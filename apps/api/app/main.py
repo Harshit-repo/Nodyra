@@ -85,11 +85,16 @@ async def _bounded(coro, timeout: float = 5.0) -> None:
 async def lifespan(app: FastAPI):
     await _ensure_global_environment()
     await _mark_interrupted_runs()
-    scheduler = asyncio.create_task(scheduler_loop())
+    scheduler = (
+        asyncio.create_task(scheduler_loop())
+        if settings.enable_inprocess_scheduler
+        else None
+    )
     yield
-    scheduler.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await scheduler
+    if scheduler is not None:
+        scheduler.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await scheduler
     await _bounded(shutdown_active_runs())
     await _bounded(runtime_pool.shutdown())
     await _bounded(engine.dispose())

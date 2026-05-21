@@ -187,6 +187,23 @@ class NodeRun(Base):
     run: Mapped[Run] = relationship(back_populates="node_runs")
 
 
+class ScheduleState(Base):
+    """Durable record of when each workflow's schedule trigger last fired.
+
+    Persisted (rather than kept in memory) so the scheduler survives an API
+    restart without missing or double-firing scheduled runs.
+    """
+
+    __tablename__ = "schedule_state"
+
+    workflow_id: Mapped[str] = mapped_column(
+        ForeignKey("workflows.id", ondelete="CASCADE"), primary_key=True
+    )
+    last_fired: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class WorkflowVersion(Base):
     """An immutable snapshot of a workflow's graph. Every save creates one."""
 

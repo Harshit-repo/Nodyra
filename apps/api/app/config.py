@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     # raise it deliberately when you have RAM to spare.
     runner_pool_size: int = 1
     max_concurrent_runs: int = 8
+    # Run the in-process schedule loop. Disable on multi-replica deployments
+    # that drive scheduled runs from Celery Beat instead (avoids double-fire).
+    enable_inprocess_scheduler: bool = True
     workflow_run_timeout_seconds: float = 120.0
     auth_required: bool = False
     secret_key: str = "noodle-dev-secret-change-me-in-production"

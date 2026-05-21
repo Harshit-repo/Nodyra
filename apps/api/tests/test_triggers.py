@@ -1,7 +1,9 @@
 from datetime import UTC, datetime, timedelta
 
 from httpx import AsyncClient
+from sqlalchemy import select
 
+from app.models import ScheduleState
 from app.services import triggers
 
 
@@ -89,14 +91,62 @@ async def test_schedule_tick_fires_when_due(client: AsyncClient) -> None:
         f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
     )
 
-    triggers._last_fired.clear()
     await triggers._tick()  # first sighting starts the clock, no run
     assert (await client.get(f"/workflows/{workflow_id}/runs")).json() == []
 
-    triggers._last_fired[workflow_id] = datetime.now(UTC) - timedelta(hours=1)
+    # Rewind the persisted last_fired so the schedule is overdue.
+    async with triggers.SessionLocal() as session:
+        state = (
+            await session.scalars(
+                select(ScheduleState).where(
+                    ScheduleState.workflow_id == workflow_id
+                )
+            )
+        ).one()
+        state.last_fired = datetime.now(UTC) - timedelta(hours=1)
+        await session.commit()
+
     await triggers._tick()  # now overdue — should fire
 
     runs = (await client.get(f"/workflows/{workflow_id}/runs")).json()
     assert len(runs) == 1
     assert runs[0]["trigger_type"] == "schedule"
-    triggers._last_fired.clear()
+
+
+async def test_schedule_tick_honours_cron(client: AsyncClient) -> None:
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Cron"})
+    ).json()["id"]
+    graph = {
+        "nodes": [
+            {
+                "id": "sched",
+                "type": "schedule_trigger",
+                "params": {"cron": "* * * * *"},  # every minute
+                "position": {"x": 0, "y": 0},
+            }
+        ],
+        "edges": [],
+    }
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+
+    await triggers._tick()  # start the clock
+    assert (await client.get(f"/workflows/{workflow_id}/runs")).json() == []
+
+    async with triggers.SessionLocal() as session:
+        state = (
+            await session.scalars(
+                select(ScheduleState).where(
+                    ScheduleState.workflow_id == workflow_id
+                )
+            )
+        ).one()
+        state.last_fired = datetime.now(UTC) - timedelta(minutes=5)
+        await session.commit()
+
+    await triggers._tick()  # a cron minute has elapsed — should fire
+    runs = (await client.get(f"/workflows/{workflow_id}/runs")).json()
+    assert len(runs) == 1
+    assert runs[0]["trigger_type"] == "schedule"
