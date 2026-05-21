@@ -1,0 +1,40 @@
+image:
+  repository: noodle
+  tag: "0.0.1"
+  pullPolicy: IfNotPresent
+
+api:
+  replicas: 1
+  port: 8000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+worker:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+web:
+  replicas: 1
+  port: 5173
+
+# External dependencies — point these at your Postgres and Redis.
+postgres:
+  url: "postgresql+asyncpg://noodle:noodle@noodle-postgres:5432/noodle"
+
+redis:
+  url: "redis://noodle-redis:6379/0"
+
+secret:
+  # Override in production. Used to encrypt credentials and sign tokens.
+  key: "change-me-in-production"
+
+ingress:
+  enabled: false
+  className: ""
+  host: noodle.example.com
+  tls: false

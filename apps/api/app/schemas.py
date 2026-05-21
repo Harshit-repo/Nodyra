@@ -1,0 +1,167 @@
+"""Pydantic request/response schemas for the API."""
+
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from noodle.models import WorkflowGraph
+
+
+class WorkflowCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+class WorkflowUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    active: bool | None = None
+    environment_id: str | None = None
+    graph: WorkflowGraph | None = None
+
+
+class WorkflowSummary(BaseModel):
+    id: str
+    name: str
+    active: bool
+    version: int
+    node_count: int
+    environment_id: str | None
+    updated_at: datetime
+
+
+class WorkflowDetail(BaseModel):
+    id: str
+    name: str
+    active: bool
+    version: int
+    environment_id: str | None
+    graph: WorkflowGraph
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorkflowVersionInfo(BaseModel):
+    version: int
+    created_at: datetime
+
+
+class EnvironmentCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    python_version: str = "3.12"
+    packages: list[str] = Field(default_factory=list)
+
+
+class PackageRequest(BaseModel):
+    package: str = Field(min_length=1, max_length=200)
+
+
+class EnvironmentInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    is_global: bool
+    python_version: str
+    packages: list[str]
+    status: str
+    status_detail: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class RunRequest(BaseModel):
+    mode: str = "manual"
+    targets: list[str] | None = None
+
+
+class RunCreated(BaseModel):
+    run_id: str
+
+
+class NodeRunInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    node_id: str
+    status: str
+    output: Any = None
+    error: str | None = None
+
+
+class RunInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    workflow_id: str
+    workflow_version: int
+    mode: str
+    status: str
+    trigger_type: str
+    started_at: datetime
+    finished_at: datetime | None
+    node_runs: list[NodeRunInfo] = []
+
+
+class CredentialCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    type: str = "generic"
+    data: dict[str, str] = Field(default_factory=dict)
+
+
+class CredentialUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    data: dict[str, str] | None = None
+
+
+class CredentialInfo(BaseModel):
+    id: str
+    name: str
+    type: str
+    keys: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class AuditEventInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    action: str
+    target_type: str
+    target_id: str
+    detail: str
+    created_at: datetime
+
+
+class UserInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    email: str
+    role: str
+
+
+class RegisterRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=8, max_length=200)
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    token: str
+    user: UserInfo
+
+
+class PinPayload(BaseModel):
+    payload: Any
+
+
+class PinnedItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    node_id: str
+    payload: Any
+    updated_at: datetime

@@ -1,0 +1,297 @@
+import { useState } from "react";
+
+import { api } from "../api";
+import { DataPanel } from "./DataPanel";
+import { ParamField, WebhookPanel } from "./NodeDetails";
+import { useEditor } from "./store";
+
+/**
+ * The three-column body of the NDV modal: Input | Parameters/Settings | Output.
+ *
+ * Mirrors n8n's node editor — the user sees the data flowing in on the left,
+ * configures the node in the middle, and inspects what came out on the right.
+ */
+
+function ParametersTab({ nodeId }: { nodeId: string }) {
+  const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
+  const updateParams = useEditor((s) => s.updateParams);
+  if (!node) return null;
+  const { manifest, params } = node.data;
+
+  const setParam = (name: string, value: unknown) => {
+    updateParams(node.id, { ...params, [name]: value });
+  };
+
+  return (
+    <>
+      <p className="expr-hint field-desc">
+        Use <code>{"{{ $json.field }}"}</code> or{" "}
+        <code>{'{{ $node["nodeId"].main.field }}'}</code> in string fields to
+        reference upstream data.
+      </p>
+      {manifest.params.length === 0 && (
+        <p className="muted">This node has no parameters.</p>
+      )}
+      {manifest.params.map((spec) => {
+        const value = params[spec.name];
+        const fx = typeof value === "string" && /\{\{.+?\}\}/s.test(value);
+        return (
+          <div className="field" key={`${node.id}:${spec.name}`}>
+            <div className="field-label">
+              <span className="field-name">{spec.name}</span>
+              <span className="field-type">{spec.type}</span>
+              {fx && (
+                <span className="fx-badge" title="Contains expression">
+                  fx
+                </span>
+              )}
+              {spec.required && <span className="field-req">required</span>}
+            </div>
+            {spec.description && (
+              <p className="field-desc">{spec.description}</p>
+            )}
+            <ParamField
+              spec={spec}
+              value={value}
+              onChange={(v) => setParam(spec.name, v)}
+            />
+          </div>
+        );
+      })}
+      {manifest.id === "webhook_trigger" && (
+        <WebhookPanel
+          path={String(params.path ?? "noodle")}
+          nodeId={node.id}
+        />
+      )}
+    </>
+  );
+}
+
+function SettingsTab({ nodeId }: { nodeId: string }) {
+  const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
+  const updateNodeSettings = useEditor((s) => s.updateNodeSettings);
+  if (!node) return null;
+  const data = node.data;
+
+  return (
+    <>
+      <p className="field-desc">
+        How this node behaves on failure and what flows downstream.
+      </p>
+
+      <div className="field">
+        <div className="field-label">
+          <span className="field-name">On error</span>
+        </div>
+        <p className="field-desc">What happens if this node throws.</p>
+        <select
+          className="field-input"
+          value={data.onError ?? "stop"}
+          onChange={(e) =>
+            updateNodeSettings(nodeId, { onError: e.target.value })
+          }
+        >
+          <option value="stop">Stop the workflow</option>
+          <option value="continue">
+            Continue (pass empty data downstream)
+          </option>
+        </select>
+      </div>
+
+      <div className="field">
+        <div className="field-label">
+          <span className="field-name">Retry on fail</span>
+        </div>
+        <p className="field-desc">
+          Re-run the node a few times before giving up.
+        </p>
+        <label className="field-toggle">
+          <input
+            type="checkbox"
+            checked={Boolean(data.retryOnFail)}
+            onChange={(e) =>
+              updateNodeSettings(nodeId, { retryOnFail: e.target.checked })
+            }
+          />
+          <span className="field-toggle-track" />
+          <span className="field-toggle-text">
+            {data.retryOnFail ? "enabled" : "disabled"}
+          </span>
+        </label>
+      </div>
+
+      {data.retryOnFail && (
+        <div className="field">
+          <div className="field-label">
+            <span className="field-name">Retries</span>
+          </div>
+          <input
+            className="field-input"
+            type="number"
+            min={1}
+            max={10}
+            value={typeof data.retries === "number" ? data.retries : 1}
+            onChange={(e) =>
+              updateNodeSettings(nodeId, {
+                retries: Math.max(
+                  1,
+                  Math.min(10, parseInt(e.target.value || "1", 10) || 1),
+                ),
+              })
+            }
+          />
+        </div>
+      )}
+
+      <div className="field">
+        <div className="field-label">
+          <span className="field-name">Always output data</span>
+        </div>
+        <p className="field-desc">
+          Emit an empty output even if the node errors so downstream nodes
+          still run.
+        </p>
+        <label className="field-toggle">
+          <input
+            type="checkbox"
+            checked={Boolean(data.alwaysOutputData)}
+            onChange={(e) =>
+              updateNodeSettings(nodeId, {
+                alwaysOutputData: e.target.checked,
+              })
+            }
+          />
+          <span className="field-toggle-track" />
+          <span className="field-toggle-text">
+            {data.alwaysOutputData ? "enabled" : "disabled"}
+          </span>
+        </label>
+      </div>
+    </>
+  );
+}
+
+export function NDVPanels({ nodeId }: { nodeId: string }) {
+  const [tab, setTab] = useState<"parameters" | "settings">("parameters");
+  const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
+  const edges = useEditor((s) => s.edges);
+  const runOutputs = useEditor((s) => s.runOutputs);
+  const runOutput = useEditor((s) => s.runOutputs[nodeId]);
+  const runStatus = useEditor((s) => s.runStatus[nodeId]);
+  const workflowId = useEditor((s) => s.workflowId);
+  const pinned = useEditor((s) => s.pinned[nodeId]);
+  const setPinnedFor = useEditor((s) => s.setPinnedFor);
+
+  if (!node) {
+    return (
+      <div className="inspector-empty">
+        <p>This node is no longer in the workflow.</p>
+      </div>
+    );
+  }
+
+  // Compute the data flowing into this node from upstream node outputs.
+  const incomingInputs: Record<string, unknown> = {};
+  for (const edge of edges) {
+    if (edge.target !== nodeId) continue;
+    const upstream = runOutputs[edge.source];
+    if (!upstream || typeof upstream !== "object") continue;
+    const sourceHandle = edge.sourceHandle ?? "main";
+    const value = (upstream as Record<string, unknown>)[sourceHandle];
+    if (value !== undefined) {
+      incomingInputs[edge.targetHandle ?? "input"] = value;
+    }
+  }
+  const inputData =
+    Object.keys(incomingInputs).length > 0 ? incomingInputs : undefined;
+
+  async function pin(): Promise<void> {
+    if (!workflowId || runOutput === undefined) return;
+    try {
+      await api.pinNode(workflowId, nodeId, runOutput);
+      setPinnedFor(nodeId, runOutput);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function unpin(): Promise<void> {
+    if (!workflowId) return;
+    try {
+      await api.unpinNode(workflowId, nodeId);
+      setPinnedFor(nodeId, null);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const outputData = pinned !== undefined ? pinned : runOutput;
+
+  const outputFooter = (
+    <div className="ndv-output-foot">
+      {runStatus && (
+        <span className={`run-pill status-run-${runStatus}`}>{runStatus}</span>
+      )}
+      {pinned !== undefined ? (
+        <button className="btn btn-sm btn-ghost" onClick={() => void unpin()}>
+          Unpin
+        </button>
+      ) : (
+        runOutput !== undefined && (
+          <button className="btn btn-sm" onClick={() => void pin()}>
+            📌 Pin this output
+          </button>
+        )
+      )}
+    </div>
+  );
+
+  return (
+    <div className="ndv-panels">
+      <DataPanel
+        title="Input"
+        data={inputData}
+        emptyMessage="No upstream data yet. Run the workflow to see input here."
+        dragPrefix="$json"
+      />
+
+      <section className="ndv-middle">
+        <div className="ndv-tabs">
+          <button
+            type="button"
+            className={tab === "parameters" ? "active" : ""}
+            onClick={() => setTab("parameters")}
+          >
+            Parameters
+          </button>
+          <button
+            type="button"
+            className={tab === "settings" ? "active" : ""}
+            onClick={() => setTab("settings")}
+          >
+            Settings
+          </button>
+        </div>
+        <div className="ndv-middle-body">
+          {tab === "parameters" ? (
+            <ParametersTab nodeId={nodeId} />
+          ) : (
+            <SettingsTab nodeId={nodeId} />
+          )}
+        </div>
+      </section>
+
+      <DataPanel
+        title={pinned !== undefined ? "Output (pinned)" : "Output"}
+        data={outputData}
+        emptyMessage={
+          runStatus === "skipped"
+            ? "This node was skipped in the last run."
+            : "No output yet. Click Run to execute the workflow."
+        }
+        footer={outputFooter}
+      />
+    </div>
+  );
+}

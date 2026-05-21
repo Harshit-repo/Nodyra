@@ -1,0 +1,13 @@
+[project]
+name = "noodle-runtime"
+version = "0.0.1"
+description = "Noodle env-runner subprocess server"
+requires-python = ">=3.12"
+dependencies = ["noodle-core", "noodle-nodes"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["noodle_runtime"]
