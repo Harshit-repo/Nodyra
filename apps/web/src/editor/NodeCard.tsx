@@ -15,6 +15,7 @@ const STATUS_GLYPH: Record<string, string> = {
   success: "✓",
   error: "!",
   skipped: "–",
+  cancelled: "■",
 };
 
 function stop(event: MouseEvent): void {

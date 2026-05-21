@@ -11,6 +11,13 @@ class Settings(BaseSettings):
     enable_venv_builds: bool = True
     run_synchronously: bool = False
     use_subprocess_runner: bool = False
+    # Parallel runs: warm runner processes kept per environment, and a global
+    # ceiling on simultaneously executing top-level runs. Default pool size 1
+    # because each warm process re-imports the env's (often heavy) packages —
+    # raise it deliberately when you have RAM to spare.
+    runner_pool_size: int = 1
+    max_concurrent_runs: int = 8
+    workflow_run_timeout_seconds: float = 120.0
     auth_required: bool = False
     secret_key: str = "noodle-dev-secret-change-me-in-production"
 

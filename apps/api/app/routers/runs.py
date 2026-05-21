@@ -5,9 +5,9 @@ from sqlalchemy.orm import selectinload
 
 from app.db import get_session
 from app.models import PinnedData, Run, Workflow
-from app.schemas import RunCreated, RunInfo, RunRequest
+from app.schemas import RunCancelResponse, RunCreated, RunInfo, RunRequest
 from app.services.events import broker
-from app.services.runner import start_run
+from app.services.runner import cancel_run, start_run
 
 router = APIRouter(tags=["runs"])
 
@@ -65,6 +65,14 @@ async def get_run(run_id: str, session: AsyncSession = Depends(get_session)):
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
     return run
+
+
+@router.post("/runs/{run_id}/cancel", response_model=RunCancelResponse)
+async def cancel_workflow_run(run_id: str) -> RunCancelResponse:
+    result = await cancel_run(run_id)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
+    return RunCancelResponse(run_id=run_id, status=result)
 
 
 @router.websocket("/ws/runs/{run_id}")

@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from noodle.engine import GraphError, execute
@@ -266,6 +268,67 @@ async def test_always_output_data_emits_a_value_on_failure() -> None:
     result = await execute(graph, reg)
     assert result.nodes["b"].status == NodeStatus.error
     assert "main" in result.nodes["b"].outputs
+
+
+async def test_node_logs_are_captured() -> None:
+    reg = NodeRegistry()
+
+    @node(name="Talker", id="talker", inputs=[], registry=reg)
+    def talker() -> int:
+        print("hello from node")
+        return 1
+
+    graph = WorkflowGraph(nodes=[GraphNode(id="t", type="talker")])
+    result = await execute(graph, reg)
+    assert any("hello from node" in line for line in result.nodes["t"].logs)
+
+
+async def test_timeout_fails_a_slow_node() -> None:
+    reg = NodeRegistry()
+
+    @node(name="Slow", id="slow", inputs=[], registry=reg)
+    async def slow() -> int:
+        await asyncio.sleep(0.5)
+        return 1
+
+    graph = WorkflowGraph(
+        nodes=[GraphNode(id="s", type="slow", timeout_seconds=0.05)],
+    )
+    result = await execute(graph, reg)
+    assert result.status == RunStatus.error
+    assert result.nodes["s"].status == NodeStatus.error
+    assert "timed out" in result.nodes["s"].error
+
+
+async def test_default_timeout_applies_to_code_nodes(monkeypatch) -> None:
+    import time
+
+    import noodle.engine as engine_module
+
+    reg = NodeRegistry()
+    monkeypatch.setitem(engine_module.DEFAULT_NODE_TIMEOUTS, "code", 0.01)
+
+    @node(name="CodeLike", id="code", inputs=[], registry=reg)
+    def slow_code() -> int:
+        time.sleep(0.2)
+        return 1
+
+    result = await execute(WorkflowGraph(nodes=[GraphNode(id="c", type="code")]), reg)
+    assert result.status == RunStatus.error
+    assert result.nodes["c"].status == NodeStatus.error
+    assert "timed out" in result.nodes["c"].error
+
+
+async def test_node_timing_is_recorded() -> None:
+    reg = make_registry()
+    graph = WorkflowGraph(
+        nodes=[GraphNode(id="c", type="const", params={"value": 1})],
+    )
+    result = await execute(graph, reg)
+    node = result.nodes["c"]
+    assert node.started_at is not None
+    assert node.finished_at is not None
+    assert node.finished_at >= node.started_at
 
 
 async def test_cycle_is_detected() -> None:

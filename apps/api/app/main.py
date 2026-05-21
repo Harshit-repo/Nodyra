@@ -1,5 +1,7 @@
 import asyncio
+import contextlib
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +10,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.db import SessionLocal, engine
-from app.models import Environment
+from app.models import Environment, Run
 from app.redis_client import redis_client
 from app.routers import (
     audit,
@@ -25,6 +27,7 @@ from app.routers import (
     workflows,
 )
 from app.services.crypto import verify_token
+from app.services.runner import shutdown_active_runs
 from app.services.runtime_pool import pool as runtime_pool
 from app.services.triggers import scheduler_loop
 
@@ -50,15 +53,47 @@ async def _ensure_global_environment() -> None:
         pass
 
 
+async def _mark_interrupted_runs() -> None:
+    """Clear run records that were left running by a previous API process."""
+    try:
+        async with SessionLocal() as session:
+            result = await session.scalars(select(Run).where(Run.status == "running"))
+            runs = result.all()
+            if not runs:
+                return
+            now = datetime.now(UTC)
+            for run in runs:
+                run.status = "cancelled"
+                run.finished_at = now
+            await session.commit()
+    except Exception:  # noqa: BLE001 - DB may not be migrated yet; not fatal
+        pass
+
+
+async def _bounded(coro, timeout: float = 5.0) -> None:
+    """Run a shutdown step but never let it block teardown forever.
+
+    The aiosqlite driver can hang on ``engine.dispose()`` when the event loop
+    is already tearing down (its connection lives on a worker thread), which
+    would otherwise wedge both the real server's shutdown and TestClient.
+    """
+    with contextlib.suppress(Exception):
+        await asyncio.wait_for(coro, timeout=timeout)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _ensure_global_environment()
+    await _mark_interrupted_runs()
     scheduler = asyncio.create_task(scheduler_loop())
     yield
     scheduler.cancel()
-    await runtime_pool.shutdown()
-    await engine.dispose()
-    await redis_client.aclose()
+    with contextlib.suppress(asyncio.CancelledError):
+        await scheduler
+    await _bounded(shutdown_active_runs())
+    await _bounded(runtime_pool.shutdown())
+    await _bounded(engine.dispose())
+    await _bounded(redis_client.aclose())
 
 
 app = FastAPI(title="Noodle API", version="0.0.1", lifespan=lifespan)

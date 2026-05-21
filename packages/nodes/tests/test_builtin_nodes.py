@@ -197,11 +197,28 @@ class FakeResponse:
     def __init__(self, payload: object, status_code: int = 200) -> None:
         self._payload = payload
         self.status_code = status_code
+        self.reason = "OK" if status_code < 400 else "Not Found"
         self.text = json.dumps(payload)
         self.content = self.text.encode("utf-8")
 
     def json(self) -> object:
         return self._payload
+
+
+def test_http_request_raises_on_error_status(monkeypatch) -> None:
+    def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
+        return FakeResponse({"message": "Not Found"}, status_code=404)
+
+    monkeypatch.setattr(requests, "request", fake_request)
+
+    node_def = registry.get("http_request")
+    try:
+        node_def.func(url="https://api.example.test/missing")
+    except RuntimeError as exc:
+        assert "HTTP 404" in str(exc)
+        assert "Not Found" in str(exc)
+    else:
+        raise AssertionError("HTTP error status should fail the node")
 
 
 def test_slack_node_builds_chat_post_message_payload(monkeypatch) -> None:

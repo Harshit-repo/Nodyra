@@ -325,9 +325,19 @@ def http_request(input: Any = None, url: str = "", method: str = "GET",
         timeout=30,
     )
     try:
-        return response.json()
+        payload = response.json()
     except ValueError:
-        return response.text
+        payload = response.text
+    if response.status_code >= 400:
+        detail = payload if isinstance(payload, str) else json.dumps(payload, default=str)
+        if len(detail) > 500:
+            detail = f"{detail[:500]}..."
+        reason = getattr(response, "reason", "") or ""
+        label = f"HTTP {response.status_code}"
+        if reason:
+            label = f"{label} {reason}"
+        raise RuntimeError(f"{label} from {url}: {detail}")
+    return payload
 
 
 @node(name="Date & Time", id="datetime", category="Transform", icon="calendar", params={

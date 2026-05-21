@@ -1,4 +1,8 @@
+import asyncio
+
 from httpx import AsyncClient
+
+from app.config import settings
 
 GRAPH = {
     "nodes": [
@@ -92,3 +96,41 @@ async def test_targeted_run_executes_a_subset(client: AsyncClient) -> None:
 
     node_ids = {n["node_id"] for n in run["node_runs"]}
     assert node_ids == {"t"}
+
+
+async def test_running_run_can_be_cancelled(client: AsyncClient) -> None:
+    previous = settings.run_synchronously
+    settings.run_synchronously = False
+    try:
+        workflow_id = (await client.post("/workflows", json={"name": "Slow"})).json()[
+            "id"
+        ]
+        slow_graph = {
+            "nodes": [
+                {
+                    "id": "slow",
+                    "type": "code",
+                    "params": {"code": "import time\ntime.sleep(0.5)\noutput = 1"},
+                    "position": {"x": 0, "y": 0},
+                }
+            ],
+            "edges": [],
+        }
+        await client.put(f"/workflows/{workflow_id}", json={"graph": slow_graph})
+
+        run_id = (
+            await client.post(f"/workflows/{workflow_id}/run", json={})
+        ).json()["run_id"]
+        cancel = await client.post(f"/runs/{run_id}/cancel")
+        assert cancel.status_code == 200
+        assert cancel.json()["status"] in {"cancelling", "cancelled"}
+
+        for _ in range(20):
+            run = (await client.get(f"/runs/{run_id}")).json()
+            if run["status"] == "cancelled":
+                break
+            await asyncio.sleep(0.05)
+
+        assert run["status"] == "cancelled"
+    finally:
+        settings.run_synchronously = previous

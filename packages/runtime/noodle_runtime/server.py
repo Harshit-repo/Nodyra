@@ -44,6 +44,7 @@ from noodle.models import WorkflowGraph
 from noodle.sdk import registry
 
 _pending_callbacks: dict[str, asyncio.Future] = {}
+_RUNTIME_DEFAULT_TIMEOUTS = {"http_request": 45.0}
 
 
 def _emit(event: dict) -> None:
@@ -95,6 +96,7 @@ async def _handle_run(request: dict[str, Any]) -> None:
             cache=request.get("cache") or None,
             targets=request.get("targets") or None,
             on_event=on_event,
+            default_timeouts=_RUNTIME_DEFAULT_TIMEOUTS,
         )
         _emit(
             {
@@ -132,6 +134,17 @@ def _resolve_callback(message: dict[str, Any]) -> bool:
     return True
 
 
+def _needs_host_callbacks(message: dict[str, Any]) -> bool:
+    graph = message.get("graph") or {}
+    nodes = graph.get("nodes") if isinstance(graph, dict) else None
+    if not isinstance(nodes, list):
+        return False
+    return any(
+        isinstance(node, dict) and node.get("type") == "execute_workflow"
+        for node in nodes
+    )
+
+
 async def run_forever() -> None:
     _emit({"type": "ready"})
     while True:
@@ -150,10 +163,17 @@ async def run_forever() -> None:
         if _resolve_callback(message):
             continue
 
-        # Anything else is a new run request. Spawn a task so the read loop
-        # keeps running — that lets sub-workflow callback responses from the
-        # host come back while the run is suspended inside ``execute_workflow``.
-        asyncio.create_task(_handle_run(message))
+        if message.get("type") != "run":
+            _emit({"type": "error", "error": "unknown message type"})
+            continue
+
+        # Most runs never call back to the host. Run those inline so the
+        # process does not keep a background stdin reader thread alive while
+        # user code imports heavy packages such as numpy/pandas on Windows.
+        if _needs_host_callbacks(message):
+            asyncio.create_task(_handle_run(message))
+        else:
+            await _handle_run(message)
 
 
 def main() -> None:

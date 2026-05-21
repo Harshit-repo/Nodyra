@@ -16,8 +16,12 @@ from app.db import Base, get_session
 from app.main import app
 
 # Tests never shell out to `uv`, and runs execute synchronously for determinism.
+# Force the in-process engine: the subprocess runner keeps a warm process per
+# env, but pytest-asyncio gives each test a fresh event loop, so a pooled
+# subprocess bound to an earlier (now-closed) loop would break later tests.
 settings.enable_venv_builds = False
 settings.run_synchronously = True
+settings.use_subprocess_runner = False
 
 
 @pytest_asyncio.fixture

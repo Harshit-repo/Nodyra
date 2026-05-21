@@ -59,7 +59,10 @@ class GraphNode(BaseModel):
     on_error: str = "stop"  # "stop" or "continue"
     retry_on_fail: bool = False
     retries: int = 1
+    retry_wait_seconds: float = 0.0
+    retry_backoff: bool = False
     always_output_data: bool = False
+    timeout_seconds: float | None = None
 
 
 class Edge(BaseModel):

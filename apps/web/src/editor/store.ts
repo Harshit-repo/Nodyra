@@ -20,7 +20,10 @@ export interface NoodleNodeData {
   onError: string;
   retryOnFail: boolean;
   retries: number;
+  retryWaitSeconds: number;
+  retryBackoff: boolean;
   alwaysOutputData: boolean;
+  timeoutSeconds: number | null;
   [key: string]: unknown;
 }
 
@@ -28,7 +31,17 @@ export interface NodeSettingsPatch {
   onError?: string;
   retryOnFail?: boolean;
   retries?: number;
+  retryWaitSeconds?: number;
+  retryBackoff?: boolean;
   alwaysOutputData?: boolean;
+  timeoutSeconds?: number | null;
+}
+
+export interface NodeRunMeta {
+  logs?: string[];
+  durationMs?: number | null;
+  startedAt?: number | null;
+  finishedAt?: number | null;
 }
 
 function deriveSwitchOutputs(rules: unknown): string[] {
@@ -53,6 +66,7 @@ interface EditorStore {
   running: boolean;
   runStatus: Record<string, string>;
   runOutputs: Record<string, unknown>;
+  runMeta: Record<string, NodeRunMeta>;
   runError: string | null;
 
   setManifests: (manifests: NodeManifest[]) => void;
@@ -78,7 +92,7 @@ interface EditorStore {
   setRunHandler: (fn: ((targets?: string[]) => Promise<void>) | null) => void;
   runFromNode: (id: string) => void;
 
-  startRun: (runId: string) => void;
+  startRun: (runId: string, targets?: string[]) => void;
   applyRunEvent: (event: RunEvent) => void;
   applyRunInfo: (run: RunInfo) => void;
   clearRun: () => void;
@@ -127,6 +141,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
   running: false,
   runStatus: {},
   runOutputs: {},
+  runMeta: {},
   runError: null,
 
   workflowId: null,
@@ -161,7 +176,12 @@ export const useEditor = create<EditorStore>((set, get) => ({
           onError: typeof n.on_error === "string" ? n.on_error : "stop",
           retryOnFail: Boolean(n.retry_on_fail),
           retries: typeof n.retries === "number" ? n.retries : 1,
+          retryWaitSeconds:
+            typeof n.retry_wait_seconds === "number" ? n.retry_wait_seconds : 0,
+          retryBackoff: Boolean(n.retry_backoff),
           alwaysOutputData: Boolean(n.always_output_data),
+          timeoutSeconds:
+            typeof n.timeout_seconds === "number" ? n.timeout_seconds : null,
         },
       });
     }
@@ -188,7 +208,16 @@ export const useEditor = create<EditorStore>((set, get) => ({
         on_error: n.data.onError ?? "stop",
         retry_on_fail: Boolean(n.data.retryOnFail),
         retries: typeof n.data.retries === "number" ? n.data.retries : 1,
+        retry_wait_seconds:
+          typeof n.data.retryWaitSeconds === "number"
+            ? n.data.retryWaitSeconds
+            : 0,
+        retry_backoff: Boolean(n.data.retryBackoff),
         always_output_data: Boolean(n.data.alwaysOutputData),
+        timeout_seconds:
+          typeof n.data.timeoutSeconds === "number"
+            ? n.data.timeoutSeconds
+            : null,
       })),
       edges: edges.map((e) => ({
         id: e.id,
@@ -243,7 +272,10 @@ export const useEditor = create<EditorStore>((set, get) => ({
         onError: "stop",
         retryOnFail: false,
         retries: 1,
+        retryWaitSeconds: 0,
+        retryBackoff: false,
         alwaysOutputData: false,
+        timeoutSeconds: null,
       },
     };
     set({ nodes: [...get().nodes, node], selectedId: node.id, dirty: true });
@@ -311,17 +343,39 @@ export const useEditor = create<EditorStore>((set, get) => ({
     if (handler) void handler([id]);
   },
 
-  startRun: (runId) =>
+  startRun: (runId, targets) => {
+    const { nodes, edges, runStatus } = get();
+    const planned = new Set<string>();
+    const targetSet = targets && targets.length > 0 ? new Set(targets) : null;
+    if (targetSet) {
+      const visit = (id: string) => {
+        if (planned.has(id)) return;
+        planned.add(id);
+        for (const edge of edges) {
+          if (edge.target === id) visit(edge.source);
+        }
+      };
+      for (const target of targetSet) visit(target);
+    } else {
+      for (const node of nodes) planned.add(node.id);
+    }
+
     // Keep prior runOutputs / runStatus visible — each node's own
     // node_started event will clear its slot when execution actually
     // begins. That way the Input panel (which reads upstream outputs)
     // and the Output panel stay populated with the previous run until
-    // the new run replaces them, avoiding the full-blank flicker.
+    // the new run replaces them, avoiding the full-blank flicker. Planned
+    // nodes are marked running immediately so the canvas shows a spinner for
+    // every node involved in this execution, not only the current node.
+    const nextStatus = { ...runStatus };
+    for (const id of planned) nextStatus[id] = "running";
     set({
       runId,
       running: true,
+      runStatus: nextStatus,
       runError: null,
-    }),
+    });
+  },
 
   applyRunEvent: (event) => {
     if (event.type === "node_started" && event.node_id) {
@@ -329,23 +383,73 @@ export const useEditor = create<EditorStore>((set, get) => ({
       set((state) => {
         const nextOutputs = { ...state.runOutputs };
         delete nextOutputs[nid];
+        const nextMeta = { ...state.runMeta };
+        delete nextMeta[nid];
         return {
           runStatus: { ...state.runStatus, [nid]: "running" },
           runOutputs: nextOutputs,
+          runMeta: nextMeta,
         };
       });
     } else if (event.type === "node_finished" && event.node_id) {
-      set({
-        runStatus: {
-          ...get().runStatus,
-          [event.node_id]: event.status ?? "success",
+      const nid = event.node_id;
+      set((state) => ({
+        runStatus: { ...state.runStatus, [nid]: event.status ?? "success" },
+        runOutputs: { ...state.runOutputs, [nid]: event.outputs },
+        runMeta: {
+          ...state.runMeta,
+          [nid]: {
+            logs: event.logs ?? [],
+            durationMs: event.duration_ms ?? null,
+            startedAt: event.started_at ?? null,
+            finishedAt: event.finished_at ?? null,
+          },
         },
-        runOutputs: { ...get().runOutputs, [event.node_id]: event.outputs },
-      });
+      }));
     } else if (event.type === "run_error") {
-      set({ running: false, runError: event.error ?? "Run failed" });
+      set((state) => ({
+        running: false,
+        runError: event.error ?? "Run failed",
+        runStatus: Object.fromEntries(
+          Object.entries(state.runStatus).map(([id, status]) => [
+            id,
+            status === "running" ? "error" : status,
+          ]),
+        ),
+      }));
+    } else if (event.type === "run_cancelled") {
+      set((state) => ({
+        running: false,
+        runError: event.error ?? "Run cancelled",
+        runStatus: Object.fromEntries(
+          Object.entries(state.runStatus).map(([id, status]) => [
+            id,
+            status === "running" ? "cancelled" : status,
+          ]),
+        ),
+      }));
     } else if (event.type === "run_finished") {
-      set({ running: false });
+      const fallback =
+        event.status === "cancelled"
+          ? "cancelled"
+          : event.status === "error"
+            ? "error"
+            : "skipped";
+      set((state) => ({
+        running: false,
+        runError:
+          event.status === "error"
+            ? (state.runError ?? "Run failed")
+            : event.status === "cancelled"
+              ? (state.runError ?? "Run cancelled")
+              : state.runError,
+        runStatus: Object.fromEntries(
+          Object.entries(state.runStatus).map(([id, status]) => [
+            id,
+            status === "running" ? fallback : status,
+          ]),
+        ),
+      }));
     }
   },
 
@@ -355,6 +459,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
       running: false,
       runStatus: {},
       runOutputs: {},
+      runMeta: {},
       runError: null,
     }),
 
@@ -375,14 +480,22 @@ export const useEditor = create<EditorStore>((set, get) => ({
   applyRunInfo: (run) => {
     const status: Record<string, string> = {};
     const outputs: Record<string, unknown> = {};
+    const meta: Record<string, NodeRunMeta> = {};
     for (const nr of run.node_runs) {
       status[nr.node_id] = nr.status;
       outputs[nr.node_id] = nr.output;
+      meta[nr.node_id] = {
+        logs: nr.logs ?? [],
+        durationMs: nr.duration_ms ?? null,
+        startedAt: nr.started_at ?? null,
+        finishedAt: nr.finished_at ?? null,
+      };
     }
     set({
       runId: run.id,
       runStatus: status,
       runOutputs: outputs,
+      runMeta: meta,
       running: false,
       runError: null,
     });

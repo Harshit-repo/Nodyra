@@ -305,25 +305,39 @@ export function DataPanel({
   emptyMessage,
   footer,
   dragPrefix,
+  logs,
+  durationMs,
 }: {
   title: string;
   data: unknown;
   emptyMessage?: string;
   footer?: ReactNode;
   dragPrefix?: string;
+  logs?: string[];
+  durationMs?: number | null;
 }) {
   const display = unwrapSingleOutput(data);
   const canTable = isTableable(display);
-  const [view, setView] = useState<"json" | "table">(
+  const hasLogs = logs !== undefined && logs.length > 0;
+  const [view, setView] = useState<"json" | "table" | "logs">(
     canTable ? "table" : "json",
   );
   const empty = data === undefined || data === null;
-  const effectiveView = canTable ? view : "json";
+  let effectiveView: "json" | "table" | "logs" = view;
+  if (view === "table" && !canTable) effectiveView = "json";
+  if (view === "logs" && !hasLogs) effectiveView = canTable ? "table" : "json";
 
   return (
     <section className="ndv-panel">
       <header className="ndv-panel-head">
-        <h3>{title}</h3>
+        <h3>
+          {title}
+          {typeof durationMs === "number" && (
+            <span className="ndv-duration" title="Execution time">
+              {durationMs} ms
+            </span>
+          )}
+        </h3>
         <div className="data-view-toggle">
           <button
             type="button"
@@ -341,10 +355,23 @@ export function DataPanel({
           >
             Table
           </button>
+          {logs !== undefined && (
+            <button
+              type="button"
+              className={effectiveView === "logs" ? "active" : ""}
+              onClick={() => hasLogs && setView("logs")}
+              disabled={!hasLogs}
+              title={hasLogs ? "Show captured logs" : "No logs for this node"}
+            >
+              Logs{hasLogs ? ` (${logs.length})` : ""}
+            </button>
+          )}
         </div>
       </header>
       <div className="ndv-panel-body">
-        {empty ? (
+        {effectiveView === "logs" ? (
+          <pre className="data-json data-logs">{(logs ?? []).join("\n")}</pre>
+        ) : empty ? (
           <p className="ndv-panel-empty muted">
             {emptyMessage ?? "No data yet."}
           </p>
@@ -353,7 +380,7 @@ export function DataPanel({
         ) : (
           <JsonTree data={display} dragPrefix={dragPrefix} />
         )}
-        {dragPrefix && !empty && (
+        {dragPrefix && !empty && effectiveView !== "logs" && (
           <p className="ndv-panel-hint muted">
             Tip: drag any field into a parameter to insert{" "}
             <code>{`{{ ${dragPrefix}.field }}`}</code>.

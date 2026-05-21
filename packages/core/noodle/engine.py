@@ -12,6 +12,9 @@ The same engine runs inside env runners and inside exported scripts.
 """
 
 import asyncio
+import contextvars
+import random
+import sys
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable
@@ -28,6 +31,52 @@ from noodle.models import (
 from noodle.sdk import NodeRegistry
 
 EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
+
+DEFAULT_NODE_TIMEOUTS: dict[str, float] = {
+    "code": 60.0,
+    "http_request": 45.0,
+}
+
+# Per-node log capture. Writes to stdout/stderr are diverted into this
+# context-local buffer *only* while a node is executing, so capture is safe
+# under concurrent runs / sub-workflows sharing one process — unlike a global
+# ``redirect_stdout`` which would cross-capture other tasks' output.
+_log_capture: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "noodle_log_capture", default=None
+)
+
+
+class _CaptureProxy:
+    """stdout/stderr proxy: divert into the active buffer, else pass through."""
+
+    def __init__(self, wrapped: Any) -> None:
+        self._wrapped = wrapped
+
+    def write(self, s: str) -> int:
+        buf = _log_capture.get()
+        if buf is not None:
+            buf.append(s)
+            return len(s)
+        return self._wrapped.write(s)
+
+    def flush(self) -> None:
+        try:
+            self._wrapped.flush()
+        except Exception:  # noqa: BLE001 - flushing must never raise into the engine
+            pass
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._wrapped, name)
+
+
+def _install_capture() -> None:
+    """Install the capture proxies once. Idempotent and process-wide-safe:
+    when no buffer is active for the current task, writes pass straight through.
+    """
+    if not isinstance(sys.stdout, _CaptureProxy):
+        sys.stdout = _CaptureProxy(sys.stdout)
+    if not isinstance(sys.stderr, _CaptureProxy):
+        sys.stderr = _CaptureProxy(sys.stderr)
 
 
 class GraphError(Exception):
@@ -99,6 +148,16 @@ def _normalize_outputs(raw: Any, output_names: list[str], node_id: str) -> dict[
     return {name: raw[name] for name in output_names if name in raw}
 
 
+def _node_timeout(
+    node_type: str,
+    timeout: float | None,
+    default_timeouts: dict[str, float],
+) -> float | None:
+    if timeout is not None:
+        return timeout
+    return default_timeouts.get(node_type)
+
+
 async def execute(
     graph: WorkflowGraph,
     registry: NodeRegistry,
@@ -106,8 +165,11 @@ async def execute(
     cache: dict[str, dict[str, Any]] | None = None,
     targets: Iterable[str] | None = None,
     on_event: EventCallback | None = None,
+    default_timeouts: dict[str, float] | None = None,
 ) -> RunResult:
     """Run a workflow graph and return per-node results."""
+    _install_capture()
+    default_timeouts = DEFAULT_NODE_TIMEOUTS if default_timeouts is None else default_timeouts
     cache = cache or {}
     target_set = set(targets) if targets is not None else None
     needed = _needed_nodes(graph, target_set, cache)
@@ -128,6 +190,9 @@ async def execute(
 
     async def finish(result: NodeRunResult) -> None:
         results[result.node_id] = result
+        duration_ms = None
+        if result.started_at is not None and result.finished_at is not None:
+            duration_ms = int((result.finished_at - result.started_at) * 1000)
         await emit(
             {
                 "type": "node_finished",
@@ -135,6 +200,10 @@ async def execute(
                 "status": str(result.status),
                 "outputs": result.outputs,
                 "error": result.error,
+                "logs": result.logs,
+                "started_at": result.started_at,
+                "finished_at": result.finished_at,
+                "duration_ms": duration_ms,
             }
         )
 
@@ -249,34 +318,62 @@ async def execute(
             if spec.name in kwargs:
                 kwargs[spec.name] = evaluate(kwargs[spec.name], expr_context)
 
+        timeout = _node_timeout(
+            graph_node.type, graph_node.timeout_seconds, default_timeouts
+        )
         attempts = (
             max(1, graph_node.retries + 1) if graph_node.retry_on_fail else 1
         )
         caught: Exception | None = None
         outputs: dict[str, Any] | None = None
-        for _ in range(attempts):
-            try:
-                if node_def.is_async:
-                    raw = await node_def.func(**kwargs)
-                else:
-                    raw = node_def.func(**kwargs)
-                outputs = _normalize_outputs(raw, output_names, graph_node.type)
-                caught = None
-                break
-            except Exception as exc:  # noqa: BLE001 - user code; surface anything
-                caught = exc
+        log_buf: list[str] = []
+        log_token = _log_capture.set(log_buf)
+        try:
+            for attempt in range(attempts):
+                try:
+                    # Only offload sync nodes to a thread when a timeout is set,
+                    # so ordinary sync nodes keep their direct-call semantics.
+                    if node_def.is_async:
+                        if timeout is not None:
+                            raw = await asyncio.wait_for(
+                                node_def.func(**kwargs), timeout
+                            )
+                        else:
+                            raw = await node_def.func(**kwargs)
+                    elif timeout is not None:
+                        raw = await asyncio.wait_for(
+                            asyncio.to_thread(node_def.func, **kwargs), timeout
+                        )
+                    else:
+                        raw = node_def.func(**kwargs)
+                    outputs = _normalize_outputs(raw, output_names, graph_node.type)
+                    caught = None
+                    break
+                except Exception as exc:  # noqa: BLE001 - user code; surface anything
+                    caught = exc
+                    if attempt + 1 < attempts and graph_node.retry_wait_seconds > 0:
+                        wait = graph_node.retry_wait_seconds
+                        delay = wait * (2**attempt if graph_node.retry_backoff else 1)
+                        delay += random.uniform(0, wait * 0.1)  # small jitter
+                        await asyncio.sleep(delay)
+        finally:
+            _log_capture.reset(log_token)
+        logs = "".join(log_buf).splitlines()
 
         if caught is None and outputs is not None:
             node_outputs[nid] = outputs
             await finish(
                 NodeRunResult(
                     node_id=nid, status=NodeStatus.success, outputs=outputs,
-                    started_at=started, finished_at=time.time(),
+                    logs=logs, started_at=started, finished_at=time.time(),
                 )
             )
             continue
 
-        error_msg = f"{type(caught).__name__}: {caught}"
+        if isinstance(caught, (TimeoutError, asyncio.TimeoutError)):
+            error_msg = f"node timed out after {timeout}s"
+        else:
+            error_msg = f"{type(caught).__name__}: {caught}"
         continue_on_error = (
             graph_node.on_error == "continue" or graph_node.always_output_data
         )
@@ -286,7 +383,7 @@ async def execute(
             await finish(
                 NodeRunResult(
                     node_id=nid, status=NodeStatus.error, error=error_msg,
-                    outputs=fallback_outputs,
+                    outputs=fallback_outputs, logs=logs,
                     started_at=started, finished_at=time.time(),
                 )
             )
@@ -295,7 +392,7 @@ async def execute(
             await finish(
                 NodeRunResult(
                     node_id=nid, status=NodeStatus.error, error=error_msg,
-                    started_at=started, finished_at=time.time(),
+                    logs=logs, started_at=started, finished_at=time.time(),
                 )
             )
 

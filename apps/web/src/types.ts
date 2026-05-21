@@ -37,7 +37,10 @@ export interface GraphNode {
   on_error: string;
   retry_on_fail: boolean;
   retries: number;
+  retry_wait_seconds: number;
+  retry_backoff: boolean;
   always_output_data: boolean;
+  timeout_seconds: number | null;
 }
 
 export interface GraphEdge {
@@ -91,6 +94,10 @@ export interface NodeRunResult {
   status: string;
   output: unknown;
   error: string | null;
+  logs?: string[] | null;
+  started_at?: number | null;
+  finished_at?: number | null;
+  duration_ms?: number | null;
 }
 
 export interface RunInfo {
@@ -112,6 +119,10 @@ export interface RunEvent {
   outputs?: unknown;
   error?: string;
   run_id?: string;
+  logs?: string[];
+  started_at?: number | null;
+  finished_at?: number | null;
+  duration_ms?: number | null;
 }
 
 export interface Credential {

@@ -29,6 +29,8 @@ from noodle.sdk import registry as node_registry
 
 TRIGGER_TYPES = ("manual_trigger", "webhook_trigger", "schedule_trigger")
 
+_active_runs: dict[str, asyncio.Task[None]] = {}
+
 
 def _json_safe(value: Any) -> Any:
     try:
@@ -125,12 +127,61 @@ async def start_run(
         run_id = run.id
 
     if settings.run_synchronously:
-        await _execute_run(run_id, workflow_id, graph, targets, cache)
+        current = asyncio.current_task()
+        if current is not None:
+            _active_runs[run_id] = current
+        try:
+            await _execute_run(run_id, workflow_id, graph, targets, cache)
+        finally:
+            _active_runs.pop(run_id, None)
     else:
-        asyncio.create_task(
+        task = asyncio.create_task(
             _execute_run(run_id, workflow_id, graph, targets, cache)
         )
+        _active_runs[run_id] = task
+        task.add_done_callback(lambda _task: _active_runs.pop(run_id, None))
     return run_id
+
+
+async def cancel_run(run_id: str) -> str | None:
+    """Cancel an active run, or mark a stale running record as cancelled."""
+    task = _active_runs.get(run_id)
+    if task is not None and not task.done():
+        task.cancel()
+        return "cancelling"
+
+    async with SessionLocal() as session:
+        run = await session.get(Run, run_id)
+        if run is None:
+            return None
+        if run.status == "running":
+            run.status = "cancelled"
+            run.finished_at = datetime.now(UTC)
+            await session.commit()
+            broker.publish(
+                run_id,
+                {
+                    "type": "run_cancelled",
+                    "run_id": run_id,
+                    "error": "Run cancelled",
+                },
+            )
+            broker.publish(
+                run_id,
+                {"type": "run_finished", "run_id": run_id, "status": "cancelled"},
+            )
+        return run.status
+
+
+async def shutdown_active_runs(timeout: float = 5.0) -> None:
+    tasks = [task for task in _active_runs.values() if not task.done()]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=timeout,
+        )
 
 
 async def _execute_run(
@@ -153,60 +204,58 @@ async def _execute_run(
     broker.publish(run_id, {"type": "run_started", "run_id": run_id})
     status = "success"
 
-    if settings.use_subprocess_runner:
-        env_id: str | None = None
-        async with SessionLocal() as session:
-            workflow = await session.get(Workflow, workflow_id)
-            if workflow is not None:
-                env_id = workflow.environment_id
-        chain_token = call_chain.set(frozenset({workflow_id}))
-        caller_token = workflow_caller.set(_call_sub_workflow)
-        try:
-            status = await runtime_pool.dispatch(
-                env_id,
-                graph_dict,
-                cache,
-                targets,
-                on_event,
-                sub_workflow_caller=_call_sub_workflow,
-            )
-        except Exception as exc:  # noqa: BLE001 - subprocess failures surface here
-            status = "error"
-            broker.publish(
-                run_id,
-                {
-                    "type": "run_error",
-                    "error": f"{type(exc).__name__}: {exc}",
-                },
-            )
-        finally:
-            workflow_caller.reset(caller_token)
-            call_chain.reset(chain_token)
-    else:
-        chain_token = call_chain.set(frozenset({workflow_id}))
-        caller_token = workflow_caller.set(_call_sub_workflow)
-        try:
-            graph = WorkflowGraph.model_validate(graph_dict)
-            result = await execute(
-                graph,
-                node_registry,
-                cache=cache,
-                targets=targets,
-                on_event=on_event,
-            )
-            status = str(result.status)
-        except Exception as exc:  # noqa: BLE001 - report any execution failure
-            status = "error"
-            broker.publish(
-                run_id,
-                {
-                    "type": "run_error",
-                    "error": f"{type(exc).__name__}: {exc}",
-                },
-            )
-        finally:
-            workflow_caller.reset(caller_token)
-            call_chain.reset(chain_token)
+    try:
+        if settings.use_subprocess_runner:
+            env_id: str | None = None
+            async with SessionLocal() as session:
+                workflow = await session.get(Workflow, workflow_id)
+                if workflow is not None:
+                    env_id = workflow.environment_id
+            chain_token = call_chain.set(frozenset({workflow_id}))
+            caller_token = workflow_caller.set(_call_sub_workflow)
+            try:
+                status = await runtime_pool.dispatch(
+                    env_id,
+                    graph_dict,
+                    cache,
+                    targets,
+                    on_event,
+                    sub_workflow_caller=_call_sub_workflow,
+                )
+            finally:
+                workflow_caller.reset(caller_token)
+                call_chain.reset(chain_token)
+        else:
+            chain_token = call_chain.set(frozenset({workflow_id}))
+            caller_token = workflow_caller.set(_call_sub_workflow)
+            try:
+                graph = WorkflowGraph.model_validate(graph_dict)
+                result = await execute(
+                    graph,
+                    node_registry,
+                    cache=cache,
+                    targets=targets,
+                    on_event=on_event,
+                )
+                status = str(result.status)
+            finally:
+                workflow_caller.reset(caller_token)
+                call_chain.reset(chain_token)
+    except asyncio.CancelledError:
+        status = "cancelled"
+        broker.publish(
+            run_id,
+            {"type": "run_cancelled", "run_id": run_id, "error": "Run cancelled"},
+        )
+    except Exception as exc:  # noqa: BLE001 - report any execution failure
+        status = "error"
+        broker.publish(
+            run_id,
+            {
+                "type": "run_error",
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+        )
 
     async with SessionLocal() as session:
         run = await session.get(Run, run_id)
@@ -221,6 +270,10 @@ async def _execute_run(
                         status=event.get("status", "unknown"),
                         output=event.get("outputs"),
                         error=event.get("error"),
+                        logs=event.get("logs"),
+                        started_at=event.get("started_at"),
+                        finished_at=event.get("finished_at"),
+                        duration_ms=event.get("duration_ms"),
                     )
                 )
             await session.commit()

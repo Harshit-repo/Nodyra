@@ -78,6 +78,11 @@ class RunCreated(BaseModel):
     run_id: str
 
 
+class RunCancelResponse(BaseModel):
+    run_id: str
+    status: str
+
+
 class NodeRunInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -85,6 +90,10 @@ class NodeRunInfo(BaseModel):
     status: str
     output: Any = None
     error: str | None = None
+    logs: list[str] | None = None
+    started_at: float | None = None
+    finished_at: float | None = None
+    duration_ms: int | None = None
 
 
 class RunInfo(BaseModel):

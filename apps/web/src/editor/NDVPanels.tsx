@@ -73,6 +73,12 @@ function SettingsTab({ nodeId }: { nodeId: string }) {
   const updateNodeSettings = useEditor((s) => s.updateNodeSettings);
   if (!node) return null;
   const data = node.data;
+  const defaultTimeout =
+    data.manifest.id === "code"
+      ? 60
+      : data.manifest.id === "http_request"
+        ? 45
+        : null;
 
   return (
     <>
@@ -122,27 +128,107 @@ function SettingsTab({ nodeId }: { nodeId: string }) {
       </div>
 
       {data.retryOnFail && (
-        <div className="field">
-          <div className="field-label">
-            <span className="field-name">Retries</span>
+        <>
+          <div className="field">
+            <div className="field-label">
+              <span className="field-name">Retries</span>
+            </div>
+            <input
+              className="field-input"
+              type="number"
+              min={1}
+              max={10}
+              value={typeof data.retries === "number" ? data.retries : 1}
+              onChange={(e) =>
+                updateNodeSettings(nodeId, {
+                  retries: Math.max(
+                    1,
+                    Math.min(10, parseInt(e.target.value || "1", 10) || 1),
+                  ),
+                })
+              }
+            />
           </div>
-          <input
-            className="field-input"
-            type="number"
-            min={1}
-            max={10}
-            value={typeof data.retries === "number" ? data.retries : 1}
-            onChange={(e) =>
-              updateNodeSettings(nodeId, {
-                retries: Math.max(
-                  1,
-                  Math.min(10, parseInt(e.target.value || "1", 10) || 1),
-                ),
-              })
-            }
-          />
-        </div>
+
+          <div className="field">
+            <div className="field-label">
+              <span className="field-name">Wait between retries (s)</span>
+            </div>
+            <p className="field-desc">
+              Seconds to wait before each retry (0 = immediate).
+            </p>
+            <input
+              className="field-input"
+              type="number"
+              min={0}
+              step={0.5}
+              value={
+                typeof data.retryWaitSeconds === "number"
+                  ? data.retryWaitSeconds
+                  : 0
+              }
+              onChange={(e) =>
+                updateNodeSettings(nodeId, {
+                  retryWaitSeconds: Math.max(
+                    0,
+                    parseFloat(e.target.value || "0") || 0,
+                  ),
+                })
+              }
+            />
+          </div>
+
+          <div className="field">
+            <div className="field-label">
+              <span className="field-name">Exponential backoff</span>
+            </div>
+            <p className="field-desc">
+              Double the wait after each failed attempt.
+            </p>
+            <label className="field-toggle">
+              <input
+                type="checkbox"
+                checked={Boolean(data.retryBackoff)}
+                onChange={(e) =>
+                  updateNodeSettings(nodeId, { retryBackoff: e.target.checked })
+                }
+              />
+              <span className="field-toggle-track" />
+              <span className="field-toggle-text">
+                {data.retryBackoff ? "enabled" : "disabled"}
+              </span>
+            </label>
+          </div>
+        </>
       )}
+
+      <div className="field">
+        <div className="field-label">
+          <span className="field-name">Timeout (s)</span>
+        </div>
+        <p className="field-desc">
+          {defaultTimeout
+            ? `Blank uses the ${defaultTimeout}s default.`
+            : "Blank = no timeout."}
+        </p>
+        <input
+          className="field-input"
+          type="number"
+          min={0}
+          step={1}
+          placeholder={defaultTimeout ? `${defaultTimeout}` : "no timeout"}
+          value={
+            typeof data.timeoutSeconds === "number" ? data.timeoutSeconds : ""
+          }
+          onChange={(e) => {
+            const raw = e.target.value;
+            updateNodeSettings(nodeId, {
+              timeoutSeconds:
+                raw === "" ? null : Math.max(0, parseFloat(raw) || 0),
+            });
+          }}
+        />
+      </div>
 
       <div className="field">
         <div className="field-label">
@@ -179,6 +265,7 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
   const runOutputs = useEditor((s) => s.runOutputs);
   const runOutput = useEditor((s) => s.runOutputs[nodeId]);
   const runStatus = useEditor((s) => s.runStatus[nodeId]);
+  const runMeta = useEditor((s) => s.runMeta[nodeId]);
   const workflowId = useEditor((s) => s.workflowId);
   const pinned = useEditor((s) => s.pinned[nodeId]);
   const setPinnedFor = useEditor((s) => s.setPinnedFor);
@@ -291,6 +378,8 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
             : "No output yet. Click Run to execute the workflow."
         }
         footer={outputFooter}
+        logs={runMeta?.logs}
+        durationMs={runMeta?.durationMs}
       />
     </div>
   );

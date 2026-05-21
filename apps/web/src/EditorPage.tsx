@@ -7,6 +7,7 @@ import { Canvas } from "./editor/Canvas";
 import { Inspector } from "./editor/Inspector";
 import { NodeDetailModal } from "./editor/NodeDetailModal";
 import { NodePalette } from "./editor/NodePalette";
+import { PortDataViewer } from "./editor/PortDataViewer";
 import { useEditor } from "./editor/store";
 import { Logo } from "./Logo";
 import type {
@@ -29,6 +30,7 @@ export function EditorPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [runsOpen, setRunsOpen] = useState(false);
   const [runsList, setRunsList] = useState<RunInfo[]>([]);
+  const [cancellingRun, setCancellingRun] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   const setManifests = useEditor((s) => s.setManifests);
@@ -37,6 +39,7 @@ export function EditorPage() {
   const markClean = useEditor((s) => s.markClean);
   const dirty = useEditor((s) => s.dirty);
   const nodeCount = useEditor((s) => s.nodes.length);
+  const runId = useEditor((s) => s.runId);
   const running = useEditor((s) => s.running);
   const runError = useEditor((s) => s.runError);
   const startRun = useEditor((s) => s.startRun);
@@ -120,7 +123,7 @@ export function EditorPage() {
         id,
         targets && targets.length > 0 ? { targets } : {},
       );
-      startRun(run_id);
+      startRun(run_id, targets);
       const ws = new WebSocket(runEventsUrl(run_id));
       wsRef.current = ws;
       ws.onmessage = (event) => {
@@ -131,6 +134,31 @@ export function EditorPage() {
       };
     } catch (err) {
       setMessage(String(err));
+    }
+  }
+
+  async function cancelCurrentRun(): Promise<void> {
+    if (!runId || cancellingRun) return;
+    setCancellingRun(true);
+    try {
+      const result = await api.cancelRun(runId);
+      if (result.status === "cancelled") {
+        applyRunEvent({
+          type: "run_cancelled",
+          run_id: runId,
+          error: "Run cancelled",
+        });
+      } else if (result.status !== "cancelling") {
+        applyRunEvent({
+          type: "run_finished",
+          run_id: runId,
+          status: result.status,
+        });
+      }
+    } catch (err) {
+      setMessage(String(err));
+    } finally {
+      setCancellingRun(false);
     }
   }
 
@@ -292,6 +320,15 @@ export function EditorPage() {
           >
             {running ? "Running…" : "▶ Run"}
           </button>
+          {running && (
+            <button
+              className="btn btn-danger"
+              onClick={() => void cancelCurrentRun()}
+              disabled={cancellingRun}
+            >
+              {cancellingRun ? "Stopping…" : "■ Stop"}
+            </button>
+          )}
           <button className="btn btn-primary" onClick={() => void save()} disabled={saving}>
             {dirty && <span className="dirty-dot" />}
             {saving ? "Saving…" : "Save"}
@@ -300,12 +337,21 @@ export function EditorPage() {
       </header>
 
       {message && <div className="toolbar-error">{message}</div>}
-      {runError && <div className="toolbar-error">Run failed: {runError}</div>}
+      {runError && (
+        <div className="toolbar-error">
+          {runError === "Run cancelled" || runError === "Run failed"
+            ? runError
+            : `Run failed: ${runError}`}
+        </div>
+      )}
 
       <ReactFlowProvider>
         <div className="editor-body">
           <NodePalette />
-          <Canvas />
+          <div className="editor-stage">
+            <Canvas />
+            <PortDataViewer />
+          </div>
           <Inspector />
         </div>
       </ReactFlowProvider>

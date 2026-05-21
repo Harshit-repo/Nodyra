@@ -129,6 +129,10 @@ export const api = {
     }),
   getRun: (runId: string) => request<RunInfo>(`/runs/${runId}`),
   listRuns: (id: string) => request<RunInfo[]>(`/workflows/${id}/runs`),
+  cancelRun: (runId: string) =>
+    request<{ run_id: string; status: string }>(`/runs/${runId}/cancel`, {
+      method: "POST",
+    }),
 
   listCredentials: () => request<Credential[]>("/credentials"),
   createCredential: (body: {
