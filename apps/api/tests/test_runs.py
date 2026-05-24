@@ -137,6 +137,132 @@ async def test_runs_are_listed_for_a_workflow(client: AsyncClient) -> None:
     assert all(r["status"] == "success" for r in runs)
 
 
+async def test_rerun_replays_the_trigger_parameters(client: AsyncClient) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "Replay"})).json()["id"]
+    graph = {
+        "nodes": [
+            {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 0, "y": 0},
+            },
+            {
+                "id": "e",
+                "type": "code",
+                "params": {"code": "output = input"},
+                "position": {"x": 1, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e1",
+                "source": "t",
+                "source_output": "main",
+                "target": "e",
+                "target_input": "input",
+            }
+        ],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
+
+    original = (
+        await client.post(
+            f"/workflows/{workflow_id}/run",
+            json={"parameters": {"x": 7}},
+        )
+    ).json()["run_id"]
+    assert (await client.get(f"/runs/{original}")).json()["status"] == "success"
+
+    re_id = (await client.post(f"/runs/{original}/rerun")).json()["run_id"]
+    re_run = (await client.get(f"/runs/{re_id}")).json()
+    results = {n["node_id"]: n for n in re_run["node_runs"]}
+    assert results["e"]["output"]["main"] == {"x": 7}
+
+
+async def test_retry_runs_only_the_failed_node_and_downstream(
+    client: AsyncClient,
+) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "Boom"})).json()["id"]
+    graph = {
+        "nodes": [
+            {
+                "id": "ok",
+                "type": "code",
+                "params": {"code": "output = 1"},
+                "position": {"x": 0, "y": 0},
+            },
+            {
+                "id": "boom",
+                "type": "code",
+                "params": {"code": "raise RuntimeError('nope')"},
+                "position": {"x": 1, "y": 0},
+            },
+            {
+                "id": "tail",
+                "type": "code",
+                "params": {"code": "output = input"},
+                "position": {"x": 2, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e1",
+                "source": "ok",
+                "source_output": "main",
+                "target": "boom",
+                "target_input": "input",
+            },
+            {
+                "id": "e2",
+                "source": "boom",
+                "source_output": "main",
+                "target": "tail",
+                "target_input": "input",
+            },
+        ],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
+
+    original = (
+        await client.post(f"/workflows/{workflow_id}/run", json={})
+    ).json()["run_id"]
+    first = (await client.get(f"/runs/{original}")).json()
+    statuses = {n["node_id"]: n["status"] for n in first["node_runs"]}
+    assert statuses["ok"] == "success"
+    assert statuses["boom"] == "error"
+
+    # Fix the boom node so retry has a chance to succeed.
+    fixed = {**graph}
+    fixed["nodes"] = [
+        n if n["id"] != "boom"
+        else {**n, "params": {"code": "output = input * 10"}}
+        for n in graph["nodes"]
+    ]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": fixed})
+
+    retry_id = (await client.post(f"/runs/{original}/retry")).json()["run_id"]
+    retry = (await client.get(f"/runs/{retry_id}")).json()
+    statuses = {n["node_id"]: n["status"] for n in retry["node_runs"]}
+    # 'ok' was supplied via cache; 'boom' and 'tail' re-ran.
+    assert statuses["ok"] == "success"
+    assert statuses["boom"] == "success"
+    assert statuses["tail"] == "success"
+    results = {n["node_id"]: n for n in retry["node_runs"]}
+    assert results["boom"]["output"]["main"] == 10
+    assert results["tail"]["output"]["main"] == 10
+
+
+async def test_retry_rejects_runs_with_no_failures(client: AsyncClient) -> None:
+    workflow_id = await _workflow_with_graph(client)
+    original = (
+        await client.post(f"/workflows/{workflow_id}/run", json={})
+    ).json()["run_id"]
+    assert (await client.get(f"/runs/{original}")).json()["status"] == "success"
+    resp = await client.post(f"/runs/{original}/retry")
+    assert resp.status_code == 400
+
+
 async def test_all_runs_endpoint_lists_across_workflows(client: AsyncClient) -> None:
     wf_a = await _workflow_with_graph(client)
     wf_b = (await client.post("/workflows", json={"name": "Other"})).json()["id"]

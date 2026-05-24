@@ -103,6 +103,33 @@ async def _call_sub_workflow(workflow_id: str, input_value: Any) -> Any:
     return None
 
 
+def _seed_parameters(
+    graph: dict,
+    cache: dict[str, dict] | None,
+    parameters: dict | None,
+) -> dict[str, dict] | None:
+    """Seed run parameters into the first trigger node's ``main`` input port.
+
+    Uses the same deterministic rule ``_call_sub_workflow`` follows: the
+    first node whose type is in ``TRIGGER_TYPES``. An explicit cache entry
+    for that trigger always wins (so a webhook payload is never overwritten
+    by deployment defaults). Returns the cache to use for the run.
+    """
+    if not parameters:
+        return cache
+    nodes = graph.get("nodes", []) if isinstance(graph, dict) else []
+    trigger = next(
+        (n for n in nodes if n.get("type") in TRIGGER_TYPES),
+        None,
+    )
+    if trigger is None:
+        return cache
+    next_cache = dict(cache or {})
+    if trigger["id"] not in next_cache:
+        next_cache[trigger["id"]] = {"main": parameters}
+    return next_cache
+
+
 async def start_run(
     workflow_id: str,
     graph: dict,
@@ -112,8 +139,11 @@ async def start_run(
     trigger_type: str = "manual",
     targets: list[str] | None = None,
     cache: dict[str, dict] | None = None,
+    parameters: dict | None = None,
 ) -> str:
     """Create a run record and launch execution in the background."""
+    cache = _seed_parameters(graph, cache, parameters)
+
     async with SessionLocal() as session:
         run = Run(
             workflow_id=workflow_id,

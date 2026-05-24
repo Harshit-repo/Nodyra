@@ -128,6 +128,45 @@ export interface RunInfo {
   node_runs: NodeRunResult[];
 }
 
+export interface Deployment {
+  id: string;
+  workflow_id: string;
+  name: string;
+  schedule_cron: string;
+  schedule_interval: string;
+  schedule_every: number;
+  schedule_tz: string;
+  default_parameters: Record<string, unknown>;
+  active: boolean;
+  environment_id: string | null;
+  last_fired: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DeploymentCreate {
+  workflow_id: string;
+  name: string;
+  schedule_cron?: string;
+  schedule_interval?: string;
+  schedule_every?: number;
+  schedule_tz?: string;
+  default_parameters?: Record<string, unknown>;
+  active?: boolean;
+  environment_id?: string | null;
+}
+
+export interface DeploymentUpdate {
+  name?: string;
+  schedule_cron?: string;
+  schedule_interval?: string;
+  schedule_every?: number;
+  schedule_tz?: string;
+  default_parameters?: Record<string, unknown>;
+  active?: boolean;
+  environment_id?: string | null;
+}
+
 export interface RunListItem {
   id: string;
   workflow_id: string;

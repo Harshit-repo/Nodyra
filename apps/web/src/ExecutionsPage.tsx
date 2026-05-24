@@ -211,6 +211,7 @@ export function ExecutionsPage() {
               <RunDetailPanel
                 runId={selectedRunId}
                 onClose={() => selectRun(null)}
+                onJump={(id) => selectRun(id)}
               />
             )}
           </div>
@@ -223,22 +224,52 @@ export function ExecutionsPage() {
 function RunDetailPanel({
   runId,
   onClose,
+  onJump,
 }: {
   runId: string;
   onClose: () => void;
+  onJump: (id: string) => void;
 }) {
   const [run, setRun] = useState<RunInfo | null>(null);
   const [error, setError] = useState("");
+  const [actionPending, setActionPending] = useState<"rerun" | "retry" | null>(
+    null,
+  );
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     setRun(null);
     setError("");
+    setActionPending(null);
     api
       .getRun(runId)
       .then(setRun)
       .catch((err) => setError(String(err)));
   }, [runId]);
+
+  async function rerun(): Promise<void> {
+    setActionPending("rerun");
+    try {
+      const { run_id } = await api.rerunRun(runId);
+      onJump(run_id);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setActionPending(null);
+    }
+  }
+
+  async function retry(): Promise<void> {
+    setActionPending("retry");
+    try {
+      const { run_id } = await api.retryRun(runId);
+      onJump(run_id);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setActionPending(null);
+    }
+  }
 
   // Re-fetch on each live event while the run is in flight.
   useEffect(() => {
@@ -273,13 +304,37 @@ function RunDetailPanel({
             </div>
           )}
         </div>
-        <button
-          type="button"
-          className="btn btn-sm btn-ghost"
-          onClick={onClose}
-        >
-          ✕
-        </button>
+        <div className="exec-detail-actions">
+          {run && run.status !== "running" && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => void rerun()}
+              disabled={actionPending !== null}
+              title="Run the same workflow again with the same trigger input"
+            >
+              {actionPending === "rerun" ? "Starting…" : "↻ Re-run"}
+            </button>
+          )}
+          {run && run.status === "error" && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => void retry()}
+              disabled={actionPending !== null}
+              title="Re-run only the failed node + downstream, reusing prior successful outputs"
+            >
+              {actionPending === "retry" ? "Starting…" : "↺ Retry from failure"}
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            onClick={onClose}
+          >
+            ✕
+          </button>
+        </div>
       </header>
 
       {error && <p className="error-text">{error}</p>}

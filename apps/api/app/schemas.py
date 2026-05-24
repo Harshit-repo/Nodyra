@@ -73,6 +73,7 @@ class RunRequest(BaseModel):
     mode: str = "manual"
     targets: list[str] | None = None
     cache: dict[str, dict[str, Any]] | None = None
+    parameters: dict[str, Any] | None = None
 
 
 class RunCreated(BaseModel):
@@ -180,6 +181,47 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     token: str
     user: UserInfo
+
+
+class DeploymentCreate(BaseModel):
+    workflow_id: str
+    name: str = Field(min_length=1, max_length=200)
+    schedule_cron: str = ""
+    schedule_interval: str = "hours"
+    schedule_every: int = 1
+    schedule_tz: str = ""
+    default_parameters: dict[str, Any] = Field(default_factory=dict)
+    active: bool = False
+    environment_id: str | None = None
+
+
+class DeploymentUpdate(BaseModel):
+    name: str | None = None
+    schedule_cron: str | None = None
+    schedule_interval: str | None = None
+    schedule_every: int | None = None
+    schedule_tz: str | None = None
+    default_parameters: dict[str, Any] | None = None
+    active: bool | None = None
+    environment_id: str | None = None
+
+
+class DeploymentInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    workflow_id: str
+    name: str
+    schedule_cron: str
+    schedule_interval: str
+    schedule_every: int
+    schedule_tz: str
+    default_parameters: dict[str, Any]
+    active: bool
+    environment_id: str | None
+    last_fired: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class PinPayload(BaseModel):

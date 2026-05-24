@@ -24,6 +24,12 @@ export function HomeHeader() {
           Workflows
         </Link>
         <Link
+          className={pathname.startsWith("/deployments") ? "active" : ""}
+          to="/deployments"
+        >
+          Deployments
+        </Link>
+        <Link
           className={pathname.startsWith("/executions") ? "active" : ""}
           to="/executions"
         >

@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import ScheduleState, Workflow
+from app.models import Deployment, ScheduleState, Workflow
 from app.services.runner import start_run
 
 _INTERVAL_SECONDS = {"minutes": 60, "hours": 3600, "days": 86400}
@@ -93,24 +93,71 @@ async def dispatch_webhook(path: str, request_payload: dict) -> list[str]:
     return run_ids
 
 
+def _deployment_params(deployment: Deployment) -> dict:
+    """Build the cron/interval-shaped params dict that ``_is_due`` expects."""
+    return {
+        "cron": deployment.schedule_cron or "",
+        "interval": deployment.schedule_interval or "hours",
+        "every": deployment.schedule_every or 1,
+        "tz": deployment.schedule_tz or "",
+    }
+
+
 async def _tick() -> None:
+    """One pass of the scheduler.
+
+    Precedence: a workflow with *any* active Deployment is scheduled **only**
+    by its deployments (deployment is the source of truth). Workflows with
+    no active deployment fall back to their in-graph ``schedule_trigger``,
+    which preserves the zero-config default for legacy graphs.
+    """
     now = datetime.now(UTC)
-    due: list[tuple[str, dict, int]] = []
+    due_workflow: list[tuple[str, dict, int]] = []
+    due_deployment: list[tuple[str, dict, int, dict]] = []
 
     async with SessionLocal() as session:
         workflows = (
             await session.scalars(
-                select(Workflow)
-                .where(Workflow.active.is_(True))
-                .options(selectinload(Workflow.versions))
+                select(Workflow).options(selectinload(Workflow.versions))
             )
+        ).all()
+        deployments = (
+            await session.scalars(select(Deployment).where(Deployment.active.is_(True)))
         ).all()
         states = {
             s.workflow_id: s
             for s in (await session.scalars(select(ScheduleState))).all()
         }
 
+        wf_by_id = {wf.id: wf for wf in workflows}
+        deployments_by_workflow: dict[str, list[Deployment]] = {}
+        for d in deployments:
+            deployments_by_workflow.setdefault(d.workflow_id, []).append(d)
+
+        # --- 1. Active deployments take precedence over in-graph schedules.
+        for deployment in deployments:
+            workflow = wf_by_id.get(deployment.workflow_id)
+            if workflow is None:
+                continue
+            latest = workflow.versions[-1]
+            graph = latest.graph or {}
+            params = _deployment_params(deployment)
+            if deployment.last_fired is None:
+                deployment.last_fired = now  # start the clock, no fire
+                continue
+            if _is_due(params, deployment.last_fired, now):
+                deployment.last_fired = now
+                due_deployment.append(
+                    (workflow.id, graph, latest.version, deployment.default_parameters or {})
+                )
+
+        # --- 2. Fallback: workflows that are active and have no deployment
+        # use their in-graph schedule_trigger as before.
         for workflow in workflows:
+            if not workflow.active:
+                continue
+            if deployments_by_workflow.get(workflow.id):
+                continue  # deployment(s) own this workflow's schedule
             latest = workflow.versions[-1]
             graph = latest.graph or {}
             schedule = next(
@@ -126,27 +173,32 @@ async def _tick() -> None:
 
             params = schedule.get("params", {})
             state = states.get(workflow.id)
-
             if state is None:
-                # First sighting — start the clock without firing, so a
-                # restart doesn't trigger an immediate run.
                 session.add(ScheduleState(workflow_id=workflow.id, last_fired=now))
                 continue
-
             if _is_due(params, state.last_fired, now):
                 state.last_fired = now
-                due.append((workflow.id, graph, latest.version))
+                due_workflow.append((workflow.id, graph, latest.version))
 
         await session.commit()
 
     # Dispatch outside the state transaction; start_run opens its own session.
-    for workflow_id, graph, version in due:
+    for workflow_id, graph, version in due_workflow:
         await start_run(
             workflow_id,
             graph,
             version,
             mode="production",
             trigger_type="schedule",
+        )
+    for workflow_id, graph, version, params in due_deployment:
+        await start_run(
+            workflow_id,
+            graph,
+            version,
+            mode="production",
+            trigger_type="deployment",
+            parameters=params or None,
         )
 
 

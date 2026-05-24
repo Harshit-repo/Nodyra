@@ -188,6 +188,50 @@ class NodeRun(Base):
     run: Mapped[Run] = relationship(back_populates="node_runs")
 
 
+class Deployment(Base):
+    """A schedulable, parametrized instance of a workflow.
+
+    Generalises the per-workflow ``active`` flag + in-graph schedule_trigger:
+    you can have several deployments of the same workflow, each with its own
+    cron / interval, default parameters, environment override, and on/off
+    toggle. When a workflow has any active deployments, the scheduler uses
+    them as the canonical schedule source (ignoring the in-graph trigger),
+    so the same workflow can't be scheduled twice.
+    """
+
+    __tablename__ = "deployments"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    workflow_id: Mapped[str] = mapped_column(
+        ForeignKey("workflows.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Schedule — set ``schedule_cron`` for full cron, or interval/every for the
+    # simple mode. Either may be empty when the deployment is run-now-only.
+    schedule_cron: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    schedule_interval: Mapped[str] = mapped_column(
+        String(20), default="hours", nullable=False
+    )
+    schedule_every: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    schedule_tz: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    default_parameters: Mapped[dict] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    environment_id: Mapped[str | None] = mapped_column(
+        ForeignKey("environments.id"), nullable=True
+    )
+    last_fired: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class ScheduleState(Base):
     """Durable record of when each workflow's schedule trigger last fired.
 

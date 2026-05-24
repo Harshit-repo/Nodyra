@@ -17,6 +17,7 @@ from app.routers import (
     audit,
     auth,
     credentials,
+    deployments,
     environments,
     export,
     health,
@@ -178,6 +179,7 @@ app.include_router(environments.router)
 app.include_router(webhooks.router)
 app.include_router(workflows.router)
 app.include_router(runs.router)
+app.include_router(deployments.router)
 app.include_router(export.router)
 app.include_router(auth.router)
 app.include_router(credentials.router)

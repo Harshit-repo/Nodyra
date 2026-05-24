@@ -5,6 +5,9 @@ import type {
   Environment,
   NodeManifest,
   PinnedItem,
+  Deployment,
+  DeploymentCreate,
+  DeploymentUpdate,
   RunInfo,
   RunListItem,
   UserInfo,
@@ -159,6 +162,31 @@ export const api = {
     request<{ run_id: string; status: string }>(`/runs/${runId}/cancel`, {
       method: "POST",
     }),
+  rerunRun: (runId: string) =>
+    request<{ run_id: string }>(`/runs/${runId}/rerun`, { method: "POST" }),
+  retryRun: (runId: string) =>
+    request<{ run_id: string }>(`/runs/${runId}/retry`, { method: "POST" }),
+
+  listDeployments: (workflowId?: string) =>
+    request<Deployment[]>(
+      `/deployments${workflowId ? `?workflow_id=${workflowId}` : ""}`,
+    ),
+  createDeployment: (body: DeploymentCreate) =>
+    request<Deployment>("/deployments", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateDeployment: (id: string, body: DeploymentUpdate) =>
+    request<Deployment>(`/deployments/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteDeployment: (id: string) =>
+    request<void>(`/deployments/${id}`, { method: "DELETE" }),
+  runDeployment: (id: string) =>
+    request<{ run_id: string }>(`/deployments/${id}/run`, { method: "POST" }),
+  listDeploymentRuns: (id: string) =>
+    request<RunListItem[]>(`/deployments/${id}/runs`),
 
   listCredentials: () => request<Credential[]>("/credentials"),
   createCredential: (body: {

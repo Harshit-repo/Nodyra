@@ -50,6 +50,7 @@ async def run_workflow(
         mode=body.mode,
         targets=body.targets,
         cache=run_cache or None,
+        parameters=body.parameters,
     )
     return RunCreated(run_id=run_id)
 
@@ -121,6 +122,118 @@ async def get_run(run_id: str, session: AsyncSession = Depends(get_session)):
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
     return run
+
+
+_TRIGGER_TYPES = {"manual_trigger", "webhook_trigger", "schedule_trigger"}
+
+
+def _forward_descendants(graph: dict, seeds: set[str]) -> set[str]:
+    """Return ``seeds`` plus every node reachable forward via edges."""
+    by_source: dict[str, list[str]] = {}
+    for edge in graph.get("edges", []):
+        src = edge.get("source")
+        tgt = edge.get("target")
+        if src and tgt:
+            by_source.setdefault(src, []).append(tgt)
+    visited: set[str] = set(seeds)
+    queue = list(seeds)
+    while queue:
+        nid = queue.pop()
+        for nxt in by_source.get(nid, []):
+            if nxt not in visited:
+                visited.add(nxt)
+                queue.append(nxt)
+    return visited
+
+
+async def _load_run_and_workflow(
+    session: AsyncSession, run_id: str
+) -> tuple[Run, Workflow]:
+    run = await session.get(Run, run_id, options=[selectinload(Run.node_runs)])
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
+    workflow = await session.scalar(
+        select(Workflow)
+        .where(Workflow.id == run.workflow_id)
+        .options(selectinload(Workflow.versions))
+    )
+    if workflow is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "Workflow has been deleted"
+        )
+    return run, workflow
+
+
+@router.post("/runs/{run_id}/rerun", response_model=RunCreated)
+async def rerun_run(
+    run_id: str, session: AsyncSession = Depends(get_session)
+) -> RunCreated:
+    """Start a fresh run of the same workflow, replaying the prior trigger input."""
+    run, workflow = await _load_run_and_workflow(session, run_id)
+    latest = workflow.versions[-1]
+    graph = latest.graph or {"nodes": [], "edges": []}
+
+    # Replay parameters by reading the trigger node's recorded output.
+    trigger_node = next(
+        (n for n in graph.get("nodes", []) if n.get("type") in _TRIGGER_TYPES),
+        None,
+    )
+    parameters: dict | None = None
+    if trigger_node is not None:
+        trigger_run = next(
+            (nr for nr in run.node_runs if nr.node_id == trigger_node["id"]),
+            None,
+        )
+        if trigger_run and isinstance(trigger_run.output, dict):
+            value = trigger_run.output.get("main")
+            if isinstance(value, dict):
+                parameters = value
+
+    new_run_id = await start_run(
+        workflow.id,
+        graph,
+        latest.version,
+        mode=run.mode,
+        trigger_type=run.trigger_type,
+        parameters=parameters,
+    )
+    return RunCreated(run_id=new_run_id)
+
+
+@router.post("/runs/{run_id}/retry", response_model=RunCreated)
+async def retry_from_failure(
+    run_id: str, session: AsyncSession = Depends(get_session)
+) -> RunCreated:
+    """Re-run only the failed node + its descendants, reusing successful outputs."""
+    run, workflow = await _load_run_and_workflow(session, run_id)
+    latest = workflow.versions[-1]
+    graph = latest.graph or {"nodes": [], "edges": []}
+
+    failed_ids = {nr.node_id for nr in run.node_runs if nr.status == "error"}
+    if not failed_ids:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "No failed nodes to retry on this run.",
+        )
+
+    # Reuse every successful upstream node's output via the engine's cache.
+    cache: dict[str, dict] = {}
+    for nr in run.node_runs:
+        if nr.status == "success" and isinstance(nr.output, dict):
+            cache[nr.node_id] = nr.output
+
+    targets = sorted(_forward_descendants(graph, failed_ids))
+
+    new_run_id = await start_run(
+        workflow.id,
+        graph,
+        latest.version,
+        mode=run.mode,
+        trigger_type=run.trigger_type,
+        targets=targets,
+        cache=cache or None,
+    )
+    return RunCreated(run_id=new_run_id)
 
 
 @router.post("/runs/{run_id}/cancel", response_model=RunCancelResponse)
