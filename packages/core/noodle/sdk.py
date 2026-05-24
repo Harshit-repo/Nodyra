@@ -136,6 +136,101 @@ def _build_manifest(
     )
 
 
+def register_module_functions(
+    module_id: str,
+    source: str,
+    registry: NodeRegistry,
+    *,
+    category: str = "Custom",
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Exec ``source`` and register each top-level function as a node.
+
+    Reuses :func:`_build_manifest` so user-uploaded functions get the exact
+    same manifest treatment as ``@node``-decorated built-ins (type hints →
+    input ports / param specs, return → output, async detection). Each
+    function ``foo`` is registered under id ``user:<module_id>:<foo>``.
+
+    ``module_id`` should be the DB row id of the uploaded file so the same
+    node id is stable across re-registers, and graphs that reference a
+    deleted function fall through the engine's existing "unknown node type"
+    path.
+
+    Returns ``(registered_names, skipped)`` where ``skipped`` is a list of
+    ``(name, reason)`` tuples so the upload preview can tell the user why
+    something was ignored (e.g. ``*args``, classes, lambdas).
+    """
+    module_globals: dict[str, Any] = {
+        "__name__": f"user_module_{module_id}",
+        "__builtins__": __builtins__,
+    }
+    pre_keys = set(module_globals.keys())
+    exec(source, module_globals)  # noqa: S102 - running user Python is the point
+    new_keys = [k for k in module_globals if k not in pre_keys]
+
+    registered: list[str] = []
+    skipped: list[tuple[str, str]] = []
+
+    for key in new_keys:
+        value = module_globals[key]
+        if not inspect.isfunction(value):
+            continue
+        if value.__module__ != module_globals["__name__"]:
+            continue  # imported from elsewhere, not a user function
+        try:
+            params = inspect.signature(value).parameters
+        except (TypeError, ValueError):
+            skipped.append((key, "could not inspect signature"))
+            continue
+        if any(
+            p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+            for p in params.values()
+        ):
+            skipped.append((key, "*args / **kwargs are not supported"))
+            continue
+
+        # Pick the first parameter as the single wired input port (mirrors how
+        # users intuitively wire f(x) → drag a value into x). The remaining
+        # parameters become config params edited in the inspector.
+        param_names = list(params.keys())
+        inputs = [param_names[0]] if param_names else []
+
+        try:
+            manifest = _build_manifest(
+                value,
+                node_id=f"user:{module_id}:{key}",
+                name=key,
+                category=category,
+                version="1.0.0",
+                description=(value.__doc__ or "").strip(),
+                param_meta={},
+                inputs=inputs,
+                outputs=["main"],
+                icon=None,
+            )
+        except Exception as exc:  # noqa: BLE001 - surface back to the UI
+            skipped.append((key, f"manifest error: {exc}"))
+            continue
+
+        node_def = NodeDef(
+            func=value,
+            manifest=manifest,
+            is_async=inspect.iscoroutinefunction(value),
+        )
+        # Re-register on top: drop any prior entry under the same id so an
+        # edited file replaces its previous registration cleanly.
+        registry._nodes[manifest.id] = node_def  # noqa: SLF001
+        registered.append(key)
+
+    return registered, skipped
+
+
+def unregister_module(module_id: str, registry: NodeRegistry) -> None:
+    """Remove every node id registered for ``module_id`` from the registry."""
+    prefix = f"user:{module_id}:"
+    for key in [k for k in registry._nodes if k.startswith(prefix)]:  # noqa: SLF001
+        del registry._nodes[key]  # noqa: SLF001
+
+
 def node(
     *,
     name: str,

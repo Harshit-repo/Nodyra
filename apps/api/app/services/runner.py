@@ -19,13 +19,19 @@ from sqlalchemy.orm import selectinload
 import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
 from app.config import settings
 from app.db import SessionLocal
-from app.models import NodeRun, PinnedData, Run, Workflow
+from app.models import CodeModule, NodeRun, PinnedData, Run, Workflow
 from app.services.events import broker
 from app.services.runtime_pool import pool as runtime_pool
 from noodle.context import call_chain, workflow_caller
 from noodle.engine import execute
 from noodle.models import WorkflowGraph
-from noodle.sdk import registry as node_registry
+from noodle.sdk import (
+    register_module_functions,
+    unregister_module,
+)
+from noodle.sdk import (
+    registry as node_registry,
+)
 
 TRIGGER_TYPES = ("manual_trigger", "webhook_trigger", "schedule_trigger")
 
@@ -284,7 +290,28 @@ async def _execute_run(
     broker.publish(run_id, {"type": "run_started", "run_id": run_id})
     status = "success"
 
+    workflow_modules: list[dict] = []
     try:
+        # Gather workflow-scoped user code modules so the runtime can register
+        # their functions before the engine kicks off. Must live INSIDE the
+        # cancellation try block: if the cancel hits this first DB await we
+        # still want the outer except to mark the run as cancelled.
+        try:
+            async with SessionLocal() as session:
+                rows = (
+                    await session.scalars(
+                        select(CodeModule).where(
+                            CodeModule.workflow_id == workflow_id
+                        )
+                    )
+                ).all()
+                workflow_modules = [
+                    {"id": m.id, "name": m.name, "contents": m.contents}
+                    for m in rows
+                ]
+        except Exception:  # noqa: BLE001 - missing table on legacy DB is fine
+            workflow_modules = []
+
         if settings.use_subprocess_runner:
             env_id: str | None = None
             async with SessionLocal() as session:
@@ -301,11 +328,33 @@ async def _execute_run(
                     targets,
                     on_event,
                     sub_workflow_caller=_call_sub_workflow,
+                    workflow_modules=workflow_modules,
                 )
             finally:
                 workflow_caller.reset(caller_token)
                 call_chain.reset(chain_token)
         else:
+            # In-process path: register modules into the host's registry for
+            # the duration of the run, then strip them on the way out so we
+            # don't leak custom nodes across runs / workflows.
+            loaded_module_ids: list[str] = []
+            for module in workflow_modules:
+                if not module.get("contents", "").strip():
+                    continue
+                try:
+                    register_module_functions(
+                        module["id"], module["contents"], node_registry
+                    )
+                    loaded_module_ids.append(module["id"])
+                except Exception as exc:  # noqa: BLE001 - bad code surfaces in the run
+                    broker.publish(
+                        run_id,
+                        {
+                            "type": "module_error",
+                            "module_id": module["id"],
+                            "error": f"{type(exc).__name__}: {exc}",
+                        },
+                    )
             chain_token = call_chain.set(frozenset({workflow_id}))
             caller_token = workflow_caller.set(_call_sub_workflow)
             try:
@@ -321,6 +370,8 @@ async def _execute_run(
             finally:
                 workflow_caller.reset(caller_token)
                 call_chain.reset(chain_token)
+                for module_id in loaded_module_ids:
+                    unregister_module(module_id, node_registry)
     except asyncio.CancelledError:
         status = "cancelled"
         broker.publish(

@@ -41,7 +41,7 @@ import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
 from noodle.context import workflow_caller
 from noodle.engine import execute
 from noodle.models import WorkflowGraph
-from noodle.sdk import registry
+from noodle.sdk import register_module_functions, registry, unregister_module
 
 _pending_callbacks: dict[str, asyncio.Future] = {}
 _RUNTIME_DEFAULT_TIMEOUTS = {"http_request": 45.0}
@@ -87,6 +87,30 @@ async def _handle_run(request: dict[str, Any]) -> None:
     async def on_event(event: dict) -> None:
         _emit({"request_id": request_id, **event})
 
+    # Register any per-run user code modules into the local registry. The
+    # ids are namespaced as ``user:<module_id>:<func>`` so they can't collide
+    # with built-ins, and we drop them again in the ``finally`` block so a
+    # warm process doesn't leak state across workflows.
+    workflow_modules = request.get("workflow_modules") or []
+    loaded_module_ids: list[str] = []
+    for module in workflow_modules:
+        module_id = str(module.get("id") or "")
+        source = str(module.get("contents") or "")
+        if not module_id or not source.strip():
+            continue
+        try:
+            register_module_functions(module_id, source, registry)
+            loaded_module_ids.append(module_id)
+        except Exception as exc:  # noqa: BLE001 - bad user code shouldn't crash the runner
+            _emit(
+                {
+                    "request_id": request_id,
+                    "type": "module_error",
+                    "module_id": module_id,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+
     caller_token = workflow_caller.set(_call_workflow_via_host)
     try:
         graph = WorkflowGraph.model_validate(request["graph"])
@@ -115,6 +139,8 @@ async def _handle_run(request: dict[str, Any]) -> None:
         )
     finally:
         workflow_caller.reset(caller_token)
+        for module_id in loaded_module_ids:
+            unregister_module(module_id, registry)
 
 
 def _resolve_callback(message: dict[str, Any]) -> bool:

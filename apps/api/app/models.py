@@ -188,6 +188,35 @@ class NodeRun(Base):
     run: Mapped[Run] = relationship(back_populates="node_runs")
 
 
+class CodeModule(Base):
+    """A user-uploaded Python file whose top-level functions become nodes.
+
+    Scoped Global / per-Environment / per-Workflow. The runtime registers
+    them into the node registry on demand: workflow-scoped modules ride
+    along with each run, while global / per-env modules can later be loaded
+    into the warm subprocess once. v1 wires only the workflow scope.
+    """
+
+    __tablename__ = "code_modules"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False, default="workflow")
+    workflow_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workflows.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    environment_id: Mapped[str | None] = mapped_column(
+        ForeignKey("environments.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    contents: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Deployment(Base):
     """A schedulable, parametrized instance of a workflow.
 

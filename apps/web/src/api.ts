@@ -5,6 +5,8 @@ import type {
   Environment,
   NodeManifest,
   PinnedItem,
+  CodeModule,
+  CodeModuleFunctionPreview,
   Deployment,
   DeploymentCreate,
   DeploymentUpdate,
@@ -187,6 +189,37 @@ export const api = {
     request<{ run_id: string }>(`/deployments/${id}/run`, { method: "POST" }),
   listDeploymentRuns: (id: string) =>
     request<RunListItem[]>(`/deployments/${id}/runs`),
+
+  // ---- Code modules (upload-to-nodes) ----
+  listCodeModules: (workflowId?: string) =>
+    request<CodeModule[]>(
+      `/code-modules${workflowId ? `?workflow_id=${workflowId}` : ""}`,
+    ),
+  createCodeModule: (body: {
+    scope: string;
+    workflow_id?: string | null;
+    environment_id?: string | null;
+    name: string;
+    contents?: string;
+  }) =>
+    request<CodeModule>("/code-modules", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateCodeModule: (
+    id: string,
+    body: { name?: string; contents?: string },
+  ) =>
+    request<CodeModule>(`/code-modules/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteCodeModule: (id: string) =>
+    request<void>(`/code-modules/${id}`, { method: "DELETE" }),
+  previewCodeModule: (id: string) =>
+    request<CodeModuleFunctionPreview>(`/code-modules/${id}/preview`),
+  workflowCustomNodeManifests: (workflowId: string) =>
+    request<NodeManifest[]>(`/code-modules/manifests/workflow/${workflowId}`),
 
   listCredentials: () => request<Credential[]>("/credentials"),
   createCredential: (body: {

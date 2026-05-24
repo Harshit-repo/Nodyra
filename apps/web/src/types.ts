@@ -167,6 +167,23 @@ export interface DeploymentUpdate {
   environment_id?: string | null;
 }
 
+export interface CodeModule {
+  id: string;
+  scope: string;
+  workflow_id: string | null;
+  environment_id: string | null;
+  name: string;
+  contents: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CodeModuleFunctionPreview {
+  registered: string[];
+  skipped: { name: string; reason: string }[];
+  syntax_error: string | null;
+}
+
 export interface RunListItem {
   id: string;
   workflow_id: string;

@@ -240,6 +240,144 @@
   position: relative;
 }
 
+/* ---- Functions side drawer (workflow-scoped code modules) ---- */
+.functions-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(640px, 96vw);
+  z-index: 40;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  box-shadow: -8px 0 24px rgba(4, 6, 10, 0.32);
+  display: flex;
+  flex-direction: column;
+  animation: slide-in 160ms ease-out;
+}
+@keyframes slide-in {
+  from {
+    transform: translateX(40px);
+    opacity: 0;
+  }
+}
+.functions-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line-2);
+}
+.functions-panel-head h2 {
+  margin: 0;
+  font-size: 15px;
+}
+.functions-panel-warn {
+  padding: 8px 16px;
+  background: rgba(229, 178, 79, 0.1);
+  border-bottom: 1px solid rgba(229, 178, 79, 0.22);
+  color: var(--ink-2);
+  font-size: 11.5px;
+}
+.functions-panel-body {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+.functions-list {
+  border-right: 1px solid var(--line-2);
+  padding: 10px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.functions-new {
+  margin-bottom: 8px;
+}
+.functions-item {
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+  padding: 2px;
+  transition: background 110ms ease;
+}
+.functions-item:hover {
+  background: var(--surface-2);
+}
+.functions-item.active {
+  background: var(--accent-glow, rgba(102, 178, 255, 0.12));
+}
+.functions-item-name {
+  flex: 1;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+.functions-item-del {
+  width: 22px;
+  height: 22px;
+  background: none;
+  border: none;
+  color: var(--ink-3);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.functions-item-del:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+.functions-editor {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  min-height: 0;
+}
+.functions-editor .field-code {
+  flex: 1;
+  min-height: 220px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  resize: vertical;
+}
+.functions-preview {
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+}
+.functions-list-funcs {
+  margin: 4px 0 4px 16px;
+  padding: 0;
+}
+.functions-list-funcs code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent);
+}
+.functions-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.functions-empty {
+  padding: 20px 8px;
+  font-size: 13px;
+}
+.functions-empty pre {
+  margin-top: 12px;
+  font-size: 11px;
+}
+
 /* ---- floating run button on the canvas (n8n-style) ---- */
 .canvas-fab {
   position: absolute;

@@ -16,6 +16,7 @@ from app.redis_client import redis_client
 from app.routers import (
     audit,
     auth,
+    code_modules,
     credentials,
     deployments,
     environments,
@@ -190,6 +191,7 @@ app.include_router(webhooks.router)
 app.include_router(workflows.router)
 app.include_router(runs.router)
 app.include_router(deployments.router)
+app.include_router(code_modules.router)
 app.include_router(export.router)
 app.include_router(auth.router)
 app.include_router(credentials.router)

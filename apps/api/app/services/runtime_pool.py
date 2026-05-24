@@ -121,6 +121,7 @@ class _RuntimeProcess:
         targets: list[str] | None,
         on_event: EventCallback,
         sub_workflow_caller: SubWorkflowCaller | None = None,
+        workflow_modules: list[dict] | None = None,
     ) -> str:
         async with self._run_lock:
             if self.dead or self.process.returncode is not None:
@@ -140,6 +141,7 @@ class _RuntimeProcess:
                         "graph": graph,
                         "cache": cache,
                         "targets": targets,
+                        "workflow_modules": workflow_modules or [],
                     }
                 )
                 while True:
@@ -286,13 +288,19 @@ class RuntimePool:
         targets: list[str] | None,
         on_event: EventCallback,
         sub_workflow_caller: SubWorkflowCaller | None = None,
+        workflow_modules: list[dict] | None = None,
     ) -> str:
         envpool = await self._env_pool(env_id)
         async with self._global_sem:
             proc = await envpool.acquire()
             try:
                 run = proc.run(
-                    graph, cache, targets, on_event, sub_workflow_caller
+                    graph,
+                    cache,
+                    targets,
+                    on_event,
+                    sub_workflow_caller,
+                    workflow_modules=workflow_modules,
                 )
                 timeout = settings.workflow_run_timeout_seconds
                 if timeout and timeout > 0:

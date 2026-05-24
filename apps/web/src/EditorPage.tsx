@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 
 import { api, runEventsUrl } from "./api";
 import { Canvas } from "./editor/Canvas";
+import { FunctionsPanel } from "./editor/FunctionsPanel";
 import { Inspector } from "./editor/Inspector";
 import { NodeDetailModal } from "./editor/NodeDetailModal";
 import { NodePalette } from "./editor/NodePalette";
@@ -43,6 +44,7 @@ export function EditorPage() {
   const [webhookListen, setWebhookListen] = useState<WebhookListenState | null>(
     null,
   );
+  const [functionsOpen, setFunctionsOpen] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const webhookTimerRef = useRef<number | null>(null);
 
@@ -74,14 +76,15 @@ export function EditorPage() {
     closeNdv();
     (async () => {
       try {
-        const [manifests, detail, envs, pinnedList] = await Promise.all([
+        const [manifests, custom, detail, envs, pinnedList] = await Promise.all([
           api.nodes(),
+          api.workflowCustomNodeManifests(id),
           api.getWorkflow(id),
           api.listEnvironments(),
           api.listPinned(id),
         ]);
         if (cancelled) return;
-        setManifests(manifests);
+        setManifests([...manifests, ...custom]);
         loadGraph(detail.graph);
         setWorkflow(detail);
         setName(detail.name);
@@ -423,6 +426,13 @@ export function EditorPage() {
               </div>
             )}
           </div>
+          <button
+            className="btn"
+            onClick={() => setFunctionsOpen(true)}
+            title="Upload Python files; their functions appear in the palette"
+          >
+            ƒ Functions
+          </button>
           <div className="export-menu">
             <button className="btn" onClick={() => setExportOpen((o) => !o)}>
               Export ▾
@@ -535,6 +545,20 @@ export function EditorPage() {
       </ReactFlowProvider>
 
       {ndvOpenId && <NodeDetailModal nodeId={ndvOpenId} />}
+
+      {functionsOpen && id && (
+        <FunctionsPanel
+          workflowId={id}
+          onClose={() => setFunctionsOpen(false)}
+          onChanged={async () => {
+            const [builtins, custom] = await Promise.all([
+              api.nodes(),
+              api.workflowCustomNodeManifests(id),
+            ]);
+            setManifests([...builtins, ...custom]);
+          }}
+        />
+      )}
     </div>
   );
 }

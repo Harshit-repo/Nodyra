@@ -224,6 +224,40 @@ class DeploymentInfo(BaseModel):
     updated_at: datetime
 
 
+class CodeModuleCreate(BaseModel):
+    scope: str = "workflow"
+    workflow_id: str | None = None
+    environment_id: str | None = None
+    name: str = Field(min_length=1, max_length=200)
+    contents: str = ""
+
+
+class CodeModuleUpdate(BaseModel):
+    name: str | None = None
+    contents: str | None = None
+
+
+class CodeModuleInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    scope: str
+    workflow_id: str | None
+    environment_id: str | None
+    name: str
+    contents: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class CodeModuleFunctionPreview(BaseModel):
+    """What the upload preview surfaces after parsing/registering the file."""
+
+    registered: list[str] = Field(default_factory=list)
+    skipped: list[dict[str, str]] = Field(default_factory=list)
+    syntax_error: str | None = None
+
+
 class PinPayload(BaseModel):
     payload: Any
 
