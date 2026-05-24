@@ -182,6 +182,10 @@ export interface CodeModuleFunctionPreview {
   registered: string[];
   skipped: { name: string; reason: string }[];
   syntax_error: string | null;
+  imports: string[];
+  missing_in_env: string[];
+  environment_id: string | null;
+  environment_name: string | null;
 }
 
 export interface RunListItem {

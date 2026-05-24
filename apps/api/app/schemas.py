@@ -256,6 +256,14 @@ class CodeModuleFunctionPreview(BaseModel):
     registered: list[str] = Field(default_factory=list)
     skipped: list[dict[str, str]] = Field(default_factory=list)
     syntax_error: str | None = None
+    # Top-level imports the file declares (stdlib filtered out).
+    imports: list[str] = Field(default_factory=list)
+    # Subset of ``imports`` that aren't in the workflow's env packages list.
+    missing_in_env: list[str] = Field(default_factory=list)
+    # The env we checked against (so the UI can show "missing in Global"
+    # rather than make the user guess). Null when the workflow has no env.
+    environment_id: str | None = None
+    environment_name: str | None = None
 
 
 class PinPayload(BaseModel):

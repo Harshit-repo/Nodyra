@@ -110,6 +110,57 @@ async def test_preview_surfaces_syntax_errors(client: AsyncClient) -> None:
     assert preview["registered"] == []
 
 
+async def test_preview_reports_missing_imports(client: AsyncClient) -> None:
+    """Top-level imports should be detected, stdlib filtered, and the
+    workflow's env packages should drive missing_in_env."""
+    # The global env in tests has no packages by default.
+    env = (
+        await client.post(
+            "/environments",
+            json={"name": "Test env", "packages": ["pandas"]},
+        )
+    ).json()
+    workflow_id = (await client.post("/workflows", json={"name": "Imp"})).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}",
+        json={"environment_id": env["id"], "graph": {"nodes": [], "edges": []}},
+    )
+    source = (
+        "import os\n"  # stdlib — filtered
+        "import json\n"  # stdlib — filtered
+        "import pandas as pd\n"  # installed in env — not missing
+        "import requests\n"  # missing
+        "from bs4 import BeautifulSoup\n"  # → beautifulsoup4 (known map)
+        "from . import sibling  # ignored: relative\n"
+        "\n"
+        "def use(x):\n"
+        "    return x\n"
+    )
+    module = (
+        await client.post(
+            "/code-modules",
+            json={
+                "scope": "workflow",
+                "workflow_id": workflow_id,
+                "name": "imps.py",
+                "contents": source,
+            },
+        )
+    ).json()
+    preview = (await client.get(f"/code-modules/{module['id']}/preview")).json()
+    assert "os" not in preview["imports"]
+    assert "json" not in preview["imports"]
+    assert "pandas" in preview["imports"]
+    assert "requests" in preview["imports"]
+    assert "bs4" in preview["imports"]
+    # pandas is installed → not missing; requests + bs4 (mapped) are missing.
+    assert "pandas" not in preview["missing_in_env"]
+    assert "requests" in preview["missing_in_env"]
+    assert "beautifulsoup4" in preview["missing_in_env"]
+    assert preview["environment_id"] == env["id"]
+    assert preview["environment_name"] == "Test env"
+
+
 async def test_preview_skips_kwargs_and_classes(client: AsyncClient) -> None:
     workflow_id = (await client.post("/workflows", json={"name": "Mix"})).json()["id"]
     source = (

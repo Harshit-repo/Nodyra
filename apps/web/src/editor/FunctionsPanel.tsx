@@ -4,6 +4,7 @@ import { api } from "../api";
 import type {
   CodeModule,
   CodeModuleFunctionPreview,
+  Environment,
 } from "../types";
 
 /** Side drawer for managing the workflow-scoped Python files whose
@@ -28,6 +29,9 @@ export function FunctionsPanel({
   const [preview, setPreview] = useState<CodeModuleFunctionPreview | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [environments, setEnvironments] = useState<Environment[]>([]);
+  const [installTargetEnv, setInstallTargetEnv] = useState<string>("");
+  const [installing, setInstalling] = useState<string | null>(null);
 
   async function refresh(): Promise<void> {
     try {
@@ -40,8 +44,43 @@ export function FunctionsPanel({
 
   useEffect(() => {
     void refresh();
+    api
+      .listEnvironments()
+      .then(setEnvironments)
+      .catch(() => {
+        /* env picker stays empty; non-fatal */
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workflowId]);
+
+  // When the preview tells us which env the workflow uses, default the
+  // install dropdown to that one (the user can override).
+  useEffect(() => {
+    if (preview?.environment_id && !installTargetEnv) {
+      setInstallTargetEnv(preview.environment_id);
+    }
+  }, [preview?.environment_id, installTargetEnv]);
+
+  async function installPackage(pkg: string): Promise<void> {
+    if (!installTargetEnv) {
+      setError("Pick an environment to install into first.");
+      return;
+    }
+    setInstalling(pkg);
+    setError("");
+    try {
+      await api.addPackage(installTargetEnv, pkg);
+      if (selected) {
+        // Refresh the preview so the package drops out of missing_in_env.
+        const p = await api.previewCodeModule(selected.id);
+        setPreview(p);
+      }
+    } catch (e) {
+      setError(`Failed to install ${pkg}: ${e}`);
+    } finally {
+      setInstalling(null);
+    }
+  }
 
   function openModule(m: CodeModule): void {
     setSelected(m);
@@ -203,6 +242,60 @@ export function FunctionsPanel({
                         </p>
                       )}
                     </>
+                  )}
+
+                  {preview.missing_in_env.length > 0 && (
+                    <div className="functions-missing">
+                      <p>
+                        <strong>Missing imports</strong>
+                        {preview.environment_name ? (
+                          <> not installed in <code>{preview.environment_name}</code>:</>
+                        ) : (
+                          <> — this workflow has no environment assigned yet:</>
+                        )}
+                      </p>
+                      <div className="functions-env-picker">
+                        <label className="muted" htmlFor="install-env">
+                          Install into
+                        </label>
+                        <select
+                          id="install-env"
+                          className="field-input"
+                          value={installTargetEnv}
+                          onChange={(e) => setInstallTargetEnv(e.target.value)}
+                        >
+                          <option value="">Select an environment…</option>
+                          {environments.map((env) => (
+                            <option key={env.id} value={env.id}>
+                              {env.name}
+                              {env.id === preview.environment_id
+                                ? " (workflow env)"
+                                : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <ul className="functions-missing-list">
+                        {preview.missing_in_env.map((pkg) => (
+                          <li key={pkg}>
+                            <code>{pkg}</code>
+                            <button
+                              type="button"
+                              className="btn btn-sm"
+                              onClick={() => void installPackage(pkg)}
+                              disabled={installing === pkg || !installTargetEnv}
+                            >
+                              {installing === pkg ? "Installing…" : "Install"}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="muted functions-missing-hint">
+                        If the pip name differs from the import (e.g.{" "}
+                        <code>cv2</code> → <code>opencv-python</code>), edit the
+                        package in the Environments page after install.
+                      </p>
+                    </div>
                   )}
                 </div>
               )}

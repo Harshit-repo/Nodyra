@@ -8,13 +8,14 @@ into warm runtime processes.
 """
 
 import ast
+import sys
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.models import CodeModule
+from app.models import CodeModule, Environment, Workflow
 from app.schemas import (
     CodeModuleCreate,
     CodeModuleFunctionPreview,
@@ -24,6 +25,72 @@ from app.schemas import (
 from app.services.audit import log_audit
 from noodle.models import NodeManifest
 from noodle.sdk import NodeRegistry, register_module_functions
+
+# A small import-name → pip-name map for common quirks. Anything not in here
+# falls back to assuming the pip name matches the import name (true for
+# most packages: requests, pandas, numpy, etc.).
+_KNOWN_IMPORT_TO_PIP: dict[str, str] = {
+    "cv2": "opencv-python",
+    "yaml": "PyYAML",
+    "bs4": "beautifulsoup4",
+    "PIL": "Pillow",
+    "sklearn": "scikit-learn",
+    "skimage": "scikit-image",
+    "dotenv": "python-dotenv",
+    "dateutil": "python-dateutil",
+}
+
+
+def _extract_top_level_imports(source: str) -> list[str]:
+    """Return the top-level imported top-level module names.
+
+    Stdlib modules and relative imports are filtered out so the result is
+    the set of third-party imports the user might actually need to install.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    seen: list[str] = []
+    stdlib = sys.stdlib_module_names
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".", 1)[0]
+                if top and top not in stdlib and top not in seen:
+                    seen.append(top)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                continue  # relative import — internal to the file
+            if not node.module:
+                continue
+            top = node.module.split(".", 1)[0]
+            if top and top not in stdlib and top not in seen:
+                seen.append(top)
+    return seen
+
+
+def _missing_in_env(imports: list[str], env: Environment | None) -> list[str]:
+    """Subset of imports that aren't satisfied by the env's installed packages.
+
+    Compares the *pip* name (translated from the import name via the small
+    known-quirks map) against the env's ``packages`` list, since that's what
+    the Environments UI installs.
+    """
+    if env is None:
+        return list(imports)
+    installed = {str(p).lower() for p in (env.packages or [])}
+    missing: list[str] = []
+    for name in imports:
+        pip_name = _KNOWN_IMPORT_TO_PIP.get(name, name)
+        if pip_name.lower() in installed:
+            continue
+        # Some packages register themselves under a normalized name (e.g.
+        # 'python-dateutil' → 'dateutil'); also accept the import name match.
+        if name.lower() in installed:
+            continue
+        missing.append(pip_name)
+    return missing
 
 router = APIRouter(prefix="/code-modules", tags=["code-modules"])
 
@@ -109,24 +176,60 @@ async def delete_code_module(
     await session.commit()
 
 
-def _preview(module_id: str, source: str) -> CodeModuleFunctionPreview:
-    """Parse + register into a throwaway registry to surface what's exposed."""
+async def _workflow_environment(
+    session: AsyncSession, workflow_id: str | None
+) -> Environment | None:
+    if workflow_id is None:
+        return None
+    workflow = await session.get(Workflow, workflow_id)
+    if workflow is None or workflow.environment_id is None:
+        return None
+    return await session.get(Environment, workflow.environment_id)
+
+
+def _preview_payload(
+    module_id: str, source: str, env: Environment | None
+) -> CodeModuleFunctionPreview:
+    """Parse + register into a throwaway registry to surface what's exposed.
+
+    Also walks the AST for top-level imports and reports which of those
+    aren't installed in ``env``'s packages list, so the UI can prompt the
+    user to install them with one click.
+    """
+    env_info = {
+        "environment_id": env.id if env else None,
+        "environment_name": env.name if env else None,
+    }
     if not source.strip():
-        return CodeModuleFunctionPreview()
+        return CodeModuleFunctionPreview(**env_info)
+
     try:
         ast.parse(source)
     except SyntaxError as exc:
         return CodeModuleFunctionPreview(
-            syntax_error=f"line {exc.lineno}: {exc.msg}"
+            syntax_error=f"line {exc.lineno}: {exc.msg}",
+            **env_info,
         )
+
+    imports = _extract_top_level_imports(source)
+    missing = _missing_in_env(imports, env)
+
     sandbox = NodeRegistry()
     try:
         registered, skipped = register_module_functions(module_id, source, sandbox)
     except Exception as exc:  # noqa: BLE001 - bad user code surfaces in the preview
-        return CodeModuleFunctionPreview(syntax_error=f"{type(exc).__name__}: {exc}")
+        return CodeModuleFunctionPreview(
+            syntax_error=f"{type(exc).__name__}: {exc}",
+            imports=imports,
+            missing_in_env=missing,
+            **env_info,
+        )
     return CodeModuleFunctionPreview(
         registered=registered,
         skipped=[{"name": name, "reason": reason} for name, reason in skipped],
+        imports=imports,
+        missing_in_env=missing,
+        **env_info,
     )
 
 
@@ -135,7 +238,8 @@ async def preview_code_module(
     module_id: str, session: AsyncSession = Depends(get_session)
 ):
     module = await _load(session, module_id)
-    return _preview(module.id, module.contents)
+    env = await _workflow_environment(session, module.workflow_id)
+    return _preview_payload(module.id, module.contents, env)
 
 
 @router.get("/manifests/workflow/{workflow_id}", response_model=list[NodeManifest])
