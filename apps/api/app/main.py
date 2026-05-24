@@ -29,6 +29,7 @@ from app.routers import (
     workflows,
 )
 from app.services.crypto import verify_token
+from app.services.retention import retention_loop
 from app.services.runner import shutdown_active_runs
 from app.services.runtime_pool import pool as runtime_pool
 from app.services.triggers import scheduler_loop
@@ -120,11 +121,20 @@ async def lifespan(app: FastAPI):
         if settings.enable_inprocess_scheduler
         else None
     )
+    # Retention prune is gated on the same flag — it's another in-process
+    # loop and we want at most one owner across replicas.
+    retention = (
+        asyncio.create_task(retention_loop())
+        if settings.enable_inprocess_scheduler
+        else None
+    )
     yield
-    if scheduler is not None:
-        scheduler.cancel()
+    for task in (scheduler, retention):
+        if task is None:
+            continue
+        task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await scheduler
+            await task
     await _bounded(shutdown_active_runs())
     await _bounded(runtime_pool.shutdown())
     await _bounded(engine.dispose())

@@ -7,6 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+import app.services.retention as retention_module
 import app.services.runner as runner_module
 import app.services.triggers as triggers_module
 import app.services.venv as venv_module
@@ -45,10 +46,12 @@ async def client() -> AsyncIterator[AsyncClient]:
         venv_module: venv_module.SessionLocal,
         runner_module: runner_module.SessionLocal,
         triggers_module: triggers_module.SessionLocal,
+        retention_module: retention_module.SessionLocal,
     }
     venv_module.SessionLocal = test_session
     runner_module.SessionLocal = test_session
     triggers_module.SessionLocal = test_session
+    retention_module.SessionLocal = test_session
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:

@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     # server's local timezone at startup; set explicitly in .env to pin it
     # (e.g. APP_TIMEZONE=Australia/Sydney).
     app_timezone: str = ""
+    # Run history retention. The retention loop ticks periodically and drops
+    # old runs so the DB stays bounded. 0 disables the corresponding rule.
+    run_retention_days: int = 14
+    run_retention_max_per_workflow: int = 0
+    run_retention_tick_seconds: int = 3600
+    # Per-NodeRun output cap (bytes of the JSON-serialised value). Outputs
+    # above this are replaced with a small {_truncated, size, preview} stub
+    # before persisting so one fat DataFrame can't bloat the DB. 0 disables.
+    max_output_bytes: int = 256 * 1024
     workflow_run_timeout_seconds: float = 120.0
     auth_required: bool = False
     secret_key: str = "noodle-dev-secret-change-me-in-production"

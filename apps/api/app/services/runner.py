@@ -39,6 +39,54 @@ def _json_safe(value: Any) -> Any:
         return str(value)
 
 
+def _maybe_truncate(value: Any, cap: int) -> Any:
+    if value is None:
+        return value
+    try:
+        encoded = json.dumps(value, default=str)
+    except (TypeError, ValueError):
+        return value
+    if len(encoded) <= cap:
+        return value
+    return {
+        "_truncated": True,
+        "size_bytes": len(encoded),
+        "preview": encoded[:1024],
+    }
+
+
+def _cap_output(value: Any) -> Any:
+    """Bound the size of a persisted NodeRun.output payload.
+
+    Outputs are ``{port: value}`` dicts; cap each port independently so a
+    single fat port doesn't drop the others. Anything past
+    ``settings.max_output_bytes`` becomes ``{_truncated, size_bytes, preview}``.
+    """
+    cap = settings.max_output_bytes
+    if not cap or cap <= 0 or value is None:
+        return value
+    if isinstance(value, dict):
+        return {port: _maybe_truncate(v, cap) for port, v in value.items()}
+    return _maybe_truncate(value, cap)
+
+
+def _cap_logs(logs: Any) -> Any:
+    """Bound the total bytes of persisted logs the same way as outputs."""
+    cap = settings.max_output_bytes
+    if not cap or cap <= 0 or not isinstance(logs, list):
+        return logs
+    total = 0
+    kept: list[str] = []
+    for line in logs:
+        s = line if isinstance(line, str) else str(line)
+        total += len(s) + 1  # newline overhead
+        if total > cap:
+            kept.append(f"… (log truncated at {cap} bytes)")
+            break
+        kept.append(s)
+    return kept
+
+
 async def _load_workflow_graph(
     session: AsyncSession, workflow_id: str
 ) -> tuple[dict, dict[str, dict]]:
@@ -300,9 +348,9 @@ async def _execute_run(
                         run_id=run_id,
                         node_id=node_id,
                         status=event.get("status", "unknown"),
-                        output=event.get("outputs"),
+                        output=_cap_output(event.get("outputs")),
                         error=event.get("error"),
-                        logs=event.get("logs"),
+                        logs=_cap_logs(event.get("logs")),
                         debug=event.get("debug"),
                         started_at=event.get("started_at"),
                         finished_at=event.get("finished_at"),
