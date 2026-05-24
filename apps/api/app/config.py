@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     # Run the in-process schedule loop. Disable on multi-replica deployments
     # that drive scheduled runs from Celery Beat instead (avoids double-fire).
     enable_inprocess_scheduler: bool = True
+    # Default IANA timezone for the app. Used as the fallback when a
+    # schedule_trigger has no explicit ``tz`` field set. Blank → detect the
+    # server's local timezone at startup; set explicitly in .env to pin it
+    # (e.g. APP_TIMEZONE=Australia/Sydney).
+    app_timezone: str = ""
     workflow_run_timeout_seconds: float = 120.0
     auth_required: bool = False
     secret_key: str = "noodle-dev-secret-change-me-in-production"

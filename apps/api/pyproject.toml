@@ -12,6 +12,7 @@ dependencies = [
     "redis>=5.0",
     "pydantic-settings>=2.2",
     "croniter>=2.0",
+    "tzlocal>=5.0",
     "noodle-core",
     "noodle-nodes",
     "noodle-exporter",

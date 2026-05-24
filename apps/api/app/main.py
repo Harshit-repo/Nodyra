@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import logging
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
@@ -70,6 +71,25 @@ async def _mark_interrupted_runs() -> None:
         pass
 
 
+def _detect_local_timezone() -> str:
+    """Best-effort detection of the OS's IANA timezone (e.g. Australia/Sydney).
+
+    Tries ``tzlocal`` first (correctly translates Windows zone names to IANA);
+    falls back to ``datetime.now().astimezone().tzinfo`` and finally "UTC".
+    """
+    try:
+        from tzlocal import get_localzone_name  # imported lazily; small dep
+
+        name = get_localzone_name()
+        if name:
+            return str(name)
+    except Exception:  # noqa: BLE001 - any failure → fall through
+        pass
+    tz = datetime.now().astimezone().tzinfo
+    name = getattr(tz, "key", None) or (str(tz) if tz else "")
+    return name or "UTC"
+
+
 async def _bounded(coro, timeout: float = 5.0) -> None:
     """Run a shutdown step but never let it block teardown forever.
 
@@ -83,6 +103,15 @@ async def _bounded(coro, timeout: float = 5.0) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Pin the app's default timezone — explicit .env override wins, otherwise
+    # ask the OS. This becomes the fallback for any schedule_trigger that
+    # doesn't set its own ``tz``.
+    if not settings.app_timezone:
+        settings.app_timezone = _detect_local_timezone()
+    logging.getLogger("noodle").info(
+        "noodle app timezone: %s", settings.app_timezone
+    )
+
     await _ensure_global_environment()
     await _mark_interrupted_runs()
     scheduler = (

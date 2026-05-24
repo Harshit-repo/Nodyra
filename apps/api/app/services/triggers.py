@@ -16,6 +16,7 @@ from croniter import croniter
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.db import SessionLocal
 from app.models import ScheduleState, Workflow
 from app.services.runner import start_run
@@ -42,8 +43,10 @@ def _is_due(params: dict, last: datetime, now: datetime) -> bool:
     if cron:
         # Evaluate the cron in the user-selected timezone so an expression like
         # "0 9 * * *" really means 09:00 *local* (not 09:00 UTC). croniter
-        # respects the tzinfo of the base datetime.
-        tz = _resolve_tz(str(params.get("tz", "") or ""))
+        # respects the tzinfo of the base datetime. Resolution chain:
+        # node-level ``tz`` → app-wide default (settings.app_timezone) → UTC.
+        tz_name = str(params.get("tz", "") or "").strip() or settings.app_timezone
+        tz = _resolve_tz(tz_name)
         last_local = last.astimezone(tz)
         try:
             next_time = croniter(cron, last_local).get_next(datetime)

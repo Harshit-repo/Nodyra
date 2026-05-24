@@ -1,11 +1,13 @@
 """Operational endpoints: Prometheus metrics and system status."""
 
 import time
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db import get_session
 from app.models import Credential, Environment, Run, Workflow
 
@@ -43,6 +45,8 @@ async def system_status(session: AsyncSession = Depends(get_session)) -> dict:
         "version": _VERSION,
         "uptime_seconds": int(time.time() - _started_at),
         "healthy": True,
+        "app_timezone": settings.app_timezone or "UTC",
+        "server_time": datetime.now().astimezone().isoformat(),
         **counts,
     }
 
