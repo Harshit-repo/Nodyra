@@ -42,6 +42,12 @@ export function HomeHeader() {
           Environments
         </Link>
         <Link
+          className={pathname.startsWith("/code-library") ? "active" : ""}
+          to="/code-library"
+        >
+          Code Library
+        </Link>
+        <Link
           className={pathname.startsWith("/credentials") ? "active" : ""}
           to="/credentials"
         >

@@ -21,6 +21,7 @@ in different subprocesses and can therefore run in parallel.
 import asyncio
 import json
 import sys
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -247,10 +248,36 @@ class _EnvPool:
     def release(self, proc: _RuntimeProcess) -> None:
         # Sync (no await) so it cannot interleave mid-statement with acquire.
         if self._alive(proc):
+            proc.idle_since = time.time()
             self._idle.append(proc)
         else:
             self._all.discard(proc)
         self._sem.release()
+
+    async def reap_idle(self, threshold_seconds: float) -> int:
+        """Close warm processes whose idle dwell-time exceeds the threshold.
+
+        Returns the number of processes closed. Safe to call concurrently
+        with acquire/release because we mutate ``_idle`` under the lock,
+        and idle processes hold no semaphore slot.
+        """
+        if threshold_seconds <= 0:
+            return 0
+        now = time.time()
+        to_close: list[_RuntimeProcess] = []
+        async with self._lock:
+            keep: list[_RuntimeProcess] = []
+            for proc in self._idle:
+                idle_since = getattr(proc, "idle_since", now)
+                if now - idle_since > threshold_seconds:
+                    to_close.append(proc)
+                    self._all.discard(proc)
+                else:
+                    keep.append(proc)
+            self._idle = keep
+        for proc in to_close:
+            await proc.close()
+        return len(to_close)
 
     async def close(self) -> None:
         async with self._lock:
@@ -315,6 +342,17 @@ class RuntimePool:
             finally:
                 envpool.release(proc)
 
+    async def reap_idle(self, threshold_seconds: float) -> int:
+        """Sweep every env pool, closing warm processes idle past the threshold."""
+        if threshold_seconds <= 0:
+            return 0
+        async with self._lock:
+            envs = list(self._envs.values())
+        closed = 0
+        for envpool in envs:
+            closed += await envpool.reap_idle(threshold_seconds)
+        return closed
+
     async def shutdown(self) -> None:
         async with self._lock:
             envs = list(self._envs.values())
@@ -324,3 +362,20 @@ class RuntimePool:
 
 
 pool = RuntimePool()
+
+
+async def idle_reaper_loop() -> None:
+    """Background loop that reaps warm processes idle past the threshold.
+
+    Cancellation-friendly (graceful shutdown sends a CancelledError that
+    breaks the sleep). Errors per tick are swallowed so a transient
+    subprocess hiccup doesn't kill the loop.
+    """
+    while True:
+        try:
+            threshold = settings.runner_idle_seconds
+            if threshold > 0:
+                await pool.reap_idle(threshold)
+        except Exception:  # noqa: BLE001 - a bad sweep must not kill the loop
+            pass
+        await asyncio.sleep(max(15, settings.runner_idle_tick_seconds))

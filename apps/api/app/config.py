@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     # raise it deliberately when you have RAM to spare.
     runner_pool_size: int = 1
     max_concurrent_runs: int = 8
+    # Close warm runner processes that have been idle longer than this.
+    # 0 disables reaping (warm forever). Sweep interval is separate so the
+    # cost stays low even with a low idle threshold.
+    runner_idle_seconds: int = 600
+    runner_idle_tick_seconds: int = 60
     # Run the in-process schedule loop. Disable on multi-replica deployments
     # that drive scheduled runs from Celery Beat instead (avoids double-fire).
     enable_inprocess_scheduler: bool = True

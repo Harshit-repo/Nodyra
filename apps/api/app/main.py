@@ -32,6 +32,7 @@ from app.routers import (
 from app.services.crypto import verify_token
 from app.services.retention import retention_loop
 from app.services.runner import shutdown_active_runs
+from app.services.runtime_pool import idle_reaper_loop
 from app.services.runtime_pool import pool as runtime_pool
 from app.services.triggers import scheduler_loop
 
@@ -129,8 +130,16 @@ async def lifespan(app: FastAPI):
         if settings.enable_inprocess_scheduler
         else None
     )
+    # Idle reaper closes warm runner subprocesses that have been sitting
+    # unused past ``runner_idle_seconds``. Independent of the scheduler flag
+    # because every replica should reap its own pool.
+    reaper = (
+        asyncio.create_task(idle_reaper_loop())
+        if settings.use_subprocess_runner and settings.runner_idle_seconds > 0
+        else None
+    )
     yield
-    for task in (scheduler, retention):
+    for task in (scheduler, retention, reaper):
         if task is None:
             continue
         task.cancel()

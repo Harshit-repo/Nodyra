@@ -3,6 +3,7 @@ import { Route, Routes } from "react-router-dom";
 
 import { api, getUser, onUnauthorized, setToken, setUser } from "./api";
 import { ActivityPage } from "./ActivityPage";
+import { CodeLibraryPage } from "./CodeLibraryPage";
 import { CredentialsPage } from "./CredentialsPage";
 import { DeploymentsPage } from "./DeploymentsPage";
 import { EditorPage } from "./EditorPage";
@@ -62,6 +63,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<WorkflowsPage />} />
       <Route path="/environments" element={<EnvironmentsPage />} />
+      <Route path="/code-library" element={<CodeLibraryPage />} />
       <Route path="/deployments" element={<DeploymentsPage />} />
       <Route path="/executions" element={<ExecutionsPage />} />
       <Route path="/credentials" element={<CredentialsPage />} />
