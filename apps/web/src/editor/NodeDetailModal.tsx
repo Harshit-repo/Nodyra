@@ -22,6 +22,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
 
   if (!node) return null;
   const { manifest, disabled } = node.data;
+  const isWebhook = manifest.id === "webhook_trigger";
   const color = categoryColor(manifest.category);
 
   return (
@@ -47,7 +48,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
               className="btn btn-sm btn-run"
               onClick={() => runFromNode(node.id)}
             >
-              ▶ Execute step
+              {isWebhook ? "▶ Listen for event" : "▶ Execute step"}
             </button>
             <button
               className="btn btn-sm"

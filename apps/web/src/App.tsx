@@ -6,6 +6,7 @@ import { ActivityPage } from "./ActivityPage";
 import { CredentialsPage } from "./CredentialsPage";
 import { EditorPage } from "./EditorPage";
 import { EnvironmentsPage } from "./EnvironmentsPage";
+import { ExecutionsPage } from "./ExecutionsPage";
 import { LoginPage } from "./LoginPage";
 import { WorkflowsPage } from "./WorkflowsPage";
 import type { AuthState, UserInfo } from "./types";
@@ -60,6 +61,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<WorkflowsPage />} />
       <Route path="/environments" element={<EnvironmentsPage />} />
+      <Route path="/executions" element={<ExecutionsPage />} />
       <Route path="/credentials" element={<CredentialsPage />} />
       <Route path="/activity" element={<ActivityPage />} />
       <Route path="/workflows/:id" element={<EditorPage />} />

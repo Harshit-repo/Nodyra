@@ -484,6 +484,7 @@ export function NodeDetails({
   const updateParams = useEditor((s) => s.updateParams);
   const runStatus = useEditor((s) => s.runStatus[nodeId]);
   const runOutput = useEditor((s) => s.runOutputs[nodeId]);
+  const runMeta = useEditor((s) => s.runMeta[nodeId]);
   const runOutputs = useEditor((s) => s.runOutputs);
   const edges = useEditor((s) => s.edges);
   const workflowId = useEditor((s) => s.workflowId);
@@ -614,6 +615,12 @@ export function NodeDetails({
               {runStatus}
             </span>
           </div>
+          {runMeta?.error && (
+            <div className="ndv-node-error" role="alert">
+              <span>Node error</span>
+              <pre>{runMeta.error}</pre>
+            </div>
+          )}
           {runOutput !== undefined ? (
             <pre className="run-output">
               {JSON.stringify(runOutput, null, 2)}

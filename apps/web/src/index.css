@@ -759,3 +759,238 @@ button {
   font-size: 11px;
   color: var(--ink-3);
 }
+
+/* ---- run pill primitives (also defined in editor.css for the canvas) ---- */
+.run-pill {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  padding: 2px 7px;
+  border-radius: 5px;
+  text-transform: uppercase;
+  display: inline-block;
+}
+.status-run-running {
+  background: var(--accent, #66b2ff);
+  color: #06101e;
+}
+.status-run-success {
+  background: #57c98a;
+  color: #06140c;
+}
+.status-run-error {
+  background: #f0747a;
+  color: #1e0608;
+}
+.status-run-skipped {
+  background: var(--surface-3);
+  color: var(--ink-2);
+}
+.status-run-cancelled {
+  background: #b59bff;
+  color: #100822;
+}
+
+/* ---- Executions page ---- */
+.exec-filters {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 4px 0 16px;
+}
+.exec-filter {
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 10px;
+  outline: none;
+  min-width: 140px;
+}
+.exec-filter:focus {
+  border-color: var(--accent);
+}
+
+.exec-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 480px);
+  gap: 16px;
+  min-height: 0;
+}
+@media (max-width: 1100px) {
+  .exec-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.exec-table-wrap {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  overflow: hidden;
+}
+.exec-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.exec-table thead th {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: 600;
+  padding: 10px 14px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+.exec-table tbody tr {
+  border-bottom: 1px solid var(--line-2);
+  cursor: pointer;
+  transition: background 110ms ease;
+}
+.exec-table tbody tr:last-child {
+  border-bottom: none;
+}
+.exec-table tbody tr:hover {
+  background: var(--surface-2);
+}
+.exec-table tbody tr.selected {
+  background: var(--accent-glow, rgba(102, 178, 255, 0.08));
+}
+.exec-table td {
+  padding: 10px 14px;
+  vertical-align: middle;
+}
+.exec-wf-name {
+  color: var(--ink);
+  font-weight: 600;
+  margin-right: 8px;
+}
+.exec-wf-version {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+.exec-trigger {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+/* ---- Run detail panel ---- */
+.exec-detail {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+}
+.exec-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line-2);
+  margin-bottom: 12px;
+}
+.exec-detail-head h2 {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.exec-detail-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 11.5px;
+}
+
+.exec-nodes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.exec-node {
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+  border-radius: 7px;
+}
+.exec-node-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.exec-node-head:hover {
+  background: var(--surface-2);
+}
+.exec-node-toggle {
+  font-size: 10px;
+  color: var(--ink-3);
+  width: 10px;
+}
+.exec-node-id {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink);
+  flex: 1;
+}
+.exec-node-duration {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+.exec-node-logs-count {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--accent, #66b2ff);
+}
+.exec-node-body {
+  padding: 4px 12px 12px;
+  border-top: 1px solid var(--line-2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.exec-node-section-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 6px 0 4px;
+}
+.exec-node-section .data-json {
+  margin: 0;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: 5px;
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow: auto;
+}
+.exec-node-section .data-logs {
+  color: var(--ink);
+}

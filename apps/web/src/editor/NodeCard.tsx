@@ -24,6 +24,7 @@ function stop(event: MouseEvent): void {
 
 export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const { manifest, disabled, outputsOverride } = data;
+  const isWebhook = manifest.id === "webhook_trigger";
   const color = categoryColor(manifest.category);
   const { inputs } = manifest;
   const outputNames = outputsOverride ?? manifest.outputs.map((o) => o.name);
@@ -47,7 +48,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       <div className="node-toolbar nodrag">
         <button
           type="button"
-          title="Run from here"
+          title={isWebhook ? "Listen for test event" : "Run from here"}
           onClick={(e) => {
             stop(e);
             runFromNode(id);

@@ -99,6 +99,7 @@ class NodeRunResult(BaseModel):
     outputs: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
     logs: list[str] = Field(default_factory=list)
+    debug: dict[str, Any] = Field(default_factory=dict)
     started_at: float | None = None
     finished_at: float | None = None
 

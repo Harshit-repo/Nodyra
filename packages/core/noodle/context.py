@@ -9,6 +9,8 @@ The runner sets these before invoking the engine. Nodes can read them via
 * :data:`call_chain` — the chain of workflow ids currently executing, used to
   short-circuit cycles. The runner seeds this with the root workflow id; each
   sub-workflow caller pushes a new id and checks for re-entry.
+* :data:`node_debug` — a per-node scratch dict. Nodes can attach optional
+  debugger metadata here; the engine emits it with the node result.
 """
 
 from collections.abc import Awaitable, Callable
@@ -23,4 +25,8 @@ workflow_caller: ContextVar[WorkflowCaller | None] = ContextVar(
 
 call_chain: ContextVar[frozenset[str]] = ContextVar(
     "noodle_call_chain", default=frozenset()
+)
+
+node_debug: ContextVar[dict[str, Any] | None] = ContextVar(
+    "noodle_node_debug", default=None
 )

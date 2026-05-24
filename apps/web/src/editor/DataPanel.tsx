@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
 
+import type { NodeVariableInfo } from "../types";
+
 /**
  * Side panel of the NDV (Input or Output). Shows the value as either a
  * tree-view JSON browser or, when the data is shaped like a list of records,
@@ -37,7 +39,11 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 function isTableable(value: unknown): boolean {
-  return isListOfRecords(value) || isPlainObject(value);
+  return (
+    isListOfRecords(value) ||
+    findNestedRecordList(value) !== null ||
+    isPlainObject(value)
+  );
 }
 
 function formatCell(value: unknown): string {
@@ -85,6 +91,23 @@ function startExpressionDrag(
   e.dataTransfer.setDragImage(ghost, 12, 12);
   // The browser keeps the ghost alive for the drag — clean up next tick.
   window.setTimeout(() => ghost.remove(), 0);
+}
+
+function findNestedRecordList(
+  value: unknown,
+): { key: string; rows: Record<string, unknown>[] } | null {
+  if (!isPlainObject(value)) return null;
+  const preferred = ["records", "rows", "items", "data", "results"];
+  for (const key of preferred) {
+    const candidate = value[key];
+    if (isListOfRecords(candidate)) return { key, rows: candidate };
+  }
+  const tableEntries = Object.entries(value).filter(([, candidate]) =>
+    isListOfRecords(candidate),
+  );
+  if (tableEntries.length !== 1) return null;
+  const [key, rows] = tableEntries[0];
+  return { key, rows: rows as Record<string, unknown>[] };
 }
 
 function primitiveClass(value: unknown): string {
@@ -195,6 +218,74 @@ function JsonTree({
   );
 }
 
+function RecordTable({
+  data,
+  dragPrefix,
+}: {
+  data: Record<string, unknown>[];
+  dragPrefix?: string;
+}) {
+  const columns = Array.from(new Set(data.flatMap((row) => Object.keys(row))));
+  // For a list, each row's iteration sees $json as that record.
+  // Headers carry $json.col; cells carry $json.col too — both yield the
+  // same per-item path, which is what the user almost always wants.
+  return (
+    <div className="data-table-wrap">
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th className="data-table-index">#</th>
+            {columns.map((col) => {
+              const expr = dragPrefix
+                ? buildExpression(dragPrefix, [col])
+                : undefined;
+              return (
+                <th
+                  key={col}
+                  className={expr ? "draggable" : undefined}
+                  draggable={Boolean(expr)}
+                  onDragStart={
+                    expr ? (e) => startExpressionDrag(e, expr) : undefined
+                  }
+                  title={expr ? `Drag to insert ${expr}` : undefined}
+                >
+                  {expr && <span className="drag-grip" aria-hidden>⠿</span>}
+                  {col}
+                </th>
+              );
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((row, i) => (
+            <tr key={i}>
+              <td className="data-table-index">{i}</td>
+              {columns.map((col) => {
+                const expr = dragPrefix
+                  ? buildExpression(dragPrefix, [col])
+                  : undefined;
+                return (
+                  <td
+                    key={col}
+                    title={formatCell(row[col])}
+                    className={expr ? "draggable-cell" : undefined}
+                    draggable={Boolean(expr)}
+                    onDragStart={
+                      expr ? (e) => startExpressionDrag(e, expr) : undefined
+                    }
+                  >
+                    {formatCell(row[col])}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function DataTable({
   data,
   dragPrefix,
@@ -203,65 +294,27 @@ function DataTable({
   dragPrefix?: string;
 }) {
   if (isListOfRecords(data)) {
-    const columns = Array.from(
-      new Set(data.flatMap((row) => Object.keys(row))),
+    return <RecordTable data={data} dragPrefix={dragPrefix} />;
+  }
+  const nested = findNestedRecordList(data);
+  if (nested && isPlainObject(data)) {
+    const summary = Object.entries(data).filter(
+      ([key, value]) => key !== nested.key && !Array.isArray(value),
     );
-    // For a list, each row's iteration sees $json as that record.
-    // Headers carry $json.col; cells carry $json.col too — both yield the
-    // same per-item path, which is what the user almost always wants.
     return (
-      <div className="data-table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th className="data-table-index">#</th>
-              {columns.map((col) => {
-                const expr = dragPrefix
-                  ? buildExpression(dragPrefix, [col])
-                  : undefined;
-                return (
-                  <th
-                    key={col}
-                    className={expr ? "draggable" : undefined}
-                    draggable={Boolean(expr)}
-                    onDragStart={
-                      expr ? (e) => startExpressionDrag(e, expr) : undefined
-                    }
-                    title={expr ? `Drag to insert ${expr}` : undefined}
-                  >
-                    {expr && <span className="drag-grip" aria-hidden>⠿</span>}
-                    {col}
-                  </th>
-                );
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((row, i) => (
-              <tr key={i}>
-                <td className="data-table-index">{i}</td>
-                {columns.map((col) => {
-                  const expr = dragPrefix
-                    ? buildExpression(dragPrefix, [col])
-                    : undefined;
-                  return (
-                    <td
-                      key={col}
-                      title={formatCell(row[col])}
-                      className={expr ? "draggable-cell" : undefined}
-                      draggable={Boolean(expr)}
-                      onDragStart={
-                        expr ? (e) => startExpressionDrag(e, expr) : undefined
-                      }
-                    >
-                      {formatCell(row[col])}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="data-table-composite">
+        <div className="data-table-summary">
+          <span>
+            Showing <strong>{nested.key}</strong>
+          </span>
+          <span>{nested.rows.length} rows</span>
+          {summary.slice(0, 4).map(([key, value]) => (
+            <span key={key}>
+              {key}: <strong>{formatCell(value)}</strong>
+            </span>
+          ))}
+        </div>
+        <RecordTable data={nested.rows} />
       </div>
     );
   }
@@ -299,6 +352,105 @@ function DataTable({
   return <pre className="data-json">{JSON.stringify(data, null, 2)}</pre>;
 }
 
+function VariableExplorer({
+  variables,
+}: {
+  variables: NodeVariableInfo[];
+}) {
+  if (variables.length === 0) {
+    return <p className="ndv-panel-empty muted">No variables captured.</p>;
+  }
+
+  return (
+    <div className="variable-explorer">
+      {variables.map((variable) => (
+        <section className="variable-card" key={variable.name}>
+          <header className="variable-card-head">
+            <div>
+              <strong>{variable.name}</strong>
+              <span>{variable.type}</span>
+            </div>
+            {variable.summary && <p>{variable.summary}</p>}
+          </header>
+          {variable.columns && variable.columns.length > 0 && (
+            <div className="variable-columns">
+              {variable.columns.slice(0, 12).map((column) => (
+                <span key={column}>{column}</span>
+              ))}
+              {variable.columns.length > 12 && (
+                <span>+{variable.columns.length - 12} more</span>
+              )}
+            </div>
+          )}
+          {isListOfRecords(variable.preview) ? (
+            <RecordTable data={variable.preview} />
+          ) : (
+            <pre className="data-json variable-preview">
+              {JSON.stringify(variable.preview ?? variable.summary ?? null, null, 2)}
+            </pre>
+          )}
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function formatLogTime(timestampSeconds?: number | null): string | null {
+  if (typeof timestampSeconds !== "number") return null;
+  const date = new Date(timestampSeconds * 1000);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function buildExecutionLog({
+  logs,
+  status,
+  error,
+  durationMs,
+  startedAt,
+  finishedAt,
+}: {
+  logs?: string[];
+  status?: string | null;
+  error?: string | null;
+  durationMs?: number | null;
+  startedAt?: number | null;
+  finishedAt?: number | null;
+}): string {
+  const lines: string[] = [];
+  const started = formatLogTime(startedAt);
+  const finished = formatLogTime(finishedAt);
+
+  if (started) {
+    lines.push(`[${started}] started`);
+  }
+
+  if (status || finished || typeof durationMs === "number") {
+    const statusText = status ? `finished: ${status}` : "finished";
+    const durationText =
+      typeof durationMs === "number" ? ` in ${durationMs} ms` : "";
+    lines.push(
+      `${finished ? `[${finished}] ` : ""}${statusText}${durationText}`,
+    );
+  }
+
+  if (error) {
+    lines.push("", "error:", error);
+  }
+
+  if (logs && logs.length > 0) {
+    lines.push("", "stdout/stderr:", ...logs);
+  } else if (lines.length > 0) {
+    lines.push("", "No stdout/stderr logs were captured for this node.");
+  }
+
+  return lines.join("\n") || "No execution details were captured for this node.";
+}
+
 export function DataPanel({
   title,
   data,
@@ -306,7 +458,12 @@ export function DataPanel({
   footer,
   dragPrefix,
   logs,
+  error,
+  status,
+  variables,
   durationMs,
+  startedAt,
+  finishedAt,
 }: {
   title: string;
   data: unknown;
@@ -314,18 +471,40 @@ export function DataPanel({
   footer?: ReactNode;
   dragPrefix?: string;
   logs?: string[];
+  error?: string | null;
+  status?: string | null;
+  variables?: NodeVariableInfo[];
   durationMs?: number | null;
+  startedAt?: number | null;
+  finishedAt?: number | null;
 }) {
   const display = unwrapSingleOutput(data);
   const canTable = isTableable(display);
-  const hasLogs = logs !== undefined && logs.length > 0;
-  const [view, setView] = useState<"json" | "table" | "logs">(
+  const hasLogStream = logs !== undefined;
+  const hasLogs = hasLogStream && logs.length > 0;
+  const hasVariables = Boolean(variables?.length);
+  const executionLog = hasLogStream
+    ? buildExecutionLog({
+        logs,
+        status,
+        error,
+        durationMs,
+        startedAt,
+        finishedAt,
+      })
+    : "";
+  const [view, setView] = useState<"json" | "table" | "logs" | "variables">(
     canTable ? "table" : "json",
   );
   const empty = data === undefined || data === null;
-  let effectiveView: "json" | "table" | "logs" = view;
+  let effectiveView: "json" | "table" | "logs" | "variables" = view;
   if (view === "table" && !canTable) effectiveView = "json";
-  if (view === "logs" && !hasLogs) effectiveView = canTable ? "table" : "json";
+  if (view === "logs" && !hasLogStream) {
+    effectiveView = canTable ? "table" : "json";
+  }
+  if (view === "variables" && !hasVariables) {
+    effectiveView = canTable ? "table" : "json";
+  }
 
   return (
     <section className="ndv-panel">
@@ -359,18 +538,39 @@ export function DataPanel({
             <button
               type="button"
               className={effectiveView === "logs" ? "active" : ""}
-              onClick={() => hasLogs && setView("logs")}
-              disabled={!hasLogs}
-              title={hasLogs ? "Show captured logs" : "No logs for this node"}
+              onClick={() => setView("logs")}
+              title={
+                hasLogs
+                  ? "Show captured logs"
+                  : "Show execution details"
+              }
             >
               Logs{hasLogs ? ` (${logs.length})` : ""}
+            </button>
+          )}
+          {hasVariables && (
+            <button
+              type="button"
+              className={effectiveView === "variables" ? "active" : ""}
+              onClick={() => setView("variables")}
+              title="Inspect Python variables"
+            >
+              Variables ({variables?.length})
             </button>
           )}
         </div>
       </header>
       <div className="ndv-panel-body">
-        {effectiveView === "logs" ? (
-          <pre className="data-json data-logs">{(logs ?? []).join("\n")}</pre>
+        {error && (
+          <div className="ndv-node-error" role="alert">
+            <span>Node error</span>
+            <pre>{error}</pre>
+          </div>
+        )}
+        {effectiveView === "variables" && variables ? (
+          <VariableExplorer variables={variables} />
+        ) : effectiveView === "logs" ? (
+          <pre className="data-json data-logs">{executionLog}</pre>
         ) : empty ? (
           <p className="ndv-panel-empty muted">
             {emptyMessage ?? "No data yet."}

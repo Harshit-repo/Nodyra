@@ -180,6 +180,7 @@ class NodeRun(Base):
     output: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     logs: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    debug: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     started_at: Mapped[float | None] = mapped_column(Float, nullable=True)
     finished_at: Mapped[float | None] = mapped_column(Float, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)

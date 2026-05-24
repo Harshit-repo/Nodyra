@@ -20,6 +20,7 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
+from noodle.context import node_debug
 from noodle.expr import build_context, evaluate
 from noodle.models import (
     NodeRunResult,
@@ -201,6 +202,7 @@ async def execute(
                 "outputs": result.outputs,
                 "error": result.error,
                 "logs": result.logs,
+                "debug": result.debug,
                 "started_at": result.started_at,
                 "finished_at": result.finished_at,
                 "duration_ms": duration_ms,
@@ -326,8 +328,10 @@ async def execute(
         )
         caught: Exception | None = None
         outputs: dict[str, Any] | None = None
+        debug: dict[str, Any] = {}
         log_buf: list[str] = []
         log_token = _log_capture.set(log_buf)
+        debug_token = node_debug.set(debug)
         try:
             for attempt in range(attempts):
                 try:
@@ -357,6 +361,7 @@ async def execute(
                         delay += random.uniform(0, wait * 0.1)  # small jitter
                         await asyncio.sleep(delay)
         finally:
+            node_debug.reset(debug_token)
             _log_capture.reset(log_token)
         logs = "".join(log_buf).splitlines()
 
@@ -365,7 +370,8 @@ async def execute(
             await finish(
                 NodeRunResult(
                     node_id=nid, status=NodeStatus.success, outputs=outputs,
-                    logs=logs, started_at=started, finished_at=time.time(),
+                    logs=logs, debug=debug,
+                    started_at=started, finished_at=time.time(),
                 )
             )
             continue
@@ -383,7 +389,7 @@ async def execute(
             await finish(
                 NodeRunResult(
                     node_id=nid, status=NodeStatus.error, error=error_msg,
-                    outputs=fallback_outputs, logs=logs,
+                    outputs=fallback_outputs, logs=logs, debug=debug,
                     started_at=started, finished_at=time.time(),
                 )
             )
@@ -392,7 +398,8 @@ async def execute(
             await finish(
                 NodeRunResult(
                     node_id=nid, status=NodeStatus.error, error=error_msg,
-                    logs=logs, started_at=started, finished_at=time.time(),
+                    logs=logs, debug=debug,
+                    started_at=started, finished_at=time.time(),
                 )
             )
 

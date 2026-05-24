@@ -95,9 +95,25 @@ export interface NodeRunResult {
   output: unknown;
   error: string | null;
   logs?: string[] | null;
+  debug?: NodeRunDebug | null;
   started_at?: number | null;
   finished_at?: number | null;
   duration_ms?: number | null;
+}
+
+export interface NodeVariableInfo {
+  name: string;
+  type: string;
+  summary?: string;
+  shape?: number[];
+  length?: number;
+  columns?: string[];
+  dtypes?: Record<string, string>;
+  preview?: unknown;
+}
+
+export interface NodeRunDebug {
+  variables?: NodeVariableInfo[];
 }
 
 export interface RunInfo {
@@ -112,6 +128,18 @@ export interface RunInfo {
   node_runs: NodeRunResult[];
 }
 
+export interface RunListItem {
+  id: string;
+  workflow_id: string;
+  workflow_name: string | null;
+  workflow_version: number;
+  mode: string;
+  status: string;
+  trigger_type: string;
+  started_at: string;
+  finished_at: string | null;
+}
+
 export interface RunEvent {
   type: string;
   node_id?: string;
@@ -120,6 +148,7 @@ export interface RunEvent {
   error?: string;
   run_id?: string;
   logs?: string[];
+  debug?: NodeRunDebug | null;
   started_at?: number | null;
   finished_at?: number | null;
   duration_ms?: number | null;

@@ -72,6 +72,7 @@ class EnvironmentInfo(BaseModel):
 class RunRequest(BaseModel):
     mode: str = "manual"
     targets: list[str] | None = None
+    cache: dict[str, dict[str, Any]] | None = None
 
 
 class RunCreated(BaseModel):
@@ -91,9 +92,26 @@ class NodeRunInfo(BaseModel):
     output: Any = None
     error: str | None = None
     logs: list[str] | None = None
+    debug: dict[str, Any] | None = None
     started_at: float | None = None
     finished_at: float | None = None
     duration_ms: int | None = None
+
+
+class RunListItem(BaseModel):
+    """Compact run summary for the cross-workflow Executions page list."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    workflow_id: str
+    workflow_name: str | None = None
+    workflow_version: int
+    mode: str
+    status: str
+    trigger_type: str
+    started_at: datetime
+    finished_at: datetime | None
 
 
 class RunInfo(BaseModel):

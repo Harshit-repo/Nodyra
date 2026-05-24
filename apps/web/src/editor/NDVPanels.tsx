@@ -314,6 +314,11 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
   }
 
   const outputData = pinned !== undefined ? pinned : runOutput;
+  const outputEmptyMessage = runMeta?.error
+    ? "This node failed before producing output."
+    : runStatus === "skipped"
+      ? "This node was skipped in the last run."
+      : "No output yet. Click Run to execute the workflow.";
 
   const outputFooter = (
     <div className="ndv-output-foot">
@@ -372,14 +377,15 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
       <DataPanel
         title={pinned !== undefined ? "Output (pinned)" : "Output"}
         data={outputData}
-        emptyMessage={
-          runStatus === "skipped"
-            ? "This node was skipped in the last run."
-            : "No output yet. Click Run to execute the workflow."
-        }
+        emptyMessage={outputEmptyMessage}
         footer={outputFooter}
         logs={runMeta?.logs}
+        error={runMeta?.error}
+        status={runStatus}
+        variables={runMeta?.debug?.variables}
         durationMs={runMeta?.durationMs}
+        startedAt={runMeta?.startedAt}
+        finishedAt={runMeta?.finishedAt}
       />
     </div>
   );

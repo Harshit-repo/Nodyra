@@ -197,6 +197,8 @@ async def _execute_run(
         clean = dict(event)
         if "outputs" in clean:
             clean["outputs"] = _json_safe(clean["outputs"])
+        if "debug" in clean:
+            clean["debug"] = _json_safe(clean["debug"])
         broker.publish(run_id, clean)
         if clean.get("type") == "node_finished":
             node_events[clean["node_id"]] = clean
@@ -271,6 +273,7 @@ async def _execute_run(
                         output=event.get("outputs"),
                         error=event.get("error"),
                         logs=event.get("logs"),
+                        debug=event.get("debug"),
                         started_at=event.get("started_at"),
                         finished_at=event.get("finished_at"),
                         duration_ms=event.get("duration_ms"),

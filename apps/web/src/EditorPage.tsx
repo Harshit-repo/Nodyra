@@ -12,10 +12,19 @@ import { useEditor } from "./editor/store";
 import { Logo } from "./Logo";
 import type {
   Environment,
+  GraphNode,
   RunEvent,
   RunInfo,
   WorkflowDetail,
+  WorkflowGraph,
 } from "./types";
+
+interface WebhookListenState {
+  nodeId: string;
+  path: string;
+  url: string;
+  targets?: string[];
+}
 
 export function EditorPage() {
   const { id } = useParams<{ id: string }>();
@@ -31,7 +40,11 @@ export function EditorPage() {
   const [runsOpen, setRunsOpen] = useState(false);
   const [runsList, setRunsList] = useState<RunInfo[]>([]);
   const [cancellingRun, setCancellingRun] = useState(false);
+  const [webhookListen, setWebhookListen] = useState<WebhookListenState | null>(
+    null,
+  );
   const wsRef = useRef<WebSocket | null>(null);
+  const webhookTimerRef = useRef<number | null>(null);
 
   const setManifests = useEditor((s) => s.setManifests);
   const loadGraph = useEditor((s) => s.loadGraph);
@@ -45,6 +58,7 @@ export function EditorPage() {
   const startRun = useEditor((s) => s.startRun);
   const applyRunEvent = useEditor((s) => s.applyRunEvent);
   const applyRunInfo = useEditor((s) => s.applyRunInfo);
+  const setNodeOutput = useEditor((s) => s.setNodeOutput);
   const clearRun = useEditor((s) => s.clearRun);
   const ndvOpenId = useEditor((s) => s.ndvOpenId);
   const closeNdv = useEditor((s) => s.closeNdv);
@@ -90,7 +104,21 @@ export function EditorPage() {
     };
   }, [id, setManifests, loadGraph, clearRun, closeNdv, setWorkflowId, setPinned]);
 
-  useEffect(() => () => wsRef.current?.close(), []);
+  function stopWebhookListen(): void {
+    if (webhookTimerRef.current !== null) {
+      window.clearInterval(webhookTimerRef.current);
+      webhookTimerRef.current = null;
+    }
+    setWebhookListen(null);
+  }
+
+  useEffect(
+    () => () => {
+      wsRef.current?.close();
+      stopWebhookListen();
+    },
+    [],
+  );
 
   async function save(): Promise<WorkflowDetail | null> {
     if (!id) return null;
@@ -114,24 +142,104 @@ export function EditorPage() {
     }
   }
 
+  function plannedNodeIds(graph: WorkflowGraph, targets?: string[]): Set<string> {
+    const planned = new Set<string>();
+    const targetSet = targets && targets.length > 0 ? new Set(targets) : null;
+    if (!targetSet) {
+      for (const node of graph.nodes) planned.add(node.id);
+      return planned;
+    }
+
+    const visit = (nodeId: string) => {
+      if (planned.has(nodeId)) return;
+      planned.add(nodeId);
+      for (const edge of graph.edges) {
+        if (edge.target === nodeId) visit(edge.source);
+      }
+    };
+    for (const target of targetSet) visit(target);
+    return planned;
+  }
+
+  function webhookForRun(
+    graph: WorkflowGraph,
+    targets?: string[],
+  ): GraphNode | null {
+    const planned = plannedNodeIds(graph, targets);
+    return (
+      graph.nodes.find(
+        (node) => planned.has(node.id) && node.type === "webhook_trigger",
+      ) ?? null
+    );
+  }
+
+  function connectRunStream(runId: string, targets?: string[]): void {
+    startRun(runId, targets);
+    const ws = new WebSocket(runEventsUrl(runId));
+    wsRef.current = ws;
+    ws.onmessage = (event) => {
+      applyRunEvent(JSON.parse(event.data as string) as RunEvent);
+    };
+    ws.onclose = () => {
+      wsRef.current = null;
+    };
+  }
+
+  async function startWebhookTestRun(
+    node: GraphNode,
+    targets?: string[],
+  ): Promise<void> {
+    if (!id || webhookListen) return;
+    const path = String(node.params.path ?? "").trim() || "noodle";
+    const url = `${window.location.origin}/api/webhook-test/${path}`;
+    const runTargets =
+      targets?.length === 1 && targets[0] === node.id ? undefined : targets;
+
+    setMessage("");
+    setNodeOutput(node.id, undefined);
+    try {
+      await api.clearWebhook(path);
+    } catch (err) {
+      setMessage(String(err));
+      return;
+    }
+
+    setWebhookListen({ nodeId: node.id, path, url, targets: runTargets });
+    webhookTimerRef.current = window.setInterval(async () => {
+      try {
+        const data = await api.lastWebhook(path);
+        if (data === null || data === undefined) return;
+
+        stopWebhookListen();
+        setNodeOutput(node.id, { main: data }, "success");
+        const { run_id } = await api.runWorkflow(id, {
+          mode: "manual",
+          targets: runTargets,
+          cache: { [node.id]: { main: data } },
+        });
+        connectRunStream(run_id, runTargets);
+      } catch (err) {
+        stopWebhookListen();
+        setMessage(String(err));
+      }
+    }, 1000);
+  }
+
   async function run(targets?: string[]): Promise<void> {
-    if (!id || running) return;
+    if (!id || running || webhookListen) return;
     const saved = await save();
     if (!saved) return;
+    const webhookNode = webhookForRun(saved.graph, targets);
+    if (webhookNode) {
+      await startWebhookTestRun(webhookNode, targets);
+      return;
+    }
     try {
       const { run_id } = await api.runWorkflow(
         id,
         targets && targets.length > 0 ? { targets } : {},
       );
-      startRun(run_id, targets);
-      const ws = new WebSocket(runEventsUrl(run_id));
-      wsRef.current = ws;
-      ws.onmessage = (event) => {
-        applyRunEvent(JSON.parse(event.data as string) as RunEvent);
-      };
-      ws.onclose = () => {
-        wsRef.current = null;
-      };
+      connectRunStream(run_id, targets);
     } catch (err) {
       setMessage(String(err));
     }
@@ -316,9 +424,18 @@ export function EditorPage() {
           <button
             className="btn btn-run"
             onClick={() => void run()}
-            disabled={running}
+            disabled={running || Boolean(webhookListen)}
           >
-            {running ? "Running…" : "▶ Run"}
+            {webhookListen ? (
+              <>
+                <span className="node-spinner" />
+                Listening…
+              </>
+            ) : running ? (
+              "Running…"
+            ) : (
+              "▶ Run"
+            )}
           </button>
           {running && (
             <button
@@ -337,6 +454,19 @@ export function EditorPage() {
       </header>
 
       {message && <div className="toolbar-error">{message}</div>}
+      {webhookListen && (
+        <div className="webhook-test-banner">
+          <div className="webhook-test-copy">
+            <span className="webhook-test-pulse" aria-hidden />
+            <strong>Listening for test webhook</strong>
+            <span>{webhookListen.path}</span>
+            <code>{webhookListen.url}</code>
+          </div>
+          <button className="btn btn-sm btn-ghost" onClick={stopWebhookListen}>
+            Stop
+          </button>
+        </div>
+      )}
       {runError && (
         <div className="toolbar-error">
           {runError === "Run cancelled" || runError === "Run failed"

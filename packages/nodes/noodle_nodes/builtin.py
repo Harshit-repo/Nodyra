@@ -6,8 +6,10 @@ parameters edited in the inspector, and one or more named outputs.
 """
 
 import json
+from types import ModuleType
 from typing import Any
 
+from noodle.context import node_debug
 from noodle.sdk import node
 
 OPERATORS = [
@@ -283,6 +285,123 @@ def rename_keys(input: Any = None, mapping: dict | None = None) -> Any:
 # ==========================================================================
 
 
+def _short_repr(value: Any, limit: int = 140) -> str:
+    try:
+        text = repr(value)
+    except Exception:  # noqa: BLE001 - debugger preview should never fail a node
+        text = f"<{type(value).__name__}>"
+    return text if len(text) <= limit else f"{text[:limit - 1]}..."
+
+
+def _json_preview(value: Any, *, depth: int = 2, max_items: int = 20) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if depth <= 0:
+        return _short_repr(value)
+    if isinstance(value, (list, tuple, set)):
+        items = list(value)[:max_items]
+        preview = [
+            _json_preview(item, depth=depth - 1, max_items=max_items)
+            for item in items
+        ]
+        if len(value) > max_items:
+            preview.append(f"... {len(value) - max_items} more")
+        return preview
+    if isinstance(value, dict):
+        preview: dict[str, Any] = {}
+        for i, (key, item) in enumerate(value.items()):
+            if i >= max_items:
+                preview["..."] = f"{len(value) - max_items} more"
+                break
+            preview[str(key)] = _json_preview(
+                item, depth=depth - 1, max_items=max_items
+            )
+        return preview
+    try:
+        return json.loads(json.dumps(value, default=str))
+    except (TypeError, ValueError):
+        return _short_repr(value)
+
+
+def _dataframe_variable(name: str, value: Any) -> dict[str, Any] | None:
+    if type(value).__name__ != "DataFrame":
+        return None
+    try:
+        rows, cols = value.shape
+        columns = [str(col) for col in value.columns]
+        preview = value.head(50).to_dict("records")
+        dtypes = {str(col): str(dtype) for col, dtype in value.dtypes.items()}
+    except Exception:  # noqa: BLE001 - fall back to generic variable preview
+        return None
+    return {
+        "name": name,
+        "type": "DataFrame",
+        "summary": f"{int(rows)} rows x {int(cols)} columns",
+        "shape": [int(rows), int(cols)],
+        "columns": columns,
+        "dtypes": dtypes,
+        "preview": _json_preview(preview, depth=3, max_items=50),
+    }
+
+
+def _series_variable(name: str, value: Any) -> dict[str, Any] | None:
+    if type(value).__name__ != "Series":
+        return None
+    try:
+        length = int(len(value))
+        preview = value.head(50).tolist()
+    except Exception:  # noqa: BLE001 - fall back to generic variable preview
+        return None
+    return {
+        "name": name,
+        "type": "Series",
+        "summary": f"{length} values",
+        "shape": [length],
+        "preview": _json_preview(preview, depth=2, max_items=50),
+    }
+
+
+def _variable_info(name: str, value: Any) -> dict[str, Any] | None:
+    if name == "__builtins__" or name.startswith("__"):
+        return None
+    if isinstance(value, ModuleType) or callable(value):
+        return None
+
+    dataframe = _dataframe_variable(name, value)
+    if dataframe is not None:
+        return dataframe
+
+    series = _series_variable(name, value)
+    if series is not None:
+        return series
+
+    type_name = type(value).__name__
+    info: dict[str, Any] = {
+        "name": name,
+        "type": type_name,
+        "summary": _short_repr(value),
+        "preview": _json_preview(value),
+    }
+    try:
+        if isinstance(value, (list, tuple, set, dict, str)):
+            info["length"] = len(value)
+    except Exception:  # noqa: BLE001 - optional debugger metadata
+        pass
+    return info
+
+
+def _record_code_variables(namespace: dict[str, Any]) -> None:
+    debug = node_debug.get()
+    if debug is None:
+        return
+    variables = []
+    for name, value in namespace.items():
+        info = _variable_info(name, value)
+        if info is not None:
+            variables.append(info)
+    debug["variables"] = variables
+
+
 @node(name="Code", id="code", category="Transform", icon="code", params={
     "code": {"multiline": True,
              "description": "Python code. `input` is in scope; assign the result to `output`."},
@@ -290,7 +409,10 @@ def rename_keys(input: Any = None, mapping: dict | None = None) -> Any:
 def code_node(input: Any = None, code: str = "output = input") -> Any:
     """Run arbitrary Python against the input."""
     namespace: dict[str, Any] = {"input": input}
-    exec(code, namespace)  # noqa: S102 - running user Python is the node's purpose
+    try:
+        exec(code, namespace)  # noqa: S102 - running user Python is the node's purpose
+    finally:
+        _record_code_variables(namespace)
     return namespace.get("output")
 
 

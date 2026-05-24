@@ -6,6 +6,7 @@ import type {
   NodeManifest,
   PinnedItem,
   RunInfo,
+  RunListItem,
   UserInfo,
   WorkflowDetail,
   WorkflowGraph,
@@ -122,13 +123,38 @@ export const api = {
   rebuildEnvironment: (id: string) =>
     request<Environment>(`/environments/${id}/rebuild`, { method: "POST" }),
 
-  runWorkflow: (id: string, body: { mode?: string; targets?: string[] }) =>
+  runWorkflow: (
+    id: string,
+    body: {
+      mode?: string;
+      targets?: string[];
+      cache?: Record<string, Record<string, unknown>>;
+    },
+  ) =>
     request<{ run_id: string }>(`/workflows/${id}/run`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
   getRun: (runId: string) => request<RunInfo>(`/runs/${runId}`),
   listRuns: (id: string) => request<RunInfo[]>(`/workflows/${id}/runs`),
+  listAllRuns: (filters: {
+    workflow_id?: string;
+    status?: string;
+    trigger_type?: string;
+    since?: string;
+    until?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== undefined && value !== null && value !== "") {
+        params.set(key, String(value));
+      }
+    }
+    const query = params.toString();
+    return request<RunListItem[]>(`/runs${query ? `?${query}` : ""}`);
+  },
   cancelRun: (runId: string) =>
     request<{ run_id: string; status: string }>(`/runs/${runId}/cancel`, {
       method: "POST",

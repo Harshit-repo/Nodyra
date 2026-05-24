@@ -10,7 +10,13 @@ import {
 } from "@xyflow/react";
 import { create } from "zustand";
 
-import type { NodeManifest, RunEvent, RunInfo, WorkflowGraph } from "../types";
+import type {
+  NodeManifest,
+  NodeRunDebug,
+  RunEvent,
+  RunInfo,
+  WorkflowGraph,
+} from "../types";
 
 export interface NoodleNodeData {
   manifest: NodeManifest;
@@ -39,6 +45,8 @@ export interface NodeSettingsPatch {
 
 export interface NodeRunMeta {
   logs?: string[];
+  error?: string | null;
+  debug?: NodeRunDebug | null;
   durationMs?: number | null;
   startedAt?: number | null;
   finishedAt?: number | null;
@@ -400,6 +408,8 @@ export const useEditor = create<EditorStore>((set, get) => ({
           ...state.runMeta,
           [nid]: {
             logs: event.logs ?? [],
+            error: event.error ?? null,
+            debug: event.debug ?? null,
             durationMs: event.duration_ms ?? null,
             startedAt: event.started_at ?? null,
             finishedAt: event.finished_at ?? null,
@@ -486,6 +496,8 @@ export const useEditor = create<EditorStore>((set, get) => ({
       outputs[nr.node_id] = nr.output;
       meta[nr.node_id] = {
         logs: nr.logs ?? [],
+        error: nr.error ?? null,
+        debug: nr.debug ?? null,
         durationMs: nr.duration_ms ?? null,
         startedAt: nr.started_at ?? null,
         finishedAt: nr.finished_at ?? null,

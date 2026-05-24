@@ -74,6 +74,31 @@ async def test_trigger_into_code() -> None:
     assert result.nodes["c"].outputs["main"] == 20
 
 
+async def test_code_node_captures_variable_debug_metadata() -> None:
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(
+                id="c",
+                type="code",
+                params={
+                    "code": (
+                        "rows = [{'id': 1, 'name': 'Ada'}]\n"
+                        "count = len(rows)\n"
+                        "output = {'row_count': count, 'records': rows}"
+                    )
+                },
+            )
+        ],
+    )
+    result = await execute(graph, registry)
+    variables = {
+        variable["name"]: variable for variable in result.nodes["c"].debug["variables"]
+    }
+    assert variables["rows"]["length"] == 1
+    assert variables["count"]["preview"] == 1
+    assert variables["output"]["preview"]["row_count"] == 1
+
+
 async def test_if_routes_false_branch() -> None:
     graph = WorkflowGraph(
         nodes=[

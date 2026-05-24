@@ -35,12 +35,107 @@ function pretty(value: unknown): string {
   }
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isRecordList(value: unknown): value is Record<string, unknown>[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((item) => isPlainRecord(item))
+  );
+}
+
+function findRecordList(
+  value: unknown,
+): { label: string | null; rows: Record<string, unknown>[] } | null {
+  if (isRecordList(value)) return { label: null, rows: value };
+  if (!isPlainRecord(value)) return null;
+
+  for (const key of ["records", "rows", "items", "data", "results"]) {
+    const candidate = value[key];
+    if (isRecordList(candidate)) return { label: key, rows: candidate };
+  }
+  return null;
+}
+
+function formatCell(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function valueSummary(value: unknown): string {
+  const table = findRecordList(value);
+  if (table) return `${table.rows.length} row${table.rows.length === 1 ? "" : "s"}`;
+  if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? "" : "s"}`;
+  if (isPlainRecord(value)) {
+    const count = Object.keys(value).length;
+    return `${count} key${count === 1 ? "" : "s"}`;
+  }
+  if (typeof value === "string") return `${value.length} char${value.length === 1 ? "" : "s"}`;
+  if (value === null) return "null";
+  return typeof value;
+}
+
 function edgeLabel(edge: Edge | undefined, direction: "input" | "output"): string {
   if (!edge) return direction === "input" ? "not connected" : "no connection";
   if (direction === "input") {
     return `${edge.source}.${edge.sourceHandle ?? "main"}`;
   }
   return `${edge.target}.${edge.targetHandle ?? "input"}`;
+}
+
+function PortValuePreview({ value }: { value: unknown }) {
+  const table = findRecordList(value);
+  if (!table) {
+    return <pre className="port-data-json">{pretty(value)}</pre>;
+  }
+
+  const columns = Array.from(new Set(table.rows.flatMap((row) => Object.keys(row))));
+  const shownColumns = columns.slice(0, 6);
+  const shownRows = table.rows.slice(0, 4);
+  const hiddenColumns = columns.length - shownColumns.length;
+  const hiddenRows = table.rows.length - shownRows.length;
+
+  return (
+    <div className="port-data-table-preview">
+      {table.label && <div className="port-data-table-label">{table.label}</div>}
+      <div className="port-data-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              {shownColumns.map((column) => (
+                <th key={column}>{column}</th>
+              ))}
+              {hiddenColumns > 0 && <th>+{hiddenColumns}</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {shownRows.map((row, index) => (
+              <tr key={index}>
+                {shownColumns.map((column) => (
+                  <td key={column} title={formatCell(row[column])}>
+                    {formatCell(row[column])}
+                  </td>
+                ))}
+                {hiddenColumns > 0 && <td />}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {hiddenRows > 0 && (
+        <div className="port-data-table-more">+{hiddenRows} more rows</div>
+      )}
+    </div>
+  );
 }
 
 function PortCard({
@@ -70,11 +165,14 @@ function PortCard({
         <span className={`port-data-kind ${direction}`}>{direction}</span>
         <span className="port-data-name">{name}</span>
         {hasValue && <span className="port-data-badge data">data</span>}
+        {hasValue && (
+          <span className="port-data-badge meta">{valueSummary(value)}</span>
+        )}
         {pinned && <span className="port-data-badge">pinned</span>}
       </header>
       <div className="port-data-wire">{edgeLabel(connectedEdge, direction)}</div>
       {hasValue ? (
-        <pre className="port-data-json">{pretty(value)}</pre>
+        <PortValuePreview value={value} />
       ) : (
         <p className="port-data-empty muted">
           {connectedEdge
