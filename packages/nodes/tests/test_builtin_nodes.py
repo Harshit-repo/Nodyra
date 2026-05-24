@@ -315,3 +315,44 @@ def test_stripe_create_customer_uses_input_and_metadata(monkeypatch) -> None:
         "description": "",
         "metadata[plan]": "pro",
     }
+
+
+def test_type_cast_nodes_handle_common_inputs() -> None:
+    assert registry.get("to_int").func("3") == 3
+    assert registry.get("to_int").func("3.7") == 3
+    assert registry.get("to_int").func(None) == 0
+    assert registry.get("to_int").func(True) == 1
+
+    assert registry.get("to_float").func("2.5") == 2.5
+    assert registry.get("to_float").func(None) == 0.0
+
+    assert registry.get("to_str").func(42) == "42"
+    assert registry.get("to_str").func(None) == ""
+    assert registry.get("to_str").func({"a": 1}) == '{"a": 1}'
+
+    assert registry.get("to_bool").func("yes") is True
+    assert registry.get("to_bool").func("No") is False
+    assert registry.get("to_bool").func("0") is False
+    assert registry.get("to_bool").func(7) is True
+
+    import pytest
+
+    with pytest.raises(ValueError):
+        registry.get("to_bool").func("maybe")
+
+    assert registry.get("to_list").func("a,b,c") == ["a", "b", "c"]
+    assert registry.get("to_list").func("hello", separator="") == ["hello"]
+    assert registry.get("to_list").func({"k": 1}) == [{"key": "k", "value": 1}]
+    assert registry.get("to_list").func([1, 2, 3]) == [1, 2, 3]
+    assert registry.get("to_list").func(None) == []
+
+
+def test_convert_type_dispatches_on_target() -> None:
+    fn = registry.get("convert_type").func
+    assert fn("3", to="int") == 3
+    assert fn("2.5", to="float") == 2.5
+    assert fn(7, to="string") == "7"
+    assert fn("true", to="boolean") is True
+    assert fn("a,b", to="list") == ["a", "b"]  # comma is the default separator
+    assert fn({"a": 1}, to="json") == '{"a": 1}'
+    assert fn('{"a": 1}', to="object") == {"a": 1}

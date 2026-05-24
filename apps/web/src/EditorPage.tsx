@@ -557,6 +557,11 @@ export function EditorPage() {
             ]);
             setManifests([...builtins, ...custom]);
           }}
+          onApplyStarterGraph={(graph) => {
+            // Apply locally and mark the workflow dirty; the user reviews on
+            // the canvas and clicks Save to persist.
+            loadGraph(graph);
+          }}
         />
       )}
     </div>

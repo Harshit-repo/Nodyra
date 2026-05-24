@@ -309,6 +309,11 @@
 .functions-item.active {
   background: var(--accent-glow, rgba(102, 178, 255, 0.12));
 }
+.functions-item-scope {
+  font-size: 11px;
+  padding-left: 4px;
+  flex-shrink: 0;
+}
 .functions-item-name {
   flex: 1;
   text-align: left;
@@ -319,6 +324,20 @@
   font-size: 12px;
   padding: 6px 8px;
   cursor: pointer;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.functions-scope-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.functions-scope-row .field-input {
+  flex: 1;
+  min-width: 180px;
 }
 .functions-item-del {
   width: 22px;

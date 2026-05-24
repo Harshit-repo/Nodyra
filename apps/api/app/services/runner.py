@@ -12,7 +12,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -292,19 +292,27 @@ async def _execute_run(
 
     workflow_modules: list[dict] = []
     try:
-        # Gather workflow-scoped user code modules so the runtime can register
-        # their functions before the engine kicks off. Must live INSIDE the
-        # cancellation try block: if the cancel hits this first DB await we
-        # still want the outer except to mark the run as cancelled.
+        # Gather user code modules visible to this workflow:
+        # global + this workflow's env + this workflow. Lives INSIDE the
+        # cancellation try block so a cancel during this DB read still
+        # routes through the outer except and marks the run cancelled.
         try:
             async with SessionLocal() as session:
-                rows = (
-                    await session.scalars(
-                        select(CodeModule).where(
-                            CodeModule.workflow_id == workflow_id
+                workflow = await session.get(Workflow, workflow_id)
+                env_id = workflow.environment_id if workflow else None
+                stmt = select(CodeModule).where(
+                    or_(
+                        CodeModule.scope == "global",
+                        CodeModule.workflow_id == workflow_id,
+                        (
+                            (CodeModule.scope == "environment")
+                            & (CodeModule.environment_id == env_id)
                         )
+                        if env_id
+                        else CodeModule.id.is_(None),  # noop predicate
                     )
-                ).all()
+                )
+                rows = (await session.scalars(stmt)).all()
                 workflow_modules = [
                     {"id": m.id, "name": m.name, "contents": m.contents}
                     for m in rows

@@ -5,6 +5,7 @@ import type {
   CodeModule,
   CodeModuleFunctionPreview,
   Environment,
+  WorkflowGraph,
 } from "../types";
 
 /** Side drawer for managing the workflow-scoped Python files whose
@@ -17,15 +18,21 @@ export function FunctionsPanel({
   workflowId,
   onClose,
   onChanged,
+  onApplyStarterGraph,
 }: {
   workflowId: string;
   onClose: () => void;
   onChanged: () => void;
+  onApplyStarterGraph: (graph: WorkflowGraph) => void;
 }) {
   const [modules, setModules] = useState<CodeModule[] | null>(null);
   const [selected, setSelected] = useState<CodeModule | null>(null);
   const [name, setName] = useState("");
   const [contents, setContents] = useState("");
+  const [newScope, setNewScope] = useState<"workflow" | "global" | "environment">(
+    "workflow",
+  );
+  const [newScopeEnvId, setNewScopeEnvId] = useState<string>("");
   const [preview, setPreview] = useState<CodeModuleFunctionPreview | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -35,7 +42,9 @@ export function FunctionsPanel({
 
   async function refresh(): Promise<void> {
     try {
-      const list = await api.listCodeModules(workflowId);
+      const list = await api.listCodeModules({
+        visible_to_workflow: workflowId,
+      });
       setModules(list);
     } catch (e) {
       setError(String(e));
@@ -96,6 +105,8 @@ export function FunctionsPanel({
     setContents("def my_node(x: int = 0) -> int:\n    return x + 1\n");
     setPreview(null);
     setError("");
+    setNewScope("workflow");
+    setNewScopeEnvId("");
   }
 
   async function save(): Promise<void> {
@@ -106,9 +117,13 @@ export function FunctionsPanel({
       if (selected) {
         saved = await api.updateCodeModule(selected.id, { name, contents });
       } else {
+        if (newScope === "environment" && !newScopeEnvId) {
+          throw new Error("Pick an environment for environment-scoped modules.");
+        }
         saved = await api.createCodeModule({
-          scope: "workflow",
-          workflow_id: workflowId,
+          scope: newScope,
+          workflow_id: newScope === "workflow" ? workflowId : null,
+          environment_id: newScope === "environment" ? newScopeEnvId : null,
           name,
           contents,
         });
@@ -171,33 +186,96 @@ export function FunctionsPanel({
           {modules?.length === 0 && (
             <p className="muted">No files yet. Click + New file to add one.</p>
           )}
-          {modules?.map((m) => (
-            <div
-              key={m.id}
-              className={`functions-item${selected?.id === m.id ? " active" : ""}`}
-            >
-              <button
-                type="button"
-                className="functions-item-name"
-                onClick={() => openModule(m)}
+          {modules?.map((m) => {
+            const envName =
+              m.scope === "environment"
+                ? environments.find((e) => e.id === m.environment_id)?.name ??
+                  "env"
+                : "";
+            const badge =
+              m.scope === "global"
+                ? "🌐"
+                : m.scope === "environment"
+                  ? "🐍"
+                  : "📎";
+            const badgeTitle =
+              m.scope === "global"
+                ? "Global — visible to every workflow"
+                : m.scope === "environment"
+                  ? `Environment scope (${envName})`
+                  : "Workflow scope";
+            return (
+              <div
+                key={m.id}
+                className={`functions-item${selected?.id === m.id ? " active" : ""}`}
               >
-                {m.name}
-              </button>
-              <button
-                type="button"
-                className="functions-item-del"
-                onClick={() => void remove(m)}
-                title="Delete"
-              >
-                ✕
-              </button>
-            </div>
-          ))}
+                <span className="functions-item-scope" title={badgeTitle}>
+                  {badge}
+                </span>
+                <button
+                  type="button"
+                  className="functions-item-name"
+                  onClick={() => openModule(m)}
+                >
+                  {m.name}
+                </button>
+                <button
+                  type="button"
+                  className="functions-item-del"
+                  onClick={() => void remove(m)}
+                  title="Delete"
+                >
+                  ✕
+                </button>
+              </div>
+            );
+          })}
         </aside>
 
         <section className="functions-editor">
           {(selected || name || contents) ? (
             <>
+              {!selected && (
+                <div className="functions-scope-row">
+                  <label className="muted" htmlFor="new-scope">
+                    Scope
+                  </label>
+                  <select
+                    id="new-scope"
+                    className="field-input"
+                    value={newScope}
+                    onChange={(e) =>
+                      setNewScope(
+                        e.target.value as "workflow" | "global" | "environment",
+                      )
+                    }
+                  >
+                    <option value="workflow">
+                      Workflow — only this workflow's palette
+                    </option>
+                    <option value="global">
+                      Global — every workflow's palette
+                    </option>
+                    <option value="environment">
+                      Environment — every workflow on that env
+                    </option>
+                  </select>
+                  {newScope === "environment" && (
+                    <select
+                      className="field-input"
+                      value={newScopeEnvId}
+                      onChange={(e) => setNewScopeEnvId(e.target.value)}
+                    >
+                      <option value="">Pick an environment…</option>
+                      {environments.map((env) => (
+                        <option key={env.id} value={env.id}>
+                          {env.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
               <input
                 className="field-input"
                 value={name}
@@ -301,6 +379,30 @@ export function FunctionsPanel({
               )}
 
               <div className="functions-actions">
+                {selected && preview && preview.registered.length > 0 && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={async () => {
+                      if (
+                        !confirm(
+                          "Replace the current workflow graph with a starter graph derived from this file?",
+                        )
+                      ) {
+                        return;
+                      }
+                      try {
+                        const graph = await api.starterGraph(selected.id);
+                        onApplyStarterGraph(graph);
+                        onClose();
+                      } catch (e) {
+                        setError(String(e));
+                      }
+                    }}
+                  >
+                    ✨ Build starter graph
+                  </button>
+                )}
                 <button
                   type="button"
                   className="btn"

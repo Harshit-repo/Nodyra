@@ -666,3 +666,184 @@ async def execute_workflow_node(
             "execute_workflow: no host caller is configured for this run"
         )
     return await caller(workflow_id, input)
+
+
+# ---- Data type conversions -----------------------------------------------
+#
+# Lenient coercions with sensible defaults. Each node has an explicit
+# docstring (which becomes the description in the inspector) so users know
+# what's happening at the boundary — types are duck-typed at the engine
+# level so the value goes through unchanged unless you opt into one of
+# these casts.
+
+_TRUTHY = {"true", "yes", "y", "on", "1"}
+_FALSY = {"false", "no", "n", "off", "0", ""}
+
+
+def _to_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in _TRUTHY:
+            return True
+        if s in _FALSY:
+            return False
+        raise ValueError(f"can't interpret {value!r} as a boolean")
+    return bool(value)
+
+
+def _to_int(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return 0
+        # Allow "3.0" / "3.14" → 3 by routing through float first.
+        return int(float(s))
+    raise ValueError(f"can't convert {type(value).__name__} to int")
+
+
+def _to_float(value: Any) -> float:
+    if value is None:
+        return 0.0
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        s = value.strip()
+        return float(s) if s else 0.0
+    raise ValueError(f"can't convert {type(value).__name__} to float")
+
+
+@node(name="To Integer", id="to_int", category="Data Types", icon="hash")
+def to_int_node(input: Any = None) -> int:
+    """Coerce the input to an int.
+
+    Strings parse via ``int(float(...))`` so ``"3"`` and ``"3.14"`` both work
+    (the latter truncates to 3). ``None`` and empty strings become 0. Bools
+    are 0/1. Anything else raises.
+    """
+    return _to_int(input)
+
+
+@node(name="To Float", id="to_float", category="Data Types", icon="hash")
+def to_float_node(input: Any = None) -> float:
+    """Coerce the input to a float. ``None``/empty string → 0.0; bools → 0.0/1.0."""
+    return _to_float(input)
+
+
+@node(name="To String", id="to_str", category="Data Types", icon="tag")
+def to_str_node(input: Any = None) -> str:
+    """Coerce the input to a string.
+
+    Dicts and lists serialize as JSON; everything else uses ``str()``.
+    """
+    if input is None:
+        return ""
+    if isinstance(input, str):
+        return input
+    if isinstance(input, (dict, list, tuple)):
+        try:
+            return json.dumps(input, default=str)
+        except (TypeError, ValueError):
+            return str(input)
+    return str(input)
+
+
+@node(name="To Boolean", id="to_bool", category="Data Types", icon="branch")
+def to_bool_node(input: Any = None) -> bool:
+    """Coerce the input to a bool.
+
+    Strings recognise ``true/false``, ``yes/no``, ``y/n``, ``on/off``, ``1/0``
+    (case-insensitive, trimmed). Numbers use ``!= 0``. Empty string → False.
+    Anything else raises so a typo doesn't silently turn into ``True``.
+    """
+    return _to_bool(input)
+
+
+@node(name="To List", id="to_list", category="Data Types", icon="ruler", params={
+    "separator": {
+        "placeholder": ",",
+        "description": (
+            "Used only when the input is a string. Split on this; "
+            "an empty separator wraps the value in a single-element list."
+        ),
+    },
+})
+def to_list_node(input: Any = None, separator: str = ",") -> list:
+    """Coerce the input to a list.
+
+    Already-a-list values pass through. Tuples become lists. Dicts become
+    their list-of-key:value-pairs. A string is split by ``separator``; if
+    ``separator`` is blank the whole string becomes a single-element list.
+    Anything else is wrapped as ``[value]``.
+    """
+    if isinstance(input, list):
+        return input
+    if isinstance(input, tuple):
+        return list(input)
+    if isinstance(input, dict):
+        return [{"key": k, "value": v} for k, v in input.items()]
+    if isinstance(input, str):
+        if not separator:
+            return [input]
+        return [piece.strip() for piece in input.split(separator)]
+    if input is None:
+        return []
+    return [input]
+
+
+@node(name="Convert Type", id="convert_type", category="Data Types", icon="braces", params={
+    "to": {
+        "choices": ["int", "float", "string", "boolean", "list", "json", "object"],
+        "description": (
+            "Target type. 'json' returns a JSON string; "
+            "'object' parses a JSON string into a dict/list."
+        ),
+    },
+})
+def convert_type_node(input: Any = None, to: str = "string") -> Any:
+    """One node that handles every cast. Useful when the target type is wired in dynamically.
+
+    For the common cases, prefer the dedicated ``to_int``/``to_str``/etc.
+    nodes — they read more clearly on the canvas.
+    """
+    if to == "int":
+        return _to_int(input)
+    if to == "float":
+        return _to_float(input)
+    if to == "string":
+        if isinstance(input, str):
+            return input
+        if isinstance(input, (dict, list, tuple)):
+            try:
+                return json.dumps(input, default=str)
+            except (TypeError, ValueError):
+                return str(input)
+        return "" if input is None else str(input)
+    if to == "boolean":
+        return _to_bool(input)
+    if to == "list":
+        return to_list_node(input)
+    if to == "json":
+        return json.dumps(input, default=str)
+    if to == "object":
+        if isinstance(input, str):
+            return json.loads(input)
+        if isinstance(input, dict):
+            return input
+        raise ValueError(
+            f"convert_type: can't parse {type(input).__name__} as a JSON object"
+        )
+    raise ValueError(f"convert_type: unknown target type {to!r}")

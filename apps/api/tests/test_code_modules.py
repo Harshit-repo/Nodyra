@@ -161,6 +161,107 @@ async def test_preview_reports_missing_imports(client: AsyncClient) -> None:
     assert preview["environment_name"] == "Test env"
 
 
+async def test_global_and_env_modules_visible_to_workflow(
+    client: AsyncClient,
+) -> None:
+    """A workflow's palette should include global + its env's + its own modules."""
+    env = (
+        await client.post("/environments", json={"name": "shared", "packages": []})
+    ).json()
+    wf = (await client.post("/workflows", json={"name": "consumer"})).json()
+    await client.put(
+        f"/workflows/{wf['id']}",
+        json={"environment_id": env["id"], "graph": {"nodes": [], "edges": []}},
+    )
+    # One module per scope, each defining a uniquely-named function.
+    glob = (
+        await client.post(
+            "/code-modules",
+            json={
+                "scope": "global",
+                "name": "g.py",
+                "contents": "def g(): return 'g'\n",
+            },
+        )
+    ).json()
+    envmod = (
+        await client.post(
+            "/code-modules",
+            json={
+                "scope": "environment",
+                "environment_id": env["id"],
+                "name": "e.py",
+                "contents": "def e(): return 'e'\n",
+            },
+        )
+    ).json()
+    wfmod = (
+        await client.post(
+            "/code-modules",
+            json={
+                "scope": "workflow",
+                "workflow_id": wf["id"],
+                "name": "w.py",
+                "contents": "def w(): return 'w'\n",
+            },
+        )
+    ).json()
+
+    visible = (
+        await client.get(f"/code-modules?visible_to_workflow={wf['id']}")
+    ).json()
+    ids = {m["id"] for m in visible}
+    assert ids == {glob["id"], envmod["id"], wfmod["id"]}
+
+    manifests = (
+        await client.get(f"/code-modules/manifests/workflow/{wf['id']}")
+    ).json()
+    names = {m["id"].split(":")[-1] for m in manifests}
+    assert names == {"g", "e", "w"}
+
+
+async def test_starter_graph_wires_variable_chain(client: AsyncClient) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "Starter"})).json()["id"]
+    source = (
+        "def fetch():\n"
+        "    return [1, 2, 3]\n"
+        "\n"
+        "def to_frame(rows, indent=2):\n"
+        "    return rows\n"
+        "\n"
+        "def summarise(df, label='ok'):\n"
+        "    return label\n"
+        "\n"
+        "result = fetch()\n"
+        "df = to_frame(result, indent=4)\n"
+        "summarise(df, label='go')\n"
+    )
+    module = (
+        await client.post(
+            "/code-modules",
+            json={
+                "scope": "workflow",
+                "workflow_id": workflow_id,
+                "name": "chain.py",
+                "contents": source,
+            },
+        )
+    ).json()
+    graph = (
+        await client.post(f"/code-modules/{module['id']}/starter-graph")
+    ).json()
+    by_id = {n["id"]: n for n in graph["nodes"]}
+    assert set(by_id) == {"n_fetch", "n_to_frame", "n_summarise"}
+
+    # Literal kwargs are pre-populated as default params.
+    assert by_id["n_to_frame"]["params"] == {"indent": 4}
+    assert by_id["n_summarise"]["params"] == {"label": "go"}
+
+    edges = {(e["source"], e["target"], e["target_input"]) for e in graph["edges"]}
+    assert ("n_fetch", "n_to_frame", "rows") in edges
+    assert ("n_to_frame", "n_summarise", "df") in edges
+
+
 async def test_preview_skips_kwargs_and_classes(client: AsyncClient) -> None:
     workflow_id = (await client.post("/workflows", json={"name": "Mix"})).json()["id"]
     source = (

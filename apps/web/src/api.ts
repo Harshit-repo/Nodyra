@@ -191,10 +191,19 @@ export const api = {
     request<RunListItem[]>(`/deployments/${id}/runs`),
 
   // ---- Code modules (upload-to-nodes) ----
-  listCodeModules: (workflowId?: string) =>
-    request<CodeModule[]>(
-      `/code-modules${workflowId ? `?workflow_id=${workflowId}` : ""}`,
-    ),
+  listCodeModules: (filters: {
+    workflow_id?: string;
+    scope?: string;
+    environment_id?: string;
+    visible_to_workflow?: string;
+  } = {}) => {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters)) {
+      if (v !== undefined && v !== null && v !== "") params.set(k, String(v));
+    }
+    const q = params.toString();
+    return request<CodeModule[]>(`/code-modules${q ? `?${q}` : ""}`);
+  },
   createCodeModule: (body: {
     scope: string;
     workflow_id?: string | null;
@@ -218,6 +227,10 @@ export const api = {
     request<void>(`/code-modules/${id}`, { method: "DELETE" }),
   previewCodeModule: (id: string) =>
     request<CodeModuleFunctionPreview>(`/code-modules/${id}/preview`),
+  starterGraph: (moduleId: string) =>
+    request<WorkflowGraph>(`/code-modules/${moduleId}/starter-graph`, {
+      method: "POST",
+    }),
   workflowCustomNodeManifests: (workflowId: string) =>
     request<NodeManifest[]>(`/code-modules/manifests/workflow/${workflowId}`),
 

@@ -23,6 +23,7 @@ from app.schemas import (
     CodeModuleUpdate,
 )
 from app.services.audit import log_audit
+from app.services.starter_graph import build_starter_graph
 from noodle.models import NodeManifest
 from noodle.sdk import NodeRegistry, register_module_functions
 
@@ -107,9 +108,33 @@ async def list_code_modules(
     scope: str | None = None,
     workflow_id: str | None = None,
     environment_id: str | None = None,
+    visible_to_workflow: str | None = None,
     session: AsyncSession = Depends(get_session),
 ):
+    """List code modules, optionally narrowed to one scope or one workflow.
+
+    ``visible_to_workflow`` returns the union the runner gathers: global
+    modules + the workflow's env modules + the workflow's own modules. Used
+    by the editor Functions panel.
+    """
+    from sqlalchemy import or_
+
     stmt = select(CodeModule).order_by(CodeModule.created_at.desc())
+    if visible_to_workflow is not None:
+        workflow = await session.get(Workflow, visible_to_workflow)
+        env_id = workflow.environment_id if workflow else None
+        stmt = stmt.where(
+            or_(
+                CodeModule.scope == "global",
+                CodeModule.workflow_id == visible_to_workflow,
+                (
+                    (CodeModule.scope == "environment")
+                    & (CodeModule.environment_id == env_id)
+                )
+                if env_id
+                else CodeModule.id.is_(None),
+            )
+        )
     if scope is not None:
         stmt = stmt.where(CodeModule.scope == scope)
     if workflow_id is not None:
@@ -242,20 +267,49 @@ async def preview_code_module(
     return _preview_payload(module.id, module.contents, env)
 
 
+@router.post("/{module_id}/starter-graph")
+async def starter_graph(
+    module_id: str, session: AsyncSession = Depends(get_session)
+) -> dict:
+    """Generate an AST-aware starter graph from the module's source.
+
+    Walks ``<var> = <call>`` chains and infers edges from variable flow,
+    pre-populating literal arguments as default params. The user accepts
+    or discards it on the canvas — we don't save here.
+    """
+    module = await _load(session, module_id)
+    if not module.contents.strip():
+        raise HTTPException(400, "Module has no contents.")
+    try:
+        return build_starter_graph(module.id, module.contents)
+    except SyntaxError as exc:
+        raise HTTPException(400, f"Syntax error: {exc}") from exc
+
+
 @router.get("/manifests/workflow/{workflow_id}", response_model=list[NodeManifest])
 async def workflow_custom_node_manifests(
     workflow_id: str, session: AsyncSession = Depends(get_session)
 ):
-    """Manifests the editor needs to render the palette's Custom group.
-
-    Built-in nodes already come from /nodes; this endpoint adds the
-    workflow-scoped function nodes on top.
+    """Manifests visible to one workflow — global + the workflow's env + the
+    workflow itself. The palette merges these on top of the built-ins.
     """
-    rows = (
-        await session.scalars(
-            select(CodeModule).where(CodeModule.workflow_id == workflow_id)
+    from sqlalchemy import or_  # local import keeps the top-level slim
+
+    workflow = await session.get(Workflow, workflow_id)
+    env_id = workflow.environment_id if workflow else None
+    stmt = select(CodeModule).where(
+        or_(
+            CodeModule.scope == "global",
+            CodeModule.workflow_id == workflow_id,
+            (
+                (CodeModule.scope == "environment")
+                & (CodeModule.environment_id == env_id)
+            )
+            if env_id
+            else CodeModule.id.is_(None),
         )
-    ).all()
+    )
+    rows = (await session.scalars(stmt)).all()
     manifests: list[NodeManifest] = []
     for module in rows:
         if not module.contents.strip():
@@ -263,7 +317,7 @@ async def workflow_custom_node_manifests(
         sandbox = NodeRegistry()
         try:
             register_module_functions(module.id, module.contents, sandbox)
-        except Exception:  # noqa: BLE001 - bad code → no manifests, but other modules still work
+        except Exception:  # noqa: BLE001 - bad code → no manifests, others still work
             continue
         manifests.extend(sandbox.manifests())
     return manifests
