@@ -142,6 +142,31 @@ export function EditorPage() {
     }
   }
 
+  async function toggleActive(next: boolean): Promise<void> {
+    // Save eagerly when the user flips Active so the change persists
+    // without a separate Save click. Optimistically update the UI and
+    // roll back if the request fails.
+    if (!id) return;
+    setActive(next);
+    setSaving(true);
+    setMessage("");
+    try {
+      const updated = await api.updateWorkflow(id, {
+        name: name.trim() || "Untitled workflow",
+        active: next,
+        environment_id: environmentId ?? undefined,
+        graph: toGraph(),
+      });
+      setWorkflow(updated);
+      markClean();
+    } catch (err) {
+      setActive(!next);
+      setMessage(String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function plannedNodeIds(graph: WorkflowGraph, targets?: string[]): Set<string> {
     const planned = new Set<string>();
     const targetSet = targets && targets.length > 0 ? new Set(targets) : null;
@@ -363,7 +388,8 @@ export function EditorPage() {
             <input
               type="checkbox"
               checked={active}
-              onChange={(e) => setActive(e.target.checked)}
+              onChange={(e) => void toggleActive(e.target.checked)}
+              disabled={saving}
             />
             <span className="active-track" />
             <span>{active ? "Active" : "Inactive"}</span>
@@ -480,6 +506,28 @@ export function EditorPage() {
           <NodePalette />
           <div className="editor-stage">
             <Canvas />
+            <div className="canvas-fab">
+              {running ? (
+                <button
+                  type="button"
+                  className="canvas-run-btn is-running"
+                  onClick={() => void cancelCurrentRun()}
+                  disabled={cancellingRun}
+                >
+                  {cancellingRun ? "Stopping…" : "■ Stop"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="canvas-run-btn"
+                  onClick={() => void run()}
+                  disabled={Boolean(webhookListen) || saving}
+                  title="Execute the whole workflow"
+                >
+                  ▶ Execute Workflow
+                </button>
+              )}
+            </div>
             <PortDataViewer />
           </div>
           <Inspector />

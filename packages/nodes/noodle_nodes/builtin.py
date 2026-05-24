@@ -77,10 +77,22 @@ def manual_trigger(data: dict | None = None) -> dict:
           "interval": {"choices": ["minutes", "hours", "days"]},
           "every": {"description": "Run once per this many intervals."},
           "cron": {"placeholder": "0 9 * * 1-5", "description": "Optional cron expression."},
+          "tz": {
+              "placeholder": "UTC",
+              "description": (
+                  "Timezone for the cron expression — IANA name like "
+                  "America/New_York or Asia/Kolkata. Defaults to UTC."
+              ),
+          },
       })
-def schedule_trigger(interval: str = "hours", every: int = 1, cron: str = "") -> dict:
+def schedule_trigger(
+    interval: str = "hours",
+    every: int = 1,
+    cron: str = "",
+    tz: str = "UTC",
+) -> dict:
     """Start the workflow on a fixed schedule."""
-    return {"interval": interval, "every": every, "cron": cron}
+    return {"interval": interval, "every": every, "cron": cron, "tz": tz}
 
 
 @node(name="Webhook", id="webhook_trigger", category="Triggers", icon="webhook",

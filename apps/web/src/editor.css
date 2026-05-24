@@ -237,6 +237,59 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
+}
+
+/* ---- floating run button on the canvas (n8n-style) ---- */
+.canvas-fab {
+  position: absolute;
+  left: 50%;
+  bottom: 264px; /* clear the port-data viewer (236px + breathing room) */
+  transform: translateX(-50%);
+  z-index: 6;
+  pointer-events: none;
+}
+.canvas-run-btn {
+  pointer-events: auto;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  padding: 11px 22px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #06101e;
+  border: 1px solid var(--accent-deep);
+  box-shadow:
+    0 6px 18px rgba(102, 178, 255, 0.32),
+    0 0 0 4px var(--accent-glow);
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease,
+    background 120ms ease;
+}
+.canvas-run-btn:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 8px 22px rgba(102, 178, 255, 0.4),
+    0 0 0 5px var(--accent-glow);
+}
+.canvas-run-btn:active {
+  transform: translateY(0);
+}
+.canvas-run-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+.canvas-run-btn.is-running {
+  background: #f0747a;
+  color: #1e0608;
+  border-color: rgba(240, 116, 122, 0.6);
+  box-shadow:
+    0 6px 18px rgba(240, 116, 122, 0.32),
+    0 0 0 4px rgba(240, 116, 122, 0.18);
 }
 
 .panel-head {

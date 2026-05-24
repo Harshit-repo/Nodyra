@@ -10,6 +10,7 @@ loop (``enable_inprocess_scheduler=false``) and drive runs from Celery Beat.
 
 import asyncio
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from croniter import croniter
 from sqlalchemy import select
@@ -22,6 +23,15 @@ from app.services.runner import start_run
 _INTERVAL_SECONDS = {"minutes": 60, "hours": 3600, "days": 86400}
 
 
+def _resolve_tz(name: str) -> ZoneInfo:
+    """Return the IANA zone for ``name``; fall back to UTC if it's unknown."""
+    name = (name or "").strip() or "UTC"
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("UTC")
+
+
 def _is_due(params: dict, last: datetime, now: datetime) -> bool:
     """Return True if a schedule with these params is due relative to ``last``."""
     # SQLite returns naive datetimes; treat a stored value as UTC so it can be
@@ -30,8 +40,14 @@ def _is_due(params: dict, last: datetime, now: datetime) -> bool:
         last = last.replace(tzinfo=UTC)
     cron = str(params.get("cron", "") or "").strip()
     if cron:
+        # Evaluate the cron in the user-selected timezone so an expression like
+        # "0 9 * * *" really means 09:00 *local* (not 09:00 UTC). croniter
+        # respects the tzinfo of the base datetime.
+        tz = _resolve_tz(str(params.get("tz", "") or ""))
+        last_local = last.astimezone(tz)
         try:
-            return croniter(cron, last).get_next(datetime) <= now
+            next_time = croniter(cron, last_local).get_next(datetime)
+            return next_time <= now
         except (ValueError, KeyError):
             return False  # malformed cron — never fire rather than crash
     interval = params.get("interval", "hours")
