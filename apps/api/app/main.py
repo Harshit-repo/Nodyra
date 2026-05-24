@@ -22,6 +22,7 @@ from app.routers import (
     environments,
     export,
     health,
+    internal,
     nodes,
     ops,
     pinned,
@@ -161,7 +162,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_AUTH_EXEMPT_PREFIXES = ("/auth", "/health", "/webhook")
+_AUTH_EXEMPT_PREFIXES = ("/auth", "/health", "/webhook", "/internal")
 _AUTH_EXEMPT_PATHS = {"/", "/metrics", "/system/status"}
 
 
@@ -201,6 +202,7 @@ app.include_router(workflows.router)
 app.include_router(runs.router)
 app.include_router(deployments.router)
 app.include_router(code_modules.router)
+app.include_router(internal.router)
 app.include_router(export.router)
 app.include_router(auth.router)
 app.include_router(credentials.router)

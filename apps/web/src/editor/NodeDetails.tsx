@@ -147,61 +147,7 @@ function KeyValueField({
       </div>
 
       {mode === "fields" ? (
-        <div className="kv-rows">
-          {rows.map((row, i) => (
-            <div className="kv-row" key={i}>
-              <input
-                className="field-input"
-                placeholder="key"
-                value={row.key}
-                onChange={(e) =>
-                  commitRows(
-                    rows.map((r, j) =>
-                      j === i ? { ...r, key: e.target.value } : r,
-                    ),
-                  )
-                }
-              />
-              <input
-                className="field-input"
-                placeholder="value"
-                value={row.value}
-                onChange={(e) =>
-                  commitRows(
-                    rows.map((r, j) =>
-                      j === i ? { ...r, value: e.target.value } : r,
-                    ),
-                  )
-                }
-                {...exprDropHandlers(row.value, (next) =>
-                  commitRows(
-                    rows.map((r, j) => (j === i ? { ...r, value: next } : r)),
-                  ),
-                )}
-              />
-              <button
-                type="button"
-                className="kv-remove"
-                aria-label="Remove"
-                onClick={() => {
-                  const filtered = rows.filter((_, j) => j !== i);
-                  commitRows(
-                    filtered.length > 0 ? filtered : [{ key: "", value: "" }],
-                  );
-                }}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost"
-            onClick={() => commitRows([...rows, { key: "", value: "" }])}
-          >
-            + Add field
-          </button>
-        </div>
+        <KvRowList rows={rows} commitRows={commitRows} />
       ) : (
         <textarea
           className={`field-input field-json${invalid ? " field-invalid" : ""}`}
@@ -225,6 +171,129 @@ function KeyValueField({
             }
           }}
         />
+      )}
+    </div>
+  );
+}
+
+const KV_DRAG_TYPE = "application/x-noodle-kv-row";
+
+function KvRowList({
+  rows,
+  commitRows,
+}: {
+  rows: KvRow[];
+  commitRows: (next: KvRow[]) => void;
+}) {
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [dragOver, setDragOver] = useState<number | null>(null);
+
+  function moveRow(from: number, to: number): void {
+    if (from === to || to < 0 || to >= rows.length) return;
+    const next = rows.slice();
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+    commitRows(next);
+  }
+
+  return (
+    <div className="kv-rows">
+      {rows.map((row, i) => (
+        <div
+          className={`kv-row${dragOver === i ? " kv-row-drop" : ""}`}
+          key={i}
+          onDragOver={(e) => {
+            // Only respond to our own row drags — text/expression drops on
+            // the value input still pass through via exprDropHandlers.
+            if (!e.dataTransfer.types.includes(KV_DRAG_TYPE)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            setDragOver(i);
+          }}
+          onDragLeave={() => {
+            if (dragOver === i) setDragOver(null);
+          }}
+          onDrop={(e) => {
+            if (!e.dataTransfer.types.includes(KV_DRAG_TYPE)) return;
+            e.preventDefault();
+            const from = parseInt(
+              e.dataTransfer.getData(KV_DRAG_TYPE) || "-1",
+              10,
+            );
+            if (Number.isFinite(from) && from >= 0) moveRow(from, i);
+            setDragOver(null);
+            setDragFrom(null);
+          }}
+        >
+          <span
+            className="kv-handle"
+            title="Drag to reorder"
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData(KV_DRAG_TYPE, String(i));
+              e.dataTransfer.effectAllowed = "move";
+              setDragFrom(i);
+            }}
+            onDragEnd={() => {
+              setDragFrom(null);
+              setDragOver(null);
+            }}
+          >
+            ⠿
+          </span>
+          <input
+            className="field-input"
+            placeholder="key"
+            value={row.key}
+            onChange={(e) =>
+              commitRows(
+                rows.map((r, j) =>
+                  j === i ? { ...r, key: e.target.value } : r,
+                ),
+              )
+            }
+          />
+          <input
+            className="field-input"
+            placeholder="value"
+            value={row.value}
+            onChange={(e) =>
+              commitRows(
+                rows.map((r, j) =>
+                  j === i ? { ...r, value: e.target.value } : r,
+                ),
+              )
+            }
+            {...exprDropHandlers(row.value, (next) =>
+              commitRows(
+                rows.map((r, j) => (j === i ? { ...r, value: next } : r)),
+              ),
+            )}
+          />
+          <button
+            type="button"
+            className="kv-remove"
+            aria-label="Remove"
+            onClick={() => {
+              const filtered = rows.filter((_, j) => j !== i);
+              commitRows(
+                filtered.length > 0 ? filtered : [{ key: "", value: "" }],
+              );
+            }}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="btn btn-sm btn-ghost"
+        onClick={() => commitRows([...rows, { key: "", value: "" }])}
+      >
+        + Add field
+      </button>
+      {dragFrom !== null && (
+        <p className="muted kv-drag-hint">Drop on a row to reorder.</p>
       )}
     </div>
   );

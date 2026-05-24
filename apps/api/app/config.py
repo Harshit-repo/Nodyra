@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     workflow_run_timeout_seconds: float = 120.0
     auth_required: bool = False
     secret_key: str = "noodle-dev-secret-change-me-in-production"
+    # Shared secret the worker presents to call /internal/* endpoints.
+    # Blank = no check (fine for local dev where only your machine reaches
+    # the API). Set this when exposing the API to anything else.
+    internal_api_token: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:

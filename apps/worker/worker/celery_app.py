@@ -17,4 +17,15 @@ celery_app.conf.update(
     enable_utc=True,
 )
 
+# Beat schedule. The single ``scheduler_tick`` task replaces the API's
+# in-process loop when ``settings.enable_inprocess_scheduler=false`` —
+# important when you run multiple API replicas, because only one Beat
+# should own scheduling.
+celery_app.conf.beat_schedule = {
+    "noodle-scheduler-tick": {
+        "task": "noodle.scheduler_tick",
+        "schedule": float(max(15, settings.scheduler_tick_seconds)),
+    },
+}
+
 celery_app.autodiscover_tasks(["worker"])
