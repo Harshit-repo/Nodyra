@@ -27,6 +27,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from app.config import settings
+from app.services.artifacts import artifact_base_dir
 from app.services.venv import venv_python
 from noodle.serialization import deserialize_value, serialize_value
 
@@ -119,6 +120,7 @@ class _RuntimeProcess:
 
     async def run(
         self,
+        run_id: str,
         graph: dict,
         cache: dict | None,
         targets: list[str] | None,
@@ -141,10 +143,18 @@ class _RuntimeProcess:
                     {
                         "type": "run",
                         "request_id": request_id,
+                        "run_id": run_id,
                         "graph": graph,
                         "cache": cache,
                         "targets": targets,
                         "workflow_modules": workflow_modules or [],
+                        # Subprocess writes artifact bytes to the SAME path the
+                        # API reads from — only safe because the runner is
+                        # co-located on the host today. Remote runners (Slice 8)
+                        # will need an upload/finalize path instead.
+                        "artifacts_dir": str(artifact_base_dir()),
+                        "max_artifact_bytes": settings.max_artifact_bytes,
+                        "max_artifacts_per_run": settings.max_artifacts_per_run,
                     }
                 )
                 while True:
@@ -311,6 +321,7 @@ class RuntimePool:
 
     async def dispatch(
         self,
+        run_id: str,
         env_id: str | None,
         graph: dict,
         cache: dict | None,
@@ -324,6 +335,7 @@ class RuntimePool:
             proc = await envpool.acquire()
             try:
                 run = proc.run(
+                    run_id,
                     graph,
                     cache,
                     targets,

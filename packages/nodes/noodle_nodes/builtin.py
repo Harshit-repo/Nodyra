@@ -9,6 +9,7 @@ import json
 from types import ModuleType
 from typing import Any
 
+import noodle.artifacts as artifacts_api
 from noodle.context import node_debug
 from noodle.sdk import node
 
@@ -422,7 +423,7 @@ def _record_code_variables(namespace: dict[str, Any]) -> None:
 })
 def code_node(input: Any = None, code: str = "output = input") -> Any:
     """Run arbitrary Python against the input."""
-    namespace: dict[str, Any] = {"input": input}
+    namespace: dict[str, Any] = {"input": input, "artifacts": artifacts_api}
     try:
         exec(code, namespace)  # noqa: S102 - running user Python is the node's purpose
     finally:

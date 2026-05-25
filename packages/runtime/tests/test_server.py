@@ -163,3 +163,72 @@ async def test_runtime_serializes_events_and_deserializes_cache() -> None:
         except TimeoutError:
             process.kill()
             await process.wait()
+
+
+async def test_runtime_writes_artifact_refs(tmp_path) -> None:
+    graph = {
+        "nodes": [
+            {
+                "id": "writer",
+                "type": "code",
+                "params": {
+                    "code": "output = artifacts.write_text('hello', name='hello.txt')"
+                },
+                "position": {"x": 0, "y": 0},
+            }
+        ],
+        "edges": [],
+    }
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-u",
+        "-m",
+        "noodle_runtime",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    assert process.stdin is not None
+    assert process.stdout is not None
+
+    try:
+        ready_line = await asyncio.wait_for(process.stdout.readline(), timeout=10)
+        ready = json.loads(ready_line)
+        assert ready["type"] == "ready"
+
+        request = {
+            "type": "run",
+            "request_id": "artifact",
+            "run_id": "run-artifact",
+            "graph": graph,
+            "cache": None,
+            "targets": None,
+            "artifacts_dir": str(tmp_path),
+        }
+        process.stdin.write((json.dumps(request) + "\n").encode())
+        await process.stdin.drain()
+
+        ref = None
+        while True:
+            line = await asyncio.wait_for(process.stdout.readline(), timeout=10)
+            event = json.loads(line)
+            kind = event.get("type")
+            if kind == "node_finished":
+                ref = event["outputs"]["main"]
+            elif kind == "result":
+                break
+            elif kind == "error":
+                raise AssertionError(f"runtime error: {event.get('error')}")
+
+        assert ref["__noodle_artifact__"] is True
+        assert ref["run_id"] == "run-artifact"
+        assert ref["node_id"] == "writer"
+        assert (tmp_path / ref["storage_key"]).read_text() == "hello"
+    finally:
+        if process.stdin:
+            process.stdin.close()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5)
+        except TimeoutError:
+            process.kill()
+            await process.wait()

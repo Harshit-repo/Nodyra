@@ -3,6 +3,12 @@ import { useState } from "react";
 
 import type { NodeVariableInfo } from "../types";
 import {
+  artifactDownloadUrl,
+  artifactSummary,
+  asArtifactRef,
+  formatBytes,
+} from "./artifactValues";
+import {
   asTypedEnvelope,
   formatTypedCell,
   typedDisplayValue,
@@ -48,6 +54,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 function isTableable(value: unknown): boolean {
+  if (asArtifactRef(value)) return false;
   const envelope = asTypedEnvelope(value);
   if (envelope?.type === "dataframe" && typedRecords(envelope)) return true;
   const display = typedDisplayValue(value);
@@ -59,6 +66,8 @@ function isTableable(value: unknown): boolean {
 }
 
 function formatCell(value: unknown): string {
+  const artifact = asArtifactRef(value);
+  if (artifact) return `Artifact: ${artifact.name} (${formatBytes(artifact.size_bytes)})`;
   const typed = formatTypedCell(value);
   if (typed) return typed;
   if (value === null || value === undefined) return "";
@@ -139,6 +148,16 @@ function JsonTreeValue({
   dragPrefix?: string;
 }): JSX.Element {
   const envelope = asTypedEnvelope(value);
+  const artifact = asArtifactRef(value);
+  if (artifact) {
+    return (
+      <ArtifactInlineValue
+        refValue={artifact}
+        path={path}
+        dragPrefix={dragPrefix}
+      />
+    );
+  }
   if (envelope) {
     return (
       <TypedInlineValue
@@ -188,6 +207,36 @@ function JsonTreeValue({
   return (
     <span className={`json-tree-prim ${primitiveClass(value)}`}>
       {value === null ? "null" : JSON.stringify(value)}
+    </span>
+  );
+}
+
+function ArtifactInlineValue({
+  refValue,
+  path,
+  dragPrefix,
+}: {
+  refValue: NonNullable<ReturnType<typeof asArtifactRef>>;
+  path: (string | number)[];
+  dragPrefix?: string;
+}) {
+  const expr = dragPrefix ? buildExpression(dragPrefix, path) : undefined;
+  return (
+    <span
+      className="artifact-inline"
+      draggable={Boolean(expr)}
+      onDragStart={expr ? (e) => startExpressionDrag(e, expr) : undefined}
+      title={expr ? `Drag to insert ${expr}` : undefined}
+    >
+      <span className="artifact-badge">Artifact</span>
+      <span className="artifact-name">{refValue.name}</span>
+      <span className="typed-meta">{artifactSummary(refValue)}</span>
+      <a
+        href={artifactDownloadUrl(refValue)}
+        onClick={(event) => event.stopPropagation()}
+      >
+        Download
+      </a>
     </span>
   );
 }
@@ -350,6 +399,35 @@ function DataTable({
   data: unknown;
   dragPrefix?: string;
 }) {
+  const artifact = asArtifactRef(data);
+  if (artifact) {
+    return (
+      <div className="artifact-card">
+        <div className="artifact-card-head">
+          <span className="artifact-badge">Artifact</span>
+          <strong>{artifact.name}</strong>
+          <span>{artifactSummary(artifact)}</span>
+        </div>
+        <div className="artifact-card-meta">
+          <span>{artifact.content_type}</span>
+          {artifact.node_id && <span>node {artifact.node_id}</span>}
+          {artifact.run_id && <span>run {artifact.run_id}</span>}
+        </div>
+        <a className="artifact-download" href={artifactDownloadUrl(artifact)}>
+          Download
+        </a>
+        {artifact.preview !== undefined && (
+          <div className="artifact-preview">
+            {isTableable(artifact.preview) ? (
+              <DataTable data={artifact.preview} />
+            ) : (
+              <JsonTree data={artifact.preview} />
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
   const envelope = asTypedEnvelope(data);
   if (envelope?.type === "dataframe") {
     const records = typedRecords(envelope) ?? [];

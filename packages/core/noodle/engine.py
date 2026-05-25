@@ -20,7 +20,7 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
-from noodle.context import node_debug
+from noodle.context import current_node_id, node_debug
 from noodle.expr import build_context, evaluate
 from noodle.models import (
     NodeRunResult,
@@ -337,6 +337,7 @@ async def execute(
         log_buf: list[str] = []
         log_token = _log_capture.set(log_buf)
         debug_token = node_debug.set(debug)
+        node_token = current_node_id.set(nid)
         # Filter kwargs to what the function actually accepts. Lets the
         # manifest expose a virtual ``input`` port (the upstream envelope,
         # used to build $json) even when the user's function doesn't take
@@ -377,6 +378,7 @@ async def execute(
                         delay += random.uniform(0, wait * 0.1)  # small jitter
                         await asyncio.sleep(delay)
         finally:
+            current_node_id.reset(node_token)
             node_debug.reset(debug_token)
             _log_capture.reset(log_token)
         logs = "".join(log_buf).splitlines()

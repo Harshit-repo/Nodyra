@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     # above this are replaced with a small {_truncated, size, preview} stub
     # before persisting so one fat DataFrame can't bloat the DB. 0 disables.
     max_output_bytes: int = 256 * 1024
+    # Files/dataframes/reports produced by nodes are written outside the DB.
+    # Node outputs carry small artifact refs; these limits bound local storage.
+    artifacts_dir: str = "./artifacts"
+    artifact_storage_backend: str = "local"
+    max_artifact_bytes: int = 50 * 1024 * 1024
+    max_artifacts_per_run: int = 100
     workflow_run_timeout_seconds: float = 120.0
     auth_required: bool = False
     secret_key: str = "noodle-dev-secret-change-me-in-production"

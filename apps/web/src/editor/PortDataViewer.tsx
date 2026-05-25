@@ -4,6 +4,12 @@ import { useEffect, useRef, useState } from "react";
 
 import { useEditor, type NoodleNode } from "./store";
 import {
+  artifactDownloadUrl,
+  artifactSummary,
+  asArtifactRef,
+  formatBytes,
+} from "./artifactValues";
+import {
   asTypedEnvelope,
   formatTypedCell,
   typedDisplayValue,
@@ -76,6 +82,8 @@ function findRecordList(
 }
 
 function formatCell(value: unknown): string {
+  const artifact = asArtifactRef(value);
+  if (artifact) return `Artifact: ${artifact.name} (${formatBytes(artifact.size_bytes)})`;
   const typed = formatTypedCell(value);
   if (typed) return typed;
   if (value === null || value === undefined) return "";
@@ -89,6 +97,8 @@ function formatCell(value: unknown): string {
 }
 
 function valueSummary(value: unknown): string {
+  const artifact = asArtifactRef(value);
+  if (artifact) return `Artifact · ${artifactSummary(artifact)}`;
   const envelope = asTypedEnvelope(value);
   if (envelope) return `${typedLabel(envelope)} · ${typedSummary(envelope)}`;
   const table = findRecordList(value);
@@ -112,6 +122,41 @@ function edgeLabel(edge: Edge | undefined, direction: "input" | "output"): strin
 }
 
 function PortValuePreview({ value }: { value: unknown }) {
+  const artifact = asArtifactRef(value);
+  if (artifact) {
+    const previewTable = findRecordList(artifact.preview);
+    return (
+      <div className="port-data-artifact-preview">
+        <div className="artifact-card-head">
+          <span className="artifact-badge">Artifact</span>
+          <strong>{artifact.name}</strong>
+        </div>
+        <div className="artifact-card-meta">
+          <span>{artifactSummary(artifact)}</span>
+          <span>{artifact.content_type}</span>
+        </div>
+        <a href={artifactDownloadUrl(artifact)}>Download</a>
+        {previewTable && (
+          <div className="port-data-table-preview">
+            <div className="port-data-table-label">Preview</div>
+            <div className="port-data-table-wrap">
+              <table>
+                <tbody>
+                  {previewTable.rows.slice(0, 3).map((row, index) => (
+                    <tr key={index}>
+                      {Object.keys(row).slice(0, 4).map((column) => (
+                        <td key={column}>{formatCell(row[column])}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
   const envelope = asTypedEnvelope(value);
   const table = findRecordList(value);
   if (!table) {

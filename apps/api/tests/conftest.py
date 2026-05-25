@@ -1,4 +1,5 @@
 import os
+import shutil
 import tempfile
 from collections.abc import AsyncIterator
 
@@ -7,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+import app.services.artifacts as artifacts_module
 import app.services.retention as retention_module
 import app.services.runner as runner_module
 import app.services.triggers as triggers_module
@@ -30,6 +32,9 @@ async def client() -> AsyncIterator[AsyncClient]:
     handle = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     handle.close()
     db_path = handle.name
+    artifacts_dir = tempfile.mkdtemp(prefix="noodle-artifacts-test-")
+    old_artifacts_dir = settings.artifacts_dir
+    settings.artifacts_dir = artifacts_dir
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
 
     async with engine.begin() as conn:
@@ -44,11 +49,13 @@ async def client() -> AsyncIterator[AsyncClient]:
     app.dependency_overrides[get_session] = override_get_session
     originals = {
         venv_module: venv_module.SessionLocal,
+        artifacts_module: artifacts_module.SessionLocal,
         runner_module: runner_module.SessionLocal,
         triggers_module: triggers_module.SessionLocal,
         retention_module: retention_module.SessionLocal,
     }
     venv_module.SessionLocal = test_session
+    artifacts_module.SessionLocal = test_session
     runner_module.SessionLocal = test_session
     triggers_module.SessionLocal = test_session
     retention_module.SessionLocal = test_session
@@ -60,7 +67,9 @@ async def client() -> AsyncIterator[AsyncClient]:
     app.dependency_overrides.clear()
     for module, original in originals.items():
         module.SessionLocal = original
+    settings.artifacts_dir = old_artifacts_dir
     await engine.dispose()
+    shutil.rmtree(artifacts_dir, ignore_errors=True)
     try:
         os.unlink(db_path)
     except OSError:

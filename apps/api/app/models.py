@@ -164,6 +164,9 @@ class Run(Base):
     node_runs: Mapped[list["NodeRun"]] = relationship(
         back_populates="run", cascade="all, delete-orphan"
     )
+    artifacts: Mapped[list["Artifact"]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
 
 
 class NodeRun(Base):
@@ -186,6 +189,39 @@ class NodeRun(Base):
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     run: Mapped[Run] = relationship(back_populates="node_runs")
+
+
+class Artifact(Base):
+    """Metadata for a file/blob produced by a workflow run."""
+
+    __tablename__ = "artifacts"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("runs.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    node_id: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(240), nullable=False)
+    kind: Mapped[str] = mapped_column(String(40), default="binary", nullable=False)
+    content_type: Mapped[str] = mapped_column(
+        String(160), default="application/octet-stream", nullable=False
+    )
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    storage_backend: Mapped[str] = mapped_column(
+        String(40), default="local", nullable=False
+    )
+    storage_key: Mapped[str] = mapped_column(Text, nullable=False)
+    artifact_metadata: Mapped[dict] = mapped_column(
+        "metadata", JSON, default=dict, nullable=False
+    )
+    preview: Mapped[dict | list | str | int | float | bool | None] = mapped_column(
+        JSON, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    run: Mapped[Run] = relationship(back_populates="artifacts")
 
 
 class CodeModule(Base):

@@ -129,6 +129,19 @@ class RunInfo(BaseModel):
     node_runs: list[NodeRunInfo] = []
 
 
+class ArtifactInfo(BaseModel):
+    id: str
+    run_id: str
+    node_id: str
+    name: str
+    kind: str
+    content_type: str
+    size_bytes: int
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    preview: Any = None
+    created_at: datetime
+
+
 class CredentialCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     type: str = "generic"

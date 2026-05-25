@@ -1,6 +1,7 @@
 import type {
   AuditEvent,
   AuthState,
+  ArtifactInfo,
   Credential,
   Environment,
   NodeManifest,
@@ -141,6 +142,12 @@ export const api = {
       body: JSON.stringify(body),
     }),
   getRun: (runId: string) => request<RunInfo>(`/runs/${runId}`),
+  listRunArtifacts: (runId: string) =>
+    request<ArtifactInfo[]>(`/runs/${runId}/artifacts`),
+  getArtifact: (artifactId: string) =>
+    request<ArtifactInfo>(`/artifacts/${artifactId}`),
+  deleteArtifact: (artifactId: string) =>
+    request<void>(`/artifacts/${artifactId}`, { method: "DELETE" }),
   listRuns: (id: string) => request<RunInfo[]>(`/workflows/${id}/runs`),
   listAllRuns: (filters: {
     workflow_id?: string;

@@ -14,6 +14,7 @@ from app.db import SessionLocal, engine
 from app.models import Environment, Run
 from app.redis_client import redis_client
 from app.routers import (
+    artifacts,
     audit,
     auth,
     code_modules,
@@ -207,6 +208,7 @@ app.include_router(export.router)
 app.include_router(auth.router)
 app.include_router(credentials.router)
 app.include_router(audit.router)
+app.include_router(artifacts.router)
 app.include_router(ops.router)
 app.include_router(pinned.router)
 

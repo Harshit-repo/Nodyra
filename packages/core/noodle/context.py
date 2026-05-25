@@ -11,6 +11,9 @@ The runner sets these before invoking the engine. Nodes can read them via
   sub-workflow caller pushes a new id and checks for re-entry.
 * :data:`node_debug` — a per-node scratch dict. Nodes can attach optional
   debugger metadata here; the engine emits it with the node result.
+* :data:`current_node_id` and :data:`artifact_store` — used by
+  ``noodle.artifacts`` so user Python can create files tied to the active run
+  without coupling the core engine to the API database.
 """
 
 from collections.abc import Awaitable, Callable
@@ -29,4 +32,12 @@ call_chain: ContextVar[frozenset[str]] = ContextVar(
 
 node_debug: ContextVar[dict[str, Any] | None] = ContextVar(
     "noodle_node_debug", default=None
+)
+
+current_node_id: ContextVar[str | None] = ContextVar(
+    "noodle_current_node_id", default=None
+)
+
+artifact_store: ContextVar[Any | None] = ContextVar(
+    "noodle_artifact_store", default=None
 )

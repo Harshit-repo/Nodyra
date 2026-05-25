@@ -38,7 +38,8 @@ import uuid
 from typing import Any
 
 import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
-from noodle.context import workflow_caller
+from noodle.artifacts import LocalArtifactStore
+from noodle.context import artifact_store, workflow_caller
 from noodle.engine import execute
 from noodle.models import WorkflowGraph
 from noodle.sdk import register_module_functions, registry, unregister_module
@@ -84,6 +85,7 @@ async def _call_workflow_via_host(workflow_id: str, input_value: Any) -> Any:
 
 async def _handle_run(request: dict[str, Any]) -> None:
     request_id = request.get("request_id", "")
+    run_id = str(request.get("run_id") or request_id)
 
     async def on_event(event: dict) -> None:
         _emit({"request_id": request_id, **event})
@@ -113,6 +115,17 @@ async def _handle_run(request: dict[str, Any]) -> None:
             )
 
     caller_token = workflow_caller.set(_call_workflow_via_host)
+    artifact_token = None
+    artifacts_dir = request.get("artifacts_dir")
+    if artifacts_dir:
+        artifact_token = artifact_store.set(
+            LocalArtifactStore(
+                str(artifacts_dir),
+                run_id,
+                max_bytes=int(request.get("max_artifact_bytes") or 0),
+                max_count=int(request.get("max_artifacts_per_run") or 0),
+            )
+        )
     try:
         graph = WorkflowGraph.model_validate(request["graph"])
         result = await execute(
@@ -139,6 +152,8 @@ async def _handle_run(request: dict[str, Any]) -> None:
             }
         )
     finally:
+        if artifact_token is not None:
+            artifact_store.reset(artifact_token)
         workflow_caller.reset(caller_token)
         for module_id in loaded_module_ids:
             unregister_module(module_id, registry)

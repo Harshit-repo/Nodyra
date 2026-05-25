@@ -19,9 +19,14 @@ import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
 from app.config import settings
 from app.db import SessionLocal
 from app.models import CodeModule, NodeRun, PinnedData, Run, Workflow
+from app.services.artifacts import (
+    collect_artifact_refs,
+    make_artifact_store,
+    persist_artifact_refs,
+)
 from app.services.events import broker
 from app.services.runtime_pool import pool as runtime_pool
-from noodle.context import call_chain, workflow_caller
+from noodle.context import artifact_store, call_chain, workflow_caller
 from noodle.engine import execute
 from noodle.models import WorkflowGraph
 from noodle.sdk import (
@@ -263,6 +268,7 @@ async def _execute_run(
     cache: dict[str, dict] | None = None,
 ) -> None:
     node_events: dict[str, dict] = {}
+    artifact_refs: list[dict] = []
 
     async def on_event(event: dict) -> None:
         clean = dict(event)
@@ -270,6 +276,10 @@ async def _execute_run(
             clean["outputs"] = serialize_value(clean["outputs"])
         if "debug" in clean:
             clean["debug"] = serialize_value(clean["debug"])
+        # Artifact refs travel as plain dicts (marker key + JSON fields) and must
+        # NOT be wrapped in a typed envelope by serialize_value, or this walk
+        # won't see them. serialize_value preserves plain dicts as-is today.
+        artifact_refs.extend(collect_artifact_refs(clean))
         broker.publish(run_id, clean)
         if clean.get("type") == "node_finished":
             node_events[clean["node_id"]] = clean
@@ -317,6 +327,7 @@ async def _execute_run(
             caller_token = workflow_caller.set(_call_sub_workflow)
             try:
                 status = await runtime_pool.dispatch(
+                    run_id,
                     env_id,
                     graph_dict,
                     cache,
@@ -352,6 +363,7 @@ async def _execute_run(
                     )
             chain_token = call_chain.set(frozenset({workflow_id}))
             caller_token = workflow_caller.set(_call_sub_workflow)
+            artifact_token = artifact_store.set(make_artifact_store(run_id))
             try:
                 graph = WorkflowGraph.model_validate(graph_dict)
                 result = await execute(
@@ -363,6 +375,7 @@ async def _execute_run(
                 )
                 status = str(result.status)
             finally:
+                artifact_store.reset(artifact_token)
                 workflow_caller.reset(caller_token)
                 call_chain.reset(chain_token)
                 for module_id in loaded_module_ids:
@@ -404,6 +417,8 @@ async def _execute_run(
                     )
                 )
             await session.commit()
+
+    await persist_artifact_refs(run_id, artifact_refs)
 
     broker.publish(
         run_id, {"type": "run_finished", "run_id": run_id, "status": status}

@@ -128,6 +128,19 @@ export interface RunInfo {
   node_runs: NodeRunResult[];
 }
 
+export interface ArtifactInfo {
+  id: string;
+  run_id: string;
+  node_id: string;
+  name: string;
+  kind: string;
+  content_type: string;
+  size_bytes: number;
+  metadata: Record<string, unknown>;
+  preview: unknown;
+  created_at: string;
+}
+
 export interface Deployment {
   id: string;
   workflow_id: string;
