@@ -4,7 +4,6 @@
 
 ```sh
 uv sync --all-packages
-docker compose -f deploy/docker-compose.yml up postgres redis minio
 
 # api
 DATABASE_URL=sqlite+aiosqlite:///./dev.db \
@@ -16,14 +15,16 @@ DATABASE_URL=sqlite+aiosqlite:///./dev.db \
 cd apps/web && npm install && npm run dev
 ```
 
-For a full Postgres-backed dev stack, swap the `DATABASE_URL` for the compose
-Postgres URL and run `alembic upgrade head` against it.
+For a full Postgres-backed dev stack, run `docker compose -f
+deploy/docker-compose.yml up postgres redis` and swap `DATABASE_URL` for the
+compose Postgres URL.
 
 ## docker-compose
 
-`deploy/docker-compose.yml` brings up the full stack — Postgres, Redis,
-MinIO, the API (running migrations on startup), Celery worker and beat, and
-the web dev server. Open <http://localhost:5173> after the API is healthy.
+`deploy/docker-compose.yml` brings up the full stack — Postgres, Redis, the
+API (running migrations on startup), the web dev server, and optionally the
+Celery worker + Beat for scale-out scheduling. Open <http://localhost:5173>
+after the API is healthy.
 
 ## Kubernetes (Helm)
 
@@ -34,11 +35,59 @@ helm install noodle deploy/helm/noodle \
   --set secret.key=$(openssl rand -hex 32)
 ```
 
-The chart deploys the API, web, worker, and a beat replica. Postgres and
-Redis are expected to be installed separately (Bitnami charts or a managed
-service). Enable the bundled Ingress with `--set ingress.enabled=true` and
-point a hostname at the cluster — it routes `/api` and `/ws` to the API and
-everything else to the web app.
+The chart deploys the API, web, worker, and a Beat replica. Postgres and
+Redis are expected to be installed separately. Enable the bundled Ingress
+with `--set ingress.enabled=true` — it routes `/api` and `/ws` to the API
+and everything else to the web app.
+
+## Configuration flags
+
+All flags read from environment variables; `apps/api/app/config.py` is the
+source of truth.
+
+### Execution
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `USE_SUBPROCESS_RUNNER` | `true` | Run graphs inside a per-env warm subprocess. |
+| `RUNNER_POOL_SIZE` | `1` | Warm processes per env. >1 enables same-env parallelism but each holds a copy of the env's heavy imports. |
+| `MAX_CONCURRENT_RUNS` | `8` | Global cap on top-level run dispatch. Sub-workflows bypass this cap (they run in-process on the parent's host). |
+| `RUNNER_IDLE_SECONDS` | `300` | Reap warm subprocesses idle for this long. |
+| `RUN_SYNCHRONOUSLY` | `false` | Tests only — block on dispatch instead of fire-and-forget. |
+
+### Scheduler
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `ENABLE_INPROCESS_SCHEDULER` | `true` | DB-backed cron loop runs inside the API process. Disable when running Celery Beat to avoid double-fire. |
+| `APP_TIMEZONE` | OS-detected | Fallback timezone for schedules without their own `tz`. |
+
+### Retention & limits
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `RUN_RETENTION_DAYS` | `14` | Age cap on runs (0 = unlimited). Deletes runs, node_runs, artifacts metadata, and artifact files. |
+| `RUN_RETENTION_MAX_PER_WORKFLOW` | `0` | Keep only N most recent per workflow (0 = unlimited count, age-only). |
+| `RUN_RETENTION_TICK_SECONDS` | `3600` | Retention loop tick. |
+| `MAX_OUTPUT_BYTES` | `262144` (256 KB) | Per-port output cap. Oversize replaced with `{_truncated, size, preview}` before persisting. |
+
+### Artifacts
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `ARTIFACTS_DIR` | `./artifacts` | Local artifact storage root. |
+| `ARTIFACT_STORAGE_BACKEND` | `local` | Only `local` shipped today; S3/GCS/Blob are future work. |
+| `MAX_ARTIFACT_BYTES` | `52428800` (50 MB) | Per-write size cap. 0 = unlimited. |
+| `MAX_ARTIFACTS_PER_RUN` | `100` | Per-run count cap. 0 = unlimited. |
+
+### Auth & security
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `AUTH_REQUIRED` | `false` | Bearer-token gate on all routes except `/auth`, `/health`, `/webhook`, `/internal`. |
+| `SECRET_KEY` | dev placeholder | Encrypts credentials + signs session tokens. **Must** be rotated for production. |
+| `INTERNAL_API_TOKEN` | unset | Shared secret for `/internal/*` worker callbacks when `AUTH_REQUIRED=true`. |
+| `CORS_ORIGINS` | `*` (dev) | Comma-separated allowed origins. |
 
 ## Observability
 
@@ -46,13 +95,18 @@ everything else to the web app.
 - `GET /health/ready` — readiness probe (Postgres + Redis).
 - `GET /system/status` — JSON status with version, uptime, counts.
 - `GET /metrics` — Prometheus text format.
-
-Point Prometheus at the API service and add `/metrics` as a scrape target.
+- `GET /runs` (paginated, filterable) and the **Executions** page in the UI
+  show every run across the system with per-node logs, timing, and outputs.
 
 ## Security checklist
 
 - Set `SECRET_KEY` to a strong random value. It encrypts credentials and
   signs session tokens.
+- Set `AUTH_REQUIRED=true` and create the first admin via `/auth/register`.
 - Set `CORS_ORIGINS` to your real frontend origin.
 - Put the API behind TLS (Ingress with `tls: true`, or a reverse proxy).
-- Rotate the encrypted-data key by re-encrypting credentials if it ever leaks.
+- Code modules and the Code node execute arbitrary Python in the workflow's
+  env. Gate Code Library access to Editor/Admin roles.
+- `ARTIFACTS_DIR` should be on persistent storage (PVC or host volume) so
+  downloads survive restarts. If you set a retention policy, files for
+  pruned runs are deleted automatically.
