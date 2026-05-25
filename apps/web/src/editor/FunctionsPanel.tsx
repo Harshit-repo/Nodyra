@@ -303,33 +303,27 @@ export function FunctionsPanel({
                         Registered nodes: {preview.registered.length}
                       </p>
                       <p className="muted functions-rule-hint">
-                        Every parameter shows up as both a wired input port
-                        (drag from upstream) and an inspector field (set a
-                        literal or expression). The edge wins if both are
-                        set. Required parameters (no default) must have at
-                        least one of the two.
+                        Each function becomes a node with one input port
+                        (the upstream data envelope, available as{" "}
+                        <code>{"{{ $json }}"}</code>) and every parameter
+                        in the inspector. Set literals or expressions like{" "}
+                        <code>{"{{ $json.field }}"}</code> to pull values
+                        from upstream.
                       </p>
                       {preview.functions.length > 0 && (
                         <ul className="functions-list-funcs">
                           {preview.functions.map((fn) => (
                             <li key={fn.name}>
                               <code>{fn.name}</code>
-                              {fn.inputs.length > 0 && (
-                                <span className="fn-shape fn-inputs">
-                                  inputs: {fn.inputs.join(", ")}
-                                </span>
-                              )}
-                              {fn.params.length > 0 && (
+                              {fn.params.length > 0 ? (
                                 <span className="fn-shape fn-params">
                                   params: {fn.params.join(", ")}
                                 </span>
+                              ) : (
+                                <span className="fn-shape muted">
+                                  (no parameters)
+                                </span>
                               )}
-                              {fn.inputs.length === 0 &&
-                                fn.params.length === 0 && (
-                                  <span className="fn-shape muted">
-                                    (no parameters)
-                                  </span>
-                                )}
                             </li>
                           ))}
                         </ul>

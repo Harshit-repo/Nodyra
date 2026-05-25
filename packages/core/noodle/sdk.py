@@ -19,7 +19,7 @@ import inspect
 import types
 import typing
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, get_args, get_origin, get_type_hints
 
 from noodle.models import NodeManifest, ParamSpec, PortSpec
@@ -53,6 +53,14 @@ class NodeDef:
     func: Callable[..., Any]
     manifest: NodeManifest
     is_async: bool
+    # Names of parameters the function actually accepts, used by the engine
+    # to filter kwargs. Lets user-function nodes expose a virtual "input"
+    # port for upstream data without requiring the function to take an
+    # ``input`` argument.
+    param_names: frozenset[str] = field(default_factory=frozenset)
+    # True when the function declares **kwargs — the engine then passes
+    # whatever kwargs it has without filtering.
+    accepts_var_keyword: bool = False
 
 
 class NodeRegistry:
@@ -81,6 +89,24 @@ class NodeRegistry:
 
 # The default registry that built-in nodes register into.
 registry = NodeRegistry()
+
+
+def _signature_info(func: Callable[..., Any]) -> tuple[frozenset[str], bool]:
+    """Return (param_names, accepts_var_keyword) for the engine's kwargs filter."""
+    try:
+        sig = inspect.signature(func)
+    except (TypeError, ValueError):
+        return frozenset(), False
+    names: set[str] = set()
+    has_var_kw = False
+    for p in sig.parameters.values():
+        if p.kind is inspect.Parameter.VAR_KEYWORD:
+            has_var_kw = True
+            continue
+        if p.kind is inspect.Parameter.VAR_POSITIONAL:
+            continue
+        names.add(p.name)
+    return frozenset(names), has_var_kw
 
 
 def _type_label(annotation: Any) -> str:
@@ -260,13 +286,12 @@ def discover_module_function_manifests(
             continue
 
         param_specs = _function_param_specs(stmt)
-        # Every parameter is exposed BOTH as a wired input port (so you can
-        # drag an upstream edge into it) AND as an inspector field (so you
-        # can set a literal or expression when nothing's wired). The engine
-        # prefers the edge value over the inspector value at run time.
-        # Required params (no default) carry ``required=True`` so the
-        # engine flags them if neither edge nor inspector supplies one.
-        input_names = [name for name, _, _, _ in param_specs]
+        # n8n-style: the node has a single "input" port (the upstream data
+        # envelope, available as $json in expressions) and every function
+        # parameter shows up in the inspector. Users wire upstream into the
+        # one port and reference its fields via {{ $json.field }} in each
+        # param — or set literals/expressions directly.
+        input_names = ["input"]
         params = [
             ParamSpec(
                 name=name,
@@ -348,20 +373,18 @@ def register_module_functions(
             skipped.append((key, "*args / **kwargs are not supported"))
             continue
 
-        # Build the manifest directly: every parameter is exposed BOTH as
-        # a wired input port and as an inspector field. The runtime engine
-        # prefers the wired value when both are present, so users can drag
-        # an upstream edge into any param OR set a literal/expression in
-        # the inspector — same model as register-mode but without the
-        # "first param is special" foot-gun.
+        # n8n-style: one virtual "input" port + every function parameter
+        # in the inspector. The engine binds the wired upstream value to
+        # $json (for expression evaluation) and filters kwargs to the
+        # function's actual signature before calling — so the virtual
+        # "input" port isn't passed unless the user happened to name a
+        # parameter ``input``.
         try:
             hints = get_type_hints(value)
         except Exception:  # noqa: BLE001 - bad annotation strings shouldn't crash registration
             hints = {}
-        input_specs: list[PortSpec] = []
         config_specs: list[ParamSpec] = []
         for pname, param in params.items():
-            input_specs.append(PortSpec(name=pname))
             has_default = param.default is not inspect.Parameter.empty
             config_specs.append(
                 ParamSpec(
@@ -378,15 +401,18 @@ def register_module_functions(
             version="1.0.0",
             description=(value.__doc__ or "").strip(),
             icon=None,
-            inputs=input_specs,
+            inputs=[PortSpec(name="input")],
             params=config_specs,
             outputs=[PortSpec(name="main")],
         )
 
+        sig_param_names, accepts_var_kw = _signature_info(value)
         node_def = NodeDef(
             func=value,
             manifest=manifest,
             is_async=inspect.iscoroutinefunction(value),
+            param_names=sig_param_names,
+            accepts_var_keyword=accepts_var_kw,
         )
         # Re-register on top: drop any prior entry under the same id so an
         # edited file replaces its previous registration cleanly.
@@ -439,10 +465,13 @@ def node(
             outputs=outputs or ["main"],
             icon=icon,
         )
+        param_names, has_var_kw = _signature_info(func)
         node_def = NodeDef(
             func=func,
             manifest=manifest,
             is_async=inspect.iscoroutinefunction(func),
+            param_names=param_names,
+            accepts_var_keyword=has_var_kw,
         )
         registry.register(node_def)
         func.__noodle_node__ = node_def  # type: ignore[attr-defined]

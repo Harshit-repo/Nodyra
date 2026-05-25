@@ -35,10 +35,9 @@ async def test_code_module_crud_and_preview(client: AsyncClient) -> None:
     manifest = manifests[0]
     assert manifest["id"] == f"user:{module['id']}:add"
     assert manifest["name"] == "add"
-    # Every param is both a wired input port AND an inspector field.
-    assert {p["name"] for p in manifest["inputs"]} == {"x", "y"}
+    # One wired input port (the upstream envelope); both params in inspector.
+    assert [p["name"] for p in manifest["inputs"]] == ["input"]
     assert {p["name"] for p in manifest["params"]} == {"x", "y"}
-    # Defaulted params carry their default; required ones don't.
     by_name = {p["name"]: p for p in manifest["params"]}
     assert by_name["x"]["default"] == 0 and by_name["x"]["required"] is False
     assert by_name["y"]["default"] == 0 and by_name["y"]["required"] is False
@@ -61,18 +60,20 @@ async def test_uploaded_function_executes_when_workflow_runs(
     ).json()
 
     add_id = f"user:{module['id']}:add"
+    # Wire the trigger's payload into the node's input port, then pull
+    # x out of $json (the upstream payload) and set y as a literal.
     graph = {
         "nodes": [
             {
                 "id": "t",
                 "type": "manual_trigger",
-                "params": {"data": 5},
+                "params": {"data": {"x": 5}},
                 "position": {"x": 0, "y": 0},
             },
             {
                 "id": "a",
                 "type": add_id,
-                "params": {"y": 7},
+                "params": {"x": "{{ $json.x }}", "y": 7},
                 "position": {"x": 1, "y": 0},
             },
         ],
@@ -82,7 +83,7 @@ async def test_uploaded_function_executes_when_workflow_runs(
                 "source": "t",
                 "source_output": "main",
                 "target": "a",
-                "target_input": "x",
+                "target_input": "input",
             }
         ],
     }
@@ -97,12 +98,12 @@ async def test_uploaded_function_executes_when_workflow_runs(
     assert results["a"]["output"]["main"] == 12
 
 
-async def test_every_param_is_both_wired_port_and_inspector_field(
+async def test_single_input_port_with_all_params_in_inspector(
     client: AsyncClient,
 ) -> None:
-    """Every uploaded-function parameter shows up as a wired input port AND
-    as an inspector field. Required params (no default) carry required=True
-    so the engine flags them if neither edge nor inspector supplies one."""
+    """User-function nodes always have exactly one 'input' port and expose
+    every function parameter as an inspector field. Required params keep
+    required=True so the engine flags them if nothing supplies a value."""
     workflow_id = (
         await client.post("/workflows", json={"name": "Shape"})
     ).json()["id"]
@@ -133,30 +134,31 @@ async def test_every_param_is_both_wired_port_and_inspector_field(
             await client.get(f"/code-modules/manifests/workflow/{workflow_id}")
         ).json()
     }
-    ad = manifests[f"user:{module['id']}:all_defaults"]
-    assert {p["name"] for p in ad["inputs"]} == {"x", "y"}
-    assert {p["name"] for p in ad["params"]} == {"x", "y"}
-    assert all(p["required"] is False for p in ad["params"])
+    for fname in ("all_defaults", "mixed", "all_required"):
+        m = manifests[f"user:{module['id']}:{fname}"]
+        assert [p["name"] for p in m["inputs"]] == ["input"]
 
-    mx = manifests[f"user:{module['id']}:mixed"]
-    assert {p["name"] for p in mx["inputs"]} == {"rows", "indent"}
-    rows_spec = next(p for p in mx["params"] if p["name"] == "rows")
-    indent_spec = next(p for p in mx["params"] if p["name"] == "indent")
-    assert rows_spec["required"] is True
-    assert indent_spec["required"] is False
-    assert indent_spec["default"] == 2
+    ad_params = {p["name"]: p for p in manifests[f"user:{module['id']}:all_defaults"]["params"]}
+    assert set(ad_params) == {"x", "y"}
+    assert all(p["required"] is False for p in ad_params.values())
 
-    ar = manifests[f"user:{module['id']}:all_required"]
-    assert {p["name"] for p in ar["inputs"]} == {"a", "b"}
-    assert all(p["required"] is True for p in ar["params"])
+    mx_params = {p["name"]: p for p in manifests[f"user:{module['id']}:mixed"]["params"]}
+    assert mx_params["rows"]["required"] is True
+    assert mx_params["indent"]["required"] is False
+    assert mx_params["indent"]["default"] == 2
+
+    ar_params = manifests[f"user:{module['id']}:all_required"]["params"]
+    assert {p["name"] for p in ar_params} == {"a", "b"}
+    assert all(p["required"] is True for p in ar_params)
 
 
-async def test_inspector_value_used_when_no_edge_then_overridden_by_edge(
+async def test_engine_filters_virtual_input_port_from_call(
     client: AsyncClient,
 ) -> None:
-    """A defaulted param's inspector value should be used when nothing's
-    wired, and an upstream edge should win when both are present."""
-    workflow_id = (await client.post("/workflows", json={"name": "Pref"})).json()["id"]
+    """An uploaded function without an 'input' parameter should still run
+    when an edge is wired into the node's input port — the engine must
+    drop the virtual port from the function call kwargs."""
+    workflow_id = (await client.post("/workflows", json={"name": "Filter"})).json()["id"]
     module = (
         await client.post(
             "/code-modules",
@@ -169,38 +171,23 @@ async def test_inspector_value_used_when_no_edge_then_overridden_by_edge(
         )
     ).json()
     add_id = f"user:{module['id']}:add"
-
-    # 1) Only inspector values, no edges. Both x and y come from params.
-    graph_no_edges = {
+    graph = {
         "nodes": [
-            {"id": "a", "type": add_id, "params": {"x": 3, "y": 4},
+            {"id": "t", "type": "manual_trigger", "params": {"data": "ignored"},
              "position": {"x": 0, "y": 0}},
-        ],
-        "edges": [],
-    }
-    await client.put(f"/workflows/{workflow_id}", json={"graph": graph_no_edges})
-    run = (await client.get(
-        f"/runs/{(await client.post(f'/workflows/{workflow_id}/run', json={})).json()['run_id']}"
-    )).json()
-    assert run["node_runs"][0]["output"]["main"] == 7
-
-    # 2) An edge into x AND an inspector value for x. Edge wins.
-    graph_edge_wins = {
-        "nodes": [
-            {"id": "src", "type": "manual_trigger", "params": {"data": 10},
-             "position": {"x": 0, "y": 0}},
-            {"id": "a", "type": add_id, "params": {"x": 999, "y": 4},
+            {"id": "a", "type": add_id, "params": {"x": 4, "y": 6},
              "position": {"x": 1, "y": 0}},
         ],
-        "edges": [{"id": "e", "source": "src", "source_output": "main",
-                   "target": "a", "target_input": "x"}],
+        "edges": [{"id": "e", "source": "t", "source_output": "main",
+                   "target": "a", "target_input": "input"}],
     }
-    await client.put(f"/workflows/{workflow_id}", json={"graph": graph_edge_wins})
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
     run = (await client.get(
         f"/runs/{(await client.post(f'/workflows/{workflow_id}/run', json={})).json()['run_id']}"
     )).json()
+    assert run["status"] == "success"
     a_run = next(n for n in run["node_runs"] if n["node_id"] == "a")
-    assert a_run["output"]["main"] == 14  # 10 (edge) + 4 (param), not 999+4
+    assert a_run["output"]["main"] == 10
 
 
 async def test_preview_surfaces_syntax_errors(client: AsyncClient) -> None:
@@ -255,7 +242,8 @@ async def test_preview_and_manifests_do_not_execute_module_body(
     assert [manifest["id"] for manifest in manifests] == [
         f"user:{module['id']}:safe"
     ]
-    # Both x and y appear as both wired ports and inspector params.
+    # Both x and y appear as inspector params; the node has one input port.
+    assert [p["name"] for p in manifests[0]["inputs"]] == ["input"]
     assert {p["name"] for p in manifests[0]["params"]} == {"x", "y"}
 
 
@@ -402,13 +390,15 @@ async def test_starter_graph_wires_variable_chain(client: AsyncClient) -> None:
     by_id = {n["id"]: n for n in graph["nodes"]}
     assert set(by_id) == {"n_fetch", "n_to_frame", "n_summarise"}
 
-    # Literal kwargs are pre-populated as default params.
-    assert by_id["n_to_frame"]["params"] == {"indent": 4}
-    assert by_id["n_summarise"]["params"] == {"label": "go"}
+    # Variable args become {{ $json }} (bound to the wired upstream port);
+    # literal args are pre-populated as default params on the inspector.
+    assert by_id["n_to_frame"]["params"] == {"rows": "{{ $json }}", "indent": 4}
+    assert by_id["n_summarise"]["params"] == {"df": "{{ $json }}", "label": "go"}
 
+    # Edges target the single ``input`` port (one upstream per node).
     edges = {(e["source"], e["target"], e["target_input"]) for e in graph["edges"]}
-    assert ("n_fetch", "n_to_frame", "rows") in edges
-    assert ("n_to_frame", "n_summarise", "df") in edges
+    assert ("n_fetch", "n_to_frame", "input") in edges
+    assert ("n_to_frame", "n_summarise", "input") in edges
 
 
 async def test_preview_skips_kwargs_and_classes(client: AsyncClient) -> None:

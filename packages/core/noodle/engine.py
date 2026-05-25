@@ -337,6 +337,17 @@ async def execute(
         log_buf: list[str] = []
         log_token = _log_capture.set(log_buf)
         debug_token = node_debug.set(debug)
+        # Filter kwargs to what the function actually accepts. Lets the
+        # manifest expose a virtual ``input`` port (the upstream envelope,
+        # used to build $json) even when the user's function doesn't take
+        # an ``input`` parameter. Built-ins with simple signatures are a
+        # no-op here. ``**kwargs``-accepting functions get the full dict.
+        if node_def.accepts_var_keyword or not node_def.param_names:
+            call_kwargs = kwargs
+        else:
+            call_kwargs = {
+                k: v for k, v in kwargs.items() if k in node_def.param_names
+            }
         try:
             for attempt in range(attempts):
                 try:
@@ -345,16 +356,16 @@ async def execute(
                     if node_def.is_async:
                         if timeout is not None:
                             raw = await asyncio.wait_for(
-                                node_def.func(**kwargs), timeout
+                                node_def.func(**call_kwargs), timeout
                             )
                         else:
-                            raw = await node_def.func(**kwargs)
+                            raw = await node_def.func(**call_kwargs)
                     elif timeout is not None:
                         raw = await asyncio.wait_for(
-                            asyncio.to_thread(node_def.func, **kwargs), timeout
+                            asyncio.to_thread(node_def.func, **call_kwargs), timeout
                         )
                     else:
-                        raw = node_def.func(**kwargs)
+                        raw = node_def.func(**call_kwargs)
                     outputs = _normalize_outputs(raw, output_names, graph_node.type)
                     caught = None
                     break

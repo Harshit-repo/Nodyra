@@ -1,22 +1,23 @@
 """AST-aware starter-graph generator for uploaded code modules.
 
 Parses the uploaded file and emits a ``WorkflowGraph`` payload by walking
-the module body:
+the module body. Under the n8n-style single-port model:
 
-* Each top-level ``def`` becomes a node (laid out left→right in declaration
-  order). Functions taking ``*args``/``**kwargs`` are skipped to match
-  ``register_module_functions``.
-* For every module-level ``<var> = <call>``, the LHS variable name is
+* Each top-level ``def`` becomes a node with one virtual ``input`` port
+  (the upstream data envelope, available as ``$json`` in expressions).
+* Every function parameter lives in the inspector.
+* For each module-level ``<var> = <call>``, the LHS variable name is
   recorded → caller node id.
-* For every call to one of those functions, positional and keyword arguments
-  that reference a known variable wire an **edge** from the variable's
-  source node into the calling node's matching input port.
-* Literal arguments (``Constant``, ``List``, ``Dict``, ``Tuple``) become the
-  node's default param values, so the starter graph looks like the script
-  with the same arguments.
+* When a call passes a variable reference, the *first* such reference
+  becomes the wired edge into the node's ``input`` port, and that
+  parameter's value is set to ``{{ $json }}``. Any *additional*
+  variable references become cross-node expressions
+  ``{{ $node["<id>"].main }}`` in their respective inspector fields.
+* Literal arguments become the node's default param values.
 """
 
 import ast
+import json
 from typing import Any
 
 
@@ -41,11 +42,7 @@ def build_starter_graph(module_id: str, source: str) -> dict:
     """Return a ``{"nodes": [...], "edges": [...]}`` graph payload."""
     tree = ast.parse(source)
 
-    # Discover all user functions and their parameter lists. Mirror
-    # register_module_functions: skip *args/**kwargs. Every param is now
-    # both a wired input port and a config field, so we don't need to
-    # tag any port as "wire-only" — literals from the script become
-    # default param values on the corresponding node.
+    # Discover top-level functions (skip *args/**kwargs).
     function_params: dict[str, list[str]] = {}
     function_order: list[str] = []
     for stmt in tree.body:
@@ -59,7 +56,7 @@ def build_starter_graph(module_id: str, source: str) -> dict:
     if not function_order:
         return {"nodes": [], "edges": []}
 
-    # Layout: a row of nodes from left to right, 240px apart.
+    # One node per function, laid out left→right.
     nodes: list[dict] = []
     node_id_by_func: dict[str, str] = {}
     for i, fname in enumerate(function_order):
@@ -78,28 +75,48 @@ def build_starter_graph(module_id: str, source: str) -> dict:
     symbol_table: dict[str, str] = {}  # variable name → source node id
     edges: list[dict] = []
     edge_seq = 0
+    # Track which target nodes already have their single ``input`` port wired,
+    # so subsequent variable references fall back to cross-node expressions.
+    wired_targets: set[str] = set()
 
     def get_node(nid: str) -> dict:
         return next(n for n in nodes if n["id"] == nid)
 
     def wire_arg(target_node_id: str, port: str, value: ast.AST) -> None:
-        """Wire one argument: either an edge from a known var, or a default param."""
+        """Set one inspector field on ``target_node_id`` based on a call arg."""
         nonlocal edge_seq
         if isinstance(value, ast.Name) and value.id in symbol_table:
-            edges.append(
-                {
-                    "id": f"e{edge_seq}",
-                    "source": symbol_table[value.id],
-                    "source_output": "main",
-                    "target": target_node_id,
-                    "target_input": port,
-                }
-            )
-            edge_seq += 1
+            source_node_id = symbol_table[value.id]
+            if target_node_id not in wired_targets:
+                edges.append(
+                    {
+                        "id": f"e{edge_seq}",
+                        "source": source_node_id,
+                        "source_output": "main",
+                        "target": target_node_id,
+                        "target_input": "input",
+                    }
+                )
+                edge_seq += 1
+                wired_targets.add(target_node_id)
+                # The wired upstream is available as $json in expressions.
+                get_node(target_node_id)["params"][port] = "{{ $json }}"
+            else:
+                # Already wired to a different upstream — use a cross-node
+                # expression to reach this one.
+                expr = f'{{{{ $node["{source_node_id}"].main }}}}'
+                get_node(target_node_id)["params"][port] = expr
             return
         lit = _literal_value(value)
-        if lit is not None:
-            get_node(target_node_id)["params"][port] = lit
+        if lit is None:
+            return
+        # JSON-friendly: bool/int/float/str/list/dict are all fine; the engine
+        # stores params as JSON anyway.
+        try:
+            json.dumps(lit)
+        except TypeError:
+            return
+        get_node(target_node_id)["params"][port] = lit
 
     def handle_call(call: ast.Call) -> str | None:
         if not isinstance(call.func, ast.Name):
