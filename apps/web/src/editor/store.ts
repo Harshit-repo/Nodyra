@@ -78,7 +78,7 @@ interface EditorStore {
   runError: string | null;
 
   setManifests: (manifests: NodeManifest[]) => void;
-  loadGraph: (graph: WorkflowGraph) => void;
+  loadGraph: (graph: WorkflowGraph, opts?: { dirty?: boolean }) => void;
   toGraph: () => WorkflowGraph;
   onNodesChange: (changes: NodeChange<NoodleNode>[]) => void;
   onEdgesChange: (changes: EdgeChange[]) => void;
@@ -161,7 +161,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
       manifestsById: Object.fromEntries(manifests.map((m) => [m.id, m])),
     }),
 
-  loadGraph: (graph) => {
+  loadGraph: (graph, opts) => {
     const byId = get().manifestsById;
     const nodes: NoodleNode[] = [];
     for (const n of graph.nodes) {
@@ -200,7 +200,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
       target: e.target,
       targetHandle: e.target_input,
     }));
-    set({ nodes, edges, selectedId: null, dirty: false });
+    set({ nodes, edges, selectedId: null, dirty: Boolean(opts?.dirty) });
   },
 
   toGraph: () => {

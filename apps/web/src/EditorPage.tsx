@@ -560,7 +560,7 @@ export function EditorPage() {
           onApplyStarterGraph={(graph) => {
             // Apply locally and mark the workflow dirty; the user reviews on
             // the canvas and clicks Save to persist.
-            loadGraph(graph);
+            loadGraph(graph, { dirty: true });
           }}
         />
       )}
