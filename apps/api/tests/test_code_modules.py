@@ -1,7 +1,7 @@
 from httpx import AsyncClient
 
 SIMPLE_MODULE = '''
-def add(x: int, y: int = 0) -> int:
+def add(x: int = 0, y: int = 0) -> int:
     """Return x + y."""
     return x + y
 '''
@@ -35,8 +35,13 @@ async def test_code_module_crud_and_preview(client: AsyncClient) -> None:
     manifest = manifests[0]
     assert manifest["id"] == f"user:{module['id']}:add"
     assert manifest["name"] == "add"
-    assert {p["name"] for p in manifest["params"]} == {"y"}
-    assert {p["name"] for p in manifest["inputs"]} == {"x"}
+    # Every param is both a wired input port AND an inspector field.
+    assert {p["name"] for p in manifest["inputs"]} == {"x", "y"}
+    assert {p["name"] for p in manifest["params"]} == {"x", "y"}
+    # Defaulted params carry their default; required ones don't.
+    by_name = {p["name"]: p for p in manifest["params"]}
+    assert by_name["x"]["default"] == 0 and by_name["x"]["required"] is False
+    assert by_name["y"]["default"] == 0 and by_name["y"]["required"] is False
 
 
 async def test_uploaded_function_executes_when_workflow_runs(
@@ -92,12 +97,12 @@ async def test_uploaded_function_executes_when_workflow_runs(
     assert results["a"]["output"]["main"] == 12
 
 
-async def test_param_split_follows_python_defaults_rule(
+async def test_every_param_is_both_wired_port_and_inspector_field(
     client: AsyncClient,
 ) -> None:
-    """Required params (no default) become wired input ports; defaulted
-    params become inspector config. Mirrors Python's optional-vs-required
-    convention so the on-canvas wiring matches the function signature."""
+    """Every uploaded-function parameter shows up as a wired input port AND
+    as an inspector field. Required params (no default) carry required=True
+    so the engine flags them if neither edge nor inspector supplies one."""
     workflow_id = (
         await client.post("/workflows", json={"name": "Shape"})
     ).json()["id"]
@@ -129,16 +134,73 @@ async def test_param_split_follows_python_defaults_rule(
         ).json()
     }
     ad = manifests[f"user:{module['id']}:all_defaults"]
-    assert [p["name"] for p in ad["inputs"]] == []
+    assert {p["name"] for p in ad["inputs"]} == {"x", "y"}
     assert {p["name"] for p in ad["params"]} == {"x", "y"}
+    assert all(p["required"] is False for p in ad["params"])
 
     mx = manifests[f"user:{module['id']}:mixed"]
-    assert [p["name"] for p in mx["inputs"]] == ["rows"]
-    assert {p["name"] for p in mx["params"]} == {"indent"}
+    assert {p["name"] for p in mx["inputs"]} == {"rows", "indent"}
+    rows_spec = next(p for p in mx["params"] if p["name"] == "rows")
+    indent_spec = next(p for p in mx["params"] if p["name"] == "indent")
+    assert rows_spec["required"] is True
+    assert indent_spec["required"] is False
+    assert indent_spec["default"] == 2
 
     ar = manifests[f"user:{module['id']}:all_required"]
-    assert [p["name"] for p in ar["inputs"]] == ["a", "b"]
-    assert ar["params"] == []
+    assert {p["name"] for p in ar["inputs"]} == {"a", "b"}
+    assert all(p["required"] is True for p in ar["params"])
+
+
+async def test_inspector_value_used_when_no_edge_then_overridden_by_edge(
+    client: AsyncClient,
+) -> None:
+    """A defaulted param's inspector value should be used when nothing's
+    wired, and an upstream edge should win when both are present."""
+    workflow_id = (await client.post("/workflows", json={"name": "Pref"})).json()["id"]
+    module = (
+        await client.post(
+            "/code-modules",
+            json={
+                "scope": "workflow",
+                "workflow_id": workflow_id,
+                "name": "m.py",
+                "contents": SIMPLE_MODULE,
+            },
+        )
+    ).json()
+    add_id = f"user:{module['id']}:add"
+
+    # 1) Only inspector values, no edges. Both x and y come from params.
+    graph_no_edges = {
+        "nodes": [
+            {"id": "a", "type": add_id, "params": {"x": 3, "y": 4},
+             "position": {"x": 0, "y": 0}},
+        ],
+        "edges": [],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph_no_edges})
+    run = (await client.get(
+        f"/runs/{(await client.post(f'/workflows/{workflow_id}/run', json={})).json()['run_id']}"
+    )).json()
+    assert run["node_runs"][0]["output"]["main"] == 7
+
+    # 2) An edge into x AND an inspector value for x. Edge wins.
+    graph_edge_wins = {
+        "nodes": [
+            {"id": "src", "type": "manual_trigger", "params": {"data": 10},
+             "position": {"x": 0, "y": 0}},
+            {"id": "a", "type": add_id, "params": {"x": 999, "y": 4},
+             "position": {"x": 1, "y": 0}},
+        ],
+        "edges": [{"id": "e", "source": "src", "source_output": "main",
+                   "target": "a", "target_input": "x"}],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph_edge_wins})
+    run = (await client.get(
+        f"/runs/{(await client.post(f'/workflows/{workflow_id}/run', json={})).json()['run_id']}"
+    )).json()
+    a_run = next(n for n in run["node_runs"] if n["node_id"] == "a")
+    assert a_run["output"]["main"] == 14  # 10 (edge) + 4 (param), not 999+4
 
 
 async def test_preview_surfaces_syntax_errors(client: AsyncClient) -> None:
@@ -193,7 +255,8 @@ async def test_preview_and_manifests_do_not_execute_module_body(
     assert [manifest["id"] for manifest in manifests] == [
         f"user:{module['id']}:safe"
     ]
-    assert manifests[0]["params"][0]["name"] == "y"
+    # Both x and y appear as both wired ports and inspector params.
+    assert {p["name"] for p in manifests[0]["params"]} == {"x", "y"}
 
 
 async def test_preview_reports_missing_imports(client: AsyncClient) -> None:

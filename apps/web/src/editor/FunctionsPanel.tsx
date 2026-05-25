@@ -303,9 +303,11 @@ export function FunctionsPanel({
                         Registered nodes: {preview.registered.length}
                       </p>
                       <p className="muted functions-rule-hint">
-                        Required parameters (no default) become wired input
-                        ports. Parameters with a default become inspector
-                        fields.
+                        Every parameter shows up as both a wired input port
+                        (drag from upstream) and an inspector field (set a
+                        literal or expression). The edge wins if both are
+                        set. Required parameters (no default) must have at
+                        least one of the two.
                       </p>
                       {preview.functions.length > 0 && (
                         <ul className="functions-list-funcs">

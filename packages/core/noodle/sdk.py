@@ -260,20 +260,21 @@ def discover_module_function_manifests(
             continue
 
         param_specs = _function_param_specs(stmt)
-        # Required positional params (no default) → wired input ports. Params
-        # with defaults → editable config in the inspector. Mirrors Python
-        # convention: defaults are "optional config", no default is "must
-        # be supplied", which on a graph is the wired-edge contract.
-        input_names = [name for name, _, has_default, _ in param_specs if not has_default]
+        # Every parameter is exposed BOTH as a wired input port (so you can
+        # drag an upstream edge into it) AND as an inspector field (so you
+        # can set a literal or expression when nothing's wired). The engine
+        # prefers the edge value over the inspector value at run time.
+        # Required params (no default) carry ``required=True`` so the
+        # engine flags them if neither edge nor inspector supplies one.
+        input_names = [name for name, _, _, _ in param_specs]
         params = [
             ParamSpec(
                 name=name,
                 type=type_label,
-                required=False,
+                required=not has_default,
                 default=default,
             )
             for name, type_label, has_default, default in param_specs
-            if has_default
         ]
         manifests.append(
             NodeManifest(
@@ -347,32 +348,40 @@ def register_module_functions(
             skipped.append((key, "*args / **kwargs are not supported"))
             continue
 
-        # Required positional params (no default) → wired input ports.
-        # Params with defaults → editable config in the inspector. Matches
-        # discover_module_function_manifests so the AST preview and the
-        # runtime registration agree on the manifest shape.
-        inputs = [
-            name
-            for name, param in params.items()
-            if param.default is inspect.Parameter.empty
-        ]
-
+        # Build the manifest directly: every parameter is exposed BOTH as
+        # a wired input port and as an inspector field. The runtime engine
+        # prefers the wired value when both are present, so users can drag
+        # an upstream edge into any param OR set a literal/expression in
+        # the inspector — same model as register-mode but without the
+        # "first param is special" foot-gun.
         try:
-            manifest = _build_manifest(
-                value,
-                node_id=f"user:{module_id}:{key}",
-                name=key,
-                category=category,
-                version="1.0.0",
-                description=(value.__doc__ or "").strip(),
-                param_meta={},
-                inputs=inputs,
-                outputs=["main"],
-                icon=None,
+            hints = get_type_hints(value)
+        except Exception:  # noqa: BLE001 - bad annotation strings shouldn't crash registration
+            hints = {}
+        input_specs: list[PortSpec] = []
+        config_specs: list[ParamSpec] = []
+        for pname, param in params.items():
+            input_specs.append(PortSpec(name=pname))
+            has_default = param.default is not inspect.Parameter.empty
+            config_specs.append(
+                ParamSpec(
+                    name=pname,
+                    type=_type_label(hints.get(pname, str)),
+                    required=not has_default,
+                    default=param.default if has_default else None,
+                )
             )
-        except Exception as exc:  # noqa: BLE001 - surface back to the UI
-            skipped.append((key, f"manifest error: {exc}"))
-            continue
+        manifest = NodeManifest(
+            id=f"user:{module_id}:{key}",
+            name=key,
+            category=category,
+            version="1.0.0",
+            description=(value.__doc__ or "").strip(),
+            icon=None,
+            inputs=input_specs,
+            params=config_specs,
+            outputs=[PortSpec(name="main")],
+        )
 
         node_def = NodeDef(
             func=value,

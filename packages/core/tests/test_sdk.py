@@ -117,8 +117,12 @@ def transform(rows: list[dict], limit: int = 10, active: bool = True,
     manifest = manifests[0]
     assert manifest.id == "user:mod1:transform"
     assert manifest.description == "Transform rows."
-    assert [p.name for p in manifest.inputs] == ["rows"]
+    # Every parameter is both a wired input port and an inspector field.
+    assert [p.name for p in manifest.inputs] == [
+        "rows", "limit", "active", "ratio", "meta", "anything", "dynamic",
+    ]
     params = {param.name: param for param in manifest.params}
+    assert params["rows"].required is True
     assert params["limit"].type == "integer"
     assert params["limit"].default == 10
     assert params["active"].type == "boolean"
@@ -159,7 +163,9 @@ async def fetch(url: str, retries: int = 3):
     assert len(manifests) == 1
     manifest = manifests[0]
     assert manifest.id == "user:mod3:fetch"
-    assert [p.name for p in manifest.inputs] == ["url"]
-    assert [(p.name, p.type, p.default) for p in manifest.params] == [
-        ("retries", "integer", 3)
+    # Every param appears in both inputs and params (edge wins at runtime).
+    assert [p.name for p in manifest.inputs] == ["url", "retries"]
+    assert [(p.name, p.type, p.default, p.required) for p in manifest.params] == [
+        ("url", "string", None, True),
+        ("retries", "integer", 3, False),
     ]

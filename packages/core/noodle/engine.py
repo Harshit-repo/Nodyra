@@ -285,6 +285,11 @@ async def execute(
 
         missing: list[str] = []
         for spec in node_def.manifest.params:
+            # A param may also be exposed as a wired input port (the user-
+            # function rule). If an upstream edge already supplied a value,
+            # the edge wins — don't let an inspector default overwrite it.
+            if spec.name in kwargs:
+                continue
             if spec.name in graph_node.params:
                 kwargs[spec.name] = graph_node.params[spec.name]
             elif spec.required:
