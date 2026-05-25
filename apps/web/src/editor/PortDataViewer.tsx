@@ -3,6 +3,14 @@ import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 
 import { useEditor, type NoodleNode } from "./store";
+import {
+  asTypedEnvelope,
+  formatTypedCell,
+  typedDisplayValue,
+  typedLabel,
+  typedRecords,
+  typedSummary,
+} from "./typedValues";
 
 const MIN_HEIGHT = 160;
 const DEFAULT_HEIGHT = 248;
@@ -50,6 +58,13 @@ function isRecordList(value: unknown): value is Record<string, unknown>[] {
 function findRecordList(
   value: unknown,
 ): { label: string | null; rows: Record<string, unknown>[] } | null {
+  const envelope = asTypedEnvelope(value);
+  if (envelope?.type === "dataframe") {
+    const rows = typedRecords(envelope);
+    return rows ? { label: "DataFrame", rows } : null;
+  }
+  const display = typedDisplayValue(value);
+  if (display !== value) return findRecordList(display);
   if (isRecordList(value)) return { label: null, rows: value };
   if (!isPlainRecord(value)) return null;
 
@@ -61,6 +76,8 @@ function findRecordList(
 }
 
 function formatCell(value: unknown): string {
+  const typed = formatTypedCell(value);
+  if (typed) return typed;
   if (value === null || value === undefined) return "";
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
@@ -72,6 +89,8 @@ function formatCell(value: unknown): string {
 }
 
 function valueSummary(value: unknown): string {
+  const envelope = asTypedEnvelope(value);
+  if (envelope) return `${typedLabel(envelope)} · ${typedSummary(envelope)}`;
   const table = findRecordList(value);
   if (table) return `${table.rows.length} row${table.rows.length === 1 ? "" : "s"}`;
   if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? "" : "s"}`;
@@ -93,8 +112,21 @@ function edgeLabel(edge: Edge | undefined, direction: "input" | "output"): strin
 }
 
 function PortValuePreview({ value }: { value: unknown }) {
+  const envelope = asTypedEnvelope(value);
   const table = findRecordList(value);
   if (!table) {
+    if (envelope) {
+      return (
+        <div className="port-data-typed-preview">
+          <span className="typed-badge">{typedLabel(envelope)}</span>
+          <span>{typedSummary(envelope)}</span>
+          {envelope.restorable === false && <span>not restorable</span>}
+          {envelope.type === "object" && envelope.repr && (
+            <pre className="port-data-json">{envelope.repr}</pre>
+          )}
+        </div>
+      );
+    }
     return <pre className="port-data-json">{pretty(value)}</pre>;
   }
 
@@ -106,7 +138,18 @@ function PortValuePreview({ value }: { value: unknown }) {
 
   return (
     <div className="port-data-table-preview">
-      {table.label && <div className="port-data-table-label">{table.label}</div>}
+      {table.label && (
+        <div className="port-data-table-label">
+          {table.label === "DataFrame" ? (
+            <>
+              <span className="typed-badge">DataFrame</span>
+              {envelope && <span>{typedSummary(envelope)}</span>}
+            </>
+          ) : (
+            table.label
+          )}
+        </div>
+      )}
       <div className="port-data-table-wrap">
         <table>
           <thead>

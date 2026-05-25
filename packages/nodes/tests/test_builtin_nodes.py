@@ -356,3 +356,40 @@ def test_convert_type_dispatches_on_target() -> None:
     assert fn("a,b", to="list") == ["a", "b"]  # comma is the default separator
     assert fn({"a": 1}, to="json") == '{"a": 1}'
     assert fn('{"a": 1}', to="object") == {"a": 1}
+
+
+def test_convert_fields_converts_selected_columns() -> None:
+    fn = registry.get("convert_fields").func
+    rows = [
+        {"id": "1", "price": "19.99", "active": "true", "tags": "a,b"},
+        {"id": "2", "price": "25.50", "active": "false", "name": "Ada"},
+    ]
+
+    result = fn(
+        rows,
+        conversions={
+            "id": "int",
+            "price": "float",
+            "active": "boolean",
+            "tags": "list",
+        },
+    )
+
+    assert result == [
+        {"id": 1, "price": 19.99, "active": True, "tags": ["a", "b"]},
+        {"id": 2, "price": 25.5, "active": False, "name": "Ada"},
+    ]
+    assert rows[0]["id"] == "1"
+
+
+def test_convert_fields_handles_single_object_and_errors() -> None:
+    fn = registry.get("convert_fields").func
+    assert fn({"count": "3"}, conversions={"count": "int"}) == {"count": 3}
+
+    import pytest
+
+    with pytest.raises(ValueError, match="field 'count'"):
+        fn({"count": "nope"}, conversions={"count": "int"})
+
+    with pytest.raises(ValueError, match="expected an object or list of objects"):
+        fn("not a row", conversions={"count": "int"})

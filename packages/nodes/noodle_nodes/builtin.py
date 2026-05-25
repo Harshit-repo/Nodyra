@@ -23,6 +23,8 @@ OPERATORS = [
     "is true",
 ]
 
+CONVERSION_TARGETS = ["int", "float", "string", "boolean", "list", "json", "object"]
+
 
 def _field(value: Any, field: str) -> Any:
     """Read ``field`` from ``value`` when it is a dict, else return ``value``."""
@@ -726,6 +728,37 @@ def _to_float(value: Any) -> float:
     raise ValueError(f"can't convert {type(value).__name__} to float")
 
 
+def _convert_value(value: Any, target: str, *, separator: str = ",") -> Any:
+    if target == "int":
+        return _to_int(value)
+    if target == "float":
+        return _to_float(value)
+    if target == "string":
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (dict, list, tuple)):
+            try:
+                return json.dumps(value, default=str)
+            except (TypeError, ValueError):
+                return str(value)
+        return "" if value is None else str(value)
+    if target == "boolean":
+        return _to_bool(value)
+    if target == "list":
+        return to_list_node(value, separator=separator)
+    if target == "json":
+        return json.dumps(value, default=str)
+    if target == "object":
+        if isinstance(value, str):
+            return json.loads(value)
+        if isinstance(value, (dict, list)):
+            return value
+        raise ValueError(
+            f"can't parse {type(value).__name__} as a JSON object"
+        )
+    raise ValueError(f"unknown target type {target!r}")
+
+
 @node(name="To Integer", id="to_int", category="Data Types", icon="hash")
 def to_int_node(input: Any = None) -> int:
     """Coerce the input to an int.
@@ -806,7 +839,7 @@ def to_list_node(input: Any = None, separator: str = ",") -> list:
 
 @node(name="Convert Type", id="convert_type", category="Data Types", icon="braces", params={
     "to": {
-        "choices": ["int", "float", "string", "boolean", "list", "json", "object"],
+        "choices": CONVERSION_TARGETS,
         "description": (
             "Target type. 'json' returns a JSON string; "
             "'object' parses a JSON string into a dict/list."
@@ -819,31 +852,77 @@ def convert_type_node(input: Any = None, to: str = "string") -> Any:
     For the common cases, prefer the dedicated ``to_int``/``to_str``/etc.
     nodes — they read more clearly on the canvas.
     """
-    if to == "int":
-        return _to_int(input)
-    if to == "float":
-        return _to_float(input)
-    if to == "string":
-        if isinstance(input, str):
-            return input
-        if isinstance(input, (dict, list, tuple)):
+    try:
+        return _convert_value(input, to)
+    except ValueError as exc:
+        raise ValueError(f"convert_type: {exc}") from exc
+
+
+@node(
+    name="Convert Fields",
+    id="convert_fields",
+    category="Data Types",
+    icon="braces",
+    params={
+        "conversions": {
+            "description": (
+                "Field-to-type map. Example: price=float, active=boolean, id=int."
+            ),
+            "key_value": True,
+            "choices": CONVERSION_TARGETS,
+        },
+        "separator": {
+            "placeholder": ",",
+            "description": "Used only when a field is converted to list.",
+        },
+    },
+)
+def convert_fields_node(
+    input: Any = None,
+    conversions: dict | None = None,
+    separator: str = ",",
+) -> Any:
+    """Convert selected fields on one object or every object in a list.
+
+    ``conversions`` maps field names to target types: int, float, string,
+    boolean, list, json, or object. Missing fields are left unchanged.
+    """
+    conversions = conversions or {}
+    if not conversions:
+        return input
+
+    def convert_row(row: dict, row_index: int | None = None) -> dict:
+        out = dict(row)
+        for field, target in conversions.items():
+            field_name = str(field)
+            if field_name not in out:
+                continue
+            target_type = str(target)
             try:
-                return json.dumps(input, default=str)
-            except (TypeError, ValueError):
-                return str(input)
-        return "" if input is None else str(input)
-    if to == "boolean":
-        return _to_bool(input)
-    if to == "list":
-        return to_list_node(input)
-    if to == "json":
-        return json.dumps(input, default=str)
-    if to == "object":
-        if isinstance(input, str):
-            return json.loads(input)
-        if isinstance(input, dict):
-            return input
-        raise ValueError(
-            f"convert_type: can't parse {type(input).__name__} as a JSON object"
-        )
-    raise ValueError(f"convert_type: unknown target type {to!r}")
+                out[field_name] = _convert_value(
+                    out[field_name],
+                    target_type,
+                    separator=separator,
+                )
+            except Exception as exc:  # noqa: BLE001 - surface field context
+                location = f" row {row_index}" if row_index is not None else ""
+                raise ValueError(
+                    f"convert_fields:{location} field {field_name!r} value "
+                    f"{out[field_name]!r} can't convert to {target_type!r}: {exc}"
+                ) from exc
+        return out
+
+    if isinstance(input, list):
+        result: list = []
+        for index, item in enumerate(input):
+            if isinstance(item, dict):
+                result.append(convert_row(item, index))
+            else:
+                result.append(item)
+        return result
+    if isinstance(input, dict):
+        return convert_row(input)
+    raise ValueError(
+        f"convert_fields: expected an object or list of objects, got "
+        f"{type(input).__name__}"
+    )

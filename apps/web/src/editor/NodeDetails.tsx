@@ -74,9 +74,11 @@ function rowsToDict(rows: KvRow[]): Record<string, string> {
 function KeyValueField({
   value,
   onChange,
+  valueChoices,
 }: {
   value: unknown;
   onChange: (v: unknown) => void;
+  valueChoices?: unknown[] | null;
 }) {
   const initialMode: "fields" | "json" =
     value && typeof value === "object" && !Array.isArray(value)
@@ -147,7 +149,11 @@ function KeyValueField({
       </div>
 
       {mode === "fields" ? (
-        <KvRowList rows={rows} commitRows={commitRows} />
+        <KvRowList
+          rows={rows}
+          commitRows={commitRows}
+          valueChoices={valueChoices}
+        />
       ) : (
         <textarea
           className={`field-input field-json${invalid ? " field-invalid" : ""}`}
@@ -181,12 +187,15 @@ const KV_DRAG_TYPE = "application/x-noodle-kv-row";
 function KvRowList({
   rows,
   commitRows,
+  valueChoices,
 }: {
   rows: KvRow[];
   commitRows: (next: KvRow[]) => void;
+  valueChoices?: unknown[] | null;
 }) {
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState<number | null>(null);
+  const choices = valueChoices?.map((choice) => String(choice)) ?? [];
 
   function moveRow(from: number, to: number): void {
     if (from === to || to < 0 || to >= rows.length) return;
@@ -253,23 +262,49 @@ function KvRowList({
               )
             }
           />
-          <input
-            className="field-input"
-            placeholder="value"
-            value={row.value}
-            onChange={(e) =>
-              commitRows(
-                rows.map((r, j) =>
-                  j === i ? { ...r, value: e.target.value } : r,
+          {choices.length > 0 ? (
+            <select
+              className="field-input kv-value-select"
+              value={row.value}
+              onChange={(e) =>
+                commitRows(
+                  rows.map((r, j) =>
+                    j === i ? { ...r, value: e.target.value } : r,
+                  ),
+                )
+              }
+            >
+              <option value="" disabled>
+                Select type
+              </option>
+              {row.value && !choices.includes(row.value) && (
+                <option value={row.value}>{row.value}</option>
+              )}
+              {choices.map((choice) => (
+                <option key={choice} value={choice}>
+                  {choice}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              className="field-input"
+              placeholder="value"
+              value={row.value}
+              onChange={(e) =>
+                commitRows(
+                  rows.map((r, j) =>
+                    j === i ? { ...r, value: e.target.value } : r,
+                  ),
+                )
+              }
+              {...exprDropHandlers(row.value, (next) =>
+                commitRows(
+                  rows.map((r, j) => (j === i ? { ...r, value: next } : r)),
                 ),
-              )
-            }
-            {...exprDropHandlers(row.value, (next) =>
-              commitRows(
-                rows.map((r, j) => (j === i ? { ...r, value: next } : r)),
-              ),
-            )}
-          />
+              )}
+            />
+          )}
           <button
             type="button"
             className="kv-remove"
@@ -355,7 +390,13 @@ export function ParamField({
   onChange: (v: unknown) => void;
 }) {
   if (spec.key_value) {
-    return <KeyValueField value={value} onChange={onChange} />;
+    return (
+      <KeyValueField
+        value={value}
+        onChange={onChange}
+        valueChoices={spec.choices}
+      />
+    );
   }
   if (spec.choices && spec.choices.length > 0) {
     return (

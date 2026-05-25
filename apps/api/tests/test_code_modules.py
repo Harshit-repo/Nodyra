@@ -110,6 +110,43 @@ async def test_preview_surfaces_syntax_errors(client: AsyncClient) -> None:
     assert preview["registered"] == []
 
 
+async def test_preview_and_manifests_do_not_execute_module_body(
+    client: AsyncClient,
+) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "Static"})).json()[
+        "id"
+    ]
+    source = (
+        "raise RuntimeError('preview executed uploaded source')\n"
+        "\n"
+        "def safe(x: int, y: int = 1) -> int:\n"
+        "    return x + y\n"
+    )
+    module = (
+        await client.post(
+            "/code-modules",
+            json={
+                "scope": "workflow",
+                "workflow_id": workflow_id,
+                "name": "static.py",
+                "contents": source,
+            },
+        )
+    ).json()
+
+    preview = (await client.get(f"/code-modules/{module['id']}/preview")).json()
+    assert preview["syntax_error"] is None
+    assert preview["registered"] == ["safe"]
+
+    manifests = (
+        await client.get(f"/code-modules/manifests/workflow/{workflow_id}")
+    ).json()
+    assert [manifest["id"] for manifest in manifests] == [
+        f"user:{module['id']}:safe"
+    ]
+    assert manifests[0]["params"][0]["name"] == "y"
+
+
 async def test_preview_reports_missing_imports(client: AsyncClient) -> None:
     """Top-level imports should be detected, stdlib filtered, and the
     workflow's env packages should drive missing_in_env."""

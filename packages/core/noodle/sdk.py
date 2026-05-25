@@ -14,6 +14,7 @@ Per-parameter UI metadata (choices, multiline, placeholder, description) is
 supplied via the decorator's ``params`` argument.
 """
 
+import ast
 import inspect
 import types
 import typing
@@ -31,6 +32,20 @@ _TYPE_MAP: dict[Any, str] = {
     list: "array",
     dict: "object",
 }
+
+_AST_TYPE_MAP: dict[str, str] = {
+    "Any": "any",
+    "str": "string",
+    "int": "integer",
+    "float": "number",
+    "bool": "boolean",
+    "list": "array",
+    "List": "array",
+    "dict": "object",
+    "Dict": "object",
+}
+
+_MISSING = object()
 
 
 @dataclass
@@ -136,6 +151,142 @@ def _build_manifest(
     )
 
 
+def _annotation_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _type_label_from_ast(node: ast.AST | None) -> str:
+    if node is None:
+        return "string"
+    name = _annotation_name(node)
+    if name in _AST_TYPE_MAP:
+        return _AST_TYPE_MAP[name]
+    if isinstance(node, ast.Subscript):
+        outer = _annotation_name(node.value)
+        if outer in ("list", "List", "Sequence", "Iterable", "tuple", "Tuple", "set", "Set"):
+            return "array"
+        if outer in ("dict", "Dict", "Mapping"):
+            return "object"
+        if outer in ("Optional", "Union"):
+            options = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+            for option in options:
+                if not (
+                    isinstance(option, ast.Constant)
+                    and option.value is None
+                ) and _annotation_name(option) != "None":
+                    return _type_label_from_ast(option)
+            return "any"
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        left_is_none = isinstance(node.left, ast.Constant) and node.left.value is None
+        right_is_none = isinstance(node.right, ast.Constant) and node.right.value is None
+        if left_is_none:
+            return _type_label_from_ast(node.right)
+        if right_is_none:
+            return _type_label_from_ast(node.left)
+        return _type_label_from_ast(node.left)
+    if isinstance(node, ast.Constant) and node.value is None:
+        return "any"
+    return "string"
+
+
+def _literal_default(node: ast.AST) -> Any:
+    try:
+        return ast.literal_eval(node)
+    except (TypeError, ValueError):
+        return _MISSING
+
+
+def _function_param_specs(
+    fn: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> list[tuple[str, str, bool, Any]]:
+    args = [*fn.args.posonlyargs, *fn.args.args]
+    defaults: list[ast.AST | None] = [None] * (len(args) - len(fn.args.defaults))
+    defaults.extend(fn.args.defaults)
+
+    specs: list[tuple[str, str, bool, Any]] = []
+    for arg, default_node in zip(args, defaults, strict=True):
+        has_default = default_node is not None
+        default = _literal_default(default_node) if default_node is not None else None
+        specs.append(
+            (
+                arg.arg,
+                _type_label_from_ast(arg.annotation),
+                has_default,
+                None if default is _MISSING else default,
+            )
+        )
+
+    for arg, default_node in zip(fn.args.kwonlyargs, fn.args.kw_defaults, strict=True):
+        has_default = default_node is not None
+        default = _literal_default(default_node) if default_node is not None else None
+        specs.append(
+            (
+                arg.arg,
+                _type_label_from_ast(arg.annotation),
+                has_default,
+                None if default is _MISSING else default,
+            )
+        )
+
+    return specs
+
+
+def discover_module_function_manifests(
+    module_id: str,
+    source: str,
+    *,
+    category: str = "Custom",
+) -> tuple[list[NodeManifest], list[tuple[str, str]]]:
+    """Statically discover top-level uploaded functions without executing code.
+
+    API preview and palette manifest endpoints must use this helper instead of
+    ``register_module_functions`` so top-level side effects in uploaded modules
+    cannot run inside the API process. Runtime registration still uses
+    ``register_module_functions`` because workflow execution needs callables.
+    """
+    tree = ast.parse(source)
+    manifests: list[NodeManifest] = []
+    skipped: list[tuple[str, str]] = []
+
+    for stmt in tree.body:
+        if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if stmt.args.vararg is not None or stmt.args.kwarg is not None:
+            skipped.append((stmt.name, "*args / **kwargs are not supported"))
+            continue
+
+        param_specs = _function_param_specs(stmt)
+        input_names = [param_specs[0][0]] if param_specs else []
+        params = [
+            ParamSpec(
+                name=name,
+                type=type_label,
+                required=not has_default,
+                default=default if has_default else None,
+            )
+            for name, type_label, has_default, default in param_specs[1:]
+        ]
+        manifests.append(
+            NodeManifest(
+                id=f"user:{module_id}:{stmt.name}",
+                name=stmt.name,
+                category=category,
+                version="1.0.0",
+                description=ast.get_docstring(stmt) or "",
+                icon=None,
+                inputs=[PortSpec(name=name) for name in input_names],
+                params=params,
+                outputs=[PortSpec(name="main")],
+            )
+        )
+
+    return manifests, skipped
+
+
 def register_module_functions(
     module_id: str,
     source: str,
@@ -143,7 +294,7 @@ def register_module_functions(
     *,
     category: str = "Custom",
 ) -> tuple[list[str], list[tuple[str, str]]]:
-    """Exec ``source`` and register each top-level function as a node.
+    """Exec ``source`` and register each top-level function as a runtime node.
 
     Reuses :func:`_build_manifest` so user-uploaded functions get the exact
     same manifest treatment as ``@node``-decorated built-ins (type hints →
@@ -158,6 +309,9 @@ def register_module_functions(
     Returns ``(registered_names, skipped)`` where ``skipped`` is a list of
     ``(name, reason)`` tuples so the upload preview can tell the user why
     something was ignored (e.g. ``*args``, classes, lambdas).
+
+    This executes uploaded Python. Do not call it from API preview or palette
+    manifest endpoints; use ``discover_module_function_manifests`` there.
     """
     module_globals: dict[str, Any] = {
         "__name__": f"user_module_{module_id}",

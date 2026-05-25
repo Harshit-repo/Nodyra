@@ -3,6 +3,7 @@ import asyncio
 from httpx import AsyncClient
 
 from app.config import settings
+from app.services.events import broker
 
 GRAPH = {
     "nodes": [
@@ -78,6 +79,62 @@ async def test_run_records_node_errors(client: AsyncClient) -> None:
     assert run["status"] == "error"
     assert run["node_runs"][0]["status"] == "error"
     assert "nope" in run["node_runs"][0]["error"]
+
+
+async def test_typed_outputs_persist_and_stream_as_envelopes(
+    client: AsyncClient,
+) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "Typed"})).json()[
+        "id"
+    ]
+    graph = {
+        "nodes": [
+            {
+                "id": "typed",
+                "type": "code",
+                "params": {
+                    "code": "\n".join(
+                        [
+                            "from datetime import datetime",
+                            "from decimal import Decimal",
+                            "output = {",
+                            "    'price': Decimal('19.99'),",
+                            "    'created': datetime(2026, 5, 25, 1, 2, 3),",
+                            "    'coords': (1, 2),",
+                            "    'tags': {'vip', 'beta'},",
+                            "    'raw': b'hello',",
+                            "}",
+                        ]
+                    )
+                },
+                "position": {"x": 0, "y": 0},
+            }
+        ],
+        "edges": [],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
+
+    run_id = (
+        await client.post(f"/workflows/{workflow_id}/run", json={})
+    ).json()["run_id"]
+    run = (await client.get(f"/runs/{run_id}")).json()
+    output = run["node_runs"][0]["output"]["main"]
+
+    assert output["price"]["__noodle_typed__"] is True
+    assert output["price"]["type"] == "decimal"
+    assert output["price"]["value"] == "19.99"
+    assert output["created"]["type"] == "datetime"
+    assert output["coords"]["type"] == "tuple"
+    assert output["tags"]["type"] == "set"
+    assert output["raw"]["type"] == "bytes"
+
+    streamed: list[dict] = []
+    async for event in broker.subscribe(run_id):
+        streamed.append(event)
+    node_event = next(
+        event for event in streamed if event.get("type") == "node_finished"
+    )
+    assert node_event["outputs"]["main"]["price"]["type"] == "decimal"
 
 
 async def test_run_accepts_editor_cache_for_webhook_payload(
@@ -251,6 +308,75 @@ async def test_retry_runs_only_the_failed_node_and_downstream(
     results = {n["node_id"]: n for n in retry["node_runs"]}
     assert results["boom"]["output"]["main"] == 10
     assert results["tail"]["output"]["main"] == 10
+
+
+async def test_retry_deserializes_typed_cached_outputs(
+    client: AsyncClient,
+) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "Typed Retry"})).json()[
+        "id"
+    ]
+    graph = {
+        "nodes": [
+            {
+                "id": "producer",
+                "type": "code",
+                "params": {
+                    "code": (
+                        "from decimal import Decimal\n"
+                        "output = {'amount': Decimal('3.50')}"
+                    )
+                },
+                "position": {"x": 0, "y": 0},
+            },
+            {
+                "id": "consumer",
+                "type": "code",
+                "params": {
+                    "code": "\n".join(
+                        [
+                            "if type(input['amount']).__name__ != 'Decimal':",
+                            "    raise RuntimeError('not decimal')",
+                            "raise RuntimeError('boom')",
+                        ]
+                    )
+                },
+                "position": {"x": 200, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e1",
+                "source": "producer",
+                "source_output": "main",
+                "target": "consumer",
+                "target_input": "input",
+            }
+        ],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
+
+    original = (
+        await client.post(f"/workflows/{workflow_id}/run", json={})
+    ).json()["run_id"]
+    first = (await client.get(f"/runs/{original}")).json()
+    results = {n["node_id"]: n for n in first["node_runs"]}
+    assert results["producer"]["output"]["main"]["amount"]["type"] == "decimal"
+    assert results["consumer"]["status"] == "error"
+
+    fixed = {**graph}
+    fixed["nodes"] = [
+        n
+        if n["id"] != "consumer"
+        else {**n, "params": {"code": "output = type(input['amount']).__name__"}}
+        for n in graph["nodes"]
+    ]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": fixed})
+
+    retry_id = (await client.post(f"/runs/{original}/retry")).json()["run_id"]
+    retry = (await client.get(f"/runs/{retry_id}")).json()
+    results = {n["node_id"]: n for n in retry["node_runs"]}
+    assert results["consumer"]["output"]["main"] == "Decimal"
 
 
 async def test_retry_rejects_runs_with_no_failures(client: AsyncClient) -> None:

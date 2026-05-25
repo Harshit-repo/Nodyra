@@ -8,7 +8,6 @@ Sets up the runtime context (``noodle.context.workflow_caller`` and
 """
 
 import asyncio
-import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -32,33 +31,21 @@ from noodle.sdk import (
 from noodle.sdk import (
     registry as node_registry,
 )
+from noodle.serialization import (
+    deserialize_value,
+    serialize_value,
+    truncate_serialized_value,
+)
 
 TRIGGER_TYPES = ("manual_trigger", "webhook_trigger", "schedule_trigger")
 
 _active_runs: dict[str, asyncio.Task[None]] = {}
 
 
-def _json_safe(value: Any) -> Any:
-    try:
-        return json.loads(json.dumps(value, default=str))
-    except (TypeError, ValueError):
-        return str(value)
-
-
 def _maybe_truncate(value: Any, cap: int) -> Any:
     if value is None:
         return value
-    try:
-        encoded = json.dumps(value, default=str)
-    except (TypeError, ValueError):
-        return value
-    if len(encoded) <= cap:
-        return value
-    return {
-        "_truncated": True,
-        "size_bytes": len(encoded),
-        "preview": encoded[:1024],
-    }
+    return truncate_serialized_value(value, cap)
 
 
 def _cap_output(value: Any) -> Any:
@@ -131,7 +118,7 @@ async def _call_sub_workflow(workflow_id: str, input_value: Any) -> Any:
     graph = WorkflowGraph.model_validate(graph_dict)
     sources = {edge.source for edge in graph.edges}
 
-    cache: dict[str, dict] = dict(pinned_cache)
+    cache: dict[str, dict] = deserialize_value(dict(pinned_cache))
     trigger = next(
         (n for n in graph.nodes if n.type in TRIGGER_TYPES),
         None,
@@ -280,9 +267,9 @@ async def _execute_run(
     async def on_event(event: dict) -> None:
         clean = dict(event)
         if "outputs" in clean:
-            clean["outputs"] = _json_safe(clean["outputs"])
+            clean["outputs"] = serialize_value(clean["outputs"])
         if "debug" in clean:
-            clean["debug"] = _json_safe(clean["debug"])
+            clean["debug"] = serialize_value(clean["debug"])
         broker.publish(run_id, clean)
         if clean.get("type") == "node_finished":
             node_events[clean["node_id"]] = clean
@@ -370,7 +357,7 @@ async def _execute_run(
                 result = await execute(
                     graph,
                     node_registry,
-                    cache=cache,
+                    cache=deserialize_value(cache),
                     targets=targets,
                     on_event=on_event,
                 )

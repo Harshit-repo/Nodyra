@@ -42,13 +42,14 @@ from noodle.context import workflow_caller
 from noodle.engine import execute
 from noodle.models import WorkflowGraph
 from noodle.sdk import register_module_functions, registry, unregister_module
+from noodle.serialization import deserialize_value, serialize_value
 
 _pending_callbacks: dict[str, asyncio.Future] = {}
 _RUNTIME_DEFAULT_TIMEOUTS = {"http_request": 45.0}
 
 
 def _emit(event: dict) -> None:
-    sys.stdout.write(json.dumps(event, default=str))
+    sys.stdout.write(json.dumps(serialize_value(event)))
     sys.stdout.write("\n")
     sys.stdout.flush()
 
@@ -117,7 +118,7 @@ async def _handle_run(request: dict[str, Any]) -> None:
         result = await execute(
             graph,
             registry,
-            cache=request.get("cache") or None,
+            cache=deserialize_value(request.get("cache")) or None,
             targets=request.get("targets") or None,
             on_event=on_event,
             default_timeouts=_RUNTIME_DEFAULT_TIMEOUTS,
@@ -156,7 +157,7 @@ def _resolve_callback(message: dict[str, Any]) -> bool:
             RuntimeError(message.get("error", "remote call_workflow error"))
         )
     else:
-        future.set_result(message.get("result"))
+        future.set_result(deserialize_value(message.get("result")))
     return True
 
 

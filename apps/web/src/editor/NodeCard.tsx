@@ -1,4 +1,5 @@
 import { Handle, type NodeProps, Position } from "@xyflow/react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
 
 import { categoryColor } from "../categories";
@@ -6,6 +7,7 @@ import { NodeIcon } from "../NodeIcon";
 import { type NoodleNode, useEditor } from "./store";
 
 const TILE = 72;
+const TOOLBAR_HIDE_DELAY_MS = 1000;
 
 function portTop(index: number, count: number): number {
   return (TILE * (index + 1)) / (count + 1);
@@ -23,6 +25,8 @@ function stop(event: MouseEvent): void {
 }
 
 export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
+  const [toolbarVisible, setToolbarVisible] = useState(false);
+  const hideTimerRef = useRef<number | null>(null);
   const { manifest, disabled, outputsOverride } = data;
   const isWebhook = manifest.id === "webhook_trigger";
   const color = categoryColor(manifest.category);
@@ -43,9 +47,45 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   if (isPinned) tileClass.push("is-pinned");
   if (runStatus) tileClass.push(`run-${runStatus}`);
 
+  function clearHideTimer(): void {
+    if (hideTimerRef.current !== null) {
+      window.clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+  }
+
+  function showToolbar(): void {
+    clearHideTimer();
+    setToolbarVisible(true);
+  }
+
+  function scheduleToolbarHide(): void {
+    clearHideTimer();
+    hideTimerRef.current = window.setTimeout(() => {
+      hideTimerRef.current = null;
+      setToolbarVisible(false);
+    }, TOOLBAR_HIDE_DELAY_MS);
+  }
+
+  useEffect(
+    () => () => {
+      clearHideTimer();
+    },
+    [],
+  );
+
   return (
-    <div className="node" style={{ "--cat": color } as CSSProperties}>
-      <div className="node-toolbar nodrag">
+    <div
+      className={`node${toolbarVisible ? " is-toolbar-visible" : ""}`}
+      style={{ "--cat": color } as CSSProperties}
+      onMouseEnter={showToolbar}
+      onMouseLeave={scheduleToolbarHide}
+    >
+      <div
+        className="node-toolbar nodrag"
+        onMouseEnter={showToolbar}
+        onMouseLeave={scheduleToolbarHide}
+      >
         <button
           type="button"
           title={isWebhook ? "Listen for test event" : "Run from here"}

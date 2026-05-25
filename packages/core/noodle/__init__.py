@@ -15,6 +15,7 @@ from noodle.models import (
     WorkflowGraph,
 )
 from noodle.sdk import NodeDef, NodeRegistry, node, registry
+from noodle.serialization import deserialize_value, serialize_value
 
 __version__ = "0.0.1"
 
@@ -37,4 +38,6 @@ __all__ = [
     "node",
     "registry",
     "run",
+    "deserialize_value",
+    "serialize_value",
 ]

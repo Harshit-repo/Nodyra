@@ -1,10 +1,9 @@
 """User code modules: upload-to-nodes.
 
-Each row is a Python file whose top-level functions register as nodes via
-``noodle.sdk.register_module_functions``. v1 wires only the per-workflow
-scope (the runner gathers a workflow's modules and passes them with each
-run). Global / per-environment scopes are persisted but not yet loaded
-into warm runtime processes.
+Each row is a Python file whose top-level functions appear as nodes. API
+preview and palette manifest generation use static AST discovery, so uploaded
+code is not executed in the API process. Actual workflow runs register the
+module source in the runner/runtime environment.
 """
 
 import ast
@@ -25,7 +24,7 @@ from app.schemas import (
 from app.services.audit import log_audit
 from app.services.starter_graph import build_starter_graph
 from noodle.models import NodeManifest
-from noodle.sdk import NodeRegistry, register_module_functions
+from noodle.sdk import discover_module_function_manifests
 
 # A small import-name → pip-name map for common quirks. Anything not in here
 # falls back to assuming the pip name matches the import name (true for
@@ -215,7 +214,7 @@ async def _workflow_environment(
 def _preview_payload(
     module_id: str, source: str, env: Environment | None
 ) -> CodeModuleFunctionPreview:
-    """Parse + register into a throwaway registry to surface what's exposed.
+    """Parse the module statically to surface which functions become nodes.
 
     Also walks the AST for top-level imports and reports which of those
     aren't installed in ``env``'s packages list, so the UI can prompt the
@@ -239,18 +238,9 @@ def _preview_payload(
     imports = _extract_top_level_imports(source)
     missing = _missing_in_env(imports, env)
 
-    sandbox = NodeRegistry()
-    try:
-        registered, skipped = register_module_functions(module_id, source, sandbox)
-    except Exception as exc:  # noqa: BLE001 - bad user code surfaces in the preview
-        return CodeModuleFunctionPreview(
-            syntax_error=f"{type(exc).__name__}: {exc}",
-            imports=imports,
-            missing_in_env=missing,
-            **env_info,
-        )
+    manifests, skipped = discover_module_function_manifests(module_id, source)
     return CodeModuleFunctionPreview(
-        registered=registered,
+        registered=[manifest.name for manifest in manifests],
         skipped=[{"name": name, "reason": reason} for name, reason in skipped],
         imports=imports,
         missing_in_env=missing,
@@ -314,10 +304,12 @@ async def workflow_custom_node_manifests(
     for module in rows:
         if not module.contents.strip():
             continue
-        sandbox = NodeRegistry()
         try:
-            register_module_functions(module.id, module.contents, sandbox)
-        except Exception:  # noqa: BLE001 - bad code → no manifests, others still work
+            discovered, _ = discover_module_function_manifests(
+                module.id,
+                module.contents,
+            )
+        except SyntaxError:
             continue
-        manifests.extend(sandbox.manifests())
+        manifests.extend(discovered)
     return manifests

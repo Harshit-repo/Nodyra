@@ -1,4 +1,8 @@
+from decimal import Decimal
+
 from httpx import AsyncClient
+
+from noodle.serialization import serialize_value
 
 GRAPH = {
     "nodes": [
@@ -69,3 +73,47 @@ async def test_run_uses_pinned_output(client: AsyncClient) -> None:
     run = (await client.get(f"/runs/{run_id}")).json()
     results = {n["node_id"]: n for n in run["node_runs"]}
     assert results["c"]["output"]["main"] == 100
+
+
+async def test_run_deserializes_typed_pinned_output(client: AsyncClient) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "Typed Pin"})).json()[
+        "id"
+    ]
+    graph = {
+        "nodes": [
+            {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {"data": None},
+                "position": {"x": 0, "y": 0},
+            },
+            {
+                "id": "c",
+                "type": "code",
+                "params": {"code": "output = type(input).__name__"},
+                "position": {"x": 250, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e1",
+                "source": "t",
+                "source_output": "main",
+                "target": "c",
+                "target_input": "input",
+            }
+        ],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
+
+    await client.put(
+        f"/workflows/{workflow_id}/pinned/t",
+        json={"payload": {"main": serialize_value(Decimal("4.20"))}},
+    )
+
+    run_id = (
+        await client.post(f"/workflows/{workflow_id}/run", json={})
+    ).json()["run_id"]
+    run = (await client.get(f"/runs/{run_id}")).json()
+    results = {n["node_id"]: n for n in run["node_runs"]}
+    assert results["c"]["output"]["main"] == "Decimal"

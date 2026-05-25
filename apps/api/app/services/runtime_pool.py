@@ -28,6 +28,7 @@ from typing import Any
 
 from app.config import settings
 from app.services.venv import venv_python
+from noodle.serialization import deserialize_value, serialize_value
 
 EventCallback = Callable[[dict], Awaitable[None]]
 SubWorkflowCaller = Callable[[str, Any], Awaitable[Any]]
@@ -80,7 +81,7 @@ class _RuntimeProcess:
     async def _write_message(self, message: dict) -> None:
         if self.process.stdin is None:
             raise RuntimeError("runtime subprocess stdin is closed")
-        payload = json.dumps(message, default=str).encode() + b"\n"
+        payload = json.dumps(serialize_value(message)).encode() + b"\n"
         async with self._write_lock:
             self.process.stdin.write(payload)
             await self.process.stdin.drain()
@@ -97,7 +98,8 @@ class _RuntimeProcess:
                     "subprocess runner has no host-side sub-workflow caller"
                 )
             result = await sub_workflow_caller(
-                event.get("workflow_id", ""), event.get("input")
+                event.get("workflow_id", ""),
+                deserialize_value(event.get("input")),
             )
             await self._write_message(
                 {

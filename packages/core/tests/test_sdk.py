@@ -1,6 +1,6 @@
 import pytest
 
-from noodle.sdk import NodeRegistry, node
+from noodle.sdk import NodeRegistry, discover_module_function_manifests, node
 
 
 def test_manifest_separates_inputs_and_config() -> None:
@@ -97,3 +97,69 @@ def test_async_node_detected() -> None:
         return 1
 
     assert reg.get("async_node").is_async is True
+
+
+def test_ast_discovery_builds_typed_manifest_without_execution() -> None:
+    source = """
+raise RuntimeError("should not run")
+
+def transform(rows: list[dict], limit: int = 10, active: bool = True,
+              ratio: float = 1.5, meta: dict | None = None,
+              anything: Any = None, dynamic=get_default()):
+    \"\"\"Transform rows.\"\"\"
+    return rows
+"""
+
+    manifests, skipped = discover_module_function_manifests("mod1", source)
+
+    assert skipped == []
+    assert len(manifests) == 1
+    manifest = manifests[0]
+    assert manifest.id == "user:mod1:transform"
+    assert manifest.description == "Transform rows."
+    assert [p.name for p in manifest.inputs] == ["rows"]
+    params = {param.name: param for param in manifest.params}
+    assert params["limit"].type == "integer"
+    assert params["limit"].default == 10
+    assert params["active"].type == "boolean"
+    assert params["ratio"].type == "number"
+    assert params["meta"].type == "object"
+    assert params["anything"].type == "any"
+    assert params["dynamic"].required is False
+    assert params["dynamic"].default is None
+
+
+def test_ast_discovery_skips_variadic_functions() -> None:
+    source = """
+class Thing:
+    pass
+
+def variadic(*args, **kwargs):
+    return args
+
+def ok(x: int, y: int = 1):
+    return x + y
+"""
+
+    manifests, skipped = discover_module_function_manifests("mod2", source)
+
+    assert [manifest.name for manifest in manifests] == ["ok"]
+    assert skipped == [("variadic", "*args / **kwargs are not supported")]
+
+
+def test_ast_discovery_includes_async_functions() -> None:
+    source = """
+async def fetch(url: str, retries: int = 3):
+    return {"url": url}
+"""
+
+    manifests, skipped = discover_module_function_manifests("mod3", source)
+
+    assert skipped == []
+    assert len(manifests) == 1
+    manifest = manifests[0]
+    assert manifest.id == "user:mod3:fetch"
+    assert [p.name for p in manifest.inputs] == ["url"]
+    assert [(p.name, p.type, p.default) for p in manifest.params] == [
+        ("retries", "integer", 3)
+    ]

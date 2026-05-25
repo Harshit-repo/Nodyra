@@ -2,6 +2,15 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 
 import type { NodeVariableInfo } from "../types";
+import {
+  asTypedEnvelope,
+  formatTypedCell,
+  typedDisplayValue,
+  typedLabel,
+  typedRecords,
+  typedSummary,
+  typedValueBody,
+} from "./typedValues";
 
 /**
  * Side panel of the NDV (Input or Output). Shows the value as either a
@@ -39,14 +48,19 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 function isTableable(value: unknown): boolean {
+  const envelope = asTypedEnvelope(value);
+  if (envelope?.type === "dataframe" && typedRecords(envelope)) return true;
+  const display = typedDisplayValue(value);
   return (
-    isListOfRecords(value) ||
-    findNestedRecordList(value) !== null ||
-    isPlainObject(value)
+    isListOfRecords(display) ||
+    findNestedRecordList(display) !== null ||
+    isPlainObject(display)
   );
 }
 
 function formatCell(value: unknown): string {
+  const typed = formatTypedCell(value);
+  if (typed) return typed;
   if (value === null || value === undefined) return "";
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") {
@@ -124,6 +138,16 @@ function JsonTreeValue({
   path: (string | number)[];
   dragPrefix?: string;
 }): JSX.Element {
+  const envelope = asTypedEnvelope(value);
+  if (envelope) {
+    return (
+      <TypedInlineValue
+        envelope={envelope}
+        path={path}
+        dragPrefix={dragPrefix}
+      />
+    );
+  }
   if (Array.isArray(value)) {
     if (value.length === 0) {
       return <span className="json-tree-empty">[]</span>;
@@ -164,6 +188,39 @@ function JsonTreeValue({
   return (
     <span className={`json-tree-prim ${primitiveClass(value)}`}>
       {value === null ? "null" : JSON.stringify(value)}
+    </span>
+  );
+}
+
+function TypedInlineValue({
+  envelope,
+  path,
+  dragPrefix,
+}: {
+  envelope: NonNullable<ReturnType<typeof asTypedEnvelope>>;
+  path: (string | number)[];
+  dragPrefix?: string;
+}) {
+  const expr =
+    dragPrefix && envelope.type !== "dataframe"
+      ? buildExpression(dragPrefix, [...path, "value"])
+      : undefined;
+  const display =
+    envelope.type === "object"
+      ? envelope.repr ?? typedSummary(envelope)
+      : typedSummary(envelope);
+  return (
+    <span
+      className="typed-inline"
+      draggable={Boolean(expr)}
+      onDragStart={expr ? (e) => startExpressionDrag(e, expr) : undefined}
+      title={expr ? `Drag to insert ${expr}` : undefined}
+    >
+      <span className="typed-badge">{typedLabel(envelope)}</span>
+      <span className="typed-meta">{display}</span>
+      {envelope.restorable === false && (
+        <span className="typed-muted">not restorable</span>
+      )}
     </span>
   );
 }
@@ -293,12 +350,48 @@ function DataTable({
   data: unknown;
   dragPrefix?: string;
 }) {
-  if (isListOfRecords(data)) {
-    return <RecordTable data={data} dragPrefix={dragPrefix} />;
+  const envelope = asTypedEnvelope(data);
+  if (envelope?.type === "dataframe") {
+    const records = typedRecords(envelope) ?? [];
+    const body = typedValueBody(envelope);
+    const dtypes = isPlainObject(body.dtypes) ? body.dtypes : {};
+    return (
+      <div className="data-table-composite">
+        <div className="data-table-summary">
+          <span className="typed-badge">DataFrame</span>
+          <span>{typedSummary(envelope)}</span>
+          {Object.entries(dtypes)
+            .slice(0, 4)
+            .map(([column, dtype]) => (
+              <span key={column}>
+                {column}: <strong>{String(dtype)}</strong>
+              </span>
+            ))}
+          {Object.keys(dtypes).length > 4 && (
+            <span>+{Object.keys(dtypes).length - 4} dtypes</span>
+          )}
+        </div>
+        {records.length > 0 ? (
+          <RecordTable
+            data={records}
+            dragPrefix={dragPrefix ? `${dragPrefix}.value.records` : undefined}
+          />
+        ) : (
+          <p className="ndv-panel-empty muted">No preview rows captured.</p>
+        )}
+      </div>
+    );
   }
-  const nested = findNestedRecordList(data);
-  if (nested && isPlainObject(data)) {
-    const summary = Object.entries(data).filter(
+  const display = typedDisplayValue(data);
+  if (display !== data) {
+    return <DataTable data={display} dragPrefix={dragPrefix} />;
+  }
+  if (isListOfRecords(display)) {
+    return <RecordTable data={display} dragPrefix={dragPrefix} />;
+  }
+  const nested = findNestedRecordList(display);
+  if (nested && isPlainObject(display)) {
+    const summary = Object.entries(display).filter(
       ([key, value]) => key !== nested.key && !Array.isArray(value),
     );
     return (
@@ -318,12 +411,12 @@ function DataTable({
       </div>
     );
   }
-  if (isPlainObject(data)) {
+  if (isPlainObject(display)) {
     return (
       <div className="data-table-wrap">
         <table className="data-table data-table-kv">
           <tbody>
-            {Object.entries(data).map(([key, value]) => {
+            {Object.entries(display).map(([key, value]) => {
               const expr = dragPrefix
                 ? buildExpression(dragPrefix, [key])
                 : undefined;
@@ -349,7 +442,7 @@ function DataTable({
       </div>
     );
   }
-  return <pre className="data-json">{JSON.stringify(data, null, 2)}</pre>;
+  return <pre className="data-json">{JSON.stringify(display, null, 2)}</pre>;
 }
 
 function VariableExplorer({
