@@ -34,17 +34,11 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
       )}
       {manifest.params.map((spec) => {
         const value = params[spec.name];
-        const fx = typeof value === "string" && /\{\{.+?\}\}/s.test(value);
         return (
           <div className="field" key={`${node.id}:${spec.name}`}>
             <div className="field-label">
               <span className="field-name">{spec.name}</span>
               <span className="field-type">{spec.type}</span>
-              {fx && (
-                <span className="fx-badge" title="Contains expression">
-                  fx
-                </span>
-              )}
               {spec.required && <span className="field-req">required</span>}
             </div>
             {spec.description && (

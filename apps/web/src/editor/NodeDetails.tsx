@@ -461,15 +461,36 @@ export function ParamField({
         />
       );
     }
+    const isExpr = /\{\{[\s\S]+?\}\}/.test(current);
+    const toggleFx = () => {
+      if (isExpr) {
+        // Strip the outermost {{ }} pair only — keeps inner braces intact.
+        const stripped = current.replace(/^\s*\{\{\s*([\s\S]*?)\s*\}\}\s*$/, "$1");
+        onChange(stripped === current ? "" : stripped);
+      } else {
+        onChange(`{{ ${current} }}`);
+      }
+    };
     return (
-      <input
-        className="field-input"
-        type="text"
-        placeholder={spec.placeholder}
-        value={current}
-        onChange={(e) => onChange(e.target.value)}
-        {...drop}
-      />
+      <div className={`field-wrap${isExpr ? " field-wrap-expr" : ""}`}>
+        <input
+          className={`field-input${isExpr ? " field-input-expr" : ""}`}
+          type="text"
+          placeholder={spec.placeholder}
+          value={current}
+          onChange={(e) => onChange(e.target.value)}
+          {...drop}
+        />
+        <button
+          type="button"
+          className={`fx-toggle${isExpr ? " fx-toggle-on" : ""}`}
+          onClick={toggleFx}
+          title={isExpr ? "Switch to fixed value" : "Switch to expression"}
+          tabIndex={-1}
+        >
+          ƒx
+        </button>
+      </div>
     );
   }
 

@@ -191,6 +191,63 @@ button {
   box-shadow: 0 0 0 3px rgba(229, 102, 79, 0.18);
 }
 
+/* ---- inspector field with fx (expression) toggle ---- */
+.field-wrap {
+  position: relative;
+  display: block;
+}
+.field-wrap .field-input {
+  padding-right: 34px;
+}
+.field-wrap-expr .field-input,
+.field-input-expr {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #ffd479;
+  background: rgba(255, 212, 121, 0.06);
+  border-color: rgba(255, 212, 121, 0.42);
+}
+.field-wrap-expr .field-input:focus,
+.field-input-expr:focus {
+  border-color: rgba(255, 212, 121, 0.85);
+  box-shadow: 0 0 0 3px rgba(255, 212, 121, 0.18);
+}
+.fx-toggle {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  font-style: italic;
+  cursor: pointer;
+  transition:
+    background 110ms ease,
+    color 110ms ease,
+    border-color 110ms ease;
+}
+.fx-toggle:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.fx-toggle-on,
+.fx-toggle-on:hover {
+  color: #06101e;
+  background: #ffd479;
+  border-color: rgba(255, 212, 121, 0.85);
+}
+
 /* ---- utility ---- */
 .muted {
   color: var(--ink-3);
