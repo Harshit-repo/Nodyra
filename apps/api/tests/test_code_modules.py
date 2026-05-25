@@ -1,7 +1,7 @@
 from httpx import AsyncClient
 
 SIMPLE_MODULE = '''
-def add(x: int = 0, y: int = 0) -> int:
+def add(x: int, y: int = 0) -> int:
     """Return x + y."""
     return x + y
 '''
@@ -90,6 +90,55 @@ async def test_uploaded_function_executes_when_workflow_runs(
     assert run["status"] == "success"
     results = {n["node_id"]: n for n in run["node_runs"]}
     assert results["a"]["output"]["main"] == 12
+
+
+async def test_param_split_follows_python_defaults_rule(
+    client: AsyncClient,
+) -> None:
+    """Required params (no default) become wired input ports; defaulted
+    params become inspector config. Mirrors Python's optional-vs-required
+    convention so the on-canvas wiring matches the function signature."""
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Shape"})
+    ).json()["id"]
+    source = (
+        "def all_defaults(x: int = 0, y: int = 0) -> int:\n"
+        "    return x + y\n"
+        "\n"
+        "def mixed(rows: list, indent: int = 2) -> dict:\n"
+        "    return {'rows': len(rows), 'indent': indent}\n"
+        "\n"
+        "def all_required(a, b):\n"
+        "    return (a, b)\n"
+    )
+    module = (
+        await client.post(
+            "/code-modules",
+            json={
+                "scope": "workflow",
+                "workflow_id": workflow_id,
+                "name": "shape.py",
+                "contents": source,
+            },
+        )
+    ).json()
+    manifests = {
+        m["id"]: m
+        for m in (
+            await client.get(f"/code-modules/manifests/workflow/{workflow_id}")
+        ).json()
+    }
+    ad = manifests[f"user:{module['id']}:all_defaults"]
+    assert [p["name"] for p in ad["inputs"]] == []
+    assert {p["name"] for p in ad["params"]} == {"x", "y"}
+
+    mx = manifests[f"user:{module['id']}:mixed"]
+    assert [p["name"] for p in mx["inputs"]] == ["rows"]
+    assert {p["name"] for p in mx["params"]} == {"indent"}
+
+    ar = manifests[f"user:{module['id']}:all_required"]
+    assert [p["name"] for p in ar["inputs"]] == ["a", "b"]
+    assert ar["params"] == []
 
 
 async def test_preview_surfaces_syntax_errors(client: AsyncClient) -> None:

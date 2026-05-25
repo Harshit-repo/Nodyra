@@ -250,10 +250,22 @@ class CodeModuleInfo(BaseModel):
     updated_at: datetime
 
 
+class CodeModuleFunctionShape(BaseModel):
+    """Per-function summary of how parameters will appear on the node card."""
+
+    name: str
+    inputs: list[str] = Field(default_factory=list)
+    params: list[str] = Field(default_factory=list)
+
+
 class CodeModuleFunctionPreview(BaseModel):
     """What the upload preview surfaces after parsing/registering the file."""
 
     registered: list[str] = Field(default_factory=list)
+    # Per-function inputs vs params so the UI can show users which args
+    # become wired ports (required, no default) and which become inspector
+    # fields (defaulted).
+    functions: list[CodeModuleFunctionShape] = Field(default_factory=list)
     skipped: list[dict[str, str]] = Field(default_factory=list)
     syntax_error: str | None = None
     # Top-level imports the file declares (stdlib filtered out).

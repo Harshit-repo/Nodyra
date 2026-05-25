@@ -42,17 +42,24 @@ def build_starter_graph(module_id: str, source: str) -> dict:
     tree = ast.parse(source)
 
     # Discover all user functions and their parameter lists. Mirror
-    # register_module_functions: skip *args/**kwargs, take the first param
-    # as the wired input port and the rest as config params.
+    # register_module_functions: skip *args/**kwargs. Required params
+    # (no default) are wired input ports; defaulted ones are config.
     function_params: dict[str, list[str]] = {}
+    function_input_ports: dict[str, set[str]] = {}
     function_order: list[str] = []
     for stmt in tree.body:
         if not isinstance(stmt, ast.FunctionDef):
             continue
         if stmt.args.vararg is not None or stmt.args.kwarg is not None:
             continue
-        params = [a.arg for a in stmt.args.args]
-        function_params[stmt.name] = params
+        args = stmt.args.args
+        defaults_count = len(stmt.args.defaults)
+        required_cutoff = len(args) - defaults_count
+        param_names = [a.arg for a in args]
+        function_params[stmt.name] = param_names
+        function_input_ports[stmt.name] = {
+            a.arg for a in args[:required_cutoff]
+        }
         function_order.append(stmt.name)
 
     if not function_order:
@@ -85,7 +92,7 @@ def build_starter_graph(module_id: str, source: str) -> dict:
         target_node_id: str,
         port: str,
         value: ast.AST,
-        wired_port: str | None,
+        wired_ports: set[str],
     ) -> None:
         """Wire one argument: either an edge from a known var, or a default param."""
         nonlocal edge_seq
@@ -101,9 +108,10 @@ def build_starter_graph(module_id: str, source: str) -> dict:
             )
             edge_seq += 1
             return
-        # Treat the first (wired) port as data-only — never push a literal
-        # in there; it's expected to come from upstream.
-        if port == wired_port:
+        # Wired (required) ports are data-only — they have no inspector slot,
+        # so we can't push a literal there. The user can replace the edge
+        # with a Constant node after accepting the starter graph.
+        if port in wired_ports:
             return
         lit = _literal_value(value)
         if lit is not None:
@@ -116,18 +124,18 @@ def build_starter_graph(module_id: str, source: str) -> dict:
         if fname not in node_id_by_func:
             return None
         params = function_params[fname]
-        wired_port = params[0] if params else None
+        wired_ports = function_input_ports[fname]
         nid = node_id_by_func[fname]
 
         for idx, arg in enumerate(call.args):
             if idx >= len(params):
                 break
-            wire_arg(nid, params[idx], arg, wired_port)
+            wire_arg(nid, params[idx], arg, wired_ports)
 
         for kw in call.keywords:
             if kw.arg is None or kw.arg not in params:
                 continue
-            wire_arg(nid, kw.arg, kw.value, wired_port)
+            wire_arg(nid, kw.arg, kw.value, wired_ports)
 
         return nid
 

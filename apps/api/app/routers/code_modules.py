@@ -18,6 +18,7 @@ from app.models import CodeModule, Environment, Workflow
 from app.schemas import (
     CodeModuleCreate,
     CodeModuleFunctionPreview,
+    CodeModuleFunctionShape,
     CodeModuleInfo,
     CodeModuleUpdate,
 )
@@ -241,6 +242,14 @@ def _preview_payload(
     manifests, skipped = discover_module_function_manifests(module_id, source)
     return CodeModuleFunctionPreview(
         registered=[manifest.name for manifest in manifests],
+        functions=[
+            CodeModuleFunctionShape(
+                name=manifest.name,
+                inputs=[p.name for p in manifest.inputs],
+                params=[p.name for p in manifest.params],
+            )
+            for manifest in manifests
+        ],
         skipped=[{"name": name, "reason": reason} for name, reason in skipped],
         imports=imports,
         missing_in_env=missing,

@@ -302,11 +302,32 @@ export function FunctionsPanel({
                       <p className="muted">
                         Registered nodes: {preview.registered.length}
                       </p>
-                      {preview.registered.length > 0 && (
+                      <p className="muted functions-rule-hint">
+                        Required parameters (no default) become wired input
+                        ports. Parameters with a default become inspector
+                        fields.
+                      </p>
+                      {preview.functions.length > 0 && (
                         <ul className="functions-list-funcs">
-                          {preview.registered.map((fn) => (
-                            <li key={fn}>
-                              <code>{fn}</code>
+                          {preview.functions.map((fn) => (
+                            <li key={fn.name}>
+                              <code>{fn.name}</code>
+                              {fn.inputs.length > 0 && (
+                                <span className="fn-shape fn-inputs">
+                                  inputs: {fn.inputs.join(", ")}
+                                </span>
+                              )}
+                              {fn.params.length > 0 && (
+                                <span className="fn-shape fn-params">
+                                  params: {fn.params.join(", ")}
+                                </span>
+                              )}
+                              {fn.inputs.length === 0 &&
+                                fn.params.length === 0 && (
+                                  <span className="fn-shape muted">
+                                    (no parameters)
+                                  </span>
+                                )}
                             </li>
                           ))}
                         </ul>

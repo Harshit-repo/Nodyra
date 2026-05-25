@@ -178,8 +178,15 @@ export interface CodeModule {
   updated_at: string;
 }
 
+export interface CodeModuleFunctionShape {
+  name: string;
+  inputs: string[];
+  params: string[];
+}
+
 export interface CodeModuleFunctionPreview {
   registered: string[];
+  functions: CodeModuleFunctionShape[];
   skipped: { name: string; reason: string }[];
   syntax_error: string | null;
   imports: string[];

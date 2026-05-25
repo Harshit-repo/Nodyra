@@ -260,15 +260,20 @@ def discover_module_function_manifests(
             continue
 
         param_specs = _function_param_specs(stmt)
-        input_names = [param_specs[0][0]] if param_specs else []
+        # Required positional params (no default) → wired input ports. Params
+        # with defaults → editable config in the inspector. Mirrors Python
+        # convention: defaults are "optional config", no default is "must
+        # be supplied", which on a graph is the wired-edge contract.
+        input_names = [name for name, _, has_default, _ in param_specs if not has_default]
         params = [
             ParamSpec(
                 name=name,
                 type=type_label,
-                required=not has_default,
-                default=default if has_default else None,
+                required=False,
+                default=default,
             )
-            for name, type_label, has_default, default in param_specs[1:]
+            for name, type_label, has_default, default in param_specs
+            if has_default
         ]
         manifests.append(
             NodeManifest(
@@ -342,11 +347,15 @@ def register_module_functions(
             skipped.append((key, "*args / **kwargs are not supported"))
             continue
 
-        # Pick the first parameter as the single wired input port (mirrors how
-        # users intuitively wire f(x) → drag a value into x). The remaining
-        # parameters become config params edited in the inspector.
-        param_names = list(params.keys())
-        inputs = [param_names[0]] if param_names else []
+        # Required positional params (no default) → wired input ports.
+        # Params with defaults → editable config in the inspector. Matches
+        # discover_module_function_manifests so the AST preview and the
+        # runtime registration agree on the manifest shape.
+        inputs = [
+            name
+            for name, param in params.items()
+            if param.default is inspect.Parameter.empty
+        ]
 
         try:
             manifest = _build_manifest(
