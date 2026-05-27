@@ -23,12 +23,18 @@ function relativeTime(iso: string): string {
 function CreateModal({
   onClose,
   onCreated,
+  initialTemplateId,
 }: {
   onClose: () => void;
   onCreated: (id: string) => void;
+  initialTemplateId: string;
 }) {
-  const [name, setName] = useState("Untitled workflow");
-  const [templateId, setTemplateId] = useState("blank");
+  const initialTemplate =
+    TEMPLATES.find((item) => item.id === initialTemplateId) ?? TEMPLATES[0];
+  const [name, setName] = useState(
+    initialTemplate.id === "blank" ? "Untitled workflow" : initialTemplate.name,
+  );
+  const [templateId, setTemplateId] = useState(initialTemplate.id);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const { notify } = useToast();
@@ -43,7 +49,10 @@ function CreateModal({
       if (template?.graph) {
         await api.updateWorkflow(created.id, { graph: template.graph() });
       }
-      notify(template?.id === "blank" ? "Workflow created." : "Template created.", "success");
+      notify(
+        template?.id === "blank" ? "Workflow created." : "Template created.",
+        "success",
+      );
       onCreated(created.id);
     } catch (err) {
       setError(String(err));
@@ -53,8 +62,17 @@ function CreateModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>New workflow</h2>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-workflow-title"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onClose();
+        }}
+      >
+        <h2 id="new-workflow-title">New workflow</h2>
         <p className="muted">Give your automation a name. You can rename it later.</p>
         <input
           className="field-input"
@@ -71,7 +89,16 @@ function CreateModal({
               className={templateId === template.id ? "is-selected" : ""}
               onClick={() => {
                 setTemplateId(template.id);
-                if (name === "Untitled workflow") setName(template.name);
+                const previous =
+                  TEMPLATES.find((item) => item.id === templateId)?.name ??
+                  "Untitled workflow";
+                if (name === "Untitled workflow" || name === previous) {
+                  setName(
+                    template.id === "blank"
+                      ? "Untitled workflow"
+                      : template.name,
+                  );
+                }
               }}
             >
               <strong>{template.name}</strong>
@@ -212,6 +239,7 @@ export function WorkflowsPage() {
   const [workflows, setWorkflows] = useState<WorkflowSummary[] | null>(null);
   const [error, setError] = useState("");
   const [modal, setModal] = useState(false);
+  const [modalTemplateId, setModalTemplateId] = useState("blank");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sort, setSort] = useState("updated");
@@ -219,10 +247,22 @@ export function WorkflowsPage() {
   const { notify } = useToast();
 
   function load() {
+    setError("");
     api
       .listWorkflows()
       .then(setWorkflows)
       .catch((err) => setError(String(err)));
+  }
+
+  function openCreate(templateId = "blank"): void {
+    setModalTemplateId(templateId);
+    setModal(true);
+  }
+
+  function resetFilters(): void {
+    setQuery("");
+    setStatusFilter("all");
+    setSort("updated");
   }
 
   useEffect(load, []);
@@ -263,6 +303,16 @@ export function WorkflowsPage() {
       });
   }, [query, sort, statusFilter, workflows]);
 
+  const stats = useMemo(() => {
+    const rows = workflows ?? [];
+    return {
+      active: rows.filter((wf) => wf.active).length,
+      drafts: rows.filter((wf) => wf.has_unpublished_changes).length,
+      failed: rows.filter((wf) => wf.last_run_status === "error").length,
+      running: rows.filter((wf) => wf.last_run_status === "running").length,
+    };
+  }, [workflows]);
+
   return (
     <div className="home">
       <HomeHeader />
@@ -273,10 +323,31 @@ export function WorkflowsPage() {
             Workflows
             {workflows && <span className="home-count">{workflows.length}</span>}
           </h1>
-          <button className="btn btn-primary" onClick={() => setModal(true)}>
+          <button className="btn btn-primary" onClick={() => openCreate()}>
             New workflow
           </button>
         </div>
+
+        {workflows && workflows.length > 0 && (
+          <div className="home-stat-strip" aria-label="Workflow status summary">
+            <button type="button" onClick={() => setStatusFilter("active")}>
+              <strong>{stats.active}</strong>
+              <span>Active</span>
+            </button>
+            <button type="button" onClick={() => setStatusFilter("draft")}>
+              <strong>{stats.drafts}</strong>
+              <span>Drafts</span>
+            </button>
+            <button type="button" onClick={() => setStatusFilter("failed")}>
+              <strong>{stats.failed}</strong>
+              <span>Failed</span>
+            </button>
+            <button type="button" onClick={() => setStatusFilter("all")}>
+              <strong>{stats.running}</strong>
+              <span>Running</span>
+            </button>
+          </div>
+        )}
 
         <div className="home-filters">
           <input
@@ -318,7 +389,7 @@ export function WorkflowsPage() {
             <p className="muted">
               Create your first automation and start wiring Python nodes together.
             </p>
-            <button className="btn btn-primary" onClick={() => setModal(true)}>
+            <button className="btn btn-primary" onClick={() => openCreate()}>
               New workflow
             </button>
             <div className="template-strip">
@@ -327,7 +398,7 @@ export function WorkflowsPage() {
                   key={template.id}
                   type="button"
                   onClick={() => {
-                    setModal(true);
+                    openCreate(template.id);
                     setQuery("");
                   }}
                 >
@@ -394,6 +465,9 @@ export function WorkflowsPage() {
           <div className="empty-state">
             <h2>No matches</h2>
             <p className="muted">Adjust search or filters.</p>
+            <button className="btn" type="button" onClick={resetFilters}>
+              Reset filters
+            </button>
           </div>
         )}
       </main>
@@ -402,6 +476,7 @@ export function WorkflowsPage() {
         <CreateModal
           onClose={() => setModal(false)}
           onCreated={(id) => navigate(`/workflows/${id}`)}
+          initialTemplateId={modalTemplateId}
         />
       )}
     </div>

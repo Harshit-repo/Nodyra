@@ -8,6 +8,10 @@ export function HomeHeader() {
   const { pathname } = useLocation();
   const user = getUser();
   const canAdmin = user?.role === "owner" || user?.role === "admin";
+  const profileActive =
+    pathname.startsWith("/settings") ||
+    pathname.startsWith("/security") ||
+    pathname.startsWith("/activity");
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const displayName = user?.name || user?.email || "User";
@@ -24,13 +28,21 @@ export function HomeHeader() {
         setOpen(false);
       }
     }
+    function onDocumentKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") setOpen(false);
+    }
     document.addEventListener("mousedown", onDocumentClick);
-    return () => document.removeEventListener("mousedown", onDocumentClick);
+    document.addEventListener("keydown", onDocumentKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocumentClick);
+      document.removeEventListener("keydown", onDocumentKeyDown);
+    };
   }, []);
 
   function signOut(): void {
     const handler = (window as unknown as { __noodle_sign_out?: () => void })
       .__noodle_sign_out;
+    setOpen(false);
     handler?.();
   }
 
@@ -41,35 +53,48 @@ export function HomeHeader() {
         <span className="brand-name">noodle</span>
       </Link>
       <nav className="home-nav">
-        <Link className={pathname === "/" ? "active" : ""} to="/">
+        <Link
+          className={pathname === "/" ? "active" : ""}
+          aria-current={pathname === "/" ? "page" : undefined}
+          to="/"
+        >
           Workflows
         </Link>
         <Link
           className={pathname.startsWith("/deployments") ? "active" : ""}
+          aria-current={pathname.startsWith("/deployments") ? "page" : undefined}
           to="/deployments"
         >
           Deployments
         </Link>
         <Link
           className={pathname.startsWith("/executions") ? "active" : ""}
+          aria-current={pathname.startsWith("/executions") ? "page" : undefined}
           to="/executions"
         >
           Executions
         </Link>
         <Link
           className={pathname.startsWith("/environments") ? "active" : ""}
+          aria-current={
+            pathname.startsWith("/environments") ? "page" : undefined
+          }
           to="/environments"
         >
           Environments
         </Link>
         <Link
           className={pathname.startsWith("/code-library") ? "active" : ""}
+          aria-current={
+            pathname.startsWith("/code-library") ? "page" : undefined
+          }
           to="/code-library"
         >
           Code Library
         </Link>
         <Link
           className={pathname.startsWith("/credentials") ? "active" : ""}
+          aria-current={pathname.startsWith("/credentials") ? "page" : undefined}
           to="/credentials"
         >
           Credentials
@@ -78,8 +103,9 @@ export function HomeHeader() {
           <div className="profile-menu" ref={menuRef}>
             <button
               type="button"
-              className="profile-trigger"
+              className={`profile-trigger${profileActive ? " active" : ""}`}
               aria-expanded={open}
+              aria-haspopup="menu"
               aria-label="User profile menu"
               onClick={() => setOpen((value) => !value)}
             >
@@ -102,26 +128,46 @@ export function HomeHeader() {
                     </span>
                   </div>
                 </div>
-                <Link to="/settings" onClick={() => setOpen(false)}>
+                <Link
+                  to="/settings"
+                  role="menuitem"
+                  onClick={() => setOpen(false)}
+                >
                   Settings
                 </Link>
-                <Link to="/credentials" onClick={() => setOpen(false)}>
+                <Link
+                  to="/credentials"
+                  role="menuitem"
+                  onClick={() => setOpen(false)}
+                >
                   Credentials
                 </Link>
                 {canAdmin && (
                   <>
-                    <Link to="/security" onClick={() => setOpen(false)}>
+                    <Link
+                      to="/security"
+                      role="menuitem"
+                      onClick={() => setOpen(false)}
+                    >
                       Security
                     </Link>
-                    <Link to="/activity" onClick={() => setOpen(false)}>
+                    <Link
+                      to="/activity"
+                      role="menuitem"
+                      onClick={() => setOpen(false)}
+                    >
                       Activity
                     </Link>
-                    <Link to="/environments" onClick={() => setOpen(false)}>
+                    <Link
+                      to="/environments"
+                      role="menuitem"
+                      onClick={() => setOpen(false)}
+                    >
                       Environments
                     </Link>
                   </>
                 )}
-                <button type="button" onClick={signOut}>
+                <button type="button" role="menuitem" onClick={signOut}>
                   Sign out
                 </button>
               </div>

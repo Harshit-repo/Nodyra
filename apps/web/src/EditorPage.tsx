@@ -135,8 +135,11 @@ export function EditorPage() {
     [],
   );
 
-  async function save(): Promise<WorkflowDetail | null> {
+  async function save(
+    options: { notifySuccess?: boolean } = {},
+  ): Promise<WorkflowDetail | null> {
     if (!id) return null;
+    const notifySuccess = options.notifySuccess ?? true;
     setSaving(true);
     setMessage("");
     try {
@@ -148,7 +151,7 @@ export function EditorPage() {
       });
       setWorkflow(updated);
       markClean();
-      notify("Draft saved.", "success");
+      if (notifySuccess) notify("Draft saved.", "success");
       return updated;
     } catch (err) {
       setMessage(String(err));
@@ -161,7 +164,7 @@ export function EditorPage() {
 
   async function publishDraft(): Promise<void> {
     if (!id || publishing) return;
-    const saved = await save();
+    const saved = await save({ notifySuccess: false });
     if (!saved) return;
     setPublishing(true);
     setMessage("");
@@ -226,7 +229,9 @@ export function EditorPage() {
   }
 
   function openAiFixFailedRun(): void {
-    const failedNodeId = Object.entries(runStatusMap).find(([, status]) => status === "error")?.[0];
+    const failedNodeId = Object.entries(runStatusMap).find(
+      ([, status]) => status === "error",
+    )?.[0];
     const failedError = failedNodeId ? runMetaMap[failedNodeId]?.error : runError;
     setAiPrompt(
       [
@@ -427,7 +432,11 @@ export function EditorPage() {
     options: RunOptions = {},
   ): Promise<void> {
     if (!id || running || webhookListen) return;
-    const saved = await save();
+    if (nodeCount === 0) {
+      notify("Add a node before running.", "error");
+      return;
+    }
+    const saved = await save({ notifySuccess: false });
     if (!saved) return;
     const cache = options.reuseUpstream
       ? reusableUpstreamCache(saved.graph, targets)

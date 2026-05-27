@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { api } from "./api";
 import { HomeHeader } from "./HomeHeader";
+import { useToast } from "./ToastProvider";
 import type { Deployment, WorkflowSummary } from "./types";
 
 function when(iso: string | null): string {
@@ -31,6 +32,7 @@ export function DeploymentsPage() {
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<Deployment | null>(null);
   const [creating, setCreating] = useState(false);
+  const { notify } = useToast();
 
   function refresh(): void {
     api
@@ -52,18 +54,22 @@ export function DeploymentsPage() {
   async function runNow(d: Deployment): Promise<void> {
     try {
       const { run_id } = await api.runDeployment(d.id);
+      notify("Deployment run started.", "success");
       navigate(`/executions?run=${run_id}`);
     } catch (err) {
       setError(String(err));
+      notify("Could not start deployment.", "error");
     }
   }
 
   async function toggleActive(d: Deployment, active: boolean): Promise<void> {
     try {
       await api.updateDeployment(d.id, { active });
+      notify(active ? "Deployment activated." : "Deployment paused.", "success");
       refresh();
     } catch (err) {
       setError(String(err));
+      notify("Could not update deployment.", "error");
     }
   }
 
@@ -71,9 +77,11 @@ export function DeploymentsPage() {
     if (!confirm(`Delete deployment "${d.name}"?`)) return;
     try {
       await api.deleteDeployment(d.id);
+      notify("Deployment deleted.", "success");
       refresh();
     } catch (err) {
       setError(String(err));
+      notify("Could not delete deployment.", "error");
     }
   }
 
@@ -103,10 +111,18 @@ export function DeploymentsPage() {
         {!deployments && !error && <p className="muted">Loading…</p>}
 
         {deployments && deployments.length === 0 && (
-          <p className="muted">
-            No deployments yet. A deployment lets you schedule a workflow with
-            default parameters and toggle it on or off without editing the graph.
-          </p>
+          <div className="empty-state">
+            <h2>No deployments yet</h2>
+            <p className="muted">Create one from a published workflow.</p>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setCreating(true)}
+              disabled={workflows.length === 0}
+            >
+              New deployment
+            </button>
+          </div>
         )}
 
         {deployments && deployments.length > 0 && (
@@ -227,6 +243,7 @@ function DeploymentDialog({
   const [active, setActive] = useState(initial?.active ?? false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+  const { notify } = useToast();
 
   async function save(): Promise<void> {
     setErr("");
@@ -255,6 +272,7 @@ function DeploymentDialog({
           workflow_version_id: workflowVersionId.trim() || undefined,
           error_workflow_id: errorWorkflowId.trim() || undefined,
         });
+        notify("Deployment updated.", "success");
       } else {
         await api.createDeployment({
           workflow_id: workflowId,
@@ -268,10 +286,12 @@ function DeploymentDialog({
           workflow_version_id: workflowVersionId.trim() || undefined,
           error_workflow_id: errorWorkflowId.trim() || undefined,
         });
+        notify("Deployment created.", "success");
       }
       onSaved();
     } catch (e) {
       setErr(String(e));
+      notify("Could not save deployment.", "error");
     } finally {
       setSaving(false);
     }

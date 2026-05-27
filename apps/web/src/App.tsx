@@ -69,6 +69,21 @@ export default function App() {
       );
   }
 
+  useEffect(() => {
+    if (auth?.user) setUser(auth.user);
+  }, [auth?.user]);
+
+  useEffect(() => {
+    // Surface signOut to HomeHeader without prop-drilling through route pages.
+    const target = window as unknown as { __noodle_sign_out?: () => void };
+    target.__noodle_sign_out = signOut;
+    return () => {
+      if (target.__noodle_sign_out === signOut) {
+        delete target.__noodle_sign_out;
+      }
+    };
+  });
+
   if (auth === null) {
     return <div className="screen-center muted">Loading…</div>;
   }
@@ -80,13 +95,6 @@ export default function App() {
       />
     );
   }
-
-  // Surface signOut to HomeHeader via a global event the header can listen for.
-  // Avoids prop-drilling through the router pages.
-  (window as unknown as { __noodle_sign_out?: () => void }).__noodle_sign_out =
-    signOut;
-  // Keep the stored user fresh for the header on reloads and role/profile edits.
-  if (auth.user) setUser(auth.user);
 
   return (
     <ToastProvider>
