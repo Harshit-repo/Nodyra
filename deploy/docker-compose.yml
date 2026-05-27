@@ -52,8 +52,20 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       CORS_ORIGINS: http://localhost:5173
+      ENABLE_INPROCESS_SCHEDULER: "false"
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
+      USE_SUBPROCESS_RUNNER: "true"
+      ENVS_DIR: /app/envs
+      ARTIFACTS_DIR: /app/artifacts
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
+      AUTH_ALLOW_REGISTRATION: ${AUTH_ALLOW_REGISTRATION:-false}
+      AUTH_REGISTRATION_ROLE: ${AUTH_REGISTRATION_ROLE:-viewer}
+      SECRET_KEY: ${NOODLE_SECRET_KEY:-noodle-dev-secret-change-me-in-production}
     ports:
       - "8000:8000"
+    volumes:
+      - envdata:/app/envs
+      - artifactdata:/app/artifacts
     depends_on:
       postgres:
         condition: service_healthy
@@ -68,7 +80,11 @@ services:
     environment:
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
+      API_BASE_URL: http://api:8000
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
     depends_on:
+      api:
+        condition: service_started
       redis:
         condition: service_healthy
 
@@ -80,7 +96,11 @@ services:
     environment:
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
+      API_BASE_URL: http://api:8000
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
     depends_on:
+      api:
+        condition: service_started
       redis:
         condition: service_healthy
 
@@ -98,3 +118,5 @@ services:
 volumes:
   pgdata:
   miniodata:
+  envdata:
+  artifactdata:

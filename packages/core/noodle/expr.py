@@ -18,7 +18,7 @@ from typing import Any
 
 _EXPR_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}", re.DOTALL)
 
-# Map the n8n-style ``$`` aliases to legal Python identifiers used inside eval.
+# Map the ``$`` aliases to legal Python identifiers used inside eval.
 _ALIASES = (
     ("$json", "_json"),
     ("$input", "_input"),

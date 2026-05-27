@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db import get_session
-from app.models import Deployment, Run, Workflow
+from app.models import Deployment, Run, Workflow, WorkflowVersion
 from app.schemas import (
     DeploymentCreate,
     DeploymentInfo,
@@ -20,6 +20,7 @@ from app.schemas import (
     RunCreated,
     RunListItem,
 )
+from app.security import require_permission
 from app.services.audit import log_audit
 from app.services.runner import start_run
 
@@ -33,6 +34,52 @@ async def _load(session: AsyncSession, deployment_id: str) -> Deployment:
     return deployment
 
 
+def _latest_published(workflow: Workflow) -> WorkflowVersion:
+    return workflow.versions[-1]
+
+
+async def _version_for_deployment(
+    session: AsyncSession,
+    workflow: Workflow,
+    workflow_version_id: str | None,
+) -> WorkflowVersion:
+    if workflow_version_id is None:
+        return _latest_published(workflow)
+    version = await session.get(WorkflowVersion, workflow_version_id)
+    if version is None or version.workflow_id != workflow.id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "workflow_version_id must belong to the deployment workflow.",
+        )
+    return version
+
+
+async def _info(session: AsyncSession, deployment: Deployment) -> DeploymentInfo:
+    workflow_version = None
+    if deployment.workflow_version_id:
+        version = await session.get(WorkflowVersion, deployment.workflow_version_id)
+        workflow_version = version.version if version is not None else None
+    return DeploymentInfo(
+        id=deployment.id,
+        workflow_id=deployment.workflow_id,
+        name=deployment.name,
+        schedule_cron=deployment.schedule_cron,
+        schedule_interval=deployment.schedule_interval,
+        schedule_every=deployment.schedule_every,
+        schedule_tz=deployment.schedule_tz,
+        default_parameters=deployment.default_parameters,
+        active=deployment.active,
+        environment_id=deployment.environment_id,
+        workflow_version_id=deployment.workflow_version_id,
+        workflow_version=workflow_version,
+        error_workflow_id=deployment.error_workflow_id,
+        error_alerts=deployment.error_alerts or {},
+        last_fired=deployment.last_fired,
+        created_at=deployment.created_at,
+        updated_at=deployment.updated_at,
+    )
+
+
 @router.get("", response_model=list[DeploymentInfo])
 async def list_deployments(
     workflow_id: str | None = None,
@@ -42,16 +89,30 @@ async def list_deployments(
     if workflow_id is not None:
         stmt = stmt.where(Deployment.workflow_id == workflow_id)
     result = await session.scalars(stmt)
-    return list(result.all())
+    return [await _info(session, deployment) for deployment in result.all()]
 
 
-@router.post("", response_model=DeploymentInfo, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=DeploymentInfo,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission("deployment:write"))],
+)
 async def create_deployment(
     body: DeploymentCreate, session: AsyncSession = Depends(get_session)
 ):
-    workflow = await session.get(Workflow, body.workflow_id)
+    workflow = await session.scalar(
+        select(Workflow)
+        .where(Workflow.id == body.workflow_id)
+        .options(selectinload(Workflow.versions))
+    )
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
+    version = await _version_for_deployment(session, workflow, body.workflow_version_id)
+    if body.error_workflow_id is not None and await session.get(
+        Workflow, body.error_workflow_id
+    ) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Error workflow not found")
 
     deployment = Deployment(
         workflow_id=body.workflow_id,
@@ -63,22 +124,29 @@ async def create_deployment(
         default_parameters=body.default_parameters,
         active=body.active,
         environment_id=body.environment_id,
+        workflow_version_id=version.id,
+        error_workflow_id=body.error_workflow_id,
+        error_alerts=body.error_alerts,
     )
     session.add(deployment)
     await log_audit(session, "create", "deployment", detail=body.name)
     await session.commit()
     await session.refresh(deployment)
-    return deployment
+    return await _info(session, deployment)
 
 
 @router.get("/{deployment_id}", response_model=DeploymentInfo)
 async def get_deployment(
     deployment_id: str, session: AsyncSession = Depends(get_session)
 ):
-    return await _load(session, deployment_id)
+    return await _info(session, await _load(session, deployment_id))
 
 
-@router.put("/{deployment_id}", response_model=DeploymentInfo)
+@router.put(
+    "/{deployment_id}",
+    response_model=DeploymentInfo,
+    dependencies=[Depends(require_permission("deployment:write"))],
+)
 async def update_deployment(
     deployment_id: str,
     body: DeploymentUpdate,
@@ -101,12 +169,34 @@ async def update_deployment(
         deployment.active = body.active
     if body.environment_id is not None:
         deployment.environment_id = body.environment_id
+    if body.workflow_version_id is not None:
+        workflow = await session.scalar(
+            select(Workflow)
+            .where(Workflow.id == deployment.workflow_id)
+            .options(selectinload(Workflow.versions))
+        )
+        if workflow is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
+        version = await _version_for_deployment(
+            session, workflow, body.workflow_version_id
+        )
+        deployment.workflow_version_id = version.id
+    if body.error_workflow_id is not None:
+        if await session.get(Workflow, body.error_workflow_id) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Error workflow not found")
+        deployment.error_workflow_id = body.error_workflow_id
+    if body.error_alerts is not None:
+        deployment.error_alerts = body.error_alerts
     await session.commit()
     await session.refresh(deployment)
-    return deployment
+    return await _info(session, deployment)
 
 
-@router.delete("/{deployment_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{deployment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_permission("deployment:write"))],
+)
 async def delete_deployment(
     deployment_id: str, session: AsyncSession = Depends(get_session)
 ):
@@ -118,7 +208,11 @@ async def delete_deployment(
     await session.commit()
 
 
-@router.post("/{deployment_id}/run", response_model=RunCreated)
+@router.post(
+    "/{deployment_id}/run",
+    response_model=RunCreated,
+    dependencies=[Depends(require_permission("deployment:run"))],
+)
 async def run_deployment(
     deployment_id: str, session: AsyncSession = Depends(get_session)
 ):
@@ -131,11 +225,15 @@ async def run_deployment(
     )
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
-    latest = workflow.versions[-1]
+    version = await _version_for_deployment(
+        session, workflow, deployment.workflow_version_id
+    )
     run_id = await start_run(
         deployment.workflow_id,
-        latest.graph or {"nodes": [], "edges": []},
-        latest.version,
+        version.graph or {"nodes": [], "edges": []},
+        version.version,
+        workflow_version_id=version.id,
+        deployment_id=deployment.id,
         mode="manual",
         trigger_type="deployment",
         parameters=deployment.default_parameters or None,
@@ -170,6 +268,9 @@ async def list_deployment_runs(
             workflow_id=run.workflow_id,
             workflow_name=workflow_name,
             workflow_version=run.workflow_version,
+            workflow_version_id=run.workflow_version_id,
+            deployment_id=run.deployment_id,
+            triggered_by_error_run_id=run.triggered_by_error_run_id,
             mode=run.mode,
             status=run.status,
             trigger_type=run.trigger_type,

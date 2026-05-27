@@ -22,6 +22,7 @@ from app.schemas import (
     CodeModuleInfo,
     CodeModuleUpdate,
 )
+from app.security import require_permission
 from app.services.audit import log_audit
 from app.services.starter_graph import build_starter_graph
 from noodle.models import NodeManifest
@@ -145,7 +146,12 @@ async def list_code_modules(
     return list(result.all())
 
 
-@router.post("", response_model=CodeModuleInfo, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=CodeModuleInfo,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission("code_module:write"))],
+)
 async def create_code_module(
     body: CodeModuleCreate, session: AsyncSession = Depends(get_session)
 ):
@@ -175,7 +181,11 @@ async def get_code_module(
     return await _load(session, module_id)
 
 
-@router.put("/{module_id}", response_model=CodeModuleInfo)
+@router.put(
+    "/{module_id}",
+    response_model=CodeModuleInfo,
+    dependencies=[Depends(require_permission("code_module:write"))],
+)
 async def update_code_module(
     module_id: str,
     body: CodeModuleUpdate,
@@ -191,7 +201,11 @@ async def update_code_module(
     return module
 
 
-@router.delete("/{module_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{module_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_permission("code_module:write"))],
+)
 async def delete_code_module(
     module_id: str, session: AsyncSession = Depends(get_session)
 ):
@@ -266,7 +280,10 @@ async def preview_code_module(
     return _preview_payload(module.id, module.contents, env)
 
 
-@router.post("/{module_id}/starter-graph")
+@router.post(
+    "/{module_id}/starter-graph",
+    dependencies=[Depends(require_permission("code_module:write"))],
+)
 async def starter_graph(
     module_id: str, session: AsyncSession = Depends(get_session)
 ) -> dict:

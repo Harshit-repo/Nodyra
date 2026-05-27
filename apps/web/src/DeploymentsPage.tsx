@@ -130,6 +130,10 @@ export function DeploymentsPage() {
                     </Link>
                     {" · "}
                     {describeSchedule(d)}
+                    {d.workflow_version ? ` · pinned v${d.workflow_version}` : ""}
+                    {d.error_workflow_id
+                      ? ` · error workflow ${d.error_workflow_id.slice(0, 8)}`
+                      : ""}
                     {" · last fired "}
                     {when(d.last_fired)}
                   </div>
@@ -211,6 +215,12 @@ function DeploymentDialog({
   );
   const [every, setEvery] = useState(initial?.schedule_every ?? 1);
   const [tz, setTz] = useState(initial?.schedule_tz ?? "");
+  const [workflowVersionId, setWorkflowVersionId] = useState(
+    initial?.workflow_version_id ?? "",
+  );
+  const [errorWorkflowId, setErrorWorkflowId] = useState(
+    initial?.error_workflow_id ?? "",
+  );
   const [paramsText, setParamsText] = useState(
     JSON.stringify(initial?.default_parameters ?? {}, null, 2),
   );
@@ -242,6 +252,8 @@ function DeploymentDialog({
           schedule_tz: tz,
           default_parameters: parsed,
           active,
+          workflow_version_id: workflowVersionId.trim() || undefined,
+          error_workflow_id: errorWorkflowId.trim() || undefined,
         });
       } else {
         await api.createDeployment({
@@ -253,6 +265,8 @@ function DeploymentDialog({
           schedule_tz: tz,
           default_parameters: parsed,
           active,
+          workflow_version_id: workflowVersionId.trim() || undefined,
+          error_workflow_id: errorWorkflowId.trim() || undefined,
         });
       }
       onSaved();
@@ -382,6 +396,37 @@ function DeploymentDialog({
             />
           </div>
 
+          <div className="field">
+            <div className="field-label">
+              <span className="field-name">Pinned workflow version ID</span>
+            </div>
+            <p className="field-desc">
+              Blank pins the latest published version when the deployment is
+              created. Set this to a specific version id for controlled rollout.
+            </p>
+            <input
+              className="field-input"
+              value={workflowVersionId}
+              onChange={(e) => setWorkflowVersionId(e.target.value)}
+              placeholder="workflow_version_id"
+            />
+          </div>
+
+          <div className="field">
+            <div className="field-label">
+              <span className="field-name">Error workflow ID</span>
+            </div>
+            <p className="field-desc">
+              Optional workflow to run when this deployment fails.
+            </p>
+            <input
+              className="field-input"
+              value={errorWorkflowId}
+              onChange={(e) => setErrorWorkflowId(e.target.value)}
+              placeholder="workflow_id"
+            />
+          </div>
+
           <label className="field-toggle">
             <input
               type="checkbox"
@@ -406,4 +451,3 @@ function DeploymentDialog({
     </div>
   );
 }
-

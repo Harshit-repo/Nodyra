@@ -1,3 +1,11 @@
+export interface CredentialParamSpec {
+  type: string;
+  key: string;
+  label: string;
+  fields: string[];
+  multi?: boolean;
+}
+
 export interface ParamSpec {
   name: string;
   type: string;
@@ -8,6 +16,7 @@ export interface ParamSpec {
   choices: unknown[] | null;
   multiline: boolean;
   key_value: boolean;
+  credential?: CredentialParamSpec | null;
 }
 
 export interface PortSpec {
@@ -61,8 +70,15 @@ export interface WorkflowSummary {
   name: string;
   active: boolean;
   version: number;
+  published_version: number;
+  has_unpublished_changes: boolean;
   node_count: number;
   environment_id: string | null;
+  error_workflow_id?: string | null;
+  last_run_id?: string | null;
+  last_run_status?: string | null;
+  last_run_started_at?: string | null;
+  last_run_finished_at?: string | null;
   updated_at: string;
 }
 
@@ -71,10 +87,21 @@ export interface WorkflowDetail {
   name: string;
   active: boolean;
   version: number;
+  published_version: number;
+  has_unpublished_changes: boolean;
   environment_id: string | null;
+  error_workflow_id?: string | null;
+  error_alerts?: Record<string, unknown>;
   graph: WorkflowGraph;
   created_at: string;
   updated_at: string;
+}
+
+export interface WorkflowPublishResponse {
+  workflow_id: string;
+  workflow_version_id: string;
+  version: number;
+  updated_deployments: number;
 }
 
 export interface Environment {
@@ -85,8 +112,25 @@ export interface Environment {
   packages: string[];
   status: string;
   status_detail: string;
+  description: string;
+  runner_pool_size: number;
+  runner_pool_max: number | null;
+  effective_pool_max: number;
+  worker_rss_estimate_bytes: number | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface SystemSettings {
+  max_concurrent_runs: number;
+  runner_idle_seconds: number;
+  run_retention_days: number;
+  run_retention_max_per_workflow: number;
+  max_output_bytes: number;
+  max_artifact_bytes: number;
+  max_artifacts_per_run: number;
+  app_timezone: string;
+  worker_rss_soft_budget_bytes: number;
 }
 
 export interface NodeRunResult {
@@ -120,6 +164,9 @@ export interface RunInfo {
   id: string;
   workflow_id: string;
   workflow_version: number;
+  workflow_version_id?: string | null;
+  deployment_id?: string | null;
+  triggered_by_error_run_id?: string | null;
   mode: string;
   status: string;
   trigger_type: string;
@@ -152,6 +199,10 @@ export interface Deployment {
   default_parameters: Record<string, unknown>;
   active: boolean;
   environment_id: string | null;
+  workflow_version_id: string | null;
+  workflow_version: number | null;
+  error_workflow_id: string | null;
+  error_alerts: Record<string, unknown>;
   last_fired: string | null;
   created_at: string;
   updated_at: string;
@@ -167,6 +218,9 @@ export interface DeploymentCreate {
   default_parameters?: Record<string, unknown>;
   active?: boolean;
   environment_id?: string | null;
+  workflow_version_id?: string | null;
+  error_workflow_id?: string | null;
+  error_alerts?: Record<string, unknown>;
 }
 
 export interface DeploymentUpdate {
@@ -178,6 +232,9 @@ export interface DeploymentUpdate {
   default_parameters?: Record<string, unknown>;
   active?: boolean;
   environment_id?: string | null;
+  workflow_version_id?: string | null;
+  error_workflow_id?: string | null;
+  error_alerts?: Record<string, unknown>;
 }
 
 export interface CodeModule {
@@ -213,6 +270,9 @@ export interface RunListItem {
   workflow_id: string;
   workflow_name: string | null;
   workflow_version: number;
+  workflow_version_id?: string | null;
+  deployment_id?: string | null;
+  triggered_by_error_run_id?: string | null;
   mode: string;
   status: string;
   trigger_type: string;
@@ -238,9 +298,34 @@ export interface Credential {
   id: string;
   name: string;
   type: string;
+  scope: string;
+  workflow_id: string | null;
+  environment_id: string | null;
+  runner_pool_id: string | null;
+  description: string;
   keys: string[];
+  last_used_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface CredentialTestResponse {
+  ok: boolean;
+  status: string;
+  service: string;
+  message: string;
+  latency_ms: number;
+  checked_at: string;
+  details: Record<string, unknown>;
+}
+
+export interface AiWorkflowDraftResponse {
+  workflow_id: string;
+  graph: WorkflowGraph;
+  assumptions: string[];
+  missing_credentials: string[];
+  required_packages: string[];
+  explanation: string;
 }
 
 export interface AuditEvent {
@@ -261,11 +346,18 @@ export interface PinnedItem {
 export interface UserInfo {
   id: string;
   email: string;
+  name: string;
+  company: string;
   role: string;
+}
+
+export interface UserAdminInfo extends UserInfo {
+  created_at: string;
 }
 
 export interface AuthState {
   auth_required: boolean;
   signed_in: boolean;
+  registration_open: boolean;
   user: UserInfo | null;
 }

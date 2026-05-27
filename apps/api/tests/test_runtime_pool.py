@@ -32,7 +32,7 @@ class _FakeProcess:
 
 @pytest.mark.asyncio
 async def test_reap_idle_closes_old_processes() -> None:
-    pool = _EnvPool(env_id=None, size=3)
+    pool = _EnvPool(env_id=None, min_size=0, max_size=3)
     fresh = _FakeProcess(idle_since=time.time())
     stale = _FakeProcess(idle_since=time.time() - 3600)
     # Put both directly into idle; bypass acquire which would spawn.
@@ -48,7 +48,7 @@ async def test_reap_idle_closes_old_processes() -> None:
 
 @pytest.mark.asyncio
 async def test_reap_idle_disabled_when_threshold_is_zero() -> None:
-    pool = _EnvPool(env_id=None, size=3)
+    pool = _EnvPool(env_id=None, min_size=0, max_size=3)
     stale = _FakeProcess(idle_since=time.time() - 9_999)
     pool._idle = [stale]  # noqa: SLF001
     pool._all = {stale}  # noqa: SLF001

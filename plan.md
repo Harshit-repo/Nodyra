@@ -1,19 +1,20 @@
 # Noodle — Project Plan & Current State
 
-> A self-hostable, n8n-style workflow automation platform where every node is
-> pure Python. This document is the single hand-off — it captures what's built,
-> how it fits together, what's intentionally not done yet, and what to do next.
+> A self-hostable, Python-native workflow automation platform where every node
+> is pure Python. This document is the single hand-off — it captures what's
+> built, how it fits together, what's intentionally not done yet, and what to
+> do next.
 
 ---
 
 ## 1. Vision
 
-Build an n8n equivalent that is Python-native end to end:
+Build a Python-native workflow automation platform, end to end:
 
 - Users build workflows on a drag-and-drop React Flow canvas.
 - Every node is a plain Python function (typed I/O, declared in a tiny SDK).
-- Workflows run on warm Python worker processes (n8n model), not a container
-  per execution.
+- Workflows run on warm Python worker processes, not a container per
+  execution.
 - Per-workflow isolation comes from an **Environments** section: one global
   `uv`-managed venv plus user-created custom envs. A workflow is assigned an
   env; runs go to the runner subprocess bound to that env.
@@ -125,7 +126,7 @@ D:\noodle\
           NodePalette.tsx
           NodeDetails.tsx # shared inspector body (params, run, pinned, webhook)
           Inspector.tsx   # right sidebar wrapper, resizable
-          NodeDetailModal.tsx # n8n-style NDV (double-click)
+          NodeDetailModal.tsx # NDV modal (double-click)
 
     api/                  # FastAPI server
       app/
@@ -382,7 +383,7 @@ not yet enforced). Base under `/api` in the frontend (Vite proxy strips it).
 
 ## 7. Node SDK & engine
 
-### The n8n-style model
+### Node model
 
 A node is a plain Python function. The `@node` decorator builds a manifest
 from its signature.
@@ -441,7 +442,7 @@ def http_request(input=None, url="", method="GET",
   ancestors not already cached. Used by the "Run from here" toolbar action.
 - **`outputs_override`** on GraphNode for dynamic-output nodes (Switch).
 - **Disabled passthrough** — a node with `disabled=True` is bypassed; the
-  first wired input flows to the first output (matches n8n).
+  first wired input flows to the first output.
 - **Live event hook** — `on_event(event)` is awaited with per-node
   `node_started` / `node_finished` events. Used by the in-process broker to
   drive WebSocket updates and per-node status badges on the canvas.
@@ -540,7 +541,7 @@ Body: `[NodePalette] [ReactFlow Canvas] [Inspector]` inside
 `ReactFlowProvider`. The inspector is **horizontally resizable** by dragging
 its left edge (260 – 720 px).
 
-Double-click any node → **NDV modal** (n8n-style). The modal header carries
+Double-click any node → **NDV modal**. The modal header carries
 the node title + Execute step / Disable / Delete / × close. Body reuses
 `NodeDetails` with `showHeader={false}` to avoid duplicate titles.
 
@@ -622,7 +623,7 @@ The M0 → M8 plan is delivered as the self-hostable core, plus polish.
 
 - **Square icon-tile node cards** with name below, status badges, hover
   toolbar (run / open / disable / delete).
-- **NDV modal** on double-click — n8n-style detail view.
+- **NDV modal** on double-click — node-detail view.
 - **Resizable inspector**.
 - **Webhook Listen mode** — clears and polls for a real captured request.
 - **Key/value editor with raw-JSON toggle** for HTTP Request headers / query
@@ -632,8 +633,8 @@ The M0 → M8 plan is delivered as the self-hostable core, plus polish.
 - **Disabled-node passthrough** in the engine.
 - **9 stdlib-only nodes** added: join, split, length, regex_extract,
   regex_replace, hash, uuid, base64_encode, base64_decode.
-- **Expression evaluation** in string params with the n8n-ish `$json`,
-  `$node`, `$input`, `$now` aliases.
+- **Expression evaluation** in string params with `$json`, `$node`, `$input`,
+  `$now` aliases.
 - **Pinned data** — UI pin/unpin per node; run dispatch seeds the engine
   cache from pinned rows.
 - **Runs dropdown** in the toolbar — view recent runs, click to replay onto
@@ -724,9 +725,9 @@ the **next pass**.
   this is a node + small UI work.
 - **Expression "fx" badges** on fields whose value contains `{{` — only the
   top-of-section hint exists today.
-- **Hover preview / input-output split** in NodeCard — n8n's NDV has a
-  side-by-side input/output panel; we only have the "Last run" section in the
-  inspector.
+- **Hover preview / input-output split** in NodeCard — a side-by-side
+  input/output panel; we only have the "Last run" section in the inspector
+  today.
 - **Sortable / draggable Switch branches** — keys are just dict order today.
 - **Partial-execution visual hints** — when targets exclude part of the
   graph, the run nodes show status but the skipped nodes show nothing

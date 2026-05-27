@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_session
 from app.models import PinnedData, Workflow
 from app.schemas import PinnedItem, PinPayload
+from app.security import require_permission
 
 router = APIRouter(tags=["pinned"])
 
@@ -32,7 +33,9 @@ async def list_pinned(
 
 
 @router.put(
-    "/workflows/{workflow_id}/pinned/{node_id}", response_model=PinnedItem
+    "/workflows/{workflow_id}/pinned/{node_id}",
+    response_model=PinnedItem,
+    dependencies=[Depends(require_permission("pinned:write"))],
 )
 async def upsert_pinned(
     workflow_id: str,
@@ -62,6 +65,7 @@ async def upsert_pinned(
 @router.delete(
     "/workflows/{workflow_id}/pinned/{node_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_permission("pinned:write"))],
 )
 async def remove_pinned(
     workflow_id: str,

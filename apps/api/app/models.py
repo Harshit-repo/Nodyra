@@ -5,6 +5,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
     Float,
@@ -36,6 +37,12 @@ class Environment(Base):
     packages: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
     status_detail: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    runner_pool_size: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    runner_pool_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    worker_rss_estimate_bytes: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -53,6 +60,12 @@ class Workflow(Base):
     environment_id: Mapped[str | None] = mapped_column(
         ForeignKey("environments.id"), nullable=True
     )
+    draft_graph: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    published_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    error_workflow_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    error_alerts: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -74,6 +87,8 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     email: Mapped[str] = mapped_column(String(200), unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(160), nullable=False, default="")
+    company: Mapped[str] = mapped_column(String(160), nullable=False, default="")
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="admin")
     created_at: Mapped[datetime] = mapped_column(
@@ -89,7 +104,21 @@ class Credential(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     type: Mapped[str] = mapped_column(String(40), nullable=False, default="generic")
+    scope: Mapped[str] = mapped_column(String(20), nullable=False, default="global")
+    workflow_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workflows.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    environment_id: Mapped[str | None] = mapped_column(
+        ForeignKey("environments.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    runner_pool_id: Mapped[str | None] = mapped_column(
+        String(120), nullable=True, index=True
+    )
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     encrypted_data: Mapped[str] = mapped_column(Text, nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -149,6 +178,15 @@ class Run(Base):
         ForeignKey("workflows.id", ondelete="CASCADE"), index=True, nullable=False
     )
     workflow_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    workflow_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workflow_versions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    deployment_id: Mapped[str | None] = mapped_column(
+        ForeignKey("deployments.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    triggered_by_error_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     mode: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
     trigger_type: Mapped[str] = mapped_column(
@@ -286,6 +324,15 @@ class Deployment(Base):
     environment_id: Mapped[str | None] = mapped_column(
         ForeignKey("environments.id"), nullable=True
     )
+    workflow_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workflow_versions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    error_workflow_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    error_alerts: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     last_fired: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -325,8 +372,46 @@ class WorkflowVersion(Base):
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     graph: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
     workflow: Mapped[Workflow] = relationship(back_populates="versions")
+
+
+class SystemSetting(Base):
+    """Singleton row holding workspace-wide runtime settings.
+
+    Only one row exists (id="singleton"). Admin endpoints update it and the
+    ``live_settings`` service reads it on each access so hot-reloadable
+    consumers (retention loop, output cap, artifact limits, idle reaper)
+    pick up changes without a restart. Pool sizing and concurrency limits
+    are applied at next pool creation or restart — the UI surfaces that.
+    """
+
+    __tablename__ = "system_settings"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default="singleton")
+    max_concurrent_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=8)
+    runner_idle_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=600)
+    run_retention_days: Mapped[int] = mapped_column(Integer, nullable=False, default=14)
+    run_retention_max_per_workflow: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    max_output_bytes: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=256 * 1024
+    )
+    max_artifact_bytes: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=50 * 1024 * 1024
+    )
+    max_artifacts_per_run: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=100
+    )
+    app_timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    worker_rss_soft_budget_bytes: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

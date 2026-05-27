@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import SessionLocal
 from app.models import Artifact
+from app.services.redaction import load_secret_values, redact_value
 from noodle.artifacts import ARTIFACT_MARKER, LocalArtifactStore, is_artifact_ref
 
 
@@ -20,12 +21,17 @@ def artifact_base_dir() -> Path:
     return Path(settings.artifacts_dir).expanduser().resolve()
 
 
-def make_artifact_store(run_id: str) -> LocalArtifactStore:
+def make_artifact_store(
+    run_id: str,
+    *,
+    max_bytes: int | None = None,
+    max_count: int | None = None,
+) -> LocalArtifactStore:
     return LocalArtifactStore(
         artifact_base_dir(),
         run_id,
-        max_bytes=settings.max_artifact_bytes,
-        max_count=settings.max_artifacts_per_run,
+        max_bytes=max_bytes if max_bytes is not None else settings.max_artifact_bytes,
+        max_count=max_count if max_count is not None else settings.max_artifacts_per_run,
     )
 
 
@@ -63,7 +69,9 @@ def path_for_artifact(artifact: Artifact) -> Path:
     return _artifact_path(artifact.storage_key)
 
 
-def _row_from_ref(ref: dict[str, Any], run_id: str) -> Artifact:
+def _row_from_ref(
+    ref: dict[str, Any], run_id: str, secret_values: list[str] | None = None
+) -> Artifact:
     artifact_id = str(ref["artifact_id"])
     node_id = str(ref.get("node_id") or "unknown")
     name = str(ref.get("name") or "artifact")
@@ -81,10 +89,11 @@ def _row_from_ref(ref: dict[str, Any], run_id: str) -> Artifact:
         size_bytes=int(ref.get("size_bytes") or 0),
         storage_backend=str(ref.get("storage_backend") or "local"),
         storage_key=storage_key,
-        artifact_metadata=(
-            ref.get("metadata") if isinstance(ref.get("metadata"), dict) else {}
+        artifact_metadata=redact_value(
+            ref.get("metadata") if isinstance(ref.get("metadata"), dict) else {},
+            secret_values or [],
         ),
-        preview=ref.get("preview"),
+        preview=redact_value(ref.get("preview"), secret_values or []),
     )
 
 
@@ -98,6 +107,7 @@ async def persist_artifact_refs(run_id: str, refs: Iterable[dict[str, Any]]) -> 
         return
 
     async with SessionLocal() as session:
+        secret_values = await load_secret_values(session)
         existing = set(
             (
                 await session.scalars(
@@ -108,7 +118,7 @@ async def persist_artifact_refs(run_id: str, refs: Iterable[dict[str, Any]]) -> 
         for artifact_id, ref in unique.items():
             if artifact_id in existing:
                 continue
-            row = _row_from_ref(ref, run_id)
+            row = _row_from_ref(ref, run_id, secret_values)
             if row.storage_backend == "local":
                 try:
                     path_for_artifact(row)

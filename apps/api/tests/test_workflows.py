@@ -13,7 +13,7 @@ async def test_create_lists_and_fetches_workflow(client: AsyncClient) -> None:
     assert fetched["name"] == "My Flow"
 
 
-async def test_saving_a_graph_creates_a_new_version(client: AsyncClient) -> None:
+async def test_saving_a_graph_updates_draft_until_publish(client: AsyncClient) -> None:
     workflow_id = (await client.post("/workflows", json={"name": "Flow"})).json()["id"]
 
     graph = {
@@ -30,11 +30,28 @@ async def test_saving_a_graph_creates_a_new_version(client: AsyncClient) -> None
     updated = (
         await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
     ).json()
-    assert updated["version"] == 2
+    assert updated["version"] == 1
+    assert updated["has_unpublished_changes"] is True
     assert len(updated["graph"]["nodes"]) == 1
 
     versions = (await client.get(f"/workflows/{workflow_id}/versions")).json()
+    assert [v["version"] for v in versions] == [1]
+
+    published = (
+        await client.post(
+            f"/workflows/{workflow_id}/publish",
+            json={"notes": "first publish"},
+        )
+    ).json()
+    assert published["version"] == 2
+
+    fetched = (await client.get(f"/workflows/{workflow_id}")).json()
+    assert fetched["version"] == 2
+    assert fetched["has_unpublished_changes"] is False
+
+    versions = (await client.get(f"/workflows/{workflow_id}/versions")).json()
     assert [v["version"] for v in versions] == [1, 2]
+    assert versions[-1]["notes"] == "first publish"
 
 
 async def test_update_name_and_active_without_new_version(client: AsyncClient) -> None:
@@ -48,6 +65,35 @@ async def test_update_name_and_active_without_new_version(client: AsyncClient) -
     assert updated["name"] == "Renamed"
     assert updated["active"] is True
     assert updated["version"] == 1
+
+
+async def test_workflow_summary_includes_latest_run(client: AsyncClient) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "Run Flow"})).json()[
+        "id"
+    ]
+    graph = {
+        "nodes": [
+            {
+                "id": "c",
+                "type": "code",
+                "params": {"code": "output = {'ok': True}"},
+                "position": {"x": 0, "y": 0},
+            }
+        ],
+        "edges": [],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()[
+        "run_id"
+    ]
+
+    listed = (await client.get("/workflows")).json()
+    summary = next(item for item in listed if item["id"] == workflow_id)
+
+    assert summary["last_run_id"] == run_id
+    assert summary["last_run_status"] == "success"
+    assert summary["last_run_started_at"] is not None
+    assert summary["last_run_finished_at"] is not None
 
 
 async def test_delete_workflow(client: AsyncClient) -> None:

@@ -1,6 +1,6 @@
 """Node SDK: the ``@node`` decorator, manifest generation, and the node registry.
 
-A node is a plain Python function. Following n8n's model, a node has:
+A node is a plain Python function with:
 
 * **input ports** — wired data connections. Function parameters whose names are
   listed in ``@node(inputs=[...])`` are input ports (default ``["input"]``;
@@ -10,8 +10,8 @@ A node is a plain Python function. Following n8n's model, a node has:
 * **outputs** — declared with ``@node(outputs=[...])`` (default ``["main"]``);
   a multi-output node returns a dict keyed by those names.
 
-Per-parameter UI metadata (choices, multiline, placeholder, description) is
-supplied via the decorator's ``params`` argument.
+Per-parameter UI metadata (choices, multiline, placeholder, description,
+credential selectors) is supplied via the decorator's ``params`` argument.
 """
 
 import ast
@@ -22,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, get_args, get_origin, get_type_hints
 
-from noodle.models import NodeManifest, ParamSpec, PortSpec
+from noodle.models import CredentialSpec, NodeManifest, ParamSpec, PortSpec
 
 _TYPE_MAP: dict[Any, str] = {
     str: "string",
@@ -150,10 +150,16 @@ def _build_manifest(
 
         meta = param_meta.get(pname, {})
         has_default = param.default is not inspect.Parameter.empty
+        credential_meta = meta.get("credential")
+        credential = (
+            CredentialSpec.model_validate(credential_meta)
+            if isinstance(credential_meta, dict)
+            else None
+        )
         params.append(
             ParamSpec(
                 name=pname,
-                type=_type_label(hints.get(pname, str)),
+                type="credential" if credential else _type_label(hints.get(pname, str)),
                 required=not has_default,
                 default=param.default if has_default else None,
                 description=meta.get("description", ""),
@@ -161,6 +167,7 @@ def _build_manifest(
                 choices=meta.get("choices"),
                 multiline=bool(meta.get("multiline", False)),
                 key_value=bool(meta.get("key_value", False)),
+                credential=credential,
             )
         )
 
@@ -286,7 +293,7 @@ def discover_module_function_manifests(
             continue
 
         param_specs = _function_param_specs(stmt)
-        # n8n-style: the node has a single "input" port (the upstream data
+        # Single-port model: the node has one "input" port (the upstream data
         # envelope, available as $json in expressions) and every function
         # parameter shows up in the inspector. Users wire upstream into the
         # one port and reference its fields via {{ $json.field }} in each
@@ -373,10 +380,10 @@ def register_module_functions(
             skipped.append((key, "*args / **kwargs are not supported"))
             continue
 
-        # n8n-style: one virtual "input" port + every function parameter
-        # in the inspector. The engine binds the wired upstream value to
-        # $json (for expression evaluation) and filters kwargs to the
-        # function's actual signature before calling — so the virtual
+        # Single-port model: one virtual "input" port + every function
+        # parameter in the inspector. The engine binds the wired upstream
+        # value to $json (for expression evaluation) and filters kwargs to
+        # the function's actual signature before calling — so the virtual
         # "input" port isn't passed unless the user happened to name a
         # parameter ``input``.
         try:

@@ -5,10 +5,18 @@ async def test_register_login_and_me(client: AsyncClient) -> None:
     registered = (
         await client.post(
             "/auth/register",
-            json={"email": "dev@noodle.test", "password": "supersecret"},
+            json={
+                "name": "Dev User",
+                "company": "Noodle Labs",
+                "email": "dev@noodle.test",
+                "password": "supersecret",
+            },
         )
     ).json()
     assert registered["user"]["email"] == "dev@noodle.test"
+    assert registered["user"]["name"] == "Dev User"
+    assert registered["user"]["company"] == "Noodle Labs"
+    assert registered["user"]["role"] == "owner"
     token = registered["token"]
 
     me = await client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
@@ -68,6 +76,7 @@ async def test_auth_required_endpoint(client: AsyncClient) -> None:
     initial = (await client.get("/auth/required")).json()
     assert initial["auth_required"] is False
     assert initial["signed_in"] is False
+    assert initial["registration_open"] is True
 
     registered = (
         await client.post(
@@ -113,6 +122,122 @@ async def test_auth_gating_blocks_when_required(client: AsyncClient) -> None:
             "/workflows", headers={"Authorization": "Bearer not-a-real-token"}
         )
         assert bad.status_code == 401
+    finally:
+        app_settings.auth_required = False
+
+
+async def test_registration_closes_after_first_user(client: AsyncClient) -> None:
+    first = await client.post(
+        "/auth/register",
+        json={
+            "name": "Workspace Admin",
+            "company": "Noodle Labs",
+            "email": "owner@noodle.test",
+            "password": "supersecret",
+        },
+    )
+    assert first.status_code == 201
+    assert first.json()["user"]["role"] == "owner"
+
+    second = await client.post(
+        "/auth/register",
+        json={"email": "second@noodle.test", "password": "supersecret"},
+    )
+    assert second.status_code == 403
+
+    state = (await client.get("/auth/required")).json()
+    assert state["registration_open"] is False
+
+
+async def test_rbac_blocks_viewer_mutations_and_admin_only_secrets(
+    client: AsyncClient,
+) -> None:
+    from app.config import settings as app_settings
+
+    app_settings.auth_required = True
+    try:
+        owner = (
+            await client.post(
+                "/auth/register",
+                json={
+                    "name": "Workspace Admin",
+                    "company": "Noodle Labs",
+                    "email": "owner2@noodle.test",
+                    "password": "supersecret",
+                },
+            )
+        ).json()
+        assert owner["user"]["role"] == "owner"
+        owner_headers = {"Authorization": f"Bearer {owner['token']}"}
+
+        viewer = (
+            await client.post(
+                "/auth/users",
+                headers=owner_headers,
+                json={
+                    "name": "Viewer User",
+                    "company": "Noodle Labs",
+                    "email": "viewer@noodle.test",
+                    "password": "supersecret",
+                    "role": "viewer",
+                },
+            )
+        ).json()
+        editor = (
+            await client.post(
+                "/auth/users",
+                headers=owner_headers,
+                json={
+                    "name": "Editor User",
+                    "email": "editor@noodle.test",
+                    "password": "supersecret",
+                    "role": "editor",
+                },
+            )
+        ).json()
+        assert viewer["role"] == "viewer"
+        assert viewer["name"] == "Viewer User"
+        assert viewer["company"] == "Noodle Labs"
+        assert editor["role"] == "editor"
+
+        viewer_login = (
+            await client.post(
+                "/auth/login",
+                json={"email": "viewer@noodle.test", "password": "supersecret"},
+            )
+        ).json()
+        editor_login = (
+            await client.post(
+                "/auth/login",
+                json={"email": "editor@noodle.test", "password": "supersecret"},
+            )
+        ).json()
+        viewer_headers = {"Authorization": f"Bearer {viewer_login['token']}"}
+        editor_headers = {"Authorization": f"Bearer {editor_login['token']}"}
+
+        denied = await client.post(
+            "/workflows", headers=viewer_headers, json={"name": "Nope"}
+        )
+        assert denied.status_code == 403
+
+        created = await client.post(
+            "/workflows", headers=editor_headers, json={"name": "Allowed"}
+        )
+        assert created.status_code == 201
+
+        secret_denied = await client.post(
+            "/credentials",
+            headers=editor_headers,
+            json={"name": "Token", "data": {"token": "secret"}},
+        )
+        assert secret_denied.status_code == 403
+
+        secret_created = await client.post(
+            "/credentials",
+            headers=owner_headers,
+            json={"name": "Token", "data": {"token": "secret"}},
+        )
+        assert secret_created.status_code == 201
     finally:
         app_settings.auth_required = False
 

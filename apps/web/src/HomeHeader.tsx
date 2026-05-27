@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 
 import { getUser } from "./api";
@@ -6,6 +7,26 @@ import { Logo } from "./Logo";
 export function HomeHeader() {
   const { pathname } = useLocation();
   const user = getUser();
+  const canAdmin = user?.role === "owner" || user?.role === "admin";
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const displayName = user?.name || user?.email || "User";
+  const initials = displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "U";
+
+  useEffect(() => {
+    function onDocumentClick(event: MouseEvent): void {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocumentClick);
+    return () => document.removeEventListener("mousedown", onDocumentClick);
+  }, []);
 
   function signOut(): void {
     const handler = (window as unknown as { __noodle_sign_out?: () => void })
@@ -53,18 +74,58 @@ export function HomeHeader() {
         >
           Credentials
         </Link>
-        <Link
-          className={pathname.startsWith("/activity") ? "active" : ""}
-          to="/activity"
-        >
-          Activity
-        </Link>
         {user && (
-          <div className="home-user">
-            <span className="home-user-email">{user.email}</span>
-            <button type="button" className="home-user-out" onClick={signOut}>
-              sign out
+          <div className="profile-menu" ref={menuRef}>
+            <button
+              type="button"
+              className="profile-trigger"
+              aria-expanded={open}
+              aria-label="User profile menu"
+              onClick={() => setOpen((value) => !value)}
+            >
+              <span className="profile-avatar">{initials}</span>
+              <span className="profile-trigger-text">
+                <span>{displayName}</span>
+                <small>{user.company || user.email}</small>
+              </span>
             </button>
+            {open && (
+              <div className="profile-dropdown" role="menu">
+                <div className="profile-dropdown-head">
+                  <span className="profile-avatar large">{initials}</span>
+                  <div>
+                    <strong>{displayName}</strong>
+                    <span>{user.email}</span>
+                    {user.company && <span>{user.company}</span>}
+                    <span className={`home-user-role role-${user.role}`}>
+                      {user.role}
+                    </span>
+                  </div>
+                </div>
+                <Link to="/settings" onClick={() => setOpen(false)}>
+                  Settings
+                </Link>
+                <Link to="/credentials" onClick={() => setOpen(false)}>
+                  Credentials
+                </Link>
+                {canAdmin && (
+                  <>
+                    <Link to="/security" onClick={() => setOpen(false)}>
+                      Security
+                    </Link>
+                    <Link to="/activity" onClick={() => setOpen(false)}>
+                      Activity
+                    </Link>
+                    <Link to="/environments" onClick={() => setOpen(false)}>
+                      Environments
+                    </Link>
+                  </>
+                )}
+                <button type="button" onClick={signOut}>
+                  Sign out
+                </button>
+              </div>
+            )}
           </div>
         )}
       </nav>

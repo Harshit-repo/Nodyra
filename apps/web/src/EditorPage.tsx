@@ -9,9 +9,11 @@ import { Inspector } from "./editor/Inspector";
 import { NodeDetailModal } from "./editor/NodeDetailModal";
 import { NodePalette } from "./editor/NodePalette";
 import { PortDataViewer } from "./editor/PortDataViewer";
-import { useEditor } from "./editor/store";
+import { type RunOptions, useEditor } from "./editor/store";
 import { Logo } from "./Logo";
+import { useToast } from "./ToastProvider";
 import type {
+  AiWorkflowDraftResponse,
   Environment,
   GraphNode,
   RunEvent,
@@ -45,6 +47,12 @@ export function EditorPage() {
     null,
   );
   const [functionsOpen, setFunctionsOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiPreview, setAiPreview] = useState<AiWorkflowDraftResponse | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const { notify } = useToast();
   const wsRef = useRef<WebSocket | null>(null);
   const webhookTimerRef = useRef<number | null>(null);
 
@@ -57,6 +65,10 @@ export function EditorPage() {
   const runId = useEditor((s) => s.runId);
   const running = useEditor((s) => s.running);
   const runError = useEditor((s) => s.runError);
+  const runStatusMap = useEditor((s) => s.runStatus);
+  const runOutputsMap = useEditor((s) => s.runOutputs);
+  const runMetaMap = useEditor((s) => s.runMeta);
+  const pinnedMap = useEditor((s) => s.pinned);
   const startRun = useEditor((s) => s.startRun);
   const applyRunEvent = useEditor((s) => s.applyRunEvent);
   const applyRunInfo = useEditor((s) => s.applyRunInfo);
@@ -136,13 +148,98 @@ export function EditorPage() {
       });
       setWorkflow(updated);
       markClean();
+      notify("Draft saved.", "success");
       return updated;
     } catch (err) {
       setMessage(String(err));
+      notify("Could not save draft.", "error");
       return null;
     } finally {
       setSaving(false);
     }
+  }
+
+  async function publishDraft(): Promise<void> {
+    if (!id || publishing) return;
+    const saved = await save();
+    if (!saved) return;
+    setPublishing(true);
+    setMessage("");
+    try {
+      const published = await api.publishWorkflow(id, {
+        notes: "Published from editor",
+      });
+      const detail = await api.getWorkflow(id);
+      setWorkflow(detail);
+      setMessage(`Published v${published.version}. Deployments stay pinned until updated.`);
+      notify(`Published v${published.version}.`, "success");
+    } catch (err) {
+      setMessage(String(err));
+      notify("Could not publish workflow.", "error");
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  async function previewAiDraft(): Promise<void> {
+    if (!id || aiBusy || !aiPrompt.trim()) return;
+    setAiBusy(true);
+    setMessage("");
+    try {
+      const draft = await api.aiWorkflowDraft(id, {
+        prompt: aiPrompt.trim(),
+        apply: false,
+      });
+      setAiPreview(draft);
+      notify("AI draft preview ready.", "success");
+    } catch (err) {
+      setMessage(String(err));
+      notify("Could not build AI draft.", "error");
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
+  async function applyAiDraft(): Promise<void> {
+    if (!id || !aiPreview) return;
+    setAiBusy(true);
+    setMessage("");
+    try {
+      await api.updateWorkflow(id, { graph: aiPreview.graph });
+      loadGraph(aiPreview.graph);
+      markClean();
+      const detail = await api.getWorkflow(id);
+      setWorkflow(detail);
+      setAiOpen(false);
+      setAiPreview(null);
+      const missing = aiPreview.missing_credentials.length
+        ? ` Missing credentials: ${aiPreview.missing_credentials.join(", ")}.`
+        : "";
+      setMessage(`${aiPreview.explanation}${missing}`);
+      notify("AI draft applied.", "success");
+    } catch (err) {
+      setMessage(String(err));
+      notify("Could not apply AI draft.", "error");
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
+  function openAiFixFailedRun(): void {
+    const failedNodeId = Object.entries(runStatusMap).find(([, status]) => status === "error")?.[0];
+    const failedError = failedNodeId ? runMetaMap[failedNodeId]?.error : runError;
+    setAiPrompt(
+      [
+        "Fix this failed workflow run.",
+        failedNodeId ? `Failed node id: ${failedNodeId}.` : "",
+        failedError ? `Error: ${failedError}` : "",
+        "Return an editable Noodle workflow draft that avoids the failure.",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+    setAiPreview(null);
+    setAiOpen(true);
   }
 
   async function toggleActive(next: boolean): Promise<void> {
@@ -162,15 +259,64 @@ export function EditorPage() {
       });
       setWorkflow(updated);
       markClean();
+      notify(next ? "Workflow activated." : "Workflow deactivated.", "success");
     } catch (err) {
       setActive(!next);
       setMessage(String(err));
+      notify("Could not update workflow state.", "error");
     } finally {
       setSaving(false);
     }
   }
 
-  function plannedNodeIds(graph: WorkflowGraph, targets?: string[]): Set<string> {
+  type RunCache = Record<string, Record<string, unknown>>;
+
+  function isPortOutput(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  }
+
+  function upstreamNodeIds(graph: WorkflowGraph, targets?: string[]): Set<string> {
+    const targetSet = targets && targets.length > 0 ? new Set(targets) : null;
+    const upstream = new Set<string>();
+    const seen = new Set<string>();
+    if (!targetSet) return upstream;
+
+    const visit = (nodeId: string) => {
+      if (seen.has(nodeId)) return;
+      seen.add(nodeId);
+      for (const edge of graph.edges) {
+        if (edge.target !== nodeId) continue;
+        if (!targetSet.has(edge.source)) upstream.add(edge.source);
+        visit(edge.source);
+      }
+    };
+    for (const target of targetSet) visit(target);
+    return upstream;
+  }
+
+  function reusableUpstreamCache(
+    graph: WorkflowGraph,
+    targets?: string[],
+  ): RunCache | undefined {
+    const cache: RunCache = {};
+    for (const nodeId of upstreamNodeIds(graph, targets)) {
+      const pinned = pinnedMap[nodeId];
+      const output =
+        pinned !== undefined
+          ? pinned
+          : runStatusMap[nodeId] === "success"
+            ? runOutputsMap[nodeId]
+            : undefined;
+      if (isPortOutput(output)) cache[nodeId] = output;
+    }
+    return Object.keys(cache).length > 0 ? cache : undefined;
+  }
+
+  function plannedNodeIds(
+    graph: WorkflowGraph,
+    targets?: string[],
+    cache?: RunCache,
+  ): Set<string> {
     const planned = new Set<string>();
     const targetSet = targets && targets.length > 0 ? new Set(targets) : null;
     if (!targetSet) {
@@ -181,6 +327,7 @@ export function EditorPage() {
     const visit = (nodeId: string) => {
       if (planned.has(nodeId)) return;
       planned.add(nodeId);
+      if (cache?.[nodeId]) return;
       for (const edge of graph.edges) {
         if (edge.target === nodeId) visit(edge.source);
       }
@@ -192,11 +339,15 @@ export function EditorPage() {
   function webhookForRun(
     graph: WorkflowGraph,
     targets?: string[],
+    cache?: RunCache,
   ): GraphNode | null {
-    const planned = plannedNodeIds(graph, targets);
+    const planned = plannedNodeIds(graph, targets, cache);
     return (
       graph.nodes.find(
-        (node) => planned.has(node.id) && node.type === "webhook_trigger",
+        (node) =>
+          planned.has(node.id) &&
+          node.type === "webhook_trigger" &&
+          !cache?.[node.id],
       ) ?? null
     );
   }
@@ -206,7 +357,18 @@ export function EditorPage() {
     const ws = new WebSocket(runEventsUrl(runId));
     wsRef.current = ws;
     ws.onmessage = (event) => {
-      applyRunEvent(JSON.parse(event.data as string) as RunEvent);
+      const payload = JSON.parse(event.data as string) as RunEvent;
+      applyRunEvent(payload);
+      if (payload.type === "run_finished") {
+        notify(
+          payload.status === "success"
+            ? "Workflow run succeeded."
+            : `Workflow run ${payload.status ?? "finished"}.`,
+          payload.status === "success" ? "success" : "error",
+        );
+      } else if (payload.type === "run_error") {
+        notify(payload.error ? `Run failed: ${payload.error}` : "Run failed.", "error");
+      }
     };
     ws.onclose = () => {
       wsRef.current = null;
@@ -216,6 +378,7 @@ export function EditorPage() {
   async function startWebhookTestRun(
     node: GraphNode,
     targets?: string[],
+    cache?: RunCache,
   ): Promise<void> {
     if (!id || webhookListen) return;
     const path = String(node.params.path ?? "").trim() || "noodle";
@@ -233,6 +396,7 @@ export function EditorPage() {
     }
 
     setWebhookListen({ nodeId: node.id, path, url, targets: runTargets });
+    notify("Listening for test webhook.", "info");
     webhookTimerRef.current = window.setInterval(async () => {
       try {
         const data = await api.lastWebhook(path);
@@ -240,10 +404,15 @@ export function EditorPage() {
 
         stopWebhookListen();
         setNodeOutput(node.id, { main: data }, "success");
+        notify("Webhook test event captured.", "success");
+        const runCache = {
+          ...(cache ?? {}),
+          [node.id]: { main: data },
+        };
         const { run_id } = await api.runWorkflow(id, {
           mode: "manual",
           targets: runTargets,
-          cache: { [node.id]: { main: data } },
+          cache: runCache,
         });
         connectRunStream(run_id, runTargets);
       } catch (err) {
@@ -253,23 +422,36 @@ export function EditorPage() {
     }, 1000);
   }
 
-  async function run(targets?: string[]): Promise<void> {
+  async function run(
+    targets?: string[],
+    options: RunOptions = {},
+  ): Promise<void> {
     if (!id || running || webhookListen) return;
     const saved = await save();
     if (!saved) return;
-    const webhookNode = webhookForRun(saved.graph, targets);
+    const cache = options.reuseUpstream
+      ? reusableUpstreamCache(saved.graph, targets)
+      : undefined;
+    const webhookNode = webhookForRun(saved.graph, targets, cache);
     if (webhookNode) {
-      await startWebhookTestRun(webhookNode, targets);
+      await startWebhookTestRun(webhookNode, targets, cache);
       return;
     }
     try {
-      const { run_id } = await api.runWorkflow(
-        id,
-        targets && targets.length > 0 ? { targets } : {},
-      );
+      const body: {
+        targets?: string[];
+        cache?: Record<string, Record<string, unknown>>;
+      } = {};
+      if (targets && targets.length > 0) body.targets = targets;
+      if (cache) body.cache = cache;
+      const { run_id } = await api.runWorkflow(id, body);
+      if (cache && Object.keys(cache).length > 0) {
+        notify(`Reused ${Object.keys(cache).length} upstream output(s).`, "info");
+      }
       connectRunStream(run_id, targets);
     } catch (err) {
       setMessage(String(err));
+      notify("Could not start workflow run.", "error");
     }
   }
 
@@ -293,6 +475,7 @@ export function EditorPage() {
       }
     } catch (err) {
       setMessage(String(err));
+      notify("Could not cancel run.", "error");
     } finally {
       setCancellingRun(false);
     }
@@ -301,7 +484,7 @@ export function EditorPage() {
   const runRef = useRef(run);
   runRef.current = run;
   useEffect(() => {
-    setRunHandler((targets) => runRef.current(targets));
+    setRunHandler((targets, options) => runRef.current(targets, options));
     return () => setRunHandler(null);
   }, [setRunHandler]);
 
@@ -370,7 +553,10 @@ export function EditorPage() {
             spellCheck={false}
           />
           <span className="toolbar-meta">
-            v{workflow?.version} · {nodeCount} node{nodeCount === 1 ? "" : "s"}
+            published v{workflow?.published_version ?? workflow?.version}
+            {workflow?.has_unpublished_changes ? " · unpublished draft" : ""}
+            {" · "}
+            {nodeCount} node{nodeCount === 1 ? "" : "s"}
           </span>
         </div>
         <div className="toolbar-right">
@@ -433,6 +619,16 @@ export function EditorPage() {
           >
             ƒ Functions
           </button>
+          <button
+            className="btn"
+            onClick={() => {
+              setAiPreview(null);
+              setAiOpen(true);
+            }}
+            title="Generate an editable draft from a natural-language prompt"
+          >
+            AI Draft
+          </button>
           <div className="export-menu">
             <button className="btn" onClick={() => setExportOpen((o) => !o)}>
               Export ▾
@@ -484,7 +680,15 @@ export function EditorPage() {
           )}
           <button className="btn btn-primary" onClick={() => void save()} disabled={saving}>
             {dirty && <span className="dirty-dot" />}
-            {saving ? "Saving…" : "Save"}
+            {saving ? "Saving…" : "Save draft"}
+          </button>
+          <button
+            className="btn"
+            onClick={() => void publishDraft()}
+            disabled={saving || publishing}
+            title="Publish the saved draft as a new production version"
+          >
+            {publishing ? "Publishing…" : "Publish"}
           </button>
         </div>
       </header>
@@ -504,10 +708,15 @@ export function EditorPage() {
         </div>
       )}
       {runError && (
-        <div className="toolbar-error">
-          {runError === "Run cancelled" || runError === "Run failed"
-            ? runError
-            : `Run failed: ${runError}`}
+        <div className="toolbar-error run-error-summary">
+          <span>
+            {runError === "Run cancelled" || runError === "Run failed"
+              ? runError
+              : `Run failed: ${runError}`}
+          </span>
+          <button className="btn btn-sm btn-ghost" onClick={openAiFixFailedRun}>
+            Fix with AI
+          </button>
         </div>
       )}
 
@@ -545,6 +754,99 @@ export function EditorPage() {
       </ReactFlowProvider>
 
       {ndvOpenId && <NodeDetailModal nodeId={ndvOpenId} />}
+
+      {aiOpen && (
+        <div
+          className="modal-overlay"
+          onClick={() => {
+            setAiOpen(false);
+            setAiPreview(null);
+          }}
+        >
+          <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+            <header className="modal-head">
+              <h2>AI workflow draft</h2>
+              <button
+                className="btn btn-sm btn-ghost"
+                onClick={() => {
+                  setAiOpen(false);
+                  setAiPreview(null);
+                }}
+              >
+                ✕
+              </button>
+            </header>
+            <div className="modal-body">
+              <p className="field-desc">
+                Creates a normal editable draft on the canvas. Review credentials
+                and parameters before publishing.
+              </p>
+              <textarea
+                className="field-input field-code"
+                rows={6}
+                value={aiPrompt}
+                onChange={(e) => setAiPrompt(e.target.value)}
+                placeholder="When a GitHub issue is opened, summarize it with OpenAI and post to Slack."
+                spellCheck={false}
+              />
+              {aiPreview && (
+                <div className="ai-preview">
+                  <div className="ai-preview-head">
+                    <strong>{aiPreview.graph.nodes.length} nodes</strong>
+                    <span>{aiPreview.graph.edges.length} connections</span>
+                  </div>
+                  <p>{aiPreview.explanation}</p>
+                  {aiPreview.missing_credentials.length > 0 && (
+                    <p className="error-text">
+                      Missing credentials: {aiPreview.missing_credentials.join(", ")}
+                    </p>
+                  )}
+                  {aiPreview.required_packages.length > 0 && (
+                    <p className="field-desc">
+                      Packages: {aiPreview.required_packages.join(", ")}
+                    </p>
+                  )}
+                  {aiPreview.assumptions.length > 0 && (
+                    <ul className="ai-preview-list">
+                      {aiPreview.assumptions.map((assumption) => (
+                        <li key={assumption}>{assumption}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+            <footer className="modal-foot">
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  setAiOpen(false);
+                  setAiPreview(null);
+                }}
+                disabled={aiBusy}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn"
+                onClick={() => void previewAiDraft()}
+                disabled={aiBusy || !aiPrompt.trim()}
+              >
+                {aiBusy ? "Building..." : "Preview draft"}
+              </button>
+              {aiPreview && (
+                <button
+                  className="btn btn-primary"
+                  onClick={() => void applyAiDraft()}
+                  disabled={aiBusy}
+                >
+                  Apply draft
+                </button>
+              )}
+            </footer>
+          </div>
+        </div>
+      )}
 
       {functionsOpen && id && (
         <FunctionsPanel

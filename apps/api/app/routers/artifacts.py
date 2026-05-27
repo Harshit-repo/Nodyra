@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_session
 from app.models import Artifact, Run
 from app.schemas import ArtifactInfo
+from app.security import require_permission
 from app.services.artifacts import delete_artifact_files, path_for_artifact
 
 router = APIRouter(tags=["artifacts"])
@@ -77,6 +78,7 @@ async def download_artifact(
 @router.delete(
     "/artifacts/{artifact_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_permission("artifact:delete"))],
 )
 async def delete_artifact(
     artifact_id: str, session: AsyncSession = Depends(get_session)

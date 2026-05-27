@@ -1,13 +1,13 @@
 # Architecture
 
-Noodle is a self-hostable, n8n-style workflow automation platform where every
-node is pure Python.
+Noodle is a self-hostable, Python-native workflow automation platform where
+every node is pure Python.
 
 ## Components
 
 - **`apps/web`** — React + React Flow editor (Vite). Drag-and-drop canvas,
-  node palette built from manifests, inspector with per-parameter forms and an
-  n8n-style ƒx (fixed/expression) toggle on string fields, Environments /
+  node palette built from manifests, inspector with per-parameter forms and a
+  ƒx (fixed/expression) toggle on string fields, Environments /
   Credentials / Activity / Executions / Code Library pages, and live
   test-mode driven by a WebSocket connection to the API.
 - **`apps/api`** — FastAPI server. Owns the database schema, the node registry
@@ -36,11 +36,11 @@ node is pure Python.
 
 ## Execution model
 
-Following n8n: a node has one or more named **input ports** (triggers have
-none), one or more named **output ports** (most have one named `main`;
-branching nodes like `if` have `true`/`false`), and a set of **config
-parameters** edited in the inspector. Edges connect an upstream output to a
-downstream input — they never wire individual parameters.
+A node has one or more named **input ports** (triggers have none), one or
+more named **output ports** (most have one named `main`; branching nodes
+like `if` have `true`/`false`), and a set of **config parameters** edited
+in the inspector. Edges connect an upstream output to a downstream input —
+they never wire individual parameters.
 
 User-uploaded code modules follow the same model with one twist: every
 top-level `def` becomes a node with a single virtual `input` port (the
@@ -149,5 +149,5 @@ deployment can choose one owner.
 - Artifact storage keys are server-generated; file names are sanitized and
   storage paths are `relative_to(base_dir)`-checked to block traversal.
 - Local-process execution is intentional — workflows run in the operator's
-  trust boundary, matching n8n's self-hosted model. Multi-tenant SaaS would
+  trust boundary, the standard self-hosted model. Multi-tenant SaaS would
   require container or gVisor isolation on top.

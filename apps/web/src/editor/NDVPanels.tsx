@@ -2,14 +2,22 @@ import { useState } from "react";
 
 import { api } from "../api";
 import { DataPanel } from "./DataPanel";
-import { ParamField, WebhookPanel } from "./NodeDetails";
+import {
+  ParamField,
+  WebhookPanel,
+  WEBHOOK_AUTH_TYPE_OPTIONS,
+  formatParamLabel,
+  webhookCredentialSpec,
+  webhookHiddenParam,
+  webhookParamLabel,
+} from "./NodeDetails";
 import { useEditor } from "./store";
 
 /**
  * The three-column body of the NDV modal: Input | Parameters/Settings | Output.
  *
- * Mirrors n8n's node editor — the user sees the data flowing in on the left,
- * configures the node in the middle, and inspects what came out on the right.
+ * The user sees the data flowing in on the left, configures the node in
+ * the middle, and inspects what came out on the right.
  */
 
 function ParametersTab({ nodeId }: { nodeId: string }) {
@@ -32,26 +40,65 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
       {manifest.params.length === 0 && (
         <p className="muted">This node has no parameters.</p>
       )}
-      {manifest.params.map((spec) => {
-        const value = params[spec.name];
-        return (
-          <div className="field" key={`${node.id}:${spec.name}`}>
-            <div className="field-label">
-              <span className="field-name">{spec.name}</span>
-              <span className="field-type">{spec.type}</span>
-              {spec.required && <span className="field-req">required</span>}
+      {manifest.params
+        .filter((spec) => !webhookHiddenParam(manifest.id, spec.name, params))
+        .map((spec) => {
+          const value = params[spec.name];
+          const displayLabel =
+            webhookParamLabel(manifest.id, spec.name, params) ??
+            formatParamLabel(spec.name);
+
+          const isWebhookAuthType =
+            manifest.id === "webhook_trigger" && spec.name === "auth_type";
+          const isWebhookCreds =
+            manifest.id === "webhook_trigger" && spec.name === "auth_credentials";
+
+          let renderSpec = spec;
+          if (isWebhookCreds) {
+            const at = String(params.auth_type || "none").toLowerCase();
+            renderSpec = webhookCredentialSpec(spec, at);
+          }
+
+          return (
+            <div className="field" key={`${node.id}:${spec.name}`}>
+              <div className="field-label">
+                <span className="field-name">{displayLabel}</span>
+                {spec.required && <span className="field-req">required</span>}
+              </div>
+              {spec.description && (
+                <p className="field-desc">{spec.description}</p>
+              )}
+              {isWebhookAuthType ? (
+                <select
+                  className="field-input"
+                  value={String(value ?? "none")}
+                  onChange={(e) => {
+                    // Atomic update — two setParam calls would race on
+                    // the same render-time params snapshot.
+                    updateParams(node.id, {
+                      ...params,
+                      [spec.name]: e.target.value,
+                      auth_credentials: "",
+                    });
+                  }}
+                >
+                  {WEBHOOK_AUTH_TYPE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <ParamField
+                  spec={renderSpec}
+                  value={value}
+                  onChange={(v) => setParam(spec.name, v)}
+                  credentialContext={params}
+                />
+              )}
             </div>
-            {spec.description && (
-              <p className="field-desc">{spec.description}</p>
-            )}
-            <ParamField
-              spec={spec}
-              value={value}
-              onChange={(v) => setParam(spec.name, v)}
-            />
-          </div>
-        );
-      })}
+          );
+        })}
       {manifest.id === "webhook_trigger" && (
         <WebhookPanel
           path={String(params.path ?? "noodle")}

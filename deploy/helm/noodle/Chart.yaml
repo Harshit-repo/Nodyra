@@ -1,6 +1,6 @@
 apiVersion: v2
 name: noodle
-description: Self-hostable, n8n-style workflow automation platform where node logic is pure Python.
+description: Self-hostable, Python-native workflow automation platform where node logic is pure Python.
 type: application
 version: 0.0.1
 appVersion: "0.0.1"

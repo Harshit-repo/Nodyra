@@ -41,6 +41,7 @@ async def _create_workflow(client: AsyncClient) -> str:
     await client.put(
         f"/workflows/{workflow_id}", json={"graph": _graph_with_trigger()}
     )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
     return workflow_id
 
 
@@ -136,6 +137,7 @@ async def test_active_deployment_overrides_in_graph_schedule(
     await client.put(
         f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
     )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
     deployment = (
         await client.post(
             "/deployments",

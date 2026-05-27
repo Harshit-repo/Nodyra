@@ -51,6 +51,13 @@ def test_expected_integration_nodes_are_registered() -> None:
     manifests = {m.id: m for m in registry.manifests()}
     assert manifests["slack_send_message"].category == "Integrations"
     assert [port.name for port in manifests["slack_send_message"].inputs] == ["input"]
+    bot_token = next(
+        param for param in manifests["slack_send_message"].params if param.name == "bot_token"
+    )
+    assert bot_token.type == "credential"
+    assert bot_token.credential is not None
+    assert bot_token.credential.type == "slack_bot"
+    assert bot_token.credential.key == "bot_token"
 
 
 def test_trigger_inputs_and_node_inputs() -> None:

@@ -53,6 +53,34 @@ def test_param_metadata_is_captured() -> None:
     assert spec.placeholder == "x or y"
 
 
+def test_credential_param_metadata_is_captured() -> None:
+    reg = NodeRegistry()
+
+    @node(
+        name="Needs Secret",
+        params={
+            "api_key": {
+                "credential": {
+                    "type": "openai",
+                    "key": "api_key",
+                    "label": "OpenAI API key",
+                    "fields": ["api_key"],
+                }
+            }
+        },
+        registry=reg,
+    )
+    def needs_secret(input=None, api_key: str = "") -> str:  # noqa: ARG001
+        return api_key
+
+    spec = reg.get("needs_secret").manifest.params[0]
+    assert spec.type == "credential"
+    assert spec.credential is not None
+    assert spec.credential.type == "openai"
+    assert spec.credential.key == "api_key"
+    assert spec.credential.fields == ["api_key"]
+
+
 def test_declared_outputs() -> None:
     reg = NodeRegistry()
 

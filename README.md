@@ -1,6 +1,6 @@
 # Noodle
 
-A self-hostable, n8n-style workflow automation platform where every node is pure Python.
+A self-hostable, Python-native workflow automation platform where every node is pure Python.
 
 Build workflows on a drag-and-drop canvas, run them on warm Python worker processes, manage
 per-workflow environments, and export any workflow as a standalone `.py` file or Docker image.

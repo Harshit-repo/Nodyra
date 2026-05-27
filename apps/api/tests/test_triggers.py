@@ -43,6 +43,7 @@ async def test_webhook_triggers_active_workflow(client: AsyncClient) -> None:
         f"/workflows/{workflow_id}",
         json={"graph": _webhook_graph("orders"), "active": True},
     )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     response = (await client.post("/webhook/orders", json={"order": 42})).json()
     assert len(response["runs"]) == 1
@@ -67,6 +68,7 @@ async def test_inactive_workflow_is_not_triggered(client: AsyncClient) -> None:
         f"/workflows/{workflow_id}",
         json={"graph": _webhook_graph("idle"), "active": False},
     )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     response = (await client.post("/webhook/idle", json={})).json()
     assert response["runs"] == []
@@ -90,6 +92,7 @@ async def test_schedule_tick_fires_when_due(client: AsyncClient) -> None:
     await client.put(
         f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
     )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     await triggers._tick()  # first sighting starts the clock, no run
     assert (await client.get(f"/workflows/{workflow_id}/runs")).json() == []
@@ -131,6 +134,7 @@ async def test_schedule_tick_honours_cron(client: AsyncClient) -> None:
     await client.put(
         f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
     )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     await triggers._tick()  # start the clock
     assert (await client.get(f"/workflows/{workflow_id}/runs")).json() == []
@@ -150,3 +154,166 @@ async def test_schedule_tick_honours_cron(client: AsyncClient) -> None:
     runs = (await client.get(f"/workflows/{workflow_id}/runs")).json()
     assert len(runs) == 1
     assert runs[0]["trigger_type"] == "schedule"
+
+
+def test_is_due_unknown_timezone_does_not_fire() -> None:
+    """An invalid IANA name must not silently fall back to UTC."""
+    triggers._logged_bad_tz.clear()
+    last = datetime.now(UTC) - timedelta(hours=5)
+    now = datetime.now(UTC)
+    params = {"cron": "* * * * *", "tz": "Mars/Olympus_Mons"}
+    assert triggers._is_due(params, last, now) is False
+    # And the warning is flood-controlled — only the first invalid hit logs.
+    assert "Mars/Olympus_Mons" in triggers._logged_bad_tz
+
+
+# --- Webhook auth (Slice 21) -------------------------------------------------
+
+
+def _webhook_graph_with_auth(path: str, auth_params: dict) -> dict:
+    graph = _webhook_graph(path)
+    graph["nodes"][0]["params"].update(auth_params)
+    return graph
+
+
+async def test_webhook_basic_auth_rejects_missing_credentials(
+    client: AsyncClient,
+) -> None:
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Basic"})
+    ).json()["id"]
+    graph = _webhook_graph_with_auth(
+        "secured",
+        {
+            "auth_type": "basic",
+            "auth_username": "alice",
+            "auth_password": "wonderland",
+        },
+    )
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    response = await client.post("/webhook/secured", json={})
+    assert response.status_code == 401
+
+
+async def test_webhook_basic_auth_accepts_valid_credentials(
+    client: AsyncClient,
+) -> None:
+    import base64
+
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Basic2"})
+    ).json()["id"]
+    graph = _webhook_graph_with_auth(
+        "secured2",
+        {
+            "auth_type": "basic",
+            "auth_username": "alice",
+            "auth_password": "wonderland",
+        },
+    )
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    token = base64.b64encode(b"alice:wonderland").decode("ascii")
+    response = await client.post(
+        "/webhook/secured2",
+        headers={"Authorization": f"Basic {token}"},
+        json={"order": 1},
+    )
+    body = response.json()
+    assert response.status_code == 200
+    assert len(body["runs"]) == 1
+
+
+async def test_webhook_header_auth_checks_value(client: AsyncClient) -> None:
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Header"})
+    ).json()["id"]
+    graph = _webhook_graph_with_auth(
+        "header-auth",
+        {
+            "auth_type": "header",
+            "auth_header_name": "X-API-Key",
+            "auth_header_value": "supersecret",
+        },
+    )
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    wrong = await client.post(
+        "/webhook/header-auth",
+        headers={"X-API-Key": "nope"},
+        json={},
+    )
+    assert wrong.status_code == 401
+    ok = await client.post(
+        "/webhook/header-auth",
+        headers={"X-API-Key": "supersecret"},
+        json={},
+    )
+    assert ok.status_code == 200
+    assert len(ok.json()["runs"]) == 1
+
+
+async def test_webhook_query_auth_checks_value(client: AsyncClient) -> None:
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Query"})
+    ).json()["id"]
+    graph = _webhook_graph_with_auth(
+        "query-auth",
+        {
+            "auth_type": "query",
+            "auth_query_name": "token",
+            "auth_query_value": "tokentokentoken",
+        },
+    )
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    wrong = await client.post("/webhook/query-auth?token=wrong", json={})
+    assert wrong.status_code == 401
+    ok = await client.post(
+        "/webhook/query-auth?token=tokentokentoken", json={}
+    )
+    assert ok.status_code == 200
+    assert len(ok.json()["runs"]) == 1
+
+
+async def test_webhook_unknown_path_still_returns_200(client: AsyncClient) -> None:
+    """Unknown paths return 200 with empty runs (existing behaviour).
+
+    Only path matches that *exist but fail auth* return 401.
+    """
+    response = await client.post("/webhook/nobody-listens", json={})
+    assert response.status_code == 200
+    assert response.json()["runs"] == []
+
+
+def test_is_due_different_timezones_fire_at_different_utc() -> None:
+    """Same cron expression resolves to different UTC fire times per tz.
+
+    Cron '0 9 * * *' fires daily at 09:00 local. NY (UTC-4 in May DST) fires
+    at 13:00 UTC; Sydney (UTC+10) fires at 23:00 UTC. Anchor ``last`` and
+    ``now`` so NY has crossed today's 09:00 but Sydney hasn't yet.
+    """
+    last = datetime(2026, 5, 26, 12, 0, tzinfo=UTC)  # 08:00 NY / 22:00 Sydney
+    now = datetime(2026, 5, 26, 14, 0, tzinfo=UTC)  # past 13:00 NY only
+
+    sydney_due = triggers._is_due(
+        {"cron": "0 9 * * *", "tz": "Australia/Sydney"}, last, now
+    )
+    ny_due = triggers._is_due(
+        {"cron": "0 9 * * *", "tz": "America/New_York"}, last, now
+    )
+    assert ny_due is True
+    assert sydney_due is False

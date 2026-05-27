@@ -27,19 +27,57 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from app.config import settings
+from app.db import SessionLocal
+from app.models import Environment
 from app.services.artifacts import artifact_base_dir
-from app.services.venv import venv_python
+from app.services.venv import ensure_environment_ready
 from noodle.serialization import deserialize_value, serialize_value
 
 EventCallback = Callable[[dict], Awaitable[None]]
 SubWorkflowCaller = Callable[[str, Any], Awaitable[Any]]
 
 
-def _python_for_env(env_id: str | None) -> str:
+async def _resolve_pool_sizes(env_id: str | None) -> tuple[int, int]:
+    """Per-environment ``(min_size, max_size)`` from the DB.
+
+    Falls back to the boot default for both bounds when the env row is
+    missing. ``min_size==0`` means Spawn-per-run (release closes the worker
+    immediately). ``runner_pool_max is None`` means Fixed pool
+    (``max := runner_pool_size``).
+
+    Looked up only when an env's pool is first created. Changing the value
+    afterwards takes effect on next API restart — the UI surfaces that.
+    """
+    if env_id is None:
+        size = max(1, settings.runner_pool_size)
+        return size, size
+    try:
+        async with SessionLocal() as session:
+            env = await session.get(Environment, env_id)
+            if env is None or env.runner_pool_size is None:
+                size = max(1, settings.runner_pool_size)
+                return size, size
+            min_size = max(0, int(env.runner_pool_size))
+            if env.runner_pool_max is not None:
+                max_size = max(1, int(env.runner_pool_max))
+            else:
+                max_size = max(1, min_size)
+            if max_size < max(1, min_size):
+                max_size = max(1, min_size)
+            return min_size, max_size
+    except Exception:  # noqa: BLE001 - degrade gracefully if the DB is unavailable
+        size = max(1, settings.runner_pool_size)
+        return size, size
+
+
+async def _python_for_env(env_id: str | None) -> str:
     if env_id:
-        candidate = venv_python(env_id)
-        if candidate.exists():
-            return str(candidate)
+        candidate = await ensure_environment_ready(env_id)
+        if not candidate.exists():
+            raise RuntimeError(
+                f"environment '{env_id}' Python was not found at {candidate}"
+            )
+        return str(candidate)
     return sys.executable
 
 
@@ -57,7 +95,7 @@ class _RuntimeProcess:
 
     @classmethod
     async def spawn(cls, env_id: str | None) -> "_RuntimeProcess":
-        python = _python_for_env(env_id)
+        python = await _python_for_env(env_id)
         process = await asyncio.create_subprocess_exec(
             python,
             "-u",
@@ -221,17 +259,28 @@ class _RuntimeProcess:
 
 
 class _EnvPool:
-    """A pool of up to ``size`` warm runner processes for one environment.
+    """Elastic pool of warm runner processes for one environment.
 
-    The semaphore bounds concurrent checkouts to ``size``, so the total number
-    of live processes for the env never exceeds ``size``. Idle processes are
-    reused; dead ones are dropped.
+    Three user-facing presets, one mechanism:
+
+    - **Fixed** (``min_size == max_size``): exactly N workers, always alive.
+    - **Elastic** (``min_size >= 1`` and ``max_size > min_size``): keep
+      ``min_size`` warm; burst up to ``max_size``; surplus dies via the
+      idle reaper.
+    - **Spawn-per-run** (``min_size == 0``, ``max_size >= 1``): no warm
+      workers; every release closes the worker immediately.
+
+    The semaphore is sized to ``max_size`` so concurrent runs are bounded
+    by that ceiling. Idle processes are reused; dead ones are dropped.
     """
 
-    def __init__(self, env_id: str | None, size: int) -> None:
+    def __init__(
+        self, env_id: str | None, min_size: int, max_size: int
+    ) -> None:
         self.env_id = env_id
-        self.size = max(1, size)
-        self._sem = asyncio.Semaphore(self.size)
+        self.min_size = max(0, min_size)
+        self.max_size = max(1, max_size, self.min_size)
+        self._sem = asyncio.Semaphore(self.max_size)
         self._idle: list[_RuntimeProcess] = []
         self._all: set[_RuntimeProcess] = set()
         self._lock = asyncio.Lock()
@@ -259,6 +308,13 @@ class _EnvPool:
 
     def release(self, proc: _RuntimeProcess) -> None:
         # Sync (no await) so it cannot interleave mid-statement with acquire.
+        # Spawn-per-run preset: never keep workers warm.
+        if self.min_size == 0:
+            self._all.discard(proc)
+            # Fire-and-forget close; don't block the dispatch caller.
+            asyncio.create_task(proc.close())
+            self._sem.release()
+            return
         if self._alive(proc):
             proc.idle_since = time.time()
             self._idle.append(proc)
@@ -267,26 +323,38 @@ class _EnvPool:
         self._sem.release()
 
     async def reap_idle(self, threshold_seconds: float) -> int:
-        """Close warm processes whose idle dwell-time exceeds the threshold.
+        """Close warm processes idle past the threshold, respecting ``min_size``.
 
-        Returns the number of processes closed. Safe to call concurrently
-        with acquire/release because we mutate ``_idle`` under the lock,
-        and idle processes hold no semaphore slot.
+        Returns the number of processes closed. Closes oldest-idle first so
+        the floor is filled by the freshest workers. Safe to call
+        concurrently with acquire/release because we mutate ``_idle`` under
+        the lock, and idle processes hold no semaphore slot.
         """
         if threshold_seconds <= 0:
             return 0
         now = time.time()
         to_close: list[_RuntimeProcess] = []
         async with self._lock:
-            keep: list[_RuntimeProcess] = []
-            for proc in self._idle:
+            live_count = sum(1 for proc in self._all if self._alive(proc))
+            surplus = max(0, live_count - self.min_size)
+            if surplus == 0:
+                return 0
+            # Idle list is append-order (newest on the right). Oldest-idle is
+            # the leftmost. Close those first, up to ``surplus``.
+            ordered = sorted(
+                self._idle,
+                key=lambda p: getattr(p, "idle_since", now),
+            )
+            kept: list[_RuntimeProcess] = []
+            for proc in ordered:
                 idle_since = getattr(proc, "idle_since", now)
-                if now - idle_since > threshold_seconds:
+                if surplus > 0 and now - idle_since > threshold_seconds:
                     to_close.append(proc)
                     self._all.discard(proc)
+                    surplus -= 1
                 else:
-                    keep.append(proc)
-            self._idle = keep
+                    kept.append(proc)
+            self._idle = kept
         for proc in to_close:
             await proc.close()
         return len(to_close)
@@ -315,7 +383,8 @@ class RuntimePool:
         async with self._lock:
             envpool = self._envs.get(key)
             if envpool is None:
-                envpool = _EnvPool(env_id, settings.runner_pool_size)
+                min_size, max_size = await _resolve_pool_sizes(env_id)
+                envpool = _EnvPool(env_id, min_size, max_size)
                 self._envs[key] = envpool
             return envpool
 
@@ -385,9 +454,12 @@ async def idle_reaper_loop() -> None:
     breaks the sleep). Errors per tick are swallowed so a transient
     subprocess hiccup doesn't kill the loop.
     """
+    from app.services.live_settings import get_live_settings
+
     while True:
         try:
-            threshold = settings.runner_idle_seconds
+            live = await get_live_settings()
+            threshold = live.runner_idle_seconds
             if threshold > 0:
                 await pool.reap_idle(threshold)
         except Exception:  # noqa: BLE001 - a bad sweep must not kill the loop

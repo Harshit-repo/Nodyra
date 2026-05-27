@@ -2,17 +2,241 @@ import { useEffect, useState } from "react";
 
 import { api } from "./api";
 import { HomeHeader } from "./HomeHeader";
-import type { Environment } from "./types";
+import type { Environment, SystemSettings } from "./types";
+
+const DESCRIPTION_HELP =
+  "Optional notes for your team — what this environment is for, who owns it, gotchas. Shown in the env card.";
+
+const FIXED_HELP =
+  "Always keep this many warm worker processes alive. Queues extra runs. Each warm worker re-imports the env's packages, so RAM cost is roughly (pool size) × (env footprint). Default for steady, predictable load.";
+
+const ELASTIC_HELP =
+  "Keep a small floor warm. Burst extra workers on demand up to the maximum, and let surplus die after idle. Best of both worlds: fast bursts without paying RAM 24/7.";
+
+const SPAWN_HELP =
+  "No warm workers. Every run spawns its own interpreter and the worker dies the moment it finishes. Saves RAM but adds cold-start latency on every run.";
+
+type PoolMode = "fixed" | "elastic" | "spawn";
+
+function InfoTip({ text }: { text: string }) {
+  return (
+    <span className="info-tip" title={text} aria-label={text}>
+      ⓘ
+    </span>
+  );
+}
+
+function modeFor(env: Environment): PoolMode {
+  if (env.runner_pool_size === 0) return "spawn";
+  if (env.runner_pool_max != null && env.runner_pool_max > env.runner_pool_size)
+    return "elastic";
+  return "fixed";
+}
+
+function formatBytes(value: number | null | undefined): string {
+  if (!value || value <= 0) return "—";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let v = value;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
+}
+
+function PoolModeFields({
+  mode,
+  setMode,
+  fixedSize,
+  setFixedSize,
+  elasticMin,
+  setElasticMin,
+  elasticMax,
+  setElasticMax,
+  spawnMax,
+  setSpawnMax,
+  workspaceCap,
+  rssEstimate,
+  rssSoftBudget,
+}: {
+  mode: PoolMode;
+  setMode: (mode: PoolMode) => void;
+  fixedSize: number;
+  setFixedSize: (n: number) => void;
+  elasticMin: number;
+  setElasticMin: (n: number) => void;
+  elasticMax: number;
+  setElasticMax: (n: number) => void;
+  spawnMax: number;
+  setSpawnMax: (n: number) => void;
+  workspaceCap: number | null;
+  rssEstimate: number | null | undefined;
+  rssSoftBudget: number;
+}) {
+  const effectiveMax =
+    mode === "fixed" ? fixedSize : mode === "elastic" ? elasticMax : spawnMax;
+  const overCap = workspaceCap != null && effectiveMax > workspaceCap;
+  const totalRssBytes =
+    rssEstimate && rssEstimate > 0 ? rssEstimate * effectiveMax : 0;
+  const overBudget = rssSoftBudget > 0 && totalRssBytes > rssSoftBudget;
+
+  return (
+    <>
+      <label className="field-label">Pool mode</label>
+      <div className="pool-mode-radios">
+        <label className="pool-mode-radio">
+          <input
+            type="radio"
+            checked={mode === "fixed"}
+            onChange={() => setMode("fixed")}
+          />
+          <span>Fixed</span>
+          <InfoTip text={FIXED_HELP} />
+        </label>
+        <label className="pool-mode-radio">
+          <input
+            type="radio"
+            checked={mode === "elastic"}
+            onChange={() => setMode("elastic")}
+          />
+          <span>Elastic</span>
+          <InfoTip text={ELASTIC_HELP} />
+        </label>
+        <label className="pool-mode-radio">
+          <input
+            type="radio"
+            checked={mode === "spawn"}
+            onChange={() => setMode("spawn")}
+          />
+          <span>Spawn-per-run</span>
+          <InfoTip text={SPAWN_HELP} />
+        </label>
+      </div>
+
+      {mode === "fixed" && (
+        <>
+          <label className="field-label">Pool size</label>
+          <input
+            className="field-input"
+            type="number"
+            min={1}
+            max={32}
+            value={fixedSize}
+            onChange={(e) => setFixedSize(Number(e.target.value))}
+          />
+        </>
+      )}
+
+      {mode === "elastic" && (
+        <div className="pool-mode-pair">
+          <div>
+            <label className="field-label">Warm minimum</label>
+            <input
+              className="field-input"
+              type="number"
+              min={1}
+              max={32}
+              value={elasticMin}
+              onChange={(e) => setElasticMin(Number(e.target.value))}
+            />
+          </div>
+          <div>
+            <label className="field-label">Burst maximum</label>
+            <input
+              className="field-input"
+              type="number"
+              min={Math.max(1, elasticMin)}
+              max={64}
+              value={elasticMax}
+              onChange={(e) => setElasticMax(Number(e.target.value))}
+            />
+          </div>
+        </div>
+      )}
+
+      {mode === "spawn" && (
+        <>
+          <label className="field-label">Concurrent run limit</label>
+          <input
+            className="field-input"
+            type="number"
+            min={1}
+            max={64}
+            value={spawnMax}
+            onChange={(e) => setSpawnMax(Number(e.target.value))}
+          />
+        </>
+      )}
+
+      {rssEstimate && rssEstimate > 0 && (
+        <p className="muted env-ram-estimate">
+          Estimated max RAM at burst: {effectiveMax} workers ×{" "}
+          {formatBytes(rssEstimate)} ≈ {formatBytes(totalRssBytes)}
+        </p>
+      )}
+      {overCap && workspaceCap != null && (
+        <p className="warn-text">
+          ⚠ Workspace cap of {workspaceCap} will limit this env's effective
+          concurrency to {workspaceCap}.
+        </p>
+      )}
+      {overBudget && (
+        <p className="warn-text">
+          ⚠ This pool could use up to {formatBytes(totalRssBytes)} at full
+          burst, more than the workspace soft budget of{" "}
+          {formatBytes(rssSoftBudget)}. Consider lowering the maximum or
+          moving heavy packages into a separate env.
+        </p>
+      )}
+    </>
+  );
+}
+
+interface PoolPayload {
+  runner_pool_size: number;
+  runner_pool_max: number | null;
+}
+
+function packPool(
+  mode: PoolMode,
+  fixedSize: number,
+  elasticMin: number,
+  elasticMax: number,
+  spawnMax: number,
+): PoolPayload {
+  if (mode === "fixed") {
+    const size = Math.max(1, Math.min(32, Math.floor(fixedSize) || 1));
+    return { runner_pool_size: size, runner_pool_max: null };
+  }
+  if (mode === "elastic") {
+    const min = Math.max(1, Math.min(32, Math.floor(elasticMin) || 1));
+    const max = Math.max(min, Math.min(64, Math.floor(elasticMax) || min));
+    return { runner_pool_size: min, runner_pool_max: max };
+  }
+  const max = Math.max(1, Math.min(64, Math.floor(spawnMax) || 1));
+  return { runner_pool_size: 0, runner_pool_max: max };
+}
 
 function CreateEnvModal({
   onClose,
   onCreated,
+  workspaceCap,
+  rssSoftBudget,
 }: {
   onClose: () => void;
   onCreated: () => void;
+  workspaceCap: number | null;
+  rssSoftBudget: number;
 }) {
   const [name, setName] = useState("");
   const [python, setPython] = useState("3.12");
+  const [description, setDescription] = useState("");
+  const [mode, setMode] = useState<PoolMode>("fixed");
+  const [fixedSize, setFixedSize] = useState(1);
+  const [elasticMin, setElasticMin] = useState(1);
+  const [elasticMax, setElasticMax] = useState(4);
+  const [spawnMax, setSpawnMax] = useState(4);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -21,7 +245,13 @@ function CreateEnvModal({
     setBusy(true);
     setError("");
     try {
-      await api.createEnvironment({ name: name.trim(), python_version: python });
+      const pool = packPool(mode, fixedSize, elasticMin, elasticMax, spawnMax);
+      await api.createEnvironment({
+        name: name.trim(),
+        python_version: python,
+        description: description.trim(),
+        ...pool,
+      });
       onCreated();
     } catch (err) {
       setError(String(err));
@@ -34,6 +264,8 @@ function CreateEnvModal({
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>New environment</h2>
         <p className="muted">A custom Python venv your workflows can run in.</p>
+
+        <label className="field-label">Name</label>
         <input
           className="field-input"
           autoFocus
@@ -42,6 +274,8 @@ function CreateEnvModal({
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && void submit()}
         />
+
+        <label className="field-label">Python version</label>
         <select
           className="field-input"
           value={python}
@@ -51,6 +285,34 @@ function CreateEnvModal({
           <option value="3.12">Python 3.12</option>
           <option value="3.13">Python 3.13</option>
         </select>
+
+        <label className="field-label">
+          Description <InfoTip text={DESCRIPTION_HELP} />
+        </label>
+        <textarea
+          className="field-input"
+          rows={2}
+          placeholder="What is this env for?"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+
+        <PoolModeFields
+          mode={mode}
+          setMode={setMode}
+          fixedSize={fixedSize}
+          setFixedSize={setFixedSize}
+          elasticMin={elasticMin}
+          setElasticMin={setElasticMin}
+          elasticMax={elasticMax}
+          setElasticMax={setElasticMax}
+          spawnMax={spawnMax}
+          setSpawnMax={setSpawnMax}
+          workspaceCap={workspaceCap}
+          rssEstimate={null}
+          rssSoftBudget={rssSoftBudget}
+        />
+
         {error && <p className="error-text">{error}</p>}
         <div className="modal-actions">
           <button className="btn btn-ghost" onClick={onClose}>
@@ -69,15 +331,138 @@ function CreateEnvModal({
   );
 }
 
+function EditEnvModal({
+  env,
+  onClose,
+  onSaved,
+  workspaceCap,
+  rssSoftBudget,
+}: {
+  env: Environment;
+  onClose: () => void;
+  onSaved: () => void;
+  workspaceCap: number | null;
+  rssSoftBudget: number;
+}) {
+  const initialMode = modeFor(env);
+  const [name, setName] = useState(env.name);
+  const [description, setDescription] = useState(env.description || "");
+  const [mode, setMode] = useState<PoolMode>(initialMode);
+  const [fixedSize, setFixedSize] = useState(
+    initialMode === "fixed" ? env.runner_pool_size || 1 : 1,
+  );
+  const [elasticMin, setElasticMin] = useState(
+    initialMode === "elastic" ? env.runner_pool_size || 1 : 1,
+  );
+  const [elasticMax, setElasticMax] = useState(
+    initialMode === "elastic" && env.runner_pool_max
+      ? env.runner_pool_max
+      : Math.max(4, env.runner_pool_size || 1),
+  );
+  const [spawnMax, setSpawnMax] = useState(
+    initialMode === "spawn" && env.runner_pool_max ? env.runner_pool_max : 4,
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save() {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const pool = packPool(mode, fixedSize, elasticMin, elasticMax, spawnMax);
+      await api.updateEnvironment(env.id, {
+        name: name.trim(),
+        description: description.trim(),
+        ...pool,
+      });
+      onSaved();
+    } catch (err) {
+      setError(String(err));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h2>Edit environment</h2>
+        <label className="field-label">Name</label>
+        <input
+          className="field-input"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <label className="field-label">
+          Description <InfoTip text={DESCRIPTION_HELP} />
+        </label>
+        <textarea
+          className="field-input"
+          rows={2}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+
+        <PoolModeFields
+          mode={mode}
+          setMode={setMode}
+          fixedSize={fixedSize}
+          setFixedSize={setFixedSize}
+          elasticMin={elasticMin}
+          setElasticMin={setElasticMin}
+          elasticMax={elasticMax}
+          setElasticMax={setElasticMax}
+          spawnMax={spawnMax}
+          setSpawnMax={setSpawnMax}
+          workspaceCap={workspaceCap}
+          rssEstimate={env.worker_rss_estimate_bytes}
+          rssSoftBudget={rssSoftBudget}
+        />
+
+        <p className="muted">
+          Pool changes apply when the API restarts (or this env's pool is
+          first created after the change).
+        </p>
+        {error && <p className="error-text">{error}</p>}
+        <div className="modal-actions">
+          <button className="btn btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={() => void save()}
+            disabled={busy}
+          >
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function poolLabel(env: Environment): string {
+  const mode = modeFor(env);
+  if (mode === "fixed") return `pool ${env.runner_pool_size || 1}`;
+  if (mode === "elastic")
+    return `pool ${env.runner_pool_size}→${env.runner_pool_max}`;
+  return `spawn-per-run (≤ ${env.runner_pool_max || env.effective_pool_max})`;
+}
+
 function EnvCard({
   env,
   onChanged,
+  workspaceCap,
+  rssSoftBudget,
 }: {
   env: Environment;
   onChanged: () => void;
+  workspaceCap: number | null;
+  rssSoftBudget: number;
 }) {
   const [pkg, setPkg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   async function add() {
     if (!pkg.trim() || busy) return;
@@ -116,7 +501,10 @@ function EnvCard({
         </div>
         <span className={`env-status status-${env.status}`}>{env.status}</span>
       </div>
-      <div className="env-meta">Python {env.python_version}</div>
+      <div className="env-meta">
+        Python {env.python_version} · {poolLabel(env)}
+      </div>
+      {env.description && <p className="env-description">{env.description}</p>}
 
       <div className="env-packages">
         {env.packages.length === 0 && (
@@ -150,6 +538,9 @@ function EnvCard({
       )}
 
       <div className="env-actions">
+        <button className="btn btn-sm" onClick={() => setEditing(true)}>
+          Edit
+        </button>
         <button className="btn btn-sm" onClick={() => void rebuild()}>
           Rebuild
         </button>
@@ -159,12 +550,28 @@ function EnvCard({
           </button>
         )}
       </div>
+
+      {editing && (
+        <EditEnvModal
+          env={env}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            onChanged();
+          }}
+          workspaceCap={workspaceCap}
+          rssSoftBudget={rssSoftBudget}
+        />
+      )}
     </article>
   );
 }
 
 export function EnvironmentsPage() {
   const [environments, setEnvironments] = useState<Environment[] | null>(null);
+  const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(
+    null,
+  );
   const [error, setError] = useState("");
   const [modal, setModal] = useState(false);
 
@@ -176,6 +583,11 @@ export function EnvironmentsPage() {
   }
 
   useEffect(load, []);
+  useEffect(() => {
+    api.getSystemSettings().then(setSystemSettings).catch(() => {
+      // Workspace settings are best-effort context; missing is fine.
+    });
+  }, []);
 
   // Poll while any environment is still building.
   useEffect(() => {
@@ -185,6 +597,9 @@ export function EnvironmentsPage() {
     const timer = window.setTimeout(load, 2500);
     return () => window.clearTimeout(timer);
   }, [environments]);
+
+  const workspaceCap = systemSettings?.max_concurrent_runs ?? null;
+  const rssSoftBudget = systemSettings?.worker_rss_soft_budget_bytes ?? 0;
 
   return (
     <div className="home">
@@ -208,7 +623,13 @@ export function EnvironmentsPage() {
         {environments && (
           <div className="env-grid">
             {environments.map((env) => (
-              <EnvCard key={env.id} env={env} onChanged={load} />
+              <EnvCard
+                key={env.id}
+                env={env}
+                onChanged={load}
+                workspaceCap={workspaceCap}
+                rssSoftBudget={rssSoftBudget}
+              />
             ))}
           </div>
         )}
@@ -221,6 +642,8 @@ export function EnvironmentsPage() {
             setModal(false);
             load();
           }}
+          workspaceCap={workspaceCap}
+          rssSoftBudget={rssSoftBudget}
         />
       )}
     </div>

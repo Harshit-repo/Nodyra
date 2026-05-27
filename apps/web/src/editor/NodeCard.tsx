@@ -24,6 +24,15 @@ function stop(event: MouseEvent): void {
   event.stopPropagation();
 }
 
+function isCredentialRef(value: unknown): boolean {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    (value as Record<string, unknown>).__noodle_credential__ === true
+  );
+}
+
 export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const [toolbarVisible, setToolbarVisible] = useState(false);
   const hideTimerRef = useRef<number | null>(null);
@@ -35,6 +44,15 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const runStatus = useEditor((s) => s.runStatus[id]);
   const running = useEditor((s) => s.running);
   const isPinned = useEditor((s) => Boolean(s.pinned[id]));
+  const credentialSpecs = manifest.params.filter((param) => param.credential);
+  const hasInlineSecret = credentialSpecs.some((param) => {
+    const value = data.params[param.name];
+    return typeof value === "string" && value.trim().length > 0;
+  });
+  const hasMissingCredential = credentialSpecs.some((param) => {
+    const value = data.params[param.name];
+    return value === null || value === undefined || value === "";
+  });
 
   const deleteNode = useEditor((s) => s.deleteNode);
   const toggleDisabled = useEditor((s) => s.toggleDisabled);
@@ -45,6 +63,8 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   if (selected) tileClass.push("selected");
   if (disabled) tileClass.push("is-disabled");
   if (isPinned) tileClass.push("is-pinned");
+  if (hasMissingCredential) tileClass.push("missing-credential");
+  if (hasInlineSecret) tileClass.push("inline-secret");
   if (runStatus) tileClass.push(`run-${runStatus}`);
 
   function clearHideTimer(): void {
@@ -88,7 +108,11 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       >
         <button
           type="button"
-          title={isWebhook ? "Listen for test event" : "Run from here"}
+          title={
+            isWebhook
+              ? "Listen for test event"
+              : "Run step using current upstream data"
+          }
           onClick={(e) => {
             stop(e);
             runFromNode(id);
@@ -96,6 +120,17 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
           disabled={running}
         >
           ▶
+        </button>
+        <button
+          type="button"
+          title="Run step fresh, recomputing upstream nodes"
+          onClick={(e) => {
+            stop(e);
+            runFromNode(id, { reuseUpstream: false });
+          }}
+          disabled={running}
+        >
+          ↻
         </button>
         <button
           type="button"
@@ -145,6 +180,13 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
         )}
 
         {disabled && <span className="node-disabled-pip">○</span>}
+        <div className="node-badges" aria-hidden>
+          {hasMissingCredential && <span title="Missing stored credential">key</span>}
+          {hasInlineSecret && <span title="Inline secret should be moved">!</span>}
+          {credentialSpecs.some((param) => isCredentialRef(data.params[param.name])) && (
+            <span title="Uses stored credential">lock</span>
+          )}
+        </div>
 
         {inputs.map((port, i) => (
           <Handle

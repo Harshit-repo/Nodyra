@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { NodeVariableInfo } from "../types";
 import {
@@ -21,7 +21,7 @@ import {
 /**
  * Side panel of the NDV (Input or Output). Shows the value as either a
  * tree-view JSON browser or, when the data is shaped like a list of records,
- * an n8n-style table. Auto-unwraps single-output ports so the viewer sees the
+ * a tabular view. Auto-unwraps single-output ports so the viewer sees the
  * items directly. When ``dragPrefix`` is set, leaf paths become draggable and
  * carry an ``{{ <prefix>.<path> }}`` expression that can be dropped into any
  * parameter text field.
@@ -80,6 +80,18 @@ function formatCell(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function pretty(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function copyText(text: string): void {
+  void navigator.clipboard.writeText(text);
 }
 
 const IDENT_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
@@ -304,6 +316,16 @@ function JsonTreeRow({
         {draggable && <span className="drag-grip" aria-hidden>⠿</span>}
         {label}
       </span>
+      {expr && (
+        <button
+          type="button"
+          className="json-tree-copy"
+          title={`Copy ${expr}`}
+          onClick={() => copyText(expr)}
+        >
+          copy
+        </button>
+      )}
       <span className="json-tree-colon">:</span>
       <JsonTreeValue value={value} path={path} dragPrefix={dragPrefix} />
     </div>
@@ -615,8 +637,14 @@ function buildExecutionLog({
 
   if (logs && logs.length > 0) {
     lines.push("", "stdout/stderr:", ...logs);
+  } else if (error) {
+    lines.push("", "No stdout/stderr logs were captured before the node failed.");
+  } else if (status === "skipped") {
+    lines.push("", "This node was skipped, so no logs were produced.");
+  } else if (status === "running") {
+    lines.push("", "This node is still running.");
   } else if (lines.length > 0) {
-    lines.push("", "No stdout/stderr logs were captured for this node.");
+    lines.push("", "The node ran, but it did not print anything.");
   }
 
   return lines.join("\n") || "No execution details were captured for this node.";
@@ -677,6 +705,17 @@ export function DataPanel({
     effectiveView = canTable ? "table" : "json";
   }
 
+  useEffect(() => {
+    if (error && hasLogStream && empty) setView("logs");
+  }, [empty, error, hasLogStream]);
+
+  const copyPayload =
+    effectiveView === "logs"
+      ? executionLog
+      : effectiveView === "variables"
+        ? pretty(variables ?? [])
+        : pretty(display);
+
   return (
     <section className="ndv-panel">
       <header className="ndv-panel-head">
@@ -729,12 +768,26 @@ export function DataPanel({
               Variables ({variables?.length})
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => copyText(copyPayload)}
+            title="Copy current view"
+          >
+            Copy
+          </button>
         </div>
       </header>
       <div className="ndv-panel-body">
         {error && (
           <div className="ndv-node-error" role="alert">
             <span>Node error</span>
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              onClick={() => copyText(error)}
+            >
+              Copy
+            </button>
             <pre>{error}</pre>
           </div>
         )}

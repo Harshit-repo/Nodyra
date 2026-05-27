@@ -1,7 +1,7 @@
 [project]
 name = "noodle"
 version = "0.0.1"
-description = "Self-hostable, n8n-style workflow automation platform where node logic is pure Python"
+description = "Self-hostable, Python-native workflow automation platform where node logic is pure Python"
 requires-python = ">=3.12"
 dependencies = []
 

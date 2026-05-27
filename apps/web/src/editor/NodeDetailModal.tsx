@@ -47,9 +47,25 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
             <button
               className="btn btn-sm btn-run"
               onClick={() => runFromNode(node.id)}
+              title={
+                isWebhook
+                  ? "Listen for a test event"
+                  : "Execute this step using current upstream data"
+              }
             >
               {isWebhook ? "▶ Listen for event" : "▶ Execute step"}
             </button>
+            {!isWebhook && (
+              <button
+                className="btn btn-sm btn-ghost"
+                onClick={() =>
+                  runFromNode(node.id, { reuseUpstream: false })
+                }
+                title="Execute this step after recomputing upstream nodes"
+              >
+                ↻ Run fresh
+              </button>
+            )}
             <button
               className="btn btn-sm"
               onClick={() => toggleDisabled(node.id)}

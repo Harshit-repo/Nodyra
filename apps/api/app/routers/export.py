@@ -28,7 +28,7 @@ async def export_script(
     workflow_id: str, session: AsyncSession = Depends(get_session)
 ) -> Response:
     workflow = await _load(session, workflow_id)
-    graph = workflow.versions[-1].graph or EMPTY_GRAPH
+    graph = workflow.draft_graph or workflow.versions[-1].graph or EMPTY_GRAPH
     script = workflow_to_script(graph, workflow.name)
     return Response(
         script,
@@ -44,7 +44,7 @@ async def export_docker(
     workflow_id: str, session: AsyncSession = Depends(get_session)
 ) -> Response:
     workflow = await _load(session, workflow_id)
-    graph = workflow.versions[-1].graph or EMPTY_GRAPH
+    graph = workflow.draft_graph or workflow.versions[-1].graph or EMPTY_GRAPH
 
     packages: list[str] = []
     python_version = "3.12"

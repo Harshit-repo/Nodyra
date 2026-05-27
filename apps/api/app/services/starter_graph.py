@@ -1,7 +1,7 @@
 """AST-aware starter-graph generator for uploaded code modules.
 
 Parses the uploaded file and emits a ``WorkflowGraph`` payload by walking
-the module body. Under the n8n-style single-port model:
+the module body. Under the single-port model:
 
 * Each top-level ``def`` becomes a node with one virtual ``input`` port
   (the upstream data envelope, available as ``$json`` in expressions).

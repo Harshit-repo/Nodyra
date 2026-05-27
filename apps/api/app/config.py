@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     max_artifacts_per_run: int = 100
     workflow_run_timeout_seconds: float = 120.0
     auth_required: bool = False
+    auth_allow_registration: bool = False
+    auth_registration_role: str = "viewer"
+    auth_token_ttl_seconds: int = 86_400
     secret_key: str = "noodle-dev-secret-change-me-in-production"
     # Shared secret the worker presents to call /internal/* endpoints.
     # Blank = no check (fine for local dev where only your machine reaches

@@ -6,6 +6,23 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class CredentialSpec(BaseModel):
+    """UI/runtime hint for parameters that should reference stored credentials.
+
+    When ``multi`` is True, the param expects the whole credential dict at
+    runtime (every named field in ``fields``). The inspector renders a
+    single "Credentials" picker rather than one per field, matching the n8n
+    convention. When ``multi`` is False (default), the param resolves to a
+    single field's decrypted string.
+    """
+
+    type: str = "generic"
+    key: str = "value"
+    label: str = "Credential"
+    fields: list[str] = Field(default_factory=list)
+    multi: bool = False
+
+
 class ParamSpec(BaseModel):
     """A configurable node parameter, edited in the inspector (not wired)."""
 
@@ -18,6 +35,7 @@ class ParamSpec(BaseModel):
     choices: list[Any] | None = None
     multiline: bool = False
     key_value: bool = False
+    credential: CredentialSpec | None = None
 
 
 class PortSpec(BaseModel):

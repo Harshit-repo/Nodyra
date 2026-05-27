@@ -1,8 +1,8 @@
 """Built-in node library.
 
 Importing this module registers every built-in node into the default registry.
-Nodes follow n8n's model: a single wired data input (triggers have none), config
-parameters edited in the inspector, and one or more named outputs.
+A node has a single wired data input (triggers have none), config parameters
+edited in the inspector, and one or more named outputs.
 """
 
 import json
@@ -12,6 +12,7 @@ from typing import Any
 import noodle.artifacts as artifacts_api
 from noodle.context import node_debug
 from noodle.sdk import node
+from noodle_nodes._creds import cred_multi
 
 OPERATORS = [
     "equals",
@@ -104,14 +105,41 @@ def schedule_trigger(
           "path": {"placeholder": "my-webhook", "description": "Last segment of the URL."},
           "response_mode": {"choices": ["On Received", "Last Node"]},
           "response_code": {"description": "HTTP status returned to the caller."},
+          "auth_type": {
+              "choices": ["none", "basic", "header", "query"],
+              "description": (
+                  "Authentication required for callers. 'none' accepts any "
+                  "request. 'basic' = HTTP Basic Auth. 'header' = check a custom "
+                  "header. 'query' = check a query-string parameter."
+              ),
+          },
+          "auth_credentials": {
+              # Default credential type for static manifest; the inspector
+              # dynamically swaps this based on auth_type — Basic Auth uses
+              # http_basic (username/password), Header Auth uses http_header
+              # (name/value), Query Auth uses http_query (name/value).
+              **cred_multi(
+                  "http_basic",
+                  "HTTP Basic Auth credentials",
+                  ["username", "password"],
+              ),
+              "description": "Stored credential used to authenticate inbound webhook calls.",
+          },
       })
 def webhook_trigger(
     http_method: str = "POST",
     path: str = "noodle",
     response_mode: str = "On Received",
     response_code: int = 200,
+    auth_type: str = "none",
+    auth_credentials: dict | None = None,
 ) -> dict:
-    """Start the workflow from an inbound HTTP request to a unique URL."""
+    """Start the workflow from an inbound HTTP request to a unique URL.
+
+    Auth options: none, HTTP Basic (Authorization header), custom header,
+    or a query-string token. Credentials should always come from the
+    Credentials store rather than be pasted inline.
+    """
     return {}
 
 

@@ -52,6 +52,10 @@ export interface NodeRunMeta {
   finishedAt?: number | null;
 }
 
+export interface RunOptions {
+  reuseUpstream?: boolean;
+}
+
 function deriveSwitchOutputs(rules: unknown): string[] {
   if (rules && typeof rules === "object" && !Array.isArray(rules)) {
     const keys = Object.keys(rules as Record<string, unknown>);
@@ -96,9 +100,11 @@ interface EditorStore {
   toggleDisabled: (id: string) => void;
   updateNodeSettings: (id: string, patch: NodeSettingsPatch) => void;
 
-  runHandler: ((targets?: string[]) => Promise<void>) | null;
-  setRunHandler: (fn: ((targets?: string[]) => Promise<void>) | null) => void;
-  runFromNode: (id: string) => void;
+  runHandler: ((targets?: string[], options?: RunOptions) => Promise<void>) | null;
+  setRunHandler: (
+    fn: ((targets?: string[], options?: RunOptions) => Promise<void>) | null,
+  ) => void;
+  runFromNode: (id: string, options?: RunOptions) => void;
 
   startRun: (runId: string, targets?: string[]) => void;
   applyRunEvent: (event: RunEvent) => void;
@@ -124,10 +130,17 @@ function newNodeId(): string {
   return `n_${Date.now().toString(36)}_${seq}`;
 }
 
+function randomSlug(): string {
+  return Math.random().toString(36).slice(2, 8);
+}
+
 function defaultParams(manifest: NodeManifest): Record<string, unknown> {
   const params: Record<string, unknown> = {};
   for (const spec of manifest.params) {
     params[spec.name] = spec.default ?? null;
+  }
+  if (manifest.id === "webhook_trigger") {
+    params.path = `webhook-${randomSlug()}`;
   }
   return params;
 }
@@ -346,9 +359,9 @@ export const useEditor = create<EditorStore>((set, get) => ({
     }),
 
   setRunHandler: (fn) => set({ runHandler: fn }),
-  runFromNode: (id) => {
+  runFromNode: (id, options = { reuseUpstream: true }) => {
     const handler = get().runHandler;
-    if (handler) void handler([id]);
+    if (handler) void handler([id], options);
   },
 
   startRun: (runId, targets) => {

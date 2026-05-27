@@ -8,6 +8,7 @@ Sets up the runtime context (``noodle.context.workflow_caller`` and
 """
 
 import asyncio
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,13 +19,16 @@ from sqlalchemy.orm import selectinload
 import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
 from app.config import settings
 from app.db import SessionLocal
-from app.models import CodeModule, NodeRun, PinnedData, Run, Workflow
+from app.models import CodeModule, Deployment, NodeRun, PinnedData, Run, Workflow, WorkflowVersion
 from app.services.artifacts import (
     collect_artifact_refs,
     make_artifact_store,
     persist_artifact_refs,
 )
+from app.services.credentials import resolve_credential_refs
 from app.services.events import broker
+from app.services.live_settings import get_live_settings
+from app.services.redaction import load_secret_values, redact_value
 from app.services.runtime_pool import pool as runtime_pool
 from noodle.context import artifact_store, call_chain, workflow_caller
 from noodle.engine import execute
@@ -46,6 +50,15 @@ TRIGGER_TYPES = ("manual_trigger", "webhook_trigger", "schedule_trigger")
 
 _active_runs: dict[str, asyncio.Task[None]] = {}
 
+# Set by ``_execute_run`` before invoking the engine. ``_call_sub_workflow``
+# reads this to decide whether sub-workflows should run their editable draft
+# (when the root run is a manual editor iteration) or their latest published
+# version (any production run). Default ``False`` is the safe choice — a
+# missing context defaults to "published only".
+_prefer_draft_graphs: ContextVar[bool] = ContextVar(
+    "noodle_prefer_draft_graphs", default=False
+)
+
 
 def _maybe_truncate(value: Any, cap: int) -> Any:
     if value is None:
@@ -53,14 +66,16 @@ def _maybe_truncate(value: Any, cap: int) -> Any:
     return truncate_serialized_value(value, cap)
 
 
-def _cap_output(value: Any) -> Any:
+def _cap_output(value: Any, cap: int | None = None) -> Any:
     """Bound the size of a persisted NodeRun.output payload.
 
     Outputs are ``{port: value}`` dicts; cap each port independently so a
-    single fat port doesn't drop the others. Anything past
-    ``settings.max_output_bytes`` becomes ``{_truncated, size_bytes, preview}``.
+    single fat port doesn't drop the others. Anything past ``cap`` becomes
+    ``{_truncated, size_bytes, preview}``. Falls back to
+    ``settings.max_output_bytes`` when no explicit cap is supplied.
     """
-    cap = settings.max_output_bytes
+    if cap is None:
+        cap = settings.max_output_bytes
     if not cap or cap <= 0 or value is None:
         return value
     if isinstance(value, dict):
@@ -68,9 +83,10 @@ def _cap_output(value: Any) -> Any:
     return _maybe_truncate(value, cap)
 
 
-def _cap_logs(logs: Any) -> Any:
+def _cap_logs(logs: Any, cap: int | None = None) -> Any:
     """Bound the total bytes of persisted logs the same way as outputs."""
-    cap = settings.max_output_bytes
+    if cap is None:
+        cap = settings.max_output_bytes
     if not cap or cap <= 0 or not isinstance(logs, list):
         return logs
     total = 0
@@ -88,7 +104,21 @@ def _cap_logs(logs: Any) -> Any:
 async def _load_workflow_graph(
     session: AsyncSession, workflow_id: str
 ) -> tuple[dict, dict[str, dict]]:
-    """Return (graph_dict, pinned_cache) for a workflow id."""
+    """Return (graph_dict, pinned_cache) for a workflow id.
+
+    Used only by ``_call_sub_workflow``. The graph picked depends on the
+    root run's context:
+
+    * Production runs (scheduled/webhook/deployment/error workflow) execute
+      the most recently published version. This is the Slice 11 contract —
+      production must never pick up unpublished changes via a sub-workflow.
+    * Manual editor runs (where the user clicked Run on a draft) propagate
+      "use draft" to sub-workflows so iteration works without publishing
+      every dependent workflow first.
+
+    The choice is read from ``_prefer_draft_graphs`` which ``_execute_run``
+    sets based on the root run's ``mode``.
+    """
     workflow = await session.scalar(
         select(Workflow)
         .where(Workflow.id == workflow_id)
@@ -101,7 +131,10 @@ async def _load_workflow_graph(
         select(PinnedData).where(PinnedData.workflow_id == workflow_id)
     )
     pinned = {row.node_id: row.payload for row in pinned_rows.all()}
-    return latest.graph or {"nodes": [], "edges": []}, pinned
+    published = latest.graph or {"nodes": [], "edges": []}
+    if _prefer_draft_graphs.get() and workflow.draft_graph:
+        return workflow.draft_graph, pinned
+    return published, pinned
 
 
 async def _call_sub_workflow(workflow_id: str, input_value: Any) -> Any:
@@ -119,6 +152,13 @@ async def _call_sub_workflow(workflow_id: str, input_value: Any) -> Any:
 
     async with SessionLocal() as session:
         graph_dict, pinned_cache = await _load_workflow_graph(session, workflow_id)
+        graph_dict = await resolve_credential_refs(
+            session, graph_dict, workflow_id=workflow_id
+        )
+        pinned_cache = await resolve_credential_refs(
+            session, pinned_cache, workflow_id=workflow_id
+        )
+        await session.commit()
 
     graph = WorkflowGraph.model_validate(graph_dict)
     sources = {edge.source for edge in graph.edges}
@@ -181,6 +221,9 @@ async def start_run(
     graph: dict,
     version: int,
     *,
+    workflow_version_id: str | None = None,
+    deployment_id: str | None = None,
+    triggered_by_error_run_id: str | None = None,
     mode: str = "manual",
     trigger_type: str = "manual",
     targets: list[str] | None = None,
@@ -194,6 +237,9 @@ async def start_run(
         run = Run(
             workflow_id=workflow_id,
             workflow_version=version,
+            workflow_version_id=workflow_version_id,
+            deployment_id=deployment_id,
+            triggered_by_error_run_id=triggered_by_error_run_id,
             mode=mode,
             trigger_type=trigger_type,
             status="running",
@@ -202,17 +248,27 @@ async def start_run(
         await session.commit()
         run_id = run.id
 
+    # Editor "manual" and "test" (test-URL webhook) runs iterate on the
+    # draft; any production trigger (webhook, schedule, deployment, error
+    # workflow) must execute the published versions — including for any
+    # sub-workflow calls.
+    prefer_draft = mode in ("manual", "test")
+
     if settings.run_synchronously:
         current = asyncio.current_task()
         if current is not None:
             _active_runs[run_id] = current
         try:
-            await _execute_run(run_id, workflow_id, graph, targets, cache)
+            await _execute_run(
+                run_id, workflow_id, graph, targets, cache, prefer_draft=prefer_draft
+            )
         finally:
             _active_runs.pop(run_id, None)
     else:
         task = asyncio.create_task(
-            _execute_run(run_id, workflow_id, graph, targets, cache)
+            _execute_run(
+                run_id, workflow_id, graph, targets, cache, prefer_draft=prefer_draft
+            )
         )
         _active_runs[run_id] = task
         task.add_done_callback(lambda _task: _active_runs.pop(run_id, None))
@@ -266,9 +322,13 @@ async def _execute_run(
     graph_dict: dict,
     targets: list[str] | None,
     cache: dict[str, dict] | None = None,
+    *,
+    prefer_draft: bool = False,
 ) -> None:
     node_events: dict[str, dict] = {}
     artifact_refs: list[dict] = []
+    secret_values: list[str] = []
+    prefer_draft_token = _prefer_draft_graphs.set(prefer_draft)
 
     async def on_event(event: dict) -> None:
         clean = dict(event)
@@ -276,6 +336,7 @@ async def _execute_run(
             clean["outputs"] = serialize_value(clean["outputs"])
         if "debug" in clean:
             clean["debug"] = serialize_value(clean["debug"])
+        clean = redact_value(clean, secret_values)
         # Artifact refs travel as plain dicts (marker key + JSON fields) and must
         # NOT be wrapped in a typed envelope by serialize_value, or this walk
         # won't see them. serialize_value preserves plain dicts as-is today.
@@ -286,9 +347,37 @@ async def _execute_run(
 
     broker.publish(run_id, {"type": "run_started", "run_id": run_id})
     status = "success"
+    # ``live`` is read inside the cancellation try-block below so a cancel
+    # arriving during the DB read still routes through the outer except and
+    # the run row reaches its terminal status. Boot defaults are kept for the
+    # output cap as a safety fallback.
+    output_cap = settings.max_output_bytes
+    live: Any = None
 
     workflow_modules: list[dict] = []
     try:
+        try:
+            live = await get_live_settings()
+            output_cap = live.max_output_bytes
+        except Exception:  # noqa: BLE001 - never let settings load block a run
+            pass
+
+        try:
+            async with SessionLocal() as session:
+                secret_values = await load_secret_values(session)
+        except Exception:  # noqa: BLE001 - redaction should never block execution
+            secret_values = []
+
+        async with SessionLocal() as session:
+            graph_dict = await resolve_credential_refs(
+                session, graph_dict, workflow_id=workflow_id
+            )
+            if cache is not None:
+                cache = await resolve_credential_refs(
+                    session, cache, workflow_id=workflow_id
+                )
+            await session.commit()
+
         # Gather user code modules visible to this workflow:
         # global + this workflow's env + this workflow. Lives INSIDE the
         # cancellation try block so a cancel during this DB read still
@@ -355,15 +444,24 @@ async def _execute_run(
                 except Exception as exc:  # noqa: BLE001 - bad code surfaces in the run
                     broker.publish(
                         run_id,
-                        {
-                            "type": "module_error",
-                            "module_id": module["id"],
-                            "error": f"{type(exc).__name__}: {exc}",
-                        },
+                        redact_value(
+                            {
+                                "type": "module_error",
+                                "module_id": module["id"],
+                                "error": f"{type(exc).__name__}: {exc}",
+                            },
+                            secret_values,
+                        ),
                     )
             chain_token = call_chain.set(frozenset({workflow_id}))
             caller_token = workflow_caller.set(_call_sub_workflow)
-            artifact_token = artifact_store.set(make_artifact_store(run_id))
+            artifact_token = artifact_store.set(
+                make_artifact_store(
+                    run_id,
+                    max_bytes=live.max_artifact_bytes if live is not None else None,
+                    max_count=live.max_artifacts_per_run if live is not None else None,
+                )
+            )
             try:
                 graph = WorkflowGraph.model_validate(graph_dict)
                 result = await execute(
@@ -384,16 +482,22 @@ async def _execute_run(
         status = "cancelled"
         broker.publish(
             run_id,
-            {"type": "run_cancelled", "run_id": run_id, "error": "Run cancelled"},
+            redact_value(
+                {"type": "run_cancelled", "run_id": run_id, "error": "Run cancelled"},
+                secret_values,
+            ),
         )
     except Exception as exc:  # noqa: BLE001 - report any execution failure
         status = "error"
         broker.publish(
             run_id,
-            {
-                "type": "run_error",
-                "error": f"{type(exc).__name__}: {exc}",
-            },
+            redact_value(
+                {
+                    "type": "run_error",
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+                secret_values,
+            ),
         )
 
     async with SessionLocal() as session:
@@ -407,9 +511,9 @@ async def _execute_run(
                         run_id=run_id,
                         node_id=node_id,
                         status=event.get("status", "unknown"),
-                        output=_cap_output(event.get("outputs")),
+                        output=_cap_output(event.get("outputs"), output_cap),
                         error=event.get("error"),
-                        logs=_cap_logs(event.get("logs")),
+                        logs=_cap_logs(event.get("logs"), output_cap),
                         debug=event.get("debug"),
                         started_at=event.get("started_at"),
                         finished_at=event.get("finished_at"),
@@ -420,6 +524,127 @@ async def _execute_run(
 
     await persist_artifact_refs(run_id, artifact_refs)
 
+    if status == "error":
+        await _dispatch_error_handlers(run_id, node_events, secret_values)
+
     broker.publish(
         run_id, {"type": "run_finished", "run_id": run_id, "status": status}
     )
+    _prefer_draft_graphs.reset(prefer_draft_token)
+
+
+def _first_failed_event(node_events: dict[str, dict]) -> dict | None:
+    for event in node_events.values():
+        if event.get("status") == "error":
+            return event
+    return None
+
+
+def _webhook_urls(alerts: dict | None) -> list[str]:
+    if not isinstance(alerts, dict):
+        return []
+    urls: list[str] = []
+    value = alerts.get("webhook_url")
+    if isinstance(value, str) and value.strip():
+        urls.append(value.strip())
+    values = alerts.get("webhook_urls")
+    if isinstance(values, list):
+        urls.extend(str(item).strip() for item in values if str(item).strip())
+    return urls
+
+
+async def _post_error_webhooks(alerts: dict | None, payload: dict) -> None:
+    urls = _webhook_urls(alerts)
+    if not urls:
+        return
+    try:
+        import httpx
+    except ImportError:
+        return
+    async with httpx.AsyncClient(timeout=10) as client:
+        for url in urls:
+            try:
+                await client.post(url, json=payload)
+            except Exception:  # noqa: BLE001 - alerts must not fail the run
+                continue
+
+
+async def _dispatch_error_handlers(
+    run_id: str,
+    node_events: dict[str, dict],
+    secret_values: list[str],
+) -> None:
+    async with SessionLocal() as session:
+        run = await session.get(Run, run_id)
+        if (
+            run is None
+            or run.status != "error"
+            or run.triggered_by_error_run_id is not None
+        ):
+            return
+        workflow = await session.scalar(
+            select(Workflow)
+            .where(Workflow.id == run.workflow_id)
+            .options(selectinload(Workflow.versions))
+        )
+        if workflow is None:
+            return
+        deployment = (
+            await session.get(Deployment, run.deployment_id)
+            if run.deployment_id
+            else None
+        )
+        error_workflow_id = (
+            deployment.error_workflow_id if deployment else None
+        ) or workflow.error_workflow_id
+        alerts = (deployment.error_alerts if deployment else None) or workflow.error_alerts
+        failed = _first_failed_event(node_events)
+        payload = redact_value(
+            {
+                "workflow_id": run.workflow_id,
+                "workflow_name": workflow.name,
+                "run_id": run.id,
+                "status": run.status,
+                "trigger_type": run.trigger_type,
+                "deployment_id": run.deployment_id,
+                "workflow_version": run.workflow_version,
+                "workflow_version_id": run.workflow_version_id,
+                "failed_node_id": failed.get("node_id") if failed else None,
+                "error": failed.get("error") if failed else None,
+                "logs": failed.get("logs") if failed else [],
+                "retry_path": f"/executions?run={run.id}",
+                "started_at": run.started_at.isoformat() if run.started_at else None,
+                "finished_at": (
+                    run.finished_at.isoformat() if run.finished_at else None
+                ),
+            },
+            secret_values,
+        )
+
+        error_graph: dict | None = None
+        error_version: int | None = None
+        error_version_id: str | None = None
+        if error_workflow_id and error_workflow_id != run.workflow_id:
+            error_workflow = await session.scalar(
+                select(Workflow)
+                .where(Workflow.id == error_workflow_id)
+                .options(selectinload(Workflow.versions))
+            )
+            if error_workflow is not None and error_workflow.versions:
+                version: WorkflowVersion = error_workflow.versions[-1]
+                error_graph = version.graph or {"nodes": [], "edges": []}
+                error_version = version.version
+                error_version_id = version.id
+
+    await _post_error_webhooks(alerts, payload)
+    if error_graph is not None and error_version is not None:
+        await start_run(
+            error_workflow_id,
+            error_graph,
+            error_version,
+            workflow_version_id=error_version_id,
+            triggered_by_error_run_id=run_id,
+            mode="production",
+            trigger_type="error",
+            parameters=payload,
+        )

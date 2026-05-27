@@ -5,8 +5,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.db import get_session
-from app.models import PinnedData, Run, Workflow
+from app.models import PinnedData, Run, Workflow, WorkflowVersion
 from app.schemas import (
     RunCancelResponse,
     RunCreated,
@@ -14,16 +15,39 @@ from app.schemas import (
     RunListItem,
     RunRequest,
 )
+from app.security import require_permission
+from app.services.crypto import verify_token
 from app.services.events import broker
 from app.services.runner import cancel_run, start_run
 
 router = APIRouter(tags=["runs"])
 
 
+EMPTY_GRAPH = {"nodes": [], "edges": []}
+
+
+def _draft_graph(workflow: Workflow) -> dict:
+    if workflow.draft_graph is not None:
+        return workflow.draft_graph
+    return workflow.versions[-1].graph or EMPTY_GRAPH
+
+
+async def _graph_for_run(
+    session: AsyncSession, run: Run, workflow: Workflow
+) -> tuple[dict, int, str | None]:
+    if run.workflow_version_id:
+        version = await session.get(WorkflowVersion, run.workflow_version_id)
+        if version is not None:
+            return version.graph or EMPTY_GRAPH, version.version, version.id
+    latest = workflow.versions[-1]
+    return _draft_graph(workflow), latest.version, None
+
+
 @router.post(
     "/workflows/{workflow_id}/run",
     response_model=RunCreated,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_permission("workflow:run"))],
 )
 async def run_workflow(
     workflow_id: str,
@@ -37,6 +61,7 @@ async def run_workflow(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
 
     latest = workflow.versions[-1]
+    graph = _draft_graph(workflow)
     pinned_rows = await session.scalars(
         select(PinnedData).where(PinnedData.workflow_id == workflow_id)
     )
@@ -45,8 +70,9 @@ async def run_workflow(
 
     run_id = await start_run(
         workflow_id,
-        latest.graph or {"nodes": [], "edges": []},
+        graph,
         latest.version,
+        workflow_version_id=None,
         mode=body.mode,
         targets=body.targets,
         cache=run_cache or None,
@@ -106,6 +132,9 @@ async def list_all_runs(
             workflow_id=run.workflow_id,
             workflow_name=workflow_name,
             workflow_version=run.workflow_version,
+            workflow_version_id=run.workflow_version_id,
+            deployment_id=run.deployment_id,
+            triggered_by_error_run_id=run.triggered_by_error_run_id,
             mode=run.mode,
             status=run.status,
             trigger_type=run.trigger_type,
@@ -164,14 +193,17 @@ async def _load_run_and_workflow(
     return run, workflow
 
 
-@router.post("/runs/{run_id}/rerun", response_model=RunCreated)
+@router.post(
+    "/runs/{run_id}/rerun",
+    response_model=RunCreated,
+    dependencies=[Depends(require_permission("workflow:run"))],
+)
 async def rerun_run(
     run_id: str, session: AsyncSession = Depends(get_session)
 ) -> RunCreated:
     """Start a fresh run of the same workflow, replaying the prior trigger input."""
     run, workflow = await _load_run_and_workflow(session, run_id)
-    latest = workflow.versions[-1]
-    graph = latest.graph or {"nodes": [], "edges": []}
+    graph, version, version_id = await _graph_for_run(session, run, workflow)
 
     # Replay parameters by reading the trigger node's recorded output.
     trigger_node = next(
@@ -192,7 +224,9 @@ async def rerun_run(
     new_run_id = await start_run(
         workflow.id,
         graph,
-        latest.version,
+        version,
+        workflow_version_id=version_id,
+        deployment_id=run.deployment_id,
         mode=run.mode,
         trigger_type=run.trigger_type,
         parameters=parameters,
@@ -200,14 +234,17 @@ async def rerun_run(
     return RunCreated(run_id=new_run_id)
 
 
-@router.post("/runs/{run_id}/retry", response_model=RunCreated)
+@router.post(
+    "/runs/{run_id}/retry",
+    response_model=RunCreated,
+    dependencies=[Depends(require_permission("workflow:run"))],
+)
 async def retry_from_failure(
     run_id: str, session: AsyncSession = Depends(get_session)
 ) -> RunCreated:
     """Re-run only the failed node + its descendants, reusing successful outputs."""
     run, workflow = await _load_run_and_workflow(session, run_id)
-    latest = workflow.versions[-1]
-    graph = latest.graph or {"nodes": [], "edges": []}
+    graph, version, version_id = await _graph_for_run(session, run, workflow)
 
     failed_ids = {nr.node_id for nr in run.node_runs if nr.status == "error"}
     if not failed_ids:
@@ -227,7 +264,9 @@ async def retry_from_failure(
     new_run_id = await start_run(
         workflow.id,
         graph,
-        latest.version,
+        version,
+        workflow_version_id=version_id,
+        deployment_id=run.deployment_id,
         mode=run.mode,
         trigger_type=run.trigger_type,
         targets=targets,
@@ -236,7 +275,11 @@ async def retry_from_failure(
     return RunCreated(run_id=new_run_id)
 
 
-@router.post("/runs/{run_id}/cancel", response_model=RunCancelResponse)
+@router.post(
+    "/runs/{run_id}/cancel",
+    response_model=RunCancelResponse,
+    dependencies=[Depends(require_permission("workflow:run"))],
+)
 async def cancel_workflow_run(run_id: str) -> RunCancelResponse:
     result = await cancel_run(run_id)
     if result is None:
@@ -246,6 +289,11 @@ async def cancel_workflow_run(run_id: str) -> RunCancelResponse:
 
 @router.websocket("/ws/runs/{run_id}")
 async def run_events(websocket: WebSocket, run_id: str) -> None:
+    if settings.auth_required:
+        token = websocket.query_params.get("token", "")
+        if verify_token(token) is None:
+            await websocket.close(code=1008)
+            return
     await websocket.accept()
     try:
         async for event in broker.subscribe(run_id):

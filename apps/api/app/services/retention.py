@@ -23,6 +23,7 @@ from app.config import settings
 from app.db import SessionLocal
 from app.models import NodeRun, Run
 from app.services.artifacts import delete_artifacts_for_run_ids
+from app.services.live_settings import get_live_settings
 
 
 async def prune_old_runs(now: datetime | None = None) -> tuple[int, int]:
@@ -39,8 +40,9 @@ async def prune_old_runs(now: datetime | None = None) -> tuple[int, int]:
         result = await session.execute(delete(Run).where(Run.id.in_(ids)))
         return int(result.rowcount or 0)
 
+    live = await get_live_settings()
     async with SessionLocal() as session:
-        days = max(0, settings.run_retention_days)
+        days = max(0, live.run_retention_days)
         if days > 0:
             cutoff = now - timedelta(days=days)
             ids = list(
@@ -52,7 +54,7 @@ async def prune_old_runs(now: datetime | None = None) -> tuple[int, int]:
             )
             aged_out = await _delete_runs(session, ids)
 
-        keep = max(0, settings.run_retention_max_per_workflow)
+        keep = max(0, live.run_retention_max_per_workflow)
         if keep > 0:
             workflow_ids = (
                 await session.scalars(select(Run.workflow_id).distinct())

@@ -166,6 +166,26 @@ export function NodeIcon({
   name: string | null | undefined;
   size?: number;
 }) {
+  // Real brand logos via SimpleIcons CDN. Convention: `brand:<slug>` where
+  // <slug> matches https://simpleicons.org (e.g. brand:stripe, brand:openai).
+  // Falls back to the dot icon if the network request fails.
+  if (typeof name === "string" && name.startsWith("brand:")) {
+    const slug = name.slice("brand:".length);
+    return (
+      <img
+        src={`https://cdn.simpleicons.org/${encodeURIComponent(slug)}`}
+        width={size}
+        height={size}
+        alt=""
+        className="node-brand-icon"
+        loading="lazy"
+        onError={(e) => {
+          // Hide the broken image so the node card doesn't show a torn-image glyph.
+          (e.currentTarget as HTMLImageElement).style.display = "none";
+        }}
+      />
+    );
+  }
   return (
     <svg
       width={size}

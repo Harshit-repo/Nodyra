@@ -9,6 +9,7 @@ loop (``enable_inprocess_scheduler=false``) and drive runs from Celery Beat.
 """
 
 import asyncio
+import logging
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -18,19 +19,32 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import Deployment, ScheduleState, Workflow
+from app.models import Deployment, ScheduleState, Workflow, WorkflowVersion
 from app.services.runner import start_run
+
+logger = logging.getLogger(__name__)
 
 _INTERVAL_SECONDS = {"minutes": 60, "hours": 3600, "days": 86400}
 
+# Don't log the same unknown-timezone string every tick — flood control.
+_logged_bad_tz: set[str] = set()
 
-def _resolve_tz(name: str) -> ZoneInfo:
-    """Return the IANA zone for ``name``; fall back to UTC if it's unknown."""
-    name = (name or "").strip() or "UTC"
-    try:
-        return ZoneInfo(name)
-    except ZoneInfoNotFoundError:
+
+def _resolve_tz(name: str) -> ZoneInfo | None:
+    """Return the IANA zone for ``name``, or ``None`` if it's unknown.
+
+    Returning ``None`` lets callers decide what "invalid" means in their
+    context — for ``_is_due`` it means "skip this tick" (don't fall back to
+    UTC, which would silently fire crons at the wrong absolute time).
+    Blank/unset is *not* invalid — it's interpreted as UTC.
+    """
+    cleaned = (name or "").strip()
+    if not cleaned:
         return ZoneInfo("UTC")
+    try:
+        return ZoneInfo(cleaned)
+    except ZoneInfoNotFoundError:
+        return None
 
 
 def _is_due(params: dict, last: datetime, now: datetime) -> bool:
@@ -45,8 +59,20 @@ def _is_due(params: dict, last: datetime, now: datetime) -> bool:
         # "0 9 * * *" really means 09:00 *local* (not 09:00 UTC). croniter
         # respects the tzinfo of the base datetime. Resolution chain:
         # node-level ``tz`` → app-wide default (settings.app_timezone) → UTC.
-        tz_name = str(params.get("tz", "") or "").strip() or settings.app_timezone
-        tz = _resolve_tz(tz_name)
+        raw_tz_name = (
+            str(params.get("tz", "") or "").strip() or settings.app_timezone
+        )
+        tz = _resolve_tz(raw_tz_name)
+        if tz is None:
+            # Unknown IANA name — refuse to fire rather than silently use UTC.
+            # Log once per name so the loop stays quiet.
+            if raw_tz_name not in _logged_bad_tz:
+                _logged_bad_tz.add(raw_tz_name)
+                logger.warning(
+                    "schedule trigger has unknown timezone %r; not firing",
+                    raw_tz_name,
+                )
+            return False
         last_local = last.astimezone(tz)
         try:
             next_time = croniter(cron, last_local).get_next(datetime)
@@ -69,28 +95,172 @@ async def _active_workflows() -> list[Workflow]:
         return list(result.all())
 
 
-async def dispatch_webhook(path: str, request_payload: dict) -> list[str]:
-    """Run every active workflow that starts with a matching webhook node."""
+async def _resolve_node_auth(
+    params: dict, workflow_id: str, environment_id: str | None
+) -> dict:
+    """Pre-resolve credential refs inside the webhook node's auth params.
+
+    Returns a copy of ``params`` with any ``{"__noodle_credential__": True}``
+    references replaced by their decrypted values. Auth comparison happens
+    in :func:`dispatch_webhook` against the resolved strings, never against
+    the stored references.
+    """
+    from app.services.credentials import resolve_credential_refs
+
+    # New workflows store the entire auth config inside auth_credentials.
+    # Legacy workflows pinned individual credential references per field;
+    # keep those keys so old graphs continue to validate.
+    auth_keys = (
+        "auth_credentials",
+        "auth_username",
+        "auth_password",
+        "auth_header_value",
+        "auth_query_value",
+    )
+    snapshot = {key: params.get(key) for key in auth_keys}
+    async with SessionLocal() as session:
+        resolved = await resolve_credential_refs(
+            session,
+            snapshot,
+            workflow_id=workflow_id,
+            environment_id=environment_id,
+        )
+    return resolved
+
+
+def _matches_basic_auth(
+    auth_header: str | None, expected_user: str, expected_pass: str
+) -> bool:
+    if not auth_header or not auth_header.lower().startswith("basic "):
+        return False
+    import base64
+
+    try:
+        decoded = base64.b64decode(auth_header.split(" ", 1)[1]).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return False
+    if ":" not in decoded:
+        return False
+    user, _, password = decoded.partition(":")
+    return user == expected_user and password == expected_pass
+
+
+def _webhook_auth_passes(node_params: dict, resolved: dict, headers: dict, query: dict) -> bool:
+    """Return True if the incoming request satisfies the node's auth_type."""
+    auth_type = str(node_params.get("auth_type") or "none").lower()
+    if auth_type == "none":
+        return True
+    # Header keys arrive lower-cased from FastAPI's CIMultiDict; normalise.
+    lower_headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+    creds = resolved.get("auth_credentials") if isinstance(resolved.get("auth_credentials"), dict) else None
+
+    if auth_type == "basic":
+        if creds:
+            username = str(creds.get("username") or "")
+            password = str(creds.get("password") or "")
+        else:
+            # Legacy: per-field credential references on old workflows.
+            username = str(resolved.get("auth_username") or "")
+            password = str(resolved.get("auth_password") or "")
+        return _matches_basic_auth(lower_headers.get("authorization"), username, password)
+
+    if auth_type == "header":
+        if creds:
+            name = str(creds.get("name") or "X-API-Key").lower()
+            expected = str(creds.get("value") or "")
+        else:
+            # Legacy fallback for workflows that pinned name on the node.
+            name = str(node_params.get("auth_header_name") or "X-API-Key").lower()
+            expected = str(resolved.get("auth_header_value") or "")
+        return bool(expected) and lower_headers.get(name) == expected
+
+    if auth_type == "query":
+        if creds:
+            name = str(creds.get("name") or "token")
+            expected = str(creds.get("value") or "")
+        else:
+            name = str(node_params.get("auth_query_name") or "token")
+            expected = str(resolved.get("auth_query_value") or "")
+        return bool(expected) and str((query or {}).get(name) or "") == expected
+
+    return False
+
+
+async def dispatch_webhook(
+    path: str, request_payload: dict, *, prefer_draft: bool = False
+) -> tuple[list[str], bool]:
+    """Run every active workflow that starts with a matching webhook node.
+
+    When ``prefer_draft`` is True the dispatcher uses each workflow's
+    in-editor draft graph instead of the latest published version. This is
+    what the editor's test URL (``/webhook-test/{path}``) should use so the
+    user can iterate on auth + flow without publishing first. Production
+    URL (``/webhook/{path}``) always uses the published snapshot.
+
+    Returns ``(run_ids, any_path_matched)``. The caller uses
+    ``any_path_matched`` to distinguish "no workflow at this path" (404)
+    from "matched but auth rejected every candidate" (401).
+    """
     run_ids: list[str] = []
-    for workflow in await _active_workflows():
-        latest = workflow.versions[-1]
-        graph = latest.graph or {}
+    any_match = False
+    headers = request_payload.get("headers") or {}
+    query = request_payload.get("query") or {}
+    workflows = (
+        await _all_workflows() if prefer_draft else await _active_workflows()
+    )
+    for workflow in workflows:
+        graph: dict | None = None
+        version_number: int = 1
+        version_id: str | None = None
+        if prefer_draft and getattr(workflow, "draft_graph", None):
+            graph = workflow.draft_graph
+            # Anchor the run to the latest known version for history sanity,
+            # but we never bump the version — drafts are not snapshots.
+            if workflow.versions:
+                version_number = workflow.versions[-1].version
+                version_id = workflow.versions[-1].id
+        else:
+            if not workflow.versions:
+                continue
+            latest = workflow.versions[-1]
+            graph = latest.graph or {}
+            version_number = latest.version
+            version_id = latest.id
+        if not graph:
+            continue
         for node in graph.get("nodes", []):
             if node.get("type") != "webhook_trigger":
                 continue
-            node_path = str(node.get("params", {}).get("path", ""))
+            node_params = node.get("params") or {}
+            node_path = str(node_params.get("path", ""))
             if node_path != path:
+                continue
+            any_match = True
+            resolved_auth = await _resolve_node_auth(
+                node_params, workflow.id, workflow.environment_id
+            )
+            if not _webhook_auth_passes(node_params, resolved_auth, headers, query):
                 continue
             run_id = await start_run(
                 workflow.id,
                 graph,
-                latest.version,
-                mode="production",
+                version_number,
+                workflow_version_id=version_id,
+                mode="test" if prefer_draft else "production",
                 trigger_type="webhook",
                 cache={node["id"]: {"main": request_payload}},
             )
             run_ids.append(run_id)
-    return run_ids
+    return run_ids, any_match
+
+
+async def _all_workflows() -> list[Workflow]:
+    """Used by the editor test URL — draft-mode dispatch ignores `active`."""
+    async with SessionLocal() as session:
+        result = await session.scalars(
+            select(Workflow).options(selectinload(Workflow.versions))
+        )
+        return list(result.all())
 
 
 def _deployment_params(deployment: Deployment) -> dict:
@@ -112,8 +282,8 @@ async def _tick() -> None:
     which preserves the zero-config default for legacy graphs.
     """
     now = datetime.now(UTC)
-    due_workflow: list[tuple[str, dict, int]] = []
-    due_deployment: list[tuple[str, dict, int, dict]] = []
+    due_workflow: list[tuple[str, dict, int, str | None]] = []
+    due_deployment: list[tuple[str, dict, int, str | None, str, dict]] = []
 
     async with SessionLocal() as session:
         workflows = (
@@ -139,8 +309,12 @@ async def _tick() -> None:
             workflow = wf_by_id.get(deployment.workflow_id)
             if workflow is None:
                 continue
-            latest = workflow.versions[-1]
-            graph = latest.graph or {}
+            version: WorkflowVersion | None = None
+            if deployment.workflow_version_id:
+                version = await session.get(WorkflowVersion, deployment.workflow_version_id)
+            if version is None:
+                version = workflow.versions[-1]
+            graph = version.graph or {}
             params = _deployment_params(deployment)
             if deployment.last_fired is None:
                 deployment.last_fired = now  # start the clock, no fire
@@ -148,7 +322,14 @@ async def _tick() -> None:
             if _is_due(params, deployment.last_fired, now):
                 deployment.last_fired = now
                 due_deployment.append(
-                    (workflow.id, graph, latest.version, deployment.default_parameters or {})
+                    (
+                        workflow.id,
+                        graph,
+                        version.version,
+                        version.id,
+                        deployment.id,
+                        deployment.default_parameters or {},
+                    )
                 )
 
         # --- 2. Fallback: workflows that are active and have no deployment
@@ -178,24 +359,27 @@ async def _tick() -> None:
                 continue
             if _is_due(params, state.last_fired, now):
                 state.last_fired = now
-                due_workflow.append((workflow.id, graph, latest.version))
+                due_workflow.append((workflow.id, graph, latest.version, latest.id))
 
         await session.commit()
 
     # Dispatch outside the state transaction; start_run opens its own session.
-    for workflow_id, graph, version in due_workflow:
+    for workflow_id, graph, version, version_id in due_workflow:
         await start_run(
             workflow_id,
             graph,
             version,
+            workflow_version_id=version_id,
             mode="production",
             trigger_type="schedule",
         )
-    for workflow_id, graph, version, params in due_deployment:
+    for workflow_id, graph, version, version_id, deployment_id, params in due_deployment:
         await start_run(
             workflow_id,
             graph,
             version,
+            workflow_version_id=version_id,
+            deployment_id=deployment_id,
             mode="production",
             trigger_type="deployment",
             parameters=params or None,

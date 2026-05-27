@@ -118,13 +118,32 @@ def _flatten_stripe_data(data: dict[str, Any], prefix: str = "") -> dict[str, An
     return flattened
 
 
+def _credential(
+    credential_type: str,
+    key: str,
+    label: str,
+    fields: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "credential": {
+            "type": credential_type,
+            "key": key,
+            "label": label,
+            "fields": fields or [key],
+        }
+    }
+
+
 @node(
     name="Slack Send Message",
     id="slack_send_message",
     category="Integrations",
     icon="message",
     params={
-        "bot_token": {"placeholder": "xoxb-...", "description": "Slack bot token."},
+        "bot_token": {
+            **_credential("slack_bot", "bot_token", "Slack bot token"),
+            "description": "Slack bot token.",
+        },
         "channel": {"placeholder": "C0123456789 or #alerts"},
         "text": {"placeholder": "Message text. Blank uses the input payload."},
         "blocks": {"description": "Optional Slack Block Kit JSON array."},
@@ -159,7 +178,10 @@ def slack_send_message(
     category="Integrations",
     icon="message",
     params={
-        "webhook_url": {"placeholder": "https://discord.com/api/webhooks/..."},
+        "webhook_url": {
+            **_credential("discord_webhook", "webhook_url", "Discord webhook URL"),
+            "description": "Discord channel webhook URL.",
+        },
         "content": {"placeholder": "Message text. Blank uses the input payload."},
         "username": {"placeholder": "Optional webhook display name."},
         "embeds": {"description": "Optional Discord embeds JSON array."},
@@ -189,8 +211,18 @@ def discord_send_message(
     params={
         "host": {"placeholder": "smtp.gmail.com"},
         "port": {"description": "SMTP port, usually 587 for STARTTLS."},
-        "username": {"placeholder": "SMTP username."},
-        "password": {"placeholder": "SMTP password or app password."},
+        "username": {
+            **_credential(
+                "smtp", "username", "SMTP username/password", ["username", "password"]
+            ),
+            "description": "SMTP username.",
+        },
+        "password": {
+            **_credential(
+                "smtp", "password", "SMTP username/password", ["username", "password"]
+            ),
+            "description": "SMTP password or app password.",
+        },
         "use_tls": {"description": "Use STARTTLS before sending."},
         "from_email": {"placeholder": "sender@example.com"},
         "to_email": {"placeholder": "one@example.com, two@example.com"},
@@ -237,8 +269,21 @@ def smtp_send_email(
     params={
         "spreadsheet_id": {"placeholder": "Google Sheets spreadsheet ID"},
         "range_name": {"placeholder": "Sheet1!A1:D20"},
-        "api_key": {"description": "API key for public/readable sheets."},
-        "access_token": {"description": "OAuth access token for private sheets."},
+        "api_key": {
+            **_credential(
+                "google_sheets", "api_key", "Google Sheets credential", ["api_key", "access_token"]
+            ),
+            "description": "API key for public/readable sheets.",
+        },
+        "access_token": {
+            **_credential(
+                "google_sheets",
+                "access_token",
+                "Google Sheets credential",
+                ["api_key", "access_token"],
+            ),
+            "description": "OAuth access token for private sheets.",
+        },
     },
 )
 def google_sheets_read(
@@ -265,7 +310,15 @@ def google_sheets_read(
         "range_name": {"placeholder": "Sheet1!A:D"},
         "values": {"description": "Rows to append. Blank derives rows from the input."},
         "value_input_option": {"choices": ["RAW", "USER_ENTERED"]},
-        "access_token": {"description": "OAuth access token with write access."},
+        "access_token": {
+            **_credential(
+                "google_sheets",
+                "access_token",
+                "Google Sheets credential",
+                ["api_key", "access_token"],
+            ),
+            "description": "OAuth access token with write access.",
+        },
     },
 )
 def google_sheets_append(
@@ -297,7 +350,10 @@ def google_sheets_append(
     category="Integrations",
     icon="page",
     params={
-        "token": {"placeholder": "secret_..."},
+        "token": {
+            **_credential("notion", "token", "Notion integration token"),
+            "description": "Notion integration token.",
+        },
         "database_id": {"description": "Create inside this database when set."},
         "parent_page_id": {"description": "Create under this page when database is blank."},
         "title": {"placeholder": "New page title"},
@@ -358,7 +414,10 @@ def notion_create_page(
     icon="github",
     params={
         "repo": {"placeholder": "owner/name"},
-        "token": {"description": "Optional GitHub token."},
+        "token": {
+            **_credential("github", "token", "GitHub token"),
+            "description": "Optional GitHub token.",
+        },
     },
 )
 def github_get_repo(input: Any = None, repo: str = "", token: str = "") -> Any:  # noqa: ARG001
@@ -373,7 +432,10 @@ def github_get_repo(input: Any = None, repo: str = "", token: str = "") -> Any: 
     icon="github",
     params={
         "repo": {"placeholder": "owner/name"},
-        "token": {"placeholder": "ghp_..."},
+        "token": {
+            **_credential("github", "token", "GitHub token"),
+            "description": "GitHub token with issue write access.",
+        },
         "title": {"placeholder": "Issue title"},
         "body": {"multiline": True, "description": "Issue body. Blank uses input."},
         "labels": {"description": "Optional list of labels."},
@@ -405,7 +467,10 @@ def github_create_issue(
     category="Integrations",
     icon="database",
     params={
-        "connection_url": {"placeholder": "postgresql://user:pass@host:5432/db"},
+        "connection_url": {
+            **_credential("postgres", "connection_url", "Postgres connection URL"),
+            "description": "Postgres connection URL.",
+        },
         "sql": {"multiline": True, "placeholder": "select * from users limit 10"},
         "parameters": {"description": "Optional positional list or named dict parameters."},
     },
@@ -440,8 +505,18 @@ def postgres_query(
     params={
         "host": {"placeholder": "localhost"},
         "port": {"description": "MySQL port."},
-        "username": {"placeholder": "root"},
-        "password": {"placeholder": "password"},
+        "username": {
+            **_credential(
+                "mysql", "username", "MySQL username/password", ["username", "password"]
+            ),
+            "description": "MySQL username.",
+        },
+        "password": {
+            **_credential(
+                "mysql", "password", "MySQL username/password", ["username", "password"]
+            ),
+            "description": "MySQL password.",
+        },
         "database": {"placeholder": "app"},
         "sql": {"multiline": True, "placeholder": "select * from users limit 10"},
         "parameters": {"description": "Optional positional list or named dict parameters."},
@@ -514,8 +589,24 @@ def _boto3_s3_client(
         "key": {"placeholder": "path/file.json"},
         "body": {"multiline": True, "description": "Object body. Blank uses input."},
         "content_type": {"placeholder": "application/json"},
-        "aws_access_key_id": {"description": "Optional; falls back to AWS env/instance auth."},
-        "aws_secret_access_key": {"description": "Optional; falls back to AWS env/instance auth."},
+        "aws_access_key_id": {
+            **_credential(
+                "aws",
+                "aws_access_key_id",
+                "AWS access keys",
+                ["aws_access_key_id", "aws_secret_access_key"],
+            ),
+            "description": "Optional; falls back to AWS env/instance auth.",
+        },
+        "aws_secret_access_key": {
+            **_credential(
+                "aws",
+                "aws_secret_access_key",
+                "AWS access keys",
+                ["aws_access_key_id", "aws_secret_access_key"],
+            ),
+            "description": "Optional; falls back to AWS env/instance auth.",
+        },
         "region_name": {"placeholder": "us-east-1"},
         "endpoint_url": {"description": "Optional S3-compatible endpoint, e.g. MinIO."},
     },
@@ -565,8 +656,24 @@ def s3_put_object(
     params={
         "bucket": {"placeholder": "my-bucket"},
         "key": {"placeholder": "path/file.json"},
-        "aws_access_key_id": {"description": "Optional; falls back to AWS env/instance auth."},
-        "aws_secret_access_key": {"description": "Optional; falls back to AWS env/instance auth."},
+        "aws_access_key_id": {
+            **_credential(
+                "aws",
+                "aws_access_key_id",
+                "AWS access keys",
+                ["aws_access_key_id", "aws_secret_access_key"],
+            ),
+            "description": "Optional; falls back to AWS env/instance auth.",
+        },
+        "aws_secret_access_key": {
+            **_credential(
+                "aws",
+                "aws_secret_access_key",
+                "AWS access keys",
+                ["aws_access_key_id", "aws_secret_access_key"],
+            ),
+            "description": "Optional; falls back to AWS env/instance auth.",
+        },
         "region_name": {"placeholder": "us-east-1"},
         "endpoint_url": {"description": "Optional S3-compatible endpoint, e.g. MinIO."},
     },
@@ -611,7 +718,10 @@ def s3_get_object(
     category="Integrations",
     icon="ai",
     params={
-        "api_key": {"placeholder": "sk-..."},
+        "api_key": {
+            **_credential("openai", "api_key", "OpenAI API key"),
+            "description": "OpenAI API key.",
+        },
         "model": {"placeholder": "gpt-4.1-mini"},
         "system": {"multiline": True},
         "prompt": {"multiline": True, "description": "User prompt. Blank uses input."},
@@ -654,7 +764,10 @@ def openai_chat(
     category="Integrations",
     icon="ai",
     params={
-        "api_key": {"placeholder": "sk-ant-..."},
+        "api_key": {
+            **_credential("anthropic", "api_key", "Anthropic API key"),
+            "description": "Anthropic API key.",
+        },
         "model": {"placeholder": "claude-3-5-haiku-latest"},
         "system": {"multiline": True},
         "prompt": {"multiline": True, "description": "User prompt. Blank uses input."},
@@ -699,7 +812,10 @@ def anthropic_message(
     category="Integrations",
     icon="card",
     params={
-        "api_key": {"placeholder": "sk_live_..."},
+        "api_key": {
+            **_credential("stripe", "api_key", "Stripe API key"),
+            "description": "Stripe API key.",
+        },
         "email": {"placeholder": "customer@example.com"},
         "name": {"placeholder": "Customer name"},
         "description": {"placeholder": "Optional description"},
@@ -736,7 +852,10 @@ def stripe_create_customer(
     category="Integrations",
     icon="table",
     params={
-        "token": {"placeholder": "pat..."},
+        "token": {
+            **_credential("airtable", "token", "Airtable token"),
+            "description": "Airtable personal access token.",
+        },
         "base_id": {"placeholder": "app..."},
         "table_name": {"placeholder": "Tasks"},
         "view": {"placeholder": "Grid view"},
@@ -769,7 +888,10 @@ def airtable_list_records(
     category="Integrations",
     icon="table",
     params={
-        "token": {"placeholder": "pat..."},
+        "token": {
+            **_credential("airtable", "token", "Airtable token"),
+            "description": "Airtable personal access token.",
+        },
         "base_id": {"placeholder": "app..."},
         "table_name": {"placeholder": "Tasks"},
         "fields": {"description": "Record fields. Blank uses input when it is an object."},

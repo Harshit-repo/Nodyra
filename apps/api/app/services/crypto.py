@@ -53,8 +53,9 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(digest, expected)
 
 
-def create_token(user_id: str, ttl_seconds: int = 86_400) -> str:
-    payload = {"sub": user_id, "exp": int(time.time()) + ttl_seconds}
+def create_token(user_id: str, ttl_seconds: int | None = None) -> str:
+    ttl = ttl_seconds if ttl_seconds is not None else settings.auth_token_ttl_seconds
+    payload = {"sub": user_id, "exp": int(time.time()) + ttl}
     body = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
     signature = hmac.new(
         settings.secret_key.encode(), body.encode(), hashlib.sha256

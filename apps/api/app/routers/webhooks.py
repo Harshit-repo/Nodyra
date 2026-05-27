@@ -9,7 +9,7 @@
 import json
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request, status
 
 from app.services.triggers import dispatch_webhook
 
@@ -37,9 +37,25 @@ async def _payload(request: Request) -> dict:
 
 @router.api_route("/webhook-test/{path}", methods=_METHODS)
 async def capture_webhook(path: str, request: Request) -> dict:
-    """Capture an inbound test request for the given webhook path."""
-    _captured[path] = await _payload(request)
-    return {"message": "Noodle test webhook received", "path": path}
+    """Editor test URL — capture the request and dispatch matching workflows
+    using their draft graph (so unpublished credential refs and auth changes
+    apply). Workflow ``active`` is ignored on this path; auth IS still
+    checked, so the user can validate their Basic/Header/Query setup."""
+    payload = await _payload(request)
+    _captured[path] = payload
+    run_ids, any_path_matched = await dispatch_webhook(
+        path, payload, prefer_draft=True
+    )
+    if not run_ids and any_path_matched:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Webhook authentication failed.",
+        )
+    return {
+        "message": "Noodle test webhook received",
+        "path": path,
+        "runs": run_ids,
+    }
 
 
 @router.get("/webhook-test/{path}/last")
@@ -59,7 +75,15 @@ async def trigger_webhook(path: str, request: Request) -> dict:
     """Production webhook — dispatch a run of matching active workflows."""
     payload = await _payload(request)
     _captured[path] = payload
-    run_ids = await dispatch_webhook(path, payload)
+    run_ids, any_path_matched = await dispatch_webhook(path, payload)
+    if not run_ids and any_path_matched:
+        # Path matched at least one workflow, but every candidate's auth check
+        # failed. Surface a clear 401 so the caller knows it wasn't an
+        # unknown-path 404.
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Webhook authentication failed.",
+        )
     return {
         "message": "Workflow triggered" if run_ids else "No active workflow for this path",
         "path": path,

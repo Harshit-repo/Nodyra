@@ -2,7 +2,9 @@ import type {
   AuditEvent,
   AuthState,
   ArtifactInfo,
+  AiWorkflowDraftResponse,
   Credential,
+  CredentialTestResponse,
   Environment,
   NodeManifest,
   PinnedItem,
@@ -13,9 +15,12 @@ import type {
   DeploymentUpdate,
   RunInfo,
   RunListItem,
+  SystemSettings,
+  UserAdminInfo,
   UserInfo,
   WorkflowDetail,
   WorkflowGraph,
+  WorkflowPublishResponse,
   WorkflowSummary,
 } from "./types";
 
@@ -85,6 +90,8 @@ export interface WorkflowPatch {
   active?: boolean;
   environment_id?: string;
   graph?: WorkflowGraph;
+  error_workflow_id?: string | null;
+  error_alerts?: Record<string, unknown>;
 }
 
 export const api = {
@@ -101,6 +108,22 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(patch),
     }),
+  publishWorkflow: (
+    id: string,
+    body: { notes?: string; update_deployments?: boolean } = {},
+  ) =>
+    request<WorkflowPublishResponse>(`/workflows/${id}/publish`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  aiWorkflowDraft: (
+    id: string,
+    body: { prompt: string; apply?: boolean },
+  ) =>
+    request<AiWorkflowDraftResponse>(`/workflows/${id}/ai-draft`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   deleteWorkflow: (id: string) =>
     request<void>(`/workflows/${id}`, { method: "DELETE" }),
 
@@ -109,13 +132,36 @@ export const api = {
     name: string;
     python_version?: string;
     packages?: string[];
+    description?: string;
+    runner_pool_size?: number;
+    runner_pool_max?: number | null;
   }) =>
     request<Environment>("/environments", {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  updateEnvironment: (
+    id: string,
+    body: {
+      name?: string;
+      description?: string;
+      runner_pool_size?: number;
+      runner_pool_max?: number | null;
+    },
+  ) =>
+    request<Environment>(`/environments/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   deleteEnvironment: (id: string) =>
     request<void>(`/environments/${id}`, { method: "DELETE" }),
+
+  getSystemSettings: () => request<SystemSettings>("/system-settings"),
+  updateSystemSettings: (body: Partial<SystemSettings>) =>
+    request<SystemSettings>("/system-settings", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   addPackage: (id: string, pkg: string) =>
     request<Environment>(`/environments/${id}/packages`, {
       method: "POST",
@@ -245,9 +291,27 @@ export const api = {
   createCredential: (body: {
     name: string;
     type: string;
+    scope?: string;
+    workflow_id?: string | null;
+    environment_id?: string | null;
+    runner_pool_id?: string | null;
+    description?: string;
     data: Record<string, string>;
   }) =>
     request<Credential>("/credentials", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  testCredential: (
+    id: string,
+    body: {
+      workflow_id?: string | null;
+      environment_id?: string | null;
+      runner_pool_id?: string | null;
+      context?: Record<string, unknown>;
+    } = {},
+  ) =>
+    request<CredentialTestResponse>(`/credentials/${id}/test`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -269,11 +333,35 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }),
-  register: (email: string, password: string) =>
+  register: (body: {
+    name: string;
+    company: string;
+    email: string;
+    password: string;
+  }) =>
     request<{ token: string; user: UserInfo }>("/auth/register", {
       method: "POST",
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify(body),
     }),
+  listUsers: () => request<UserAdminInfo[]>("/auth/users"),
+  createUser: (body: {
+    name?: string;
+    company?: string;
+    email: string;
+    password: string;
+    role: string;
+  }) =>
+    request<UserAdminInfo>("/auth/users", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateUserRole: (id: string, role: string) =>
+    request<UserAdminInfo>(`/auth/users/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ role }),
+    }),
+  deleteUser: (id: string) =>
+    request<void>(`/auth/users/${id}`, { method: "DELETE" }),
 
   listPinned: (workflowId: string) =>
     request<PinnedItem[]>(`/workflows/${workflowId}/pinned`),
@@ -290,5 +378,7 @@ export const api = {
 
 export function runEventsUrl(runId: string): string {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${window.location.host}/ws/runs/${runId}`;
+  const token = getToken();
+  const query = token ? `?token=${encodeURIComponent(token)}` : "";
+  return `${proto}//${window.location.host}/ws/runs/${runId}${query}`;
 }

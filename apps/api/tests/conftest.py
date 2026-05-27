@@ -9,8 +9,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 import app.services.artifacts as artifacts_module
+import app.services.live_settings as live_settings_module
+import app.services.redaction as redaction_module
 import app.services.retention as retention_module
 import app.services.runner as runner_module
+import app.services.runtime_pool as runtime_pool_module
 import app.services.triggers as triggers_module
 import app.services.venv as venv_module
 from app import models  # noqa: F401 - registers ORM models on Base.metadata
@@ -47,18 +50,29 @@ async def client() -> AsyncIterator[AsyncClient]:
             yield session
 
     app.dependency_overrides[get_session] = override_get_session
+    # Each test gets a fresh DB; the secret cache + live-settings cache are
+    # process-local, so reset them at fixture boundaries to keep tests
+    # isolated. Tests mutate ``settings.X`` directly to override retention /
+    # output cap / artifact limits and rely on the fallback path in
+    # ``live_settings._load_from_db`` reading those at call time.
+    redaction_module.invalidate_secret_cache()
+    live_settings_module.invalidate_live_settings_cache()
     originals = {
         venv_module: venv_module.SessionLocal,
         artifacts_module: artifacts_module.SessionLocal,
         runner_module: runner_module.SessionLocal,
         triggers_module: triggers_module.SessionLocal,
         retention_module: retention_module.SessionLocal,
+        live_settings_module: live_settings_module.SessionLocal,
+        runtime_pool_module: runtime_pool_module.SessionLocal,
     }
     venv_module.SessionLocal = test_session
     artifacts_module.SessionLocal = test_session
     runner_module.SessionLocal = test_session
     triggers_module.SessionLocal = test_session
     retention_module.SessionLocal = test_session
+    live_settings_module.SessionLocal = test_session
+    runtime_pool_module.SessionLocal = test_session
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
@@ -68,6 +82,8 @@ async def client() -> AsyncIterator[AsyncClient]:
     for module, original in originals.items():
         module.SessionLocal = original
     settings.artifacts_dir = old_artifacts_dir
+    redaction_module.invalidate_secret_cache()
+    live_settings_module.invalidate_live_settings_cache()
     await engine.dispose()
     shutil.rmtree(artifacts_dir, ignore_errors=True)
     try:
