@@ -62,13 +62,27 @@ async def test_run_records_node_errors(client: AsyncClient) -> None:
     bad_graph = {
         "nodes": [
             {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 0, "y": 0},
+            },
+            {
                 "id": "boom",
                 "type": "code",
                 "params": {"code": "raise ValueError('nope')"},
-                "position": {"x": 0, "y": 0},
+                "position": {"x": 250, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e",
+                "source": "t",
+                "source_output": "main",
+                "target": "boom",
+                "target_input": "input",
             }
         ],
-        "edges": [],
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": bad_graph})
 
@@ -77,8 +91,9 @@ async def test_run_records_node_errors(client: AsyncClient) -> None:
     ).json()["run_id"]
     run = (await client.get(f"/runs/{run_id}")).json()
     assert run["status"] == "error"
-    assert run["node_runs"][0]["status"] == "error"
-    assert "nope" in run["node_runs"][0]["error"]
+    boom = next(nr for nr in run["node_runs"] if nr["node_id"] == "boom")
+    assert boom["status"] == "error"
+    assert "nope" in boom["error"]
 
 
 async def test_typed_outputs_persist_and_stream_as_envelopes(
@@ -89,6 +104,12 @@ async def test_typed_outputs_persist_and_stream_as_envelopes(
     ]
     graph = {
         "nodes": [
+            {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 0, "y": 0},
+            },
             {
                 "id": "typed",
                 "type": "code",
@@ -107,10 +128,18 @@ async def test_typed_outputs_persist_and_stream_as_envelopes(
                         ]
                     )
                 },
-                "position": {"x": 0, "y": 0},
+                "position": {"x": 250, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e",
+                "source": "t",
+                "source_output": "main",
+                "target": "typed",
+                "target_input": "input",
             }
         ],
-        "edges": [],
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
 
@@ -118,7 +147,8 @@ async def test_typed_outputs_persist_and_stream_as_envelopes(
         await client.post(f"/workflows/{workflow_id}/run", json={})
     ).json()["run_id"]
     run = (await client.get(f"/runs/{run_id}")).json()
-    output = run["node_runs"][0]["output"]["main"]
+    typed_run = next(nr for nr in run["node_runs"] if nr["node_id"] == "typed")
+    output = typed_run["output"]["main"]
 
     assert output["price"]["__noodle_typed__"] is True
     assert output["price"]["type"] == "decimal"
@@ -132,7 +162,9 @@ async def test_typed_outputs_persist_and_stream_as_envelopes(
     async for event in broker.subscribe(run_id):
         streamed.append(event)
     node_event = next(
-        event for event in streamed if event.get("type") == "node_finished"
+        event
+        for event in streamed
+        if event.get("type") == "node_finished" and event.get("node_id") == "typed"
     )
     assert node_event["outputs"]["main"]["price"]["type"] == "decimal"
 
@@ -244,25 +276,38 @@ async def test_retry_runs_only_the_failed_node_and_downstream(
     graph = {
         "nodes": [
             {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 0, "y": 0},
+            },
+            {
                 "id": "ok",
                 "type": "code",
                 "params": {"code": "output = 1"},
-                "position": {"x": 0, "y": 0},
+                "position": {"x": 1, "y": 0},
             },
             {
                 "id": "boom",
                 "type": "code",
                 "params": {"code": "raise RuntimeError('nope')"},
-                "position": {"x": 1, "y": 0},
+                "position": {"x": 2, "y": 0},
             },
             {
                 "id": "tail",
                 "type": "code",
                 "params": {"code": "output = input"},
-                "position": {"x": 2, "y": 0},
+                "position": {"x": 3, "y": 0},
             },
         ],
         "edges": [
+            {
+                "id": "e0",
+                "source": "t",
+                "source_output": "main",
+                "target": "ok",
+                "target_input": "input",
+            },
             {
                 "id": "e1",
                 "source": "ok",
@@ -319,6 +364,12 @@ async def test_retry_deserializes_typed_cached_outputs(
     graph = {
         "nodes": [
             {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 0, "y": 0},
+            },
+            {
                 "id": "producer",
                 "type": "code",
                 "params": {
@@ -327,7 +378,7 @@ async def test_retry_deserializes_typed_cached_outputs(
                         "output = {'amount': Decimal('3.50')}"
                     )
                 },
-                "position": {"x": 0, "y": 0},
+                "position": {"x": 200, "y": 0},
             },
             {
                 "id": "consumer",
@@ -341,17 +392,24 @@ async def test_retry_deserializes_typed_cached_outputs(
                         ]
                     )
                 },
-                "position": {"x": 200, "y": 0},
+                "position": {"x": 400, "y": 0},
             },
         ],
         "edges": [
+            {
+                "id": "e0",
+                "source": "t",
+                "source_output": "main",
+                "target": "producer",
+                "target_input": "input",
+            },
             {
                 "id": "e1",
                 "source": "producer",
                 "source_output": "main",
                 "target": "consumer",
                 "target_input": "input",
-            }
+            },
         ],
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
@@ -433,13 +491,27 @@ async def test_running_run_can_be_cancelled(client: AsyncClient) -> None:
         slow_graph = {
             "nodes": [
                 {
+                    "id": "t",
+                    "type": "manual_trigger",
+                    "params": {},
+                    "position": {"x": 0, "y": 0},
+                },
+                {
                     "id": "slow",
                     "type": "code",
                     "params": {"code": "import time\ntime.sleep(0.5)\noutput = 1"},
-                    "position": {"x": 0, "y": 0},
+                    "position": {"x": 250, "y": 0},
+                },
+            ],
+            "edges": [
+                {
+                    "id": "e",
+                    "source": "t",
+                    "source_output": "main",
+                    "target": "slow",
+                    "target_input": "input",
                 }
             ],
-            "edges": [],
         }
         await client.put(f"/workflows/{workflow_id}", json={"graph": slow_graph})
 

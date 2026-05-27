@@ -183,13 +183,27 @@ async def test_execute_workflow_requires_workflow_id(client: AsyncClient) -> Non
     graph = {
         "nodes": [
             {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 0, "y": 0},
+            },
+            {
                 "id": "sub",
                 "type": "execute_workflow",
                 "params": {"workflow_id": ""},
-                "position": {"x": 0, "y": 0},
+                "position": {"x": 250, "y": 0},
             },
         ],
-        "edges": [],
+        "edges": [
+            {
+                "id": "e",
+                "source": "t",
+                "source_output": "main",
+                "target": "sub",
+                "target_input": "input",
+            }
+        ],
     }
     await client.put(f"/workflows/{workflow['id']}", json={"graph": graph})
 

@@ -22,6 +22,7 @@ from app.schemas import (
 )
 from app.security import require_permission
 from app.services.audit import log_audit
+from app.services.graph_utils import first_trigger_node
 from app.services.runner import start_run
 
 router = APIRouter(prefix="/deployments", tags=["deployments"])
@@ -228,16 +229,25 @@ async def run_deployment(
     version = await _version_for_deployment(
         session, workflow, deployment.workflow_version_id
     )
-    run_id = await start_run(
-        deployment.workflow_id,
-        version.graph or {"nodes": [], "edges": []},
-        version.version,
-        workflow_version_id=version.id,
-        deployment_id=deployment.id,
-        mode="manual",
-        trigger_type="deployment",
-        parameters=deployment.default_parameters or None,
+    graph = version.graph or {"nodes": [], "edges": []}
+    chosen = first_trigger_node(graph)
+    trigger_id = (
+        chosen["id"] if isinstance(chosen, dict) else getattr(chosen, "id", None)
     )
+    try:
+        run_id = await start_run(
+            deployment.workflow_id,
+            graph,
+            version.version,
+            workflow_version_id=version.id,
+            deployment_id=deployment.id,
+            mode="manual",
+            trigger_type="deployment",
+            parameters=deployment.default_parameters or None,
+            trigger_node_id=trigger_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return RunCreated(run_id=run_id)
 
 

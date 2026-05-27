@@ -18,6 +18,12 @@ async def test_code_node_creates_downloadable_artifact_and_downstream_reads_it(
     graph = {
         "nodes": [
             {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": -200, "y": 0},
+            },
+            {
                 "id": "writer",
                 "type": "code",
                 "params": {
@@ -34,12 +40,19 @@ async def test_code_node_creates_downloadable_artifact_and_downstream_reads_it(
         ],
         "edges": [
             {
+                "id": "e0",
+                "source": "t",
+                "source_output": "main",
+                "target": "writer",
+                "target_input": "input",
+            },
+            {
                 "id": "e1",
                 "source": "writer",
                 "source_output": "main",
                 "target": "reader",
                 "target_input": "input",
-            }
+            },
         ],
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
@@ -75,15 +88,29 @@ async def test_binary_artifact_keeps_bytes_out_of_node_output(
     graph = {
         "nodes": [
             {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 0, "y": 0},
+            },
+            {
                 "id": "blob",
                 "type": "code",
                 "params": {
                     "code": "output = artifacts.write_bytes(b'x' * 2048, name='blob.bin')"
                 },
-                "position": {"x": 0, "y": 0},
+                "position": {"x": 250, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e",
+                "source": "t",
+                "source_output": "main",
+                "target": "blob",
+                "target_input": "input",
             }
         ],
-        "edges": [],
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
 
@@ -91,7 +118,8 @@ async def test_binary_artifact_keeps_bytes_out_of_node_output(
         await client.post(f"/workflows/{workflow_id}/run", json={})
     ).json()["run_id"]
     run = (await client.get(f"/runs/{run_id}")).json()
-    ref = run["node_runs"][0]["output"]["main"]
+    blob_run = next(nr for nr in run["node_runs"] if nr["node_id"] == "blob")
+    ref = blob_run["output"]["main"]
 
     assert ref["size_bytes"] == 2048
     assert "base64" not in ref
@@ -107,15 +135,29 @@ async def test_artifact_size_limit_fails_cleanly(client: AsyncClient) -> None:
     graph = {
         "nodes": [
             {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 0, "y": 0},
+            },
+            {
                 "id": "blob",
                 "type": "code",
                 "params": {
                     "code": "output = artifacts.write_bytes(b'x' * 16, name='blob.bin')"
                 },
-                "position": {"x": 0, "y": 0},
+                "position": {"x": 250, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e",
+                "source": "t",
+                "source_output": "main",
+                "target": "blob",
+                "target_input": "input",
             }
         ],
-        "edges": [],
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
 
@@ -130,7 +172,8 @@ async def test_artifact_size_limit_fails_cleanly(client: AsyncClient) -> None:
         settings.max_artifact_bytes = previous
 
     assert run["status"] == "error"
-    assert "limit is 8 bytes" in run["node_runs"][0]["error"]
+    blob_run = next(nr for nr in run["node_runs"] if nr["node_id"] == "blob")
+    assert "limit is 8 bytes" in blob_run["error"]
 
 
 async def test_retention_prune_deletes_artifact_metadata_and_file(
@@ -142,15 +185,29 @@ async def test_retention_prune_deletes_artifact_metadata_and_file(
     graph = {
         "nodes": [
             {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 0, "y": 0},
+            },
+            {
                 "id": "writer",
                 "type": "code",
                 "params": {
                     "code": "output = artifacts.write_text('old', name='old.txt')"
                 },
-                "position": {"x": 0, "y": 0},
+                "position": {"x": 250, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e",
+                "source": "t",
+                "source_output": "main",
+                "target": "writer",
+                "target_input": "input",
             }
         ],
-        "edges": [],
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
     run_id = (

@@ -9,7 +9,7 @@ import { Inspector } from "./editor/Inspector";
 import { NodeDetailModal } from "./editor/NodeDetailModal";
 import { NodePalette } from "./editor/NodePalette";
 import { PortDataViewer } from "./editor/PortDataViewer";
-import { type RunOptions, useEditor } from "./editor/store";
+import { pickEditorRunTrigger, type RunOptions, useEditor } from "./editor/store";
 import { Logo } from "./Logo";
 import { useToast } from "./ToastProvider";
 import type {
@@ -62,6 +62,7 @@ export function EditorPage() {
   const markClean = useEditor((s) => s.markClean);
   const dirty = useEditor((s) => s.dirty);
   const nodeCount = useEditor((s) => s.nodes.length);
+  const hasTrigger = useEditor((s) => pickEditorRunTrigger(s.nodes) !== null);
   const runId = useEditor((s) => s.runId);
   const running = useEditor((s) => s.running);
   const runError = useEditor((s) => s.runError);
@@ -418,6 +419,11 @@ export function EditorPage() {
           mode: "manual",
           targets: runTargets,
           cache: runCache,
+          // Gate to this webhook trigger's branch — otherwise sibling
+          // triggers in the same graph would also fire on the test run.
+          ...(runTargets && runTargets.length > 0
+            ? {}
+            : { trigger_node_id: node.id }),
         });
         connectRunStream(run_id, runTargets);
       } catch (err) {
@@ -438,10 +444,32 @@ export function EditorPage() {
     }
     const saved = await save({ notifySuccess: false });
     if (!saved) return;
+
+    // Default the run to the workflow's trigger when no explicit
+    // targets / triggerNodeId was supplied. A workflow with no trigger
+    // can't be run — bail with a toast instead of letting the API 400.
+    let triggerNodeId = options.triggerNodeId;
+    if (!triggerNodeId && (!targets || targets.length === 0)) {
+      const trigger = pickEditorRunTrigger(useEditor.getState().nodes);
+      if (!trigger) {
+        notify("Add a trigger node to run this workflow.", "error");
+        return;
+      }
+      triggerNodeId = trigger.id;
+    }
+
     const cache = options.reuseUpstream
       ? reusableUpstreamCache(saved.graph, targets)
       : undefined;
-    const webhookNode = webhookForRun(saved.graph, targets, cache);
+    // Test-listen mode only kicks in when a webhook_trigger is what we
+    // actually intend to fire — i.e. the chosen entry trigger is a webhook,
+    // or the user explicitly targets a webhook downstream.
+    const webhookNode =
+      triggerNodeId && (!targets || targets.length === 0)
+        ? saved.graph.nodes.find(
+            (n) => n.id === triggerNodeId && n.type === "webhook_trigger",
+          ) ?? null
+        : webhookForRun(saved.graph, targets, cache);
     if (webhookNode) {
       await startWebhookTestRun(webhookNode, targets, cache);
       return;
@@ -450,9 +478,13 @@ export function EditorPage() {
       const body: {
         targets?: string[];
         cache?: Record<string, Record<string, unknown>>;
+        trigger_node_id?: string;
       } = {};
       if (targets && targets.length > 0) body.targets = targets;
       if (cache) body.cache = cache;
+      if (triggerNodeId && (!targets || targets.length === 0)) {
+        body.trigger_node_id = triggerNodeId;
+      }
       const { run_id } = await api.runWorkflow(id, body);
       if (cache && Object.keys(cache).length > 0) {
         notify(`Reused ${Object.keys(cache).length} upstream output(s).`, "info");
@@ -665,7 +697,12 @@ export function EditorPage() {
           <button
             className="btn btn-run"
             onClick={() => void run()}
-            disabled={running || Boolean(webhookListen)}
+            disabled={running || Boolean(webhookListen) || !hasTrigger}
+            title={
+              !hasTrigger
+                ? "Add a trigger node to run this workflow"
+                : undefined
+            }
           >
             {webhookListen ? (
               <>
@@ -749,8 +786,12 @@ export function EditorPage() {
                   type="button"
                   className="canvas-run-btn"
                   onClick={() => void run()}
-                  disabled={Boolean(webhookListen) || saving}
-                  title="Execute the whole workflow"
+                  disabled={Boolean(webhookListen) || saving || !hasTrigger}
+                  title={
+                    !hasTrigger
+                      ? "Add a trigger node to run this workflow"
+                      : "Execute the whole workflow"
+                  }
                 >
                   ▶ Execute Workflow
                 </button>

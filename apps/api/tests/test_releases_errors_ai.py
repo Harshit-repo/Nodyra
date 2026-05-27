@@ -111,13 +111,27 @@ async def test_error_workflow_runs_with_failure_payload(client: AsyncClient) -> 
     fail_graph = {
         "nodes": [
             {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 0, "y": 0},
+            },
+            {
                 "id": "boom",
                 "type": "code",
                 "params": {"code": "print('about to fail')\nraise RuntimeError('bad')"},
-                "position": {"x": 0, "y": 0},
+                "position": {"x": 250, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e",
+                "source": "t",
+                "source_output": "main",
+                "target": "boom",
+                "target_input": "input",
             }
         ],
-        "edges": [],
     }
     await client.put(
         f"/workflows/{workflow_id}",

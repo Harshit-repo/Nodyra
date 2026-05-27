@@ -81,6 +81,12 @@ async def test_run_logs_and_outputs_redact_known_secrets(client: AsyncClient) ->
     graph = {
         "nodes": [
             {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 0, "y": 0},
+            },
+            {
                 "id": "c",
                 "type": "code",
                 "params": {
@@ -90,10 +96,18 @@ async def test_run_logs_and_outputs_redact_known_secrets(client: AsyncClient) ->
                         "'message': 'value super-secret-token'}"
                     )
                 },
-                "position": {"x": 0, "y": 0},
+                "position": {"x": 250, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e",
+                "source": "t",
+                "source_output": "main",
+                "target": "c",
+                "target_input": "input",
             }
         ],
-        "edges": [],
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
 
@@ -101,7 +115,7 @@ async def test_run_logs_and_outputs_redact_known_secrets(client: AsyncClient) ->
         await client.post(f"/workflows/{workflow_id}/run", json={})
     ).json()["run_id"]
     run = (await client.get(f"/runs/{run_id}")).json()
-    node = run["node_runs"][0]
+    node = next(nr for nr in run["node_runs"] if nr["node_id"] == "c")
     assert node["output"]["main"]["token"] == "***REDACTED***"
     assert node["output"]["main"]["message"] == "value ***REDACTED***"
     assert "super-secret-token" not in "\n".join(node["logs"])
@@ -136,6 +150,12 @@ async def test_integration_node_resolves_stored_credential_ref(
     graph = {
         "nodes": [
             {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 0, "y": 0},
+            },
+            {
                 "id": "s",
                 "type": "slack_send_message",
                 "params": {
@@ -147,10 +167,18 @@ async def test_integration_node_resolves_stored_credential_ref(
                     "channel": "C123",
                     "text": "Hello",
                 },
-                "position": {"x": 0, "y": 0},
+                "position": {"x": 250, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e",
+                "source": "t",
+                "source_output": "main",
+                "target": "s",
+                "target_input": "input",
             }
         ],
-        "edges": [],
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
 

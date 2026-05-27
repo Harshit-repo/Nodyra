@@ -18,6 +18,10 @@ from app.schemas import (
 from app.security import require_permission
 from app.services.crypto import verify_token
 from app.services.events import broker
+from app.services.graph_utils import (
+    first_trigger_node,
+    forward_descendants,
+)
 from app.services.runner import cancel_run, start_run
 
 router = APIRouter(tags=["runs"])
@@ -68,16 +72,20 @@ async def run_workflow(
     pinned_cache = {row.node_id: row.payload for row in pinned_rows.all()}
     run_cache = {**pinned_cache, **(body.cache or {})}
 
-    run_id = await start_run(
-        workflow_id,
-        graph,
-        latest.version,
-        workflow_version_id=None,
-        mode=body.mode,
-        targets=body.targets,
-        cache=run_cache or None,
-        parameters=body.parameters,
-    )
+    try:
+        run_id = await start_run(
+            workflow_id,
+            graph,
+            latest.version,
+            workflow_version_id=None,
+            mode=body.mode,
+            targets=body.targets,
+            cache=run_cache or None,
+            parameters=body.parameters,
+            trigger_node_id=body.trigger_node_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return RunCreated(run_id=run_id)
 
 
@@ -153,28 +161,6 @@ async def get_run(run_id: str, session: AsyncSession = Depends(get_session)):
     return run
 
 
-_TRIGGER_TYPES = {"manual_trigger", "webhook_trigger", "schedule_trigger"}
-
-
-def _forward_descendants(graph: dict, seeds: set[str]) -> set[str]:
-    """Return ``seeds`` plus every node reachable forward via edges."""
-    by_source: dict[str, list[str]] = {}
-    for edge in graph.get("edges", []):
-        src = edge.get("source")
-        tgt = edge.get("target")
-        if src and tgt:
-            by_source.setdefault(src, []).append(tgt)
-    visited: set[str] = set(seeds)
-    queue = list(seeds)
-    while queue:
-        nid = queue.pop()
-        for nxt in by_source.get(nid, []):
-            if nxt not in visited:
-                visited.add(nxt)
-                queue.append(nxt)
-    return visited
-
-
 async def _load_run_and_workflow(
     session: AsyncSession, run_id: str
 ) -> tuple[Run, Workflow]:
@@ -206,14 +192,14 @@ async def rerun_run(
     graph, version, version_id = await _graph_for_run(session, run, workflow)
 
     # Replay parameters by reading the trigger node's recorded output.
-    trigger_node = next(
-        (n for n in graph.get("nodes", []) if n.get("type") in _TRIGGER_TYPES),
-        None,
-    )
+    trigger_node = first_trigger_node(graph)
     parameters: dict | None = None
     if trigger_node is not None:
+        trigger_id = (
+            trigger_node["id"] if isinstance(trigger_node, dict) else trigger_node.id
+        )
         trigger_run = next(
-            (nr for nr in run.node_runs if nr.node_id == trigger_node["id"]),
+            (nr for nr in run.node_runs if nr.node_id == trigger_id),
             None,
         )
         if trigger_run and isinstance(trigger_run.output, dict):
@@ -259,7 +245,7 @@ async def retry_from_failure(
         if nr.status == "success" and isinstance(nr.output, dict):
             cache[nr.node_id] = nr.output
 
-    targets = sorted(_forward_descendants(graph, failed_ids))
+    targets = sorted(forward_descendants(graph, failed_ids))
 
     new_run_id = await start_run(
         workflow.id,

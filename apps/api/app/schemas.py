@@ -144,6 +144,7 @@ class RunRequest(BaseModel):
     targets: list[str] | None = None
     cache: dict[str, dict[str, Any]] | None = None
     parameters: dict[str, Any] | None = None
+    trigger_node_id: str | None = None
 
 
 class RunCreated(BaseModel):

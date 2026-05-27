@@ -100,13 +100,27 @@ async def test_output_cap_truncates_oversize_payloads(client: AsyncClient) -> No
     graph = {
         "nodes": [
             {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 0, "y": 0},
+            },
+            {
                 "id": "fat",
                 "type": "code",
                 "params": {"code": "output = 'x' * 5000"},
-                "position": {"x": 0, "y": 0},
+                "position": {"x": 250, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e",
+                "source": "t",
+                "source_output": "main",
+                "target": "fat",
+                "target_input": "input",
             }
         ],
-        "edges": [],
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
 
@@ -117,7 +131,8 @@ async def test_output_cap_truncates_oversize_payloads(client: AsyncClient) -> No
             await client.post(f"/workflows/{workflow_id}/run", json={})
         ).json()["run_id"]
         run = (await client.get(f"/runs/{run_id}")).json()
-        out = run["node_runs"][0]["output"]["main"]
+        fat_run = next(nr for nr in run["node_runs"] if nr["node_id"] == "fat")
+        out = fat_run["output"]["main"]
         assert isinstance(out, dict)
         assert out.get("_truncated") is True
         assert out["size_bytes"] > 1024

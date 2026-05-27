@@ -58,6 +58,8 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const toggleDisabled = useEditor((s) => s.toggleDisabled);
   const openNdv = useEditor((s) => s.openNdv);
   const runFromNode = useEditor((s) => s.runFromNode);
+  const runFromTrigger = useEditor((s) => s.runFromTrigger);
+  const isTrigger = manifest.category === "Triggers";
 
   const tileClass = ["node-tile"];
   if (selected) tileClass.push("selected");
@@ -111,11 +113,14 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
           title={
             isWebhook
               ? "Listen for test event"
-              : "Run step using current upstream data"
+              : isTrigger
+                ? "Run this trigger and its downstream nodes"
+                : "Run step using current upstream data"
           }
           onClick={(e) => {
             stop(e);
-            runFromNode(id);
+            if (isTrigger) runFromTrigger(id);
+            else runFromNode(id);
           }}
           disabled={running}
         >
@@ -123,10 +128,15 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
         </button>
         <button
           type="button"
-          title="Run step fresh, recomputing upstream nodes"
+          title={
+            isTrigger
+              ? "Run this trigger and its downstream nodes"
+              : "Run step fresh, recomputing upstream nodes"
+          }
           onClick={(e) => {
             stop(e);
-            runFromNode(id, { reuseUpstream: false });
+            if (isTrigger) runFromTrigger(id);
+            else runFromNode(id, { reuseUpstream: false });
           }}
           disabled={running}
         >

@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.db import SessionLocal
 from app.models import Deployment, ScheduleState, Workflow, WorkflowVersion
+from app.services.graph_utils import first_trigger_node
 from app.services.runner import start_run
 
 logger = logging.getLogger(__name__)
@@ -252,6 +253,7 @@ async def dispatch_webhook(
                 mode="test" if prefer_draft else "production",
                 trigger_type="webhook",
                 cache={node["id"]: {"main": request_payload}},
+                trigger_node_id=node["id"],
             )
             run_ids.append(run_id)
     return run_ids, any_match
@@ -285,8 +287,8 @@ async def _tick() -> None:
     which preserves the zero-config default for legacy graphs.
     """
     now = datetime.now(UTC)
-    due_workflow: list[tuple[str, dict, int, str | None]] = []
-    due_deployment: list[tuple[str, dict, int, str | None, str, dict]] = []
+    due_workflow: list[tuple[str, dict, int, str | None, str]] = []
+    due_deployment: list[tuple[str, dict, int, str | None, str, dict, str | None]] = []
 
     async with SessionLocal() as session:
         workflows = (
@@ -324,6 +326,12 @@ async def _tick() -> None:
                 continue
             if _is_due(params, deployment.last_fired, now):
                 deployment.last_fired = now
+                chosen_trigger = first_trigger_node(graph)
+                trigger_id = (
+                    chosen_trigger["id"]
+                    if isinstance(chosen_trigger, dict)
+                    else getattr(chosen_trigger, "id", None)
+                )
                 due_deployment.append(
                     (
                         workflow.id,
@@ -332,6 +340,7 @@ async def _tick() -> None:
                         version.id,
                         deployment.id,
                         deployment.default_parameters or {},
+                        trigger_id,
                     )
                 )
 
@@ -362,12 +371,20 @@ async def _tick() -> None:
                 continue
             if _is_due(params, state.last_fired, now):
                 state.last_fired = now
-                due_workflow.append((workflow.id, graph, latest.version, latest.id))
+                due_workflow.append(
+                    (
+                        workflow.id,
+                        graph,
+                        latest.version,
+                        latest.id,
+                        schedule["id"],
+                    )
+                )
 
         await session.commit()
 
     # Dispatch outside the state transaction; start_run opens its own session.
-    for workflow_id, graph, version, version_id in due_workflow:
+    for workflow_id, graph, version, version_id, trigger_id in due_workflow:
         await start_run(
             workflow_id,
             graph,
@@ -375,8 +392,17 @@ async def _tick() -> None:
             workflow_version_id=version_id,
             mode="production",
             trigger_type="schedule",
+            trigger_node_id=trigger_id,
         )
-    for workflow_id, graph, version, version_id, deployment_id, params in due_deployment:
+    for (
+        workflow_id,
+        graph,
+        version,
+        version_id,
+        deployment_id,
+        params,
+        trigger_id,
+    ) in due_deployment:
         await start_run(
             workflow_id,
             graph,
@@ -386,6 +412,7 @@ async def _tick() -> None:
             mode="production",
             trigger_type="deployment",
             parameters=params or None,
+            trigger_node_id=trigger_id,
         )
 
 

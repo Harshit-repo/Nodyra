@@ -27,6 +27,10 @@ from app.services.artifacts import (
 )
 from app.services.credentials import resolve_credential_refs
 from app.services.events import broker
+from app.services.graph_utils import (
+    first_trigger_node,
+    resolve_trigger_targets,
+)
 from app.services.live_settings import get_live_settings
 from app.services.redaction import load_secret_values, redact_value
 from app.services.runtime_pool import pool as runtime_pool
@@ -45,8 +49,6 @@ from noodle.serialization import (
     serialize_value,
     truncate_serialized_value,
 )
-
-TRIGGER_TYPES = ("manual_trigger", "webhook_trigger", "schedule_trigger")
 
 _active_runs: dict[str, asyncio.Task[None]] = {}
 
@@ -164,16 +166,23 @@ async def _call_sub_workflow(workflow_id: str, input_value: Any) -> Any:
     sources = {edge.source for edge in graph.edges}
 
     cache: dict[str, dict] = deserialize_value(dict(pinned_cache))
-    trigger = next(
-        (n for n in graph.nodes if n.type in TRIGGER_TYPES),
-        None,
-    )
+    trigger = first_trigger_node(graph)
     if trigger is not None and trigger.id not in cache:
         cache[trigger.id] = {"main": input_value if input_value is not None else {}}
 
+    # Gate the sub-workflow's execution to the trigger we just seeded, so
+    # sibling triggers in the same sub-graph don't fire on every call.
+    sub_targets = (
+        resolve_trigger_targets(graph_dict, trigger.id, None)
+        if trigger is not None
+        else None
+    )
+
     chain_token = call_chain.set(chain | {workflow_id})
     try:
-        result = await execute(graph, node_registry, cache=cache or None)
+        result = await execute(
+            graph, node_registry, cache=cache or None, targets=sub_targets
+        )
     finally:
         call_chain.reset(chain_token)
 
@@ -193,26 +202,26 @@ def _seed_parameters(
     graph: dict,
     cache: dict[str, dict] | None,
     parameters: dict | None,
+    *,
+    trigger_id: str | None,
 ) -> dict[str, dict] | None:
-    """Seed run parameters into the first trigger node's ``main`` input port.
+    """Seed run parameters into ``trigger_id``'s ``main`` input port.
 
-    Uses the same deterministic rule ``_call_sub_workflow`` follows: the
-    first node whose type is in ``TRIGGER_TYPES``. An explicit cache entry
-    for that trigger always wins (so a webhook payload is never overwritten
-    by deployment defaults). Returns the cache to use for the run.
+    An explicit cache entry for that trigger always wins (so a webhook
+    payload is never overwritten by deployment defaults). When the caller
+    didn't pick a trigger, fall back to the first trigger in graph order so
+    legacy callers and the no-trigger path keep working.
     """
     if not parameters:
         return cache
-    nodes = graph.get("nodes", []) if isinstance(graph, dict) else []
-    trigger = next(
-        (n for n in nodes if n.get("type") in TRIGGER_TYPES),
-        None,
-    )
-    if trigger is None:
-        return cache
+    if trigger_id is None:
+        chosen = first_trigger_node(graph)
+        if chosen is None:
+            return cache
+        trigger_id = chosen["id"] if isinstance(chosen, dict) else chosen.id
     next_cache = dict(cache or {})
-    if trigger["id"] not in next_cache:
-        next_cache[trigger["id"]] = {"main": parameters}
+    if trigger_id not in next_cache:
+        next_cache[trigger_id] = {"main": parameters}
     return next_cache
 
 
@@ -229,9 +238,31 @@ async def start_run(
     targets: list[str] | None = None,
     cache: dict[str, dict] | None = None,
     parameters: dict | None = None,
+    trigger_node_id: str | None = None,
 ) -> str:
-    """Create a run record and launch execution in the background."""
-    cache = _seed_parameters(graph, cache, parameters)
+    """Create a run record and launch execution in the background.
+
+    Gating rule: when the caller doesn't supply explicit ``targets`` (the
+    retry/rerun/"Run this step" paths), execution is restricted to the
+    chosen trigger plus its forward descendants — so sibling triggers in
+    the same graph don't fire. If ``trigger_node_id`` is None the dispatcher
+    picks one deterministically (manual_trigger first, else the first
+    trigger in graph order). A graph with no trigger raises ``ValueError``,
+    which the router turns into a 400.
+    """
+    if not targets:
+        if trigger_node_id is None:
+            chosen = first_trigger_node(graph, prefer_manual=True)
+            if chosen is None:
+                raise ValueError("Workflow needs a trigger to run.")
+            trigger_node_id = (
+                chosen["id"] if isinstance(chosen, dict) else chosen.id
+            )
+        targets = resolve_trigger_targets(graph, trigger_node_id, None)
+
+    cache = _seed_parameters(
+        graph, cache, parameters, trigger_id=trigger_node_id
+    )
 
     async with SessionLocal() as session:
         run = Run(

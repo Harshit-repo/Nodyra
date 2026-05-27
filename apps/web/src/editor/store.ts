@@ -54,6 +54,20 @@ export interface NodeRunMeta {
 
 export interface RunOptions {
   reuseUpstream?: boolean;
+  triggerNodeId?: string;
+}
+
+export const TRIGGER_CATEGORY = "Triggers";
+
+export function pickEditorRunTrigger(nodes: NoodleNode[]): NoodleNode | null {
+  const triggers = nodes.filter((n) => n.data.manifest.category === TRIGGER_CATEGORY);
+  if (triggers.length === 0) return null;
+  const manual = triggers.find((n) => n.data.manifest.id === "manual_trigger");
+  return manual ?? triggers[0];
+}
+
+export function isTriggerNode(node: NoodleNode | undefined): boolean {
+  return Boolean(node && node.data.manifest.category === TRIGGER_CATEGORY);
 }
 
 function deriveSwitchOutputs(rules: unknown): string[] {
@@ -105,6 +119,7 @@ interface EditorStore {
     fn: ((targets?: string[], options?: RunOptions) => Promise<void>) | null,
   ) => void;
   runFromNode: (id: string, options?: RunOptions) => void;
+  runFromTrigger: (id: string) => void;
 
   startRun: (runId: string, targets?: string[]) => void;
   applyRunEvent: (event: RunEvent) => void;
@@ -362,6 +377,14 @@ export const useEditor = create<EditorStore>((set, get) => ({
   runFromNode: (id, options = { reuseUpstream: true }) => {
     const handler = get().runHandler;
     if (handler) void handler([id], options);
+  },
+  runFromTrigger: (id) => {
+    // Triggers have no ancestors — the engine's ancestor-walk would
+    // collapse `targets=[id]` to "just the trigger". Use the new
+    // `trigger_node_id` gating instead so the trigger AND its descendants
+    // execute.
+    const handler = get().runHandler;
+    if (handler) void handler(undefined, { triggerNodeId: id });
   },
 
   startRun: (runId, targets) => {

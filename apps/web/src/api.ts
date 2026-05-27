@@ -181,6 +181,7 @@ export const api = {
       mode?: string;
       targets?: string[];
       cache?: Record<string, Record<string, unknown>>;
+      trigger_node_id?: string;
     },
   ) =>
     request<{ run_id: string }>(`/workflows/${id}/run`, {
