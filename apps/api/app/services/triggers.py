@@ -145,14 +145,17 @@ def _matches_basic_auth(
     return user == expected_user and password == expected_pass
 
 
-def _webhook_auth_passes(node_params: dict, resolved: dict, headers: dict, query: dict) -> bool:
+def _webhook_auth_passes(
+    node_params: dict, resolved: dict, headers: dict, query: dict
+) -> bool:
     """Return True if the incoming request satisfies the node's auth_type."""
     auth_type = str(node_params.get("auth_type") or "none").lower()
     if auth_type == "none":
         return True
     # Header keys arrive lower-cased from FastAPI's CIMultiDict; normalise.
     lower_headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
-    creds = resolved.get("auth_credentials") if isinstance(resolved.get("auth_credentials"), dict) else None
+    auth_credentials = resolved.get("auth_credentials")
+    creds = auth_credentials if isinstance(auth_credentials, dict) else None
 
     if auth_type == "basic":
         if creds:
