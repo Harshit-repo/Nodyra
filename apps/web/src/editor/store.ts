@@ -102,6 +102,8 @@ interface EditorStore {
   onEdgesChange: (changes: EdgeChange[]) => void;
   onConnect: (connection: Connection) => void;
   addNode: (manifestId: string, position: { x: number; y: number }) => void;
+  autoLayout: () => void;
+  duplicateNode: (id: string) => void;
   updateParams: (id: string, params: Record<string, unknown>) => void;
   setSelected: (id: string | null) => void;
   markClean: () => void;
@@ -161,6 +163,81 @@ function defaultParams(manifest: NodeManifest): Record<string, unknown> {
 }
 
 const STRUCTURAL = new Set(["position", "remove", "add", "replace"]);
+
+function cloneParams(params: Record<string, unknown>): Record<string, unknown> {
+  try {
+    return structuredClone(params) as Record<string, unknown>;
+  } catch {
+    return JSON.parse(JSON.stringify(params)) as Record<string, unknown>;
+  }
+}
+
+function layoutPositions(
+  nodes: NoodleNode[],
+  edges: Edge[],
+): Record<string, { x: number; y: number }> {
+  const incoming = new Map<string, number>();
+  const outgoing = new Map<string, string[]>();
+  const layer = new Map<string, number>();
+
+  for (const node of nodes) {
+    incoming.set(node.id, 0);
+    outgoing.set(node.id, []);
+    layer.set(node.id, 0);
+  }
+  for (const edge of edges) {
+    if (!incoming.has(edge.target) || !outgoing.has(edge.source)) continue;
+    incoming.set(edge.target, (incoming.get(edge.target) ?? 0) + 1);
+    outgoing.get(edge.source)?.push(edge.target);
+  }
+
+  const queue = nodes
+    .filter((node) => (incoming.get(node.id) ?? 0) === 0)
+    .sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x);
+  const visited = new Set<string>();
+
+  for (let i = 0; i < queue.length; i += 1) {
+    const node = queue[i];
+    visited.add(node.id);
+    for (const target of outgoing.get(node.id) ?? []) {
+      layer.set(target, Math.max(layer.get(target) ?? 0, (layer.get(node.id) ?? 0) + 1));
+      const nextIncoming = (incoming.get(target) ?? 1) - 1;
+      incoming.set(target, nextIncoming);
+      if (nextIncoming === 0) {
+        const targetNode = nodes.find((n) => n.id === target);
+        if (targetNode) queue.push(targetNode);
+      }
+    }
+  }
+
+  for (const node of nodes) {
+    if (visited.has(node.id)) continue;
+    const upstreamLayers = edges
+      .filter((edge) => edge.target === node.id)
+      .map((edge) => (layer.get(edge.source) ?? 0) + 1);
+    layer.set(node.id, upstreamLayers.length ? Math.max(...upstreamLayers) : 0);
+  }
+
+  const groups = new Map<number, NoodleNode[]>();
+  for (const node of nodes) {
+    const group = layer.get(node.id) ?? 0;
+    groups.set(group, [...(groups.get(group) ?? []), node]);
+  }
+
+  const result: Record<string, { x: number; y: number }> = {};
+  for (const [group, groupNodes] of groups.entries()) {
+    const sorted = [...groupNodes].sort(
+      (a, b) => a.position.y - b.position.y || a.position.x - b.position.x,
+    );
+    sorted.forEach((node, index) => {
+      result[node.id] = {
+        x: 48 + group * 300,
+        y: 42 + index * 150,
+      };
+    });
+  }
+  return result;
+}
 
 export const useEditor = create<EditorStore>((set, get) => ({
   manifests: [],
@@ -315,6 +392,42 @@ export const useEditor = create<EditorStore>((set, get) => ({
       },
     };
     set({ nodes: [...get().nodes, node], selectedId: node.id, dirty: true });
+  },
+
+  autoLayout: () => {
+    const { nodes, edges } = get();
+    if (nodes.length === 0) return;
+    const positions = layoutPositions(nodes, edges);
+    set({
+      nodes: nodes.map((node) => ({
+        ...node,
+        position: positions[node.id] ?? node.position,
+      })),
+      dirty: true,
+    });
+  },
+
+  duplicateNode: (id) => {
+    const source = get().nodes.find((node) => node.id === id);
+    if (!source) return;
+    const node: NoodleNode = {
+      ...source,
+      id: newNodeId(),
+      selected: false,
+      position: {
+        x: source.position.x + 48,
+        y: source.position.y + 48,
+      },
+      data: {
+        ...source.data,
+        params: cloneParams(source.data.params),
+      },
+    };
+    set({
+      nodes: [...get().nodes, node],
+      selectedId: node.id,
+      dirty: true,
+    });
   },
 
   updateParams: (id, params) => {

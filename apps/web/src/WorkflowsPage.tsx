@@ -2,10 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { api } from "./api";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { HomeHeader } from "./HomeHeader";
 import { Logo } from "./Logo";
 import { useToast } from "./ToastProvider";
-import type { WorkflowGraph, WorkflowSummary } from "./types";
+import type {
+  Credential,
+  Deployment,
+  Environment,
+  WorkflowSummary,
+} from "./types";
+import { WORKFLOW_TEMPLATES as TEMPLATES } from "./workflowTemplates";
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -120,129 +127,19 @@ function CreateModal({
   );
 }
 
-function node(
-  id: string,
-  type: string,
-  params: Record<string, unknown>,
-  x: number,
-  y: number,
-) {
-  return {
-    id,
-    type,
-    params,
-    position: { x, y },
-    disabled: false,
-    outputs_override: null,
-    on_error: "stop",
-    retry_on_fail: false,
-    retries: 1,
-    retry_wait_seconds: 0,
-    retry_backoff: false,
-    always_output_data: false,
-    timeout_seconds: null,
-  };
-}
-
-const TEMPLATES: {
-  id: string;
-  name: string;
-  description: string;
-  graph?: () => WorkflowGraph;
-}[] = [
-  {
-    id: "blank",
-    name: "Blank workflow",
-    description: "Start with an empty canvas.",
-  },
-  {
-    id: "api-code",
-    name: "API fetch + Python",
-    description: "Fetch JSON, transform it in Code, inspect output.",
-    graph: () => ({
-      nodes: [
-        node("manual", "manual_trigger", { data: {} }, 0, 40),
-        node(
-          "fetch",
-          "http_request",
-          {
-            url: "https://jsonplaceholder.typicode.com/users",
-            method: "GET",
-            headers: {},
-            query: {},
-            body: {},
-          },
-          260,
-          40,
-        ),
-        node(
-          "code",
-          "code",
-          {
-            code:
-              "rows = input or []\n" +
-              "output = {\n" +
-              "    'row_count': len(rows),\n" +
-              "    'emails': [row.get('email') for row in rows],\n" +
-              "    'records': rows,\n" +
-              "}",
-          },
-          520,
-          40,
-        ),
-      ],
-      edges: [
-        { id: "e1", source: "manual", source_output: "main", target: "fetch", target_input: "input" },
-        { id: "e2", source: "fetch", source_output: "main", target: "code", target_input: "input" },
-      ],
-    }),
-  },
-  {
-    id: "webhook-slack",
-    name: "Webhook + Slack",
-    description: "Capture a webhook and send a Slack notification.",
-    graph: () => ({
-      nodes: [
-        node("hook", "webhook_trigger", { path: "incoming-event", response_mode: "On Received" }, 0, 40),
-        node(
-          "slack",
-          "slack_send_message",
-          { bot_token: "", channel: "", text: "New webhook event: {{ $json }}", blocks: null, thread_ts: "" },
-          300,
-          40,
-        ),
-      ],
-      edges: [
-        { id: "e1", source: "hook", source_output: "main", target: "slack", target_input: "input" },
-      ],
-    }),
-  },
-  {
-    id: "schedule-http",
-    name: "Schedule + HTTP transform",
-    description: "Run on a schedule, call an API, and normalize fields.",
-    graph: () => ({
-      nodes: [
-        node("schedule", "schedule_trigger", { every: 1, interval: "hours", cron: "", timezone: "UTC" }, 0, 40),
-        node("fetch", "http_request", { url: "https://jsonplaceholder.typicode.com/posts", method: "GET", headers: {}, query: {}, body: {} }, 280, 40),
-        node("limit", "limit", { max_items: 5, keep: "first" }, 560, 40),
-      ],
-      edges: [
-        { id: "e1", source: "schedule", source_output: "main", target: "fetch", target_input: "input" },
-        { id: "e2", source: "fetch", source_output: "main", target: "limit", target_input: "input" },
-      ],
-    }),
-  },
-];
-
 export function WorkflowsPage() {
   const [workflows, setWorkflows] = useState<WorkflowSummary[] | null>(null);
+  const [deployments, setDeployments] = useState<Deployment[] | null>(null);
+  const [credentials, setCredentials] = useState<Credential[] | null>(null);
+  const [environments, setEnvironments] = useState<Environment[] | null>(null);
   const [error, setError] = useState("");
   const [modal, setModal] = useState(false);
   const [modalTemplateId, setModalTemplateId] = useState("blank");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sort, setSort] = useState("updated");
+  const [pendingDelete, setPendingDelete] = useState<WorkflowSummary | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const navigate = useNavigate();
   const { notify } = useToast();
 
@@ -252,6 +149,21 @@ export function WorkflowsPage() {
       .listWorkflows()
       .then(setWorkflows)
       .catch((err) => setError(String(err)));
+    void Promise.allSettled([
+      api.listDeployments(),
+      api.listCredentials(),
+      api.listEnvironments(),
+    ]).then(([deploymentResult, credentialResult, environmentResult]) => {
+      if (deploymentResult.status === "fulfilled") {
+        setDeployments(deploymentResult.value);
+      }
+      if (credentialResult.status === "fulfilled") {
+        setCredentials(credentialResult.value);
+      }
+      if (environmentResult.status === "fulfilled") {
+        setEnvironments(environmentResult.value);
+      }
+    });
   }
 
   function openCreate(templateId = "blank"): void {
@@ -267,15 +179,18 @@ export function WorkflowsPage() {
 
   useEffect(load, []);
 
-  async function remove(id: string, name: string) {
-    if (!window.confirm(`Delete “${name}”? This cannot be undone.`)) return;
+  async function remove(id: string) {
+    setDeleteBusy(true);
     try {
       await api.deleteWorkflow(id);
       notify("Workflow deleted.", "success");
+      setPendingDelete(null);
       load();
     } catch (err) {
       setError(String(err));
       notify("Could not delete workflow.", "error");
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
@@ -313,6 +228,24 @@ export function WorkflowsPage() {
     };
   }, [workflows]);
 
+  const ops = useMemo(() => {
+    const activeDeployments = deployments?.filter((item) => item.active).length ?? 0;
+    const envErrors =
+      environments?.filter((env) => env.status === "error").length ?? 0;
+    const envBuilding =
+      environments?.filter(
+        (env) => env.status === "pending" || env.status === "building",
+      ).length ?? 0;
+    const credentialsNeedingAttention =
+      credentials?.filter((cred) => cred.keys.length === 0).length ?? 0;
+    return {
+      activeDeployments,
+      credentialsNeedingAttention,
+      envErrors,
+      envBuilding,
+    };
+  }, [credentials, deployments, environments]);
+
   return (
     <div className="home">
       <HomeHeader />
@@ -329,7 +262,7 @@ export function WorkflowsPage() {
         </div>
 
         {workflows && workflows.length > 0 && (
-          <div className="home-stat-strip" aria-label="Workflow status summary">
+          <div className="dashboard-grid" aria-label="Operational summary">
             <button type="button" onClick={() => setStatusFilter("active")}>
               <strong>{stats.active}</strong>
               <span>Active</span>
@@ -340,11 +273,27 @@ export function WorkflowsPage() {
             </button>
             <button type="button" onClick={() => setStatusFilter("failed")}>
               <strong>{stats.failed}</strong>
-              <span>Failed</span>
+              <span>Failed runs</span>
             </button>
             <button type="button" onClick={() => setStatusFilter("all")}>
               <strong>{stats.running}</strong>
-              <span>Running</span>
+              <span>Running runs</span>
+            </button>
+            <button type="button" onClick={() => navigate("/deployments")}>
+              <strong>{ops.activeDeployments}</strong>
+              <span>Active deployments</span>
+            </button>
+            <button type="button" onClick={() => navigate("/credentials")}>
+              <strong>{ops.credentialsNeedingAttention}</strong>
+              <span>Credential attention</span>
+            </button>
+            <button type="button" onClick={() => navigate("/environments")}>
+              <strong>{ops.envErrors}</strong>
+              <span>Env errors</span>
+            </button>
+            <button type="button" onClick={() => navigate("/environments")}>
+              <strong>{ops.envBuilding}</strong>
+              <span>Env building</span>
             </button>
           </div>
         )}
@@ -380,7 +329,18 @@ export function WorkflowsPage() {
 
         {error && <p className="error-text">{error}</p>}
 
-        {!workflows && !error && <p className="muted">Loading…</p>}
+        {!workflows && !error && (
+          <div className="wf-grid" aria-label="Loading workflows">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <div className="wf-card skeleton-card" key={index}>
+                <span className="skeleton-line short" />
+                <span className="skeleton-line title" />
+                <span className="skeleton-line" />
+                <span className="skeleton-line tiny" />
+              </div>
+            ))}
+          </div>
+        )}
 
         {workflows && workflows.length === 0 && (
           <div className="empty-state">
@@ -434,7 +394,7 @@ export function WorkflowsPage() {
                     title="Delete workflow"
                     onClick={(e) => {
                       e.stopPropagation();
-                      void remove(wf.id, wf.name);
+                      setPendingDelete(wf);
                     }}
                   >
                     ×
@@ -477,6 +437,15 @@ export function WorkflowsPage() {
           onClose={() => setModal(false)}
           onCreated={(id) => navigate(`/workflows/${id}`)}
           initialTemplateId={modalTemplateId}
+        />
+      )}
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Delete workflow"
+          body={`Delete "${pendingDelete.name}"? This removes the workflow and cannot be undone.`}
+          busy={deleteBusy}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => void remove(pendingDelete.id)}
         />
       )}
     </div>

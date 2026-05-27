@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { api } from "./api";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { HomeHeader } from "./HomeHeader";
 import type { Environment, SystemSettings } from "./types";
 
@@ -463,6 +464,13 @@ function EnvCard({
   const [pkg, setPkg] = useState("");
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const effectiveWorkers = env.effective_pool_max || env.runner_pool_size || 1;
+  const maxRam =
+    env.worker_rss_estimate_bytes && env.worker_rss_estimate_bytes > 0
+      ? env.worker_rss_estimate_bytes * effectiveWorkers
+      : null;
 
   async function add() {
     if (!pkg.trim() || busy) return;
@@ -487,9 +495,14 @@ function EnvCard({
   }
 
   async function del() {
-    if (!window.confirm(`Delete environment “${env.name}”?`)) return;
-    await api.deleteEnvironment(env.id);
-    onChanged();
+    setDeleteBusy(true);
+    try {
+      await api.deleteEnvironment(env.id);
+      setConfirmDelete(false);
+      onChanged();
+    } finally {
+      setDeleteBusy(false);
+    }
   }
 
   return (
@@ -503,6 +516,24 @@ function EnvCard({
       </div>
       <div className="env-meta">
         Python {env.python_version} · {poolLabel(env)}
+      </div>
+      <div className="env-health-grid">
+        <div>
+          <span>Workers</span>
+          <strong>{effectiveWorkers}</strong>
+        </div>
+        <div>
+          <span>Packages</span>
+          <strong>{env.packages.length}</strong>
+        </div>
+        <div>
+          <span>Worker RAM</span>
+          <strong>{formatBytes(env.worker_rss_estimate_bytes)}</strong>
+        </div>
+        <div>
+          <span>Max RAM</span>
+          <strong>{formatBytes(maxRam)}</strong>
+        </div>
       </div>
       {env.description && <p className="env-description">{env.description}</p>}
 
@@ -533,7 +564,7 @@ function EnvCard({
         </button>
       </div>
 
-      {env.status === "error" && env.status_detail && (
+      {env.status_detail && (env.status === "error" || env.status === "building") && (
         <pre className="env-log">{env.status_detail}</pre>
       )}
 
@@ -545,7 +576,10 @@ function EnvCard({
           Rebuild
         </button>
         {!env.is_global && (
-          <button className="btn btn-sm btn-ghost" onClick={() => void del()}>
+          <button
+            className="btn btn-sm btn-ghost"
+            onClick={() => setConfirmDelete(true)}
+          >
             Delete
           </button>
         )}
@@ -561,6 +595,15 @@ function EnvCard({
           }}
           workspaceCap={workspaceCap}
           rssSoftBudget={rssSoftBudget}
+        />
+      )}
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete environment"
+          body={`Delete "${env.name}"? Workflows that use this environment will need a new run environment.`}
+          busy={deleteBusy}
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={() => void del()}
         />
       )}
     </article>
@@ -600,6 +643,17 @@ export function EnvironmentsPage() {
 
   const workspaceCap = systemSettings?.max_concurrent_runs ?? null;
   const rssSoftBudget = systemSettings?.worker_rss_soft_budget_bytes ?? 0;
+  const health = useMemo(() => {
+    const rows = environments ?? [];
+    return {
+      ready: rows.filter((env) => env.status === "ready").length,
+      building: rows.filter(
+        (env) => env.status === "pending" || env.status === "building",
+      ).length,
+      errors: rows.filter((env) => env.status === "error").length,
+      packages: rows.reduce((total, env) => total + env.packages.length, 0),
+    };
+  }, [environments]);
 
   return (
     <div className="home">
@@ -618,20 +672,51 @@ export function EnvironmentsPage() {
         </div>
 
         {error && <p className="error-text">{error}</p>}
-        {!environments && !error && <p className="muted">Loading…</p>}
-
-        {environments && (
-          <div className="env-grid">
-            {environments.map((env) => (
-              <EnvCard
-                key={env.id}
-                env={env}
-                onChanged={load}
-                workspaceCap={workspaceCap}
-                rssSoftBudget={rssSoftBudget}
-              />
+        {!environments && !error && (
+          <div className="env-grid" aria-label="Loading environments">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div className="env-card skeleton-card" key={index}>
+                <span className="skeleton-line title" />
+                <span className="skeleton-line" />
+                <span className="skeleton-line" />
+                <span className="skeleton-line tiny" />
+              </div>
             ))}
           </div>
+        )}
+
+        {environments && (
+          <>
+            <div className="env-health-summary">
+              <div>
+                <strong>{health.ready}</strong>
+                <span>Ready</span>
+              </div>
+              <div>
+                <strong>{health.building}</strong>
+                <span>Building</span>
+              </div>
+              <div>
+                <strong>{health.errors}</strong>
+                <span>Errors</span>
+              </div>
+              <div>
+                <strong>{health.packages}</strong>
+                <span>Installed packages</span>
+              </div>
+            </div>
+            <div className="env-grid">
+              {environments.map((env) => (
+                <EnvCard
+                  key={env.id}
+                  env={env}
+                  onChanged={load}
+                  workspaceCap={workspaceCap}
+                  rssSoftBudget={rssSoftBudget}
+                />
+              ))}
+            </div>
+          </>
         )}
       </main>
 

@@ -29,6 +29,83 @@ interface WebhookListenState {
   targets?: string[];
 }
 
+interface PublishSummary {
+  addedNodes: number;
+  removedNodes: number;
+  edgeDelta: number;
+  credentialRefs: number;
+  triggerSummary: string;
+  triggerChanged: boolean;
+  environmentChanged: boolean;
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName.toLowerCase();
+  return (
+    tag === "input" ||
+    tag === "textarea" ||
+    tag === "select" ||
+    target.isContentEditable
+  );
+}
+
+function isCredentialRef(value: unknown): boolean {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    (value as Record<string, unknown>).__noodle_credential__ === true
+  );
+}
+
+function countCredentialRefs(value: unknown): number {
+  if (isCredentialRef(value)) return 1;
+  if (Array.isArray(value)) {
+    return value.reduce<number>(
+      (total, item) => total + countCredentialRefs(item),
+      0,
+    );
+  }
+  if (value && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).reduce<number>(
+      (total, item) => total + countCredentialRefs(item),
+      0,
+    );
+  }
+  return 0;
+}
+
+function triggerTypes(graph: WorkflowGraph | null | undefined): string[] {
+  if (!graph) return [];
+  return graph.nodes
+    .filter((node) => node.type.endsWith("_trigger"))
+    .map((node) => node.type)
+    .sort();
+}
+
+function buildPublishSummary(
+  baseGraph: WorkflowGraph | null | undefined,
+  currentGraph: WorkflowGraph,
+  baseEnvironmentId: string | null | undefined,
+  currentEnvironmentId: string | null,
+): PublishSummary {
+  const baseNodeIds = new Set(baseGraph?.nodes.map((node) => node.id) ?? []);
+  const currentNodeIds = new Set(currentGraph.nodes.map((node) => node.id));
+  const baseTriggers = triggerTypes(baseGraph);
+  const currentTriggers = triggerTypes(currentGraph);
+  return {
+    addedNodes: currentGraph.nodes.filter((node) => !baseNodeIds.has(node.id))
+      .length,
+    removedNodes: [...baseNodeIds].filter((id) => !currentNodeIds.has(id)).length,
+    edgeDelta: currentGraph.edges.length - (baseGraph?.edges.length ?? 0),
+    credentialRefs: countCredentialRefs(currentGraph.nodes),
+    triggerSummary: currentTriggers.length ? currentTriggers.join(", ") : "none",
+    triggerChanged: baseTriggers.join("|") !== currentTriggers.join("|"),
+    environmentChanged: (baseEnvironmentId ?? "") !== (currentEnvironmentId ?? ""),
+  };
+}
+
 export function EditorPage() {
   const { id } = useParams<{ id: string }>();
   const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
@@ -52,6 +129,10 @@ export function EditorPage() {
   const [aiPreview, setAiPreview] = useState<AiWorkflowDraftResponse | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [publishReviewOpen, setPublishReviewOpen] = useState(false);
+  const [publishUpdateDeployments, setPublishUpdateDeployments] = useState(false);
+  const [publishSummary, setPublishSummary] = useState<PublishSummary | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const { notify } = useToast();
   const wsRef = useRef<WebSocket | null>(null);
   const webhookTimerRef = useRef<number | null>(null);
@@ -63,6 +144,9 @@ export function EditorPage() {
   const dirty = useEditor((s) => s.dirty);
   const nodeCount = useEditor((s) => s.nodes.length);
   const hasTrigger = useEditor((s) => pickEditorRunTrigger(s.nodes) !== null);
+  const selectedId = useEditor((s) => s.selectedId);
+  const deleteNode = useEditor((s) => s.deleteNode);
+  const duplicateNode = useEditor((s) => s.duplicateNode);
   const runId = useEditor((s) => s.runId);
   const running = useEditor((s) => s.running);
   const runError = useEditor((s) => s.runError);
@@ -163,7 +247,7 @@ export function EditorPage() {
     }
   }
 
-  async function publishDraft(): Promise<void> {
+  async function publishDraft(updateDeployments = false): Promise<void> {
     if (!id || publishing) return;
     const saved = await save({ notifySuccess: false });
     if (!saved) return;
@@ -172,10 +256,15 @@ export function EditorPage() {
     try {
       const published = await api.publishWorkflow(id, {
         notes: "Published from editor",
+        update_deployments: updateDeployments,
       });
       const detail = await api.getWorkflow(id);
       setWorkflow(detail);
-      setMessage(`Published v${published.version}. Deployments stay pinned until updated.`);
+      setPublishReviewOpen(false);
+      const deployNote = published.updated_deployments
+        ? ` Updated ${published.updated_deployments} deployment(s).`
+        : " Deployments stay pinned until updated.";
+      setMessage(`Published v${published.version}.${deployNote}`);
       notify(`Published v${published.version}.`, "success");
     } catch (err) {
       setMessage(String(err));
@@ -183,6 +272,14 @@ export function EditorPage() {
     } finally {
       setPublishing(false);
     }
+  }
+
+  function openPublishReview(): void {
+    setPublishSummary(
+      buildPublishSummary(workflow?.graph, toGraph(), workflow?.environment_id, environmentId),
+    );
+    setPublishUpdateDeployments(false);
+    setPublishReviewOpen(true);
   }
 
   async function previewAiDraft(): Promise<void> {
@@ -531,14 +628,46 @@ export function EditorPage() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (e.defaultPrevented) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         void save();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        void run();
+        return;
+      }
+      if (isEditableTarget(e.target)) return;
+      if (e.key === "?") {
+        e.preventDefault();
+        setShortcutsOpen(true);
+        return;
+      }
+      if (e.key === "/") {
+        e.preventDefault();
+        window.dispatchEvent(new Event("noodle:focus-node-search"));
+        return;
+      }
+      if (e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        window.dispatchEvent(new Event("noodle:fit-view"));
+        return;
+      }
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
+        e.preventDefault();
+        deleteNode(selectedId);
+        return;
+      }
+      if (e.key.toLowerCase() === "d" && selectedId) {
+        e.preventDefault();
+        duplicateNode(selectedId);
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  });
+  }, [deleteNode, duplicateNode, environmentId, run, save, selectedId]);
 
   async function openRuns(): Promise<void> {
     if (!id) return;
@@ -661,6 +790,14 @@ export function EditorPage() {
             ƒ Functions
           </button>
           <button
+            className="btn btn-icon"
+            onClick={() => setShortcutsOpen(true)}
+            title="Keyboard shortcuts"
+            aria-label="Keyboard shortcuts"
+          >
+            ?
+          </button>
+          <button
             className="btn"
             onClick={() => {
               setAiPreview(null);
@@ -730,7 +867,7 @@ export function EditorPage() {
           </button>
           <button
             className="btn"
-            onClick={() => void publishDraft()}
+            onClick={openPublishReview}
             disabled={saving || publishing}
             title="Publish the saved draft as a new production version"
           >
@@ -740,6 +877,11 @@ export function EditorPage() {
       </header>
 
       {message && <div className="toolbar-error">{message}</div>}
+      {active && (dirty || workflow?.has_unpublished_changes) && (
+        <div className="production-warning">
+          Draft changes won't affect active production runs until you publish.
+        </div>
+      )}
       {webhookListen && (
         <div className="webhook-test-banner">
           <div className="webhook-test-copy">
@@ -894,6 +1036,140 @@ export function EditorPage() {
                 </button>
               )}
             </footer>
+          </div>
+        </div>
+      )}
+
+      {shortcutsOpen && (
+        <div className="modal-overlay" onClick={() => setShortcutsOpen(false)}>
+          <div
+            className="modal shortcuts-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="shortcuts-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="modal-head">
+              <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+              <button
+                className="btn btn-sm btn-ghost"
+                onClick={() => setShortcutsOpen(false)}
+              >
+                ✕
+              </button>
+            </header>
+            <div className="shortcut-grid">
+              <span>Save draft</span>
+              <kbd>Ctrl</kbd>
+              <kbd>S</kbd>
+              <span>Run workflow</span>
+              <kbd>Ctrl</kbd>
+              <kbd>Enter</kbd>
+              <span>Search nodes</span>
+              <kbd>/</kbd>
+              <span />
+              <span>Fit view</span>
+              <kbd>Shift</kbd>
+              <kbd>F</kbd>
+              <span>Delete selected node</span>
+              <kbd>Delete</kbd>
+              <span />
+              <span>Duplicate selected node</span>
+              <kbd>D</kbd>
+              <span />
+              <span>Open shortcuts</span>
+              <kbd>?</kbd>
+              <span />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {publishReviewOpen && publishSummary && (
+        <div className="modal-overlay" onClick={() => setPublishReviewOpen(false)}>
+          <div
+            className="modal publish-review-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="publish-review-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="modal-head">
+              <h2 id="publish-review-title">Review release</h2>
+              <button
+                className="btn btn-sm btn-ghost"
+                onClick={() => setPublishReviewOpen(false)}
+                disabled={publishing}
+              >
+                ✕
+              </button>
+            </header>
+            <div className="publish-review-grid">
+              <div>
+                <strong>{publishSummary.addedNodes}</strong>
+                <span>nodes added</span>
+              </div>
+              <div>
+                <strong>{publishSummary.removedNodes}</strong>
+                <span>nodes removed</span>
+              </div>
+              <div>
+                <strong>
+                  {publishSummary.edgeDelta > 0 ? "+" : ""}
+                  {publishSummary.edgeDelta}
+                </strong>
+                <span>connection delta</span>
+              </div>
+              <div>
+                <strong>{publishSummary.credentialRefs}</strong>
+                <span>credential refs</span>
+              </div>
+            </div>
+            <div className="publish-review-notes">
+              <p>
+                <strong>Triggers:</strong> {publishSummary.triggerSummary}
+                {publishSummary.triggerChanged ? " (changed)" : ""}
+              </p>
+              {publishSummary.environmentChanged && (
+                <p>
+                  <strong>Environment:</strong> this release changes the run
+                  environment.
+                </p>
+              )}
+              {workflow?.active && (
+                <p>
+                  <strong>Production:</strong> publishing creates a new version.
+                  Existing deployments remain pinned unless you update them.
+                </p>
+              )}
+            </div>
+            <label className="field-toggle publish-deploy-toggle">
+              <input
+                type="checkbox"
+                checked={publishUpdateDeployments}
+                onChange={(e) => setPublishUpdateDeployments(e.target.checked)}
+              />
+              <span className="field-toggle-track" />
+              <span className="field-toggle-text">
+                Update deployments to this version
+              </span>
+            </label>
+            <div className="modal-actions">
+              <button
+                className="btn btn-ghost"
+                onClick={() => setPublishReviewOpen(false)}
+                disabled={publishing}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => void publishDraft(publishUpdateDeployments)}
+                disabled={saving || publishing}
+              >
+                {publishing ? "Publishing..." : "Publish release"}
+              </button>
+            </div>
           </div>
         </div>
       )}
