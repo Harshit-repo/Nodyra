@@ -1,44 +1,542 @@
 # Noodle
 
-A self-hostable, Python-native workflow automation platform where every node is pure Python.
+Noodle is a self-hostable, Python-native workflow automation platform for
+teams that want automation, data movement, and operational runbooks to live
+close to their Python stack.
 
-Build workflows on a drag-and-drop canvas, run them on warm Python worker processes, manage
-per-workflow environments, and export any workflow as a standalone `.py` file or Docker image.
-The built-in node library includes core data/logic/transform nodes plus first-pass official
-integrations for Slack, Discord, SMTP, Google Sheets, Notion, GitHub, SQL databases, S3,
-OpenAI, Anthropic, Stripe, and Airtable.
+Every node is a plain Python function registered through the Noodle SDK. Users
+build workflows on a React Flow canvas, run them in isolated Python
+environments, inspect every node input/output, persist artifacts outside the
+database, and publish versioned workflow releases for production execution.
 
-## Repository layout
+## Why Noodle
 
+Noodle is designed for teams that need more than point-and-click integrations:
+
+- Python-native execution: built-in, uploaded, and custom nodes run as Python,
+  not JavaScript wrappers around Python work.
+- Environment-aware runtime: workflows run inside per-environment virtualenvs
+  so packages like pandas, boto3, psycopg, or internal libraries resolve in the
+  same interpreter that executes the workflow.
+- Production control plane: RBAC, credentials, audit logs, workflow releases,
+  deployments, scheduled runs, webhook auth, retry-from-failed-node, and
+  failure workflows.
+- Enterprise data handling: typed output serialization, durable artifacts,
+  output caps, retention rules, redaction, and per-node logs/debug data.
+- Self-hostable architecture: FastAPI, PostgreSQL, Redis, React/Vite, Celery,
+  and optional Kubernetes packaging.
+
+## Current Status
+
+Noodle is an active product codebase. The local and Docker stacks are usable,
+and the platform includes a broad v1 enterprise surface. Some larger scale-out
+capabilities are still planned, notably remote runner agents and a first-class
+admin restart control.
+
+## Key Capabilities
+
+### Workflow Authoring
+
+- Drag-and-drop React Flow editor.
+- Node palette generated from Python node manifests.
+- Inspector with typed parameters, credential pickers, expression fields, and
+  fixed/expression mode for string values.
+- Input/output data viewer for every node.
+- Per-node logs, errors, timing, debug variables, and output previews.
+- Pinned data and reusable upstream output cache for targeted node runs.
+- AI workflow draft builder that creates editable graphs instead of hidden
+  agent execution.
+- Starter graph generation from uploaded Python modules.
+
+### Execution
+
+- Topological graph execution with branching and targeted runs.
+- Manual, webhook, schedule, deployment, and error-workflow triggers.
+- Per-node retry, retry backoff, jitter, timeout, and "always output data"
+  support.
+- Warm subprocess runtime per environment.
+- Elastic per-environment runner pools with min/max worker sizing.
+- Global top-level run concurrency cap.
+- Sub-workflows with production-safe draft/published graph selection.
+- Retry from failed node using cached successful upstream outputs.
+
+### Enterprise Controls
+
+- Local auth with first-user owner setup.
+- RBAC roles: `viewer`, `editor`, `admin`, `owner`.
+- Owner/admin user management and invitation flow.
+- Scoped credentials: global, workflow, environment, and runner pool.
+- Encrypted credentials at rest.
+- Credential redaction in logs, outputs, run events, and API responses.
+- Read-only credential test connections for supported integrations.
+- Audit log surface.
+- Workflow draft vs published versions.
+- Deployments pinned to workflow versions.
+- Error workflows and failure payloads.
+- Workspace settings for retention, output caps, artifacts, timezones, and
+  runtime limits.
+
+### Data And Artifacts
+
+- Typed output serialization for DataFrame, datetime, date, time, Decimal,
+  tuple, set, frozenset, bytes, and bytearray.
+- No pickle-based restoration.
+- Unknown Python objects are preview-only and not automatically rehydrated.
+- Durable per-run artifact metadata in the database.
+- Artifact bytes stored outside the database.
+- Retention cleanup cascades run rows and artifact files.
+- Output and artifact size caps.
+
+### Built-In Nodes And Integrations
+
+The built-in node library includes core logic, data, transform, system, AI,
+SaaS, communication, storage, and cloud/devops nodes.
+
+Representative integrations include:
+
+- Slack
+- Discord
+- SMTP / Gmail-style email
+- Google Sheets
+- Notion
+- GitHub
+- Postgres
+- MySQL
+- S3 / AWS-style storage
+- OpenAI
+- Anthropic
+- Stripe
+- Airtable
+- HTTP and webhook nodes
+- Execute Command
+- CSV, XML, HTML, gzip, and transform utilities
+
+## Architecture
+
+```text
+Browser UI
+   |
+   | HTTP / WebSocket
+   v
+FastAPI API
+   |
+   | SQLAlchemy / Alembic
+   v
+PostgreSQL or SQLite
+
+FastAPI API
+   |
+   | run dispatch
+   v
+RuntimePool
+   |
+   | per-environment subprocess
+   v
+python -m noodle_runtime
+   |
+   | executes WorkflowGraph
+   v
+Noodle engine + node registry
+
+Redis + Celery are used for optional worker and scheduler scale-out.
+Artifacts are stored outside the database through the artifact service.
 ```
+
+### Repository Layout
+
+```text
 apps/
-  web/        React + React Flow editor (Vite)
-  api/        FastAPI server
-  worker/     Celery workers + env-runner pool
+  api/        FastAPI server, Alembic migrations, auth, runs, credentials
+  web/        React 18 + Vite + React Flow application
+  worker/     Celery worker and scheduler integration
+
 packages/
-  core/       execution engine + node SDK + shared models   (dist: noodle-core)
-  nodes/      built-in node library                          (dist: noodle-nodes)
-  exporter/   workflow -> .py / Docker image                 (dist: noodle-exporter)
-  runtime/    env-runner subprocess server                   (dist: noodle-runtime)
-deploy/       docker-compose dev stack, Dockerfiles, Helm chart
+  core/       execution engine, SDK, models, typed serialization, artifacts
+  nodes/      built-in node library and official integration nodes
+  exporter/   workflow to Python script / Docker bundle
+  runtime/    per-environment subprocess runtime
+
+deploy/
+  docker-compose.yml
+  Dockerfiles
+  helm/noodle/
+
+docs/
+  architecture.md
+
+plan.md       milestone and slice history
+HANDOFF.md    compact engineering handoff context
 ```
 
-## Development
+### Runtime Model
 
-Requires [uv](https://docs.astral.sh/uv/), Node 20+, and Docker.
+Noodle separates the control plane from the Python execution plane.
+
+- The API validates requests, stores workflows, resolves credentials, applies
+  redaction, persists runs, and streams events.
+- The runtime pool owns warm Python subprocesses per environment.
+- Each subprocess runs inside the selected environment's interpreter.
+- Uploaded code modules are discovered statically with AST for previews and
+  palette generation.
+- Uploaded code is executed only during workflow execution, inside the runtime
+  trust boundary.
+
+This model keeps editor preview safe while still allowing real Python code to
+run during trusted workflow execution.
+
+## Security Model
+
+### Authentication And Authorization
+
+- `AUTH_REQUIRED=true` is used in Docker by default.
+- The first registered account becomes `owner`.
+- Registration closes after the first user unless explicitly enabled.
+- Owners/admins can create and manage users.
+- Role permissions are enforced server-side.
+- Sensitive user-management permissions require an authenticated actor even if
+  local auth is disabled for development.
+
+### Credentials And Secrets
+
+- Credentials are encrypted at rest with Fernet-derived encryption.
+- The API never returns decrypted credential values.
+- Workflows store credential references, not inline plaintext secrets.
+- Credential scopes limit visibility:
+  - global
+  - workflow
+  - environment
+  - runner pool
+- Multi-field credentials resolve to a single dictionary at runtime.
+- Redaction is applied to logs, node outputs, events, and API responses.
+
+### Code Execution Boundary
+
+Noodle intentionally runs workflow code in the operator's trust boundary. This
+is appropriate for self-hosted automation, internal data operations, and trusted
+workflow authors.
+
+Important boundaries:
+
+- Preview and manifest generation are AST-only.
+- Runtime execution happens in the workflow environment subprocess.
+- The Code node and uploaded modules can execute arbitrary Python.
+- Multi-tenant SaaS isolation would require additional sandboxing such as
+  containers, gVisor, Firecracker, or remote runner isolation.
+
+### Recommended Production Controls
+
+- Use a strong `NOODLE_SECRET_KEY`.
+- Use a strong `INTERNAL_API_TOKEN`.
+- Keep `AUTH_REQUIRED=true`.
+- Keep public registration disabled.
+- Terminate TLS at a reverse proxy or ingress.
+- Restrict API, Redis, Postgres, and MinIO network access.
+- Back up Postgres and artifact volumes together.
+- Treat workflow authors as trusted automation engineers unless stronger
+  runtime sandboxing is added.
+
+## Deployment
+
+### Local Docker Stack
+
+Create `deploy/.env` with production-style local secrets:
 
 ```bash
-# Start infra + services
-docker compose -f deploy/docker-compose.yml up
-
-# Or run the stack locally
-uv sync
-docker compose -f deploy/docker-compose.yml up postgres redis minio
-uv run uvicorn app.main:app --reload --app-dir apps/api      # API
-uv run celery -A worker.celery_app worker -l info            # worker
-cd apps/web && npm install && npm run dev                    # web
+INTERNAL_API_TOKEN=replace-with-a-long-random-token
+NOODLE_SECRET_KEY=replace-with-a-long-random-secret
+AUTH_REQUIRED=true
+AUTH_ALLOW_REGISTRATION=false
 ```
 
-API health: `GET http://localhost:8000/health/ready`
+Start the stack:
 
-See `docs/` and the design plan for architecture details.
+```bash
+docker compose -f deploy/docker-compose.yml up --build -d
+```
+
+Open:
+
+```text
+http://localhost:5173
+```
+
+Health checks:
+
+```bash
+curl http://localhost:8000/health/live
+curl http://localhost:8000/health/ready
+```
+
+The compose stack includes:
+
+- PostgreSQL
+- Redis
+- MinIO
+- FastAPI API
+- Celery worker
+- Celery beat
+- Vite web app
+
+### Local Developer Stack
+
+Requirements:
+
+- Python 3.12
+- uv
+- Node.js 20+
+- Docker Desktop, when using local Postgres/Redis/MinIO
+
+Install Python dependencies:
+
+```bash
+uv sync --all-packages
+```
+
+Start infrastructure:
+
+```bash
+docker compose -f deploy/docker-compose.yml up postgres redis minio
+```
+
+Run migrations:
+
+```bash
+cd apps/api
+uv run alembic upgrade head
+```
+
+Start the API:
+
+```bash
+cd apps/api
+uv run uvicorn app.main:app --reload --port 8000
+```
+
+Start the web app:
+
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+
+### Kubernetes
+
+A Helm chart skeleton lives in `deploy/helm/noodle`. Production Kubernetes
+deployments should provide managed services or hardened in-cluster services for:
+
+- PostgreSQL
+- Redis
+- object/artifact storage
+- ingress and TLS
+- secret management
+- persistent runtime environment storage, if warm environments are retained
+
+## Configuration
+
+Core API settings are environment variables loaded by `apps/api/app/config.py`.
+
+| Variable | Purpose | Typical production value |
+| --- | --- | --- |
+| `DATABASE_URL` | SQLAlchemy database URL | managed PostgreSQL |
+| `REDIS_URL` | Redis URL for broker/cache use | managed Redis |
+| `CELERY_BROKER_URL` | Celery broker URL | Redis DB/index |
+| `CELERY_RESULT_BACKEND` | Celery result backend | Redis DB/index |
+| `CORS_ORIGINS` | Allowed web origins | public web URL |
+| `AUTH_REQUIRED` | Require login | `true` |
+| `AUTH_ALLOW_REGISTRATION` | Allow open registration | `false` |
+| `AUTH_REGISTRATION_ROLE` | Default role when registration is open | `viewer` |
+| `NOODLE_SECRET_KEY` / `SECRET_KEY` | token and credential encryption secret | strong secret |
+| `INTERNAL_API_TOKEN` | API to worker shared secret | strong secret |
+| `USE_SUBPROCESS_RUNNER` | run workflows in env subprocesses | `true` |
+| `ENVS_DIR` | virtualenv storage path | persistent volume |
+| `ARTIFACTS_DIR` | artifact file storage path | persistent volume |
+| `ENABLE_INPROCESS_SCHEDULER` | API-owned scheduler loop | one scheduler owner only |
+| `APP_TIMEZONE` | default schedule timezone | IANA timezone |
+| `MAX_CONCURRENT_RUNS` | global top-level concurrency cap | sized to host capacity |
+| `RUNNER_IDLE_SECONDS` | warm worker idle reap delay | workload dependent |
+| `MAX_OUTPUT_BYTES` | persisted per-node output cap | workload dependent |
+
+Several settings can also be managed through the admin Settings page and are
+read through the live settings service.
+
+## Operations
+
+### Run History And Debugging
+
+Operators can inspect:
+
+- all runs
+- per-workflow run history
+- run status and duration
+- trigger type
+- per-node status
+- per-node input/output
+- logs and captured errors
+- pinned outputs
+- artifacts
+
+Retry-from-failed-node rebuilds a cache from successful upstream nodes and
+reruns the failed node and descendants.
+
+### Versioned Releases
+
+Workflows have editable drafts and published versions.
+
+- Editor saves update the draft graph.
+- Publish creates a workflow version.
+- Deployments pin to a version.
+- Production paths execute published versions.
+- Manual editor runs can execute drafts for iteration.
+
+This prevents unpublished edits from changing production behavior until a user
+explicitly publishes and updates deployments.
+
+### Scheduling And Webhooks
+
+- Schedule nodes use cron-style scheduling.
+- Workflow deployments can own production schedules.
+- Celery Beat can be used for scheduler scale-out.
+- Webhook nodes support test-mode listening in the editor.
+- Production webhook routes return `401` when a path matches but auth fails.
+- Webhook auth modes include none, basic, header, and query.
+
+### Retention And Storage
+
+Use retention settings to keep storage bounded:
+
+- `run_retention_days`
+- `run_retention_max_per_workflow`
+- `max_output_bytes`
+- `max_artifact_bytes`
+- `max_artifacts_per_run`
+
+Back up the database and artifact storage together. A run row can reference
+artifact metadata and files outside the database.
+
+### Observability
+
+Available surfaces:
+
+- API health endpoints: `/health/live`, `/health/ready`
+- metrics endpoint: `/metrics`
+- audit log
+- run events over WebSocket
+- per-node logs and timings
+- worker and API container logs
+
+Recommended production additions:
+
+- centralized log collection
+- uptime checks against `/health/ready`
+- Postgres backup monitoring
+- Redis memory monitoring
+- artifact volume usage alerts
+- run failure alert workflows
+
+## Development And Testing
+
+Run backend, runtime, and core tests:
+
+```bash
+uv run pytest packages/core/tests apps/api/tests packages/runtime/tests
+```
+
+Run node package tests:
+
+```bash
+uv run pytest packages/nodes/tests
+```
+
+Run Python lint checks:
+
+```bash
+uv run ruff check packages/nodes apps/api/app
+```
+
+Run frontend checks:
+
+```bash
+cd apps/web
+npm run typecheck
+npm run build
+```
+
+## API And Extension Points
+
+### Python Node SDK
+
+Nodes are plain Python functions decorated with `@node`.
+
+```python
+from noodle.sdk import node
+
+
+@node(name="Normalize Customer", id="normalize_customer", category="Data")
+def normalize_customer(input: dict, lowercase_email: bool = True) -> dict:
+    customer = dict(input)
+    if lowercase_email and customer.get("email"):
+        customer["email"] = customer["email"].lower()
+    return customer
+```
+
+### Uploaded Code Modules
+
+Uploaded `.py` modules are discovered with AST:
+
+- top-level `def` and `async def` become candidate nodes
+- the first parameter is treated as the wired input port
+- remaining parameters become config fields
+- `*args` and `**kwargs` functions are skipped
+- source is not executed during preview or palette generation
+
+At runtime, modules execute inside the workflow environment subprocess.
+
+### Credentials In Nodes
+
+Node parameters can declare credential metadata using helpers in
+`packages/nodes/noodle_nodes/_creds.py`:
+
+- `cred_single(...)` for API keys, tokens, webhook URLs, and passwords
+- `cred_multi(...)` for grouped credentials such as username/password or AWS
+  key pairs
+
+The UI renders a credential picker and stores only a reference in workflow JSON.
+
+## Backup And Upgrade Guidance
+
+Before upgrading:
+
+1. Back up PostgreSQL.
+2. Back up artifact storage.
+3. Back up environment/package storage if rebuild time matters.
+4. Review Alembic migrations in `apps/api/alembic/versions`.
+5. Run `alembic upgrade head` during deployment.
+6. Smoke test login, workflow list, one manual run, and one webhook/schedule
+   path.
+
+For Docker Compose, the API container runs migrations before starting Uvicorn.
+
+## Roadmap
+
+Planned or designed areas:
+
+- remote runner agents and VM/runner-pool execution
+- owner-only API restart control
+- stronger sandboxing options for untrusted code
+- OAuth browser flows for supported integrations
+- LLM-backed workflow builder with server-side graph validation
+- per-workflow concurrency limits
+- hot-resize of runner pool semaphores
+- richer deployment promotion flows
+
+## Documentation
+
+- `docs/architecture.md` contains a deeper architecture walkthrough.
+- `plan.md` contains milestone and slice history.
+- `HANDOFF.md` contains compact context for engineering handoff.
+
+## License
+
+No license file is currently included. Add a license before distributing this
+repository outside your organization.
