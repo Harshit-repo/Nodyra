@@ -360,6 +360,147 @@ function PoolDialog({
   );
 }
 
+function SSHOnboardDialog({
+  poolId,
+  onClose,
+  onDone,
+}: {
+  poolId: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [host, setHost] = useState("");
+  const [port, setPort] = useState("22");
+  const [username, setUsername] = useState("");
+  const [authMethod, setAuthMethod] = useState<"key" | "password">("key");
+  const [password, setPassword] = useState("");
+  const [privateKey, setPrivateKey] = useState("");
+  const [passphrase, setPassphrase] = useState("");
+  const [apiUrl, setApiUrl] = useState(window.location.origin);
+  const [useSystemd, setUseSystemd] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [log, setLog] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (!host.trim() || !username.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await runnerPoolsApi.sshOnboard(poolId, {
+        host: host.trim(),
+        port: Number(port) || 22,
+        username: username.trim(),
+        auth_method: authMethod,
+        password: authMethod === "password" ? password : undefined,
+        private_key: authMethod === "key" ? privateKey : undefined,
+        passphrase: authMethod === "key" ? passphrase || undefined : undefined,
+        api_url: apiUrl.trim() || undefined,
+        use_systemd: useSystemd,
+      });
+      setLog(res.install_log || "Onboarded.");
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "SSH onboarding failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+        <header className="modal-head">
+          <h2>Onboard a machine over SSH</h2>
+          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+            ✕
+          </button>
+        </header>
+        <div className="modal-body">
+          {error && <p className="error-text">{error}</p>}
+          {log ? (
+            <Field label="Install log">
+              <pre className="runner-install">{log}</pre>
+            </Field>
+          ) : (
+            <>
+              <div className="field-row">
+                <TextField label="Host" value={host} onChange={setHost} placeholder="10.0.0.5" />
+                <TextField label="Port" type="number" value={port} onChange={setPort} />
+              </div>
+              <TextField label="Username" value={username} onChange={setUsername} placeholder="ubuntu" />
+              <Field label="Authentication">
+                <select
+                  className="field-input"
+                  value={authMethod}
+                  onChange={(e) => setAuthMethod(e.target.value as "key" | "password")}
+                >
+                  <option value="key">Private key</option>
+                  <option value="password">Password</option>
+                </select>
+              </Field>
+              {authMethod === "key" ? (
+                <>
+                  <Field label="Private key" desc="PEM/OpenSSH private key contents.">
+                    <textarea
+                      className="field-input field-textarea"
+                      value={privateKey}
+                      onChange={(e) => setPrivateKey(e.target.value)}
+                      placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                    />
+                  </Field>
+                  <TextField
+                    label="Passphrase"
+                    type="password"
+                    desc="Optional, if the key is encrypted."
+                    value={passphrase}
+                    onChange={setPassphrase}
+                  />
+                </>
+              ) : (
+                <TextField
+                  label="Password"
+                  type="password"
+                  value={password}
+                  onChange={setPassword}
+                />
+              )}
+              <TextField
+                label="API URL"
+                desc="The URL the runner connects back to (must be reachable from the host)."
+                value={apiUrl}
+                onChange={setApiUrl}
+              />
+              <label className="cloud-toggle">
+                <input
+                  type="checkbox"
+                  checked={useSystemd}
+                  onChange={(e) => setUseSystemd(e.target.checked)}
+                />
+                Install as a systemd service (survives reboot; falls back to nohup)
+              </label>
+            </>
+          )}
+        </div>
+        <footer className="modal-foot">
+          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+            {log ? "Close" : "Cancel"}
+          </button>
+          {!log && (
+            <button
+              className="btn btn-sm btn-primary"
+              disabled={busy || !host.trim() || !username.trim()}
+              onClick={submit}
+            >
+              {busy ? "Onboarding…" : "Onboard"}
+            </button>
+          )}
+        </footer>
+      </div>
+    </div>
+  );
+}
+
 function PoolCard({
   pool,
   onChanged,
@@ -372,6 +513,7 @@ function PoolCard({
   const [runners, setRunners] = useState<RunnerInfo[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [sshOpen, setSshOpen] = useState(false);
   const [token, setToken] = useState<RegistrationTokenResponse | null>(null);
   const [loadingToken, setLoadingToken] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -498,7 +640,7 @@ noodle-runner start`
           ))}
 
           {canWrite && pool.provider === "agent" && (
-            <div>
+            <div className="pool-onboard-actions">
               <button
                 type="button"
                 className="btn btn-sm"
@@ -506,6 +648,13 @@ noodle-runner start`
                 onClick={generateToken}
               >
                 {loadingToken ? "Generating…" : "Generate registration token"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => setSshOpen(true)}
+              >
+                Onboard via SSH
               </button>
               {token && (
                 <div className="runner-install">
@@ -543,6 +692,17 @@ noodle-runner start`
           onClose={() => setEditing(false)}
           onSaved={() => {
             setEditing(false);
+            onChanged();
+          }}
+        />
+      )}
+
+      {sshOpen && (
+        <SSHOnboardDialog
+          poolId={pool.id}
+          onClose={() => setSshOpen(false)}
+          onDone={() => {
+            void loadRunners();
             onChanged();
           }}
         />

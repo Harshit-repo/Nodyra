@@ -497,6 +497,25 @@ class RegistrationTokenResponse(BaseModel):
     expires_at: datetime
 
 
+class SSHOnboardRequest(BaseModel):
+    host: str = Field(min_length=1)
+    port: int = Field(default=22, ge=1, le=65535)
+    username: str = Field(min_length=1)
+    auth_method: str = "key"  # "key" | "password"
+    password: str | None = None
+    private_key: str | None = None
+    passphrase: str | None = None
+    name: str | None = None
+    api_url: str | None = None  # URL the runner connects back to
+    use_systemd: bool = True
+
+
+class SSHOnboardResponse(BaseModel):
+    runner_id: str
+    runner_name: str
+    install_log: str
+
+
 class RunBatchCreate(BaseModel):
     runner_pool_id: str | None = None
     parameters: list[dict[str, Any]] = Field(min_length=1)
@@ -534,6 +553,12 @@ class PinnedItem(BaseModel):
 class AiWorkflowDraftRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=4000)
     apply: bool = False
+    mode: str = Field(default="draft", pattern="^(draft|fix)$")
+    current_graph: WorkflowGraph | None = None
+    failed_run_id: str | None = None
+    failed_node_id: str | None = None
+    error: str | None = Field(default=None, max_length=8000)
+    fix_strategy: str = Field(default="minimal", pattern="^(minimal|replacement)$")
 
 
 class AiWorkflowDraftResponse(BaseModel):
@@ -543,3 +568,8 @@ class AiWorkflowDraftResponse(BaseModel):
     missing_credentials: list[str] = Field(default_factory=list)
     required_packages: list[str] = Field(default_factory=list)
     explanation: str = ""
+    mode: str = "draft"
+    change_summary: list[str] = Field(default_factory=list)
+    confidence: str = "medium"
+    focus_node_id: str | None = None
+    planner: str = "llm"

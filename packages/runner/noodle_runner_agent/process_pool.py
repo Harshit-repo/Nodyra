@@ -5,10 +5,12 @@ inside the env's venv so workflow imports resolve against that env's
 site-packages. We drive the same newline-delimited JSON protocol the host's
 ``runtime_pool`` uses, forwarding every node event to ``on_event``.
 
-This v1 does not broker sub-workflow ``call_workflow`` callbacks — a remote
-run with ``execute_workflow`` nodes returns an error event for that node
-rather than hanging. Sub-workflow brokering over the remote WS is a
-follow-up.
+Sub-workflow ``call_workflow`` events from the runtime are brokered back to the
+API via the optional ``call_workflow`` handler (which round-trips over the
+agent WS); the resolved result is written back into the subprocess stdin.
+
+Cancellation: cancel the asyncio task awaiting this coroutine — the ``finally``
+block terminates the subprocess.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 EventCallback = Callable[[dict], Awaitable[None]]
+CallWorkflow = Callable[[str, Any], Awaitable[Any]]
 
 
 async def run_workflow_subprocess(
@@ -32,6 +35,7 @@ async def run_workflow_subprocess(
     on_event: EventCallback,
     artifacts_upload_url: str | None = None,
     artifacts_runner_token: str | None = None,
+    call_workflow: CallWorkflow | None = None,
 ) -> str:
     """Spawn ``noodle_runtime``, run the workflow, return the status string."""
     proc = await asyncio.create_subprocess_exec(
@@ -45,6 +49,34 @@ async def run_workflow_subprocess(
     )
     if proc.stdin is None or proc.stdout is None:
         raise RuntimeError("noodle_runtime subprocess pipes were not opened")
+
+    write_lock = asyncio.Lock()
+    callbacks: set[asyncio.Task] = set()
+
+    async def write_msg(msg: dict[str, Any]) -> None:
+        async with write_lock:
+            proc.stdin.write(json.dumps(msg).encode() + b"\n")
+            await proc.stdin.drain()
+
+    async def handle_call_workflow(event: dict[str, Any]) -> None:
+        callback_id = event.get("callback_id", "")
+        try:
+            if call_workflow is None:
+                raise RuntimeError("no sub-workflow broker on this runner")
+            result = await call_workflow(
+                event.get("workflow_id", ""), event.get("input")
+            )
+            await write_msg({
+                "type": "call_workflow_response",
+                "callback_id": callback_id,
+                "result": result,
+            })
+        except Exception as exc:  # noqa: BLE001 - surface back to the runtime
+            await write_msg({
+                "type": "call_workflow_error",
+                "callback_id": callback_id,
+                "error": f"{type(exc).__name__}: {exc}",
+            })
 
     run_msg: dict[str, Any] = {
         "type": "run",
@@ -61,7 +93,6 @@ async def run_workflow_subprocess(
 
     status = "error"
     try:
-        # Wait for the runtime's ready event before dispatching.
         ready_line = await proc.stdout.readline()
         if not ready_line:
             raise RuntimeError("noodle_runtime did not emit a ready event")
@@ -69,8 +100,7 @@ async def run_workflow_subprocess(
         if ready.get("type") != "ready":
             raise RuntimeError(f"unexpected first event: {ready}")
 
-        proc.stdin.write(json.dumps(run_msg).encode() + b"\n")
-        await proc.stdin.drain()
+        await write_msg(run_msg)
 
         while True:
             line = await proc.stdout.readline()
@@ -81,18 +111,29 @@ async def run_workflow_subprocess(
             except json.JSONDecodeError:
                 continue
 
+            # Sub-workflow callback — broker it on a task so the read loop
+            # keeps draining the pipe while the API resolves the sub.
+            if event.get("type") == "call_workflow":
+                task = asyncio.create_task(handle_call_workflow(event))
+                callbacks.add(task)
+                task.add_done_callback(callbacks.discard)
+                continue
+
             etype = event.get("type")
             if etype == "result":
+                if callbacks:
+                    await asyncio.gather(*callbacks, return_exceptions=True)
                 status = str(event.get("status", "success"))
                 break
             if etype == "error":
                 await on_event({"type": "run_error", "error": event.get("error", "")})
                 status = "error"
                 break
-            # Forward node_started / node_finished / module_error to the host.
             clean = {k: v for k, v in event.items() if k != "request_id"}
             await on_event(clean)
     finally:
+        for task in callbacks:
+            task.cancel()
         try:
             if proc.returncode is None:
                 proc.terminate()

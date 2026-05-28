@@ -507,6 +507,26 @@ export const runnerPoolsApi = {
       method: "POST",
     }),
 
+  sshOnboard: (
+    poolId: string,
+    body: {
+      host: string;
+      port?: number;
+      username: string;
+      auth_method: "key" | "password";
+      password?: string;
+      private_key?: string;
+      passphrase?: string;
+      name?: string;
+      api_url?: string;
+      use_systemd?: boolean;
+    }
+  ) =>
+    request<{ runner_id: string; runner_name: string; install_log: string }>(
+      `/runner-pools/${poolId}/ssh-onboard`,
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+
   createBatchRun: (
     workflowId: string,
     body: {

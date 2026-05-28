@@ -25,6 +25,7 @@ from fastapi import (
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db import SessionLocal, get_session
 from app.models import Artifact, Run, RunBatch, Runner, RunnerPool, Workflow, WorkflowVersion
 from app.schemas import (
@@ -35,13 +36,20 @@ from app.schemas import (
     RunnerPoolCreate,
     RunnerPoolInfo,
     RunnerPoolUpdate,
+    SSHOnboardRequest,
+    SSHOnboardResponse,
 )
 from app.security import require_permission
 from app.services.artifacts import _artifact_path
-from app.services.crypto import create_payload_token, decode_payload_token
+from app.services.crypto import (
+    create_payload_token,
+    decode_payload_token,
+    encrypt_data,
+)
 from app.services.graph_utils import first_trigger_node
 from app.services.remote_dispatch import dispatcher
 from app.services.runner import start_run
+from app.services.ssh_onboard import onboard_machine
 
 router = APIRouter(prefix="/runner-pools", tags=["runner-pools"])
 
@@ -251,6 +259,79 @@ async def create_registration_token(
     )
     return RegistrationTokenResponse(
         token=token, runner_id=runner.id, expires_at=expires_at
+    )
+
+
+# ---------------------------------------------------------------------------
+# SSH onboarding
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{pool_id}/ssh-onboard",
+    response_model=SSHOnboardResponse,
+    dependencies=[Depends(require_permission("runner_pool:write"))],
+)
+async def ssh_onboard(
+    pool_id: str,
+    body: SSHOnboardRequest,
+    session: AsyncSession = Depends(get_session),
+) -> SSHOnboardResponse:
+    """SSH into a host, install + register + start ``noodle-runner``, and add
+    it to this (agent) pool. SSH credentials are stored encrypted on the runner
+    row so the machine can be restarted later."""
+    pool = await session.get(RunnerPool, pool_id)
+    if pool is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Runner pool not found")
+    if pool.provider != "agent":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "SSH onboarding only applies to agent pools",
+        )
+
+    api_url = body.api_url or getattr(settings, "public_api_url", None)
+    if not api_url:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "api_url is required (the URL the runner connects back to)",
+        )
+
+    name = body.name or f"ssh-{body.host}"
+    runner = Runner(pool_id=pool_id, name=name, status="offline")
+    session.add(runner)
+    await session.commit()
+    await session.refresh(runner)
+
+    token = create_payload_token(
+        {"sub": runner.id, "pool_id": pool_id, "kind": "runner_registration"},
+        ttl_seconds=86_400,
+    )
+
+    try:
+        install_log = await onboard_machine(body, api_url, token, name)
+    except Exception as exc:  # noqa: BLE001 - cleanup the placeholder runner
+        await session.delete(runner)
+        await session.commit()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    # Persist the SSH credentials (encrypted) for later restart / re-provision.
+    runner.ssh_host = f"{body.username}@{body.host}:{body.port}"
+    runner.ssh_credentials = encrypt_data(
+        {
+            "host": body.host,
+            "port": body.port,
+            "username": body.username,
+            "auth_method": body.auth_method,
+            "password": body.password,
+            "private_key": body.private_key,
+            "passphrase": body.passphrase,
+            "use_systemd": body.use_systemd,
+        }
+    )
+    await session.commit()
+
+    return SSHOnboardResponse(
+        runner_id=runner.id, runner_name=name, install_log=install_log
     )
 
 

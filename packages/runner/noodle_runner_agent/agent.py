@@ -20,6 +20,7 @@ import base64
 import json
 import logging
 import sys
+import uuid
 from typing import Any
 
 from noodle_runner_agent import env_manager
@@ -51,6 +52,9 @@ class RunnerAgent:
         self._cfg = cfg
         self._max_concurrent = max_concurrent
         self._active = 0
+        self._run_tasks: dict[str, asyncio.Task] = {}
+        # callback_id → future, for sub-workflow calls brokered through the API
+        self._pending_calls: dict[str, asyncio.Future] = {}
         self._client = AgentWSClient(
             ws_url=cfg.ws_url,
             hello_payload=self._hello_payload,
@@ -70,13 +74,44 @@ class RunnerAgent:
     async def _on_message(self, msg: dict, ws: Any) -> None:
         mtype = msg.get("type")
         if mtype == "run_assigned":
-            asyncio.create_task(self._handle_run(msg))
+            run_id = str(msg.get("run_id") or "")
+            task = asyncio.create_task(self._handle_run(msg))
+            self._run_tasks[run_id] = task
+            task.add_done_callback(lambda _t: self._run_tasks.pop(run_id, None))
         elif mtype == "ping":
             await self._client.send({"type": "pong"})
         elif mtype == "run_cancel":
-            # v1: per-run cancellation isn't wired through; log and ignore.
-            logger.info("run_cancel received for %s (not supported in v1)",
-                        msg.get("run_id"))
+            run_id = str(msg.get("run_id") or "")
+            task = self._run_tasks.get(run_id)
+            if task and not task.done():
+                logger.info("cancelling run %s", run_id)
+                task.cancel()
+        elif mtype in ("call_workflow_response", "call_workflow_error"):
+            fut = self._pending_calls.get(msg.get("callback_id", ""))
+            if fut and not fut.done():
+                if mtype == "call_workflow_error":
+                    fut.set_exception(
+                        RuntimeError(msg.get("error", "sub-workflow error"))
+                    )
+                else:
+                    fut.set_result(msg.get("result"))
+
+    async def _broker_subworkflow(self, run_id: str, workflow_id: str, input_value: Any) -> Any:
+        """Ask the API to run a sub-workflow and return its result."""
+        callback_id = uuid.uuid4().hex
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._pending_calls[callback_id] = fut
+        await self._client.send({
+            "type": "call_workflow",
+            "run_id": run_id,
+            "callback_id": callback_id,
+            "workflow_id": workflow_id,
+            "input": input_value,
+        })
+        try:
+            return await fut
+        finally:
+            self._pending_calls.pop(callback_id, None)
 
     async def _handle_run(self, msg: dict) -> None:
         run_id = str(msg.get("run_id") or "")
@@ -113,6 +148,9 @@ class RunnerAgent:
                     "type": "run_event", "run_id": run_id, "event": event,
                 })
 
+            async def broker(workflow_id: str, input_value: Any) -> Any:
+                return await self._broker_subworkflow(run_id, workflow_id, input_value)
+
             status = "error"
             try:
                 status = await run_workflow_subprocess(
@@ -125,7 +163,14 @@ class RunnerAgent:
                     on_event=on_event,
                     artifacts_upload_url=self._cfg.artifact_upload_url,
                     artifacts_runner_token=self._cfg.token,
+                    call_workflow=broker,
                 )
+            except asyncio.CancelledError:
+                logger.info("run %s cancelled", run_id)
+                await self._client.send({
+                    "type": "run_finished", "run_id": run_id, "status": "cancelled",
+                })
+                raise
             except Exception as exc:  # noqa: BLE001
                 logger.exception("run failed run_id=%s", run_id)
                 await on_event({"type": "run_error", "error": str(exc)})

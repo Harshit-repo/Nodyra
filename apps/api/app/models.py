@@ -107,6 +107,10 @@ class Runner(Base):
     current_runs: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     max_concurrent_runs: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     cached_env_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    # SSH-onboarded runners store "user@host:port" + a Fernet-encrypted JSON
+    # blob of the SSH credentials so the machine can be restarted later.
+    ssh_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ssh_credentials: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

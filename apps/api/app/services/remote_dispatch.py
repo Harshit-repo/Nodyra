@@ -40,6 +40,7 @@ from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.models import Run, Runner, RunnerPool
+from noodle.serialization import serialize_value
 
 logger = logging.getLogger(__name__)
 
@@ -254,13 +255,17 @@ class RemoteDispatcher:
         conn.active_runs[run_id] = future
         self._run_callbacks[run_id] = on_event
 
-        # Update runner current_runs
+        # Update runner current_runs and persist the runner id on the run so
+        # cancel_run can route a run_cancel to this agent.
         async with SessionLocal() as session:
             runner = await session.get(Runner, conn.runner_id)
             if runner is not None:
                 runner.current_runs = max(0, runner.current_runs) + 1
                 runner.status = "busy"
-                await session.commit()
+            run = await session.get(Run, run_id)
+            if run is not None:
+                run.runner_id = conn.runner_id
+            await session.commit()
 
         await conn.send({
             "type": "run_assigned",
@@ -372,12 +377,47 @@ class RemoteDispatcher:
                     fut.set_result(status)
                 self._run_callbacks.pop(run_id, None)
 
+        elif mtype == "call_workflow":
+            # The runner's runtime hit an execute_workflow node; resolve the
+            # sub-workflow host-side and send the result back. Run it on a task
+            # so the agent receive loop keeps draining.
+            asyncio.create_task(self._resolve_remote_subworkflow(conn, msg))
+
         elif mtype == "pong":
             async with SessionLocal() as session:
                 runner = await session.get(Runner, conn.runner_id)
                 if runner is not None:
                     runner.last_seen_at = datetime.now(UTC)
                     await session.commit()
+
+    async def _resolve_remote_subworkflow(
+        self, conn: _AgentConnection, msg: dict
+    ) -> None:
+        """Run a sub-workflow host-side for a remote runner and reply.
+
+        Reuses the host's ``_call_sub_workflow`` (deferred import to avoid the
+        runner.py ↔ remote_dispatch.py cycle). With no ``parent_env_id`` it
+        always returns a concrete leaf result — never an inline sentinel — so
+        the value serializes cleanly back over the WS.
+        """
+        from app.services.runner import _call_sub_workflow  # noqa: PLC0415
+
+        callback_id = msg.get("callback_id", "")
+        try:
+            result = await _call_sub_workflow(
+                str(msg.get("workflow_id") or ""), msg.get("input")
+            )
+            await conn.send({
+                "type": "call_workflow_response",
+                "callback_id": callback_id,
+                "result": serialize_value(result),
+            })
+        except Exception as exc:  # noqa: BLE001 - surface back to the runner
+            await conn.send({
+                "type": "call_workflow_error",
+                "callback_id": callback_id,
+                "error": f"{type(exc).__name__}: {exc}",
+            })
 
     # ------------------------------------------------------------------
     # Docker provider
@@ -712,7 +752,7 @@ class RemoteDispatcher:
                 self._agents.pop(run_id, None)
 
     # ------------------------------------------------------------------
-    # Cloud provisioning (AWS)
+    # Cloud provisioning (AWS / GCP / Azure)
     # ------------------------------------------------------------------
 
     async def _maybe_provision(self, pool_id: str) -> None:
@@ -722,7 +762,8 @@ class RemoteDispatcher:
             if pool is None:
                 return
             cfg = pool.provider_config
-            if cfg.get("cloud_provider") != "aws":
+            provider = cfg.get("cloud_provider")
+            if provider not in ("aws", "gcp", "azure"):
                 return
             max_instances = int(cfg.get("max_instances", 0))
             if max_instances <= 0:
@@ -734,7 +775,23 @@ class RemoteDispatcher:
         if len(existing) >= max_instances:
             return
 
-        await self._provision_aws_instance(pool_id, cfg)
+        if provider == "aws":
+            await self._provision_aws_instance(pool_id, cfg)
+        elif provider == "gcp":
+            await self._provision_gcp_instance(pool_id, cfg)
+        elif provider == "azure":
+            await self._provision_azure_instance(pool_id, cfg)
+
+    def _bootstrap_user_data(self, api_url: str, token: str, runner_id: str) -> str:
+        """Cloud-init / startup script that installs and starts the agent."""
+        return (
+            "#!/bin/bash\n"
+            "set -e\n"
+            "pip install noodle-runner --quiet\n"
+            f"noodle-runner register --api-url {api_url} --token {token} "
+            f"--name cloud-{runner_id[:8]}\n"
+            "noodle-runner start &\n"
+        )
 
     async def _provision_aws_instance(self, pool_id: str, cfg: dict) -> None:
         """Provision an EC2 instance and register a runner for it."""
@@ -760,14 +817,7 @@ class RemoteDispatcher:
 
         runner_id, token = await self._create_runner_and_token(pool_id, "cloud-auto")
 
-        user_data = (
-            "#!/bin/bash\n"
-            "set -e\n"
-            "pip install noodle-runner --quiet\n"
-            f"noodle-runner register --api-url {api_url} --token {token} "
-            f"--name cloud-{runner_id[:8]}\n"
-            "noodle-runner start &\n"
-        )
+        user_data = self._bootstrap_user_data(api_url, token, runner_id)
 
         import base64  # noqa: PLC0415
         encoded_ud = base64.b64encode(user_data.encode()).decode()
@@ -800,6 +850,192 @@ class RemoteDispatcher:
             await self._update_runner_instance_id(runner_id, instance_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("EC2 provisioning failed pool_id=%s: %s", pool_id, exc)
+
+    async def _provision_gcp_instance(self, pool_id: str, cfg: dict) -> None:
+        """Provision a GCE instance and register a runner for it.
+
+        ``provider_config`` keys: ``project``, ``zone``, ``machine_type``,
+        ``source_image`` (e.g. ``projects/debian-cloud/global/images/family/
+        debian-12``), ``network`` (default ``global/networks/default``),
+        ``service_account_json`` (optional inline key).
+        """
+        try:
+            from google.cloud import compute_v1  # type: ignore[import-untyped]  # noqa: PLC0415
+            from google.oauth2 import (
+                service_account,  # type: ignore[import-untyped]  # noqa: PLC0415
+            )
+        except ImportError:
+            logger.warning(
+                "google-cloud-compute not installed — cannot auto-provision GCE runners"
+            )
+            return
+
+        from app.config import settings as app_settings  # noqa: PLC0415
+        api_url = getattr(app_settings, "public_api_url", "http://localhost:8000")
+        project = cfg.get("project", "")
+        zone = cfg.get("zone", "us-central1-a")
+        machine_type = cfg.get("machine_type", "e2-medium")
+        source_image = cfg.get("source_image", "")
+        network = cfg.get("network", "global/networks/default")
+        sa_json = cfg.get("service_account_json")
+
+        if not project or not source_image:
+            logger.warning(
+                "GCP provisioning skipped — project and source_image are required"
+            )
+            return
+
+        runner_id, token = await self._create_runner_and_token(pool_id, "gcp-auto")
+        startup = self._bootstrap_user_data(api_url, token, runner_id)
+        instance_name = f"noodle-runner-{runner_id[:12]}"
+
+        def _create() -> None:
+            creds = None
+            if sa_json:
+                import json as _json  # noqa: PLC0415
+                creds = service_account.Credentials.from_service_account_info(
+                    _json.loads(sa_json) if isinstance(sa_json, str) else sa_json
+                )
+            client = compute_v1.InstancesClient(credentials=creds)
+            instance = compute_v1.Instance(
+                name=instance_name,
+                machine_type=f"zones/{zone}/machineTypes/{machine_type}",
+                disks=[
+                    compute_v1.AttachedDisk(
+                        boot=True,
+                        auto_delete=True,
+                        initialize_params=compute_v1.AttachedDiskInitializeParams(
+                            source_image=source_image
+                        ),
+                    )
+                ],
+                network_interfaces=[
+                    compute_v1.NetworkInterface(
+                        network=network,
+                        access_configs=[
+                            compute_v1.AccessConfig(name="External NAT")
+                        ],
+                    )
+                ],
+                metadata=compute_v1.Metadata(
+                    items=[compute_v1.Items(key="startup-script", value=startup)]
+                ),
+            )
+            client.insert(project=project, zone=zone, instance_resource=instance)
+
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(None, _create)
+            logger.info("provisioned GCE instance %s for pool %s", instance_name, pool_id)
+            await self._update_runner_instance_id(runner_id, instance_name)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("GCE provisioning failed pool_id=%s: %s", pool_id, exc)
+
+    async def _provision_azure_instance(self, pool_id: str, cfg: dict) -> None:
+        """Provision an Azure VM and register a runner for it.
+
+        ``provider_config`` keys: ``subscription_id``, ``resource_group``,
+        ``location``, ``vm_size``, ``image`` (e.g.
+        ``Canonical:0001-com-ubuntu-server-jammy:22_04-lts:latest``),
+        ``admin_username``, ``admin_password`` or ``ssh_public_key``,
+        ``subnet_id``. Uses ``DefaultAzureCredential`` unless a service
+        principal is supplied via ``tenant_id``/``client_id``/``client_secret``.
+        """
+        try:
+            from azure.identity import (  # type: ignore[import-untyped]  # noqa: PLC0415
+                ClientSecretCredential,
+                DefaultAzureCredential,
+            )
+            from azure.mgmt.compute import (  # type: ignore[import-untyped]  # noqa: PLC0415
+                ComputeManagementClient,
+            )
+        except ImportError:
+            logger.warning(
+                "azure SDK not installed — cannot auto-provision Azure VMs "
+                "(need azure-identity + azure-mgmt-compute)"
+            )
+            return
+
+        from app.config import settings as app_settings  # noqa: PLC0415
+        api_url = getattr(app_settings, "public_api_url", "http://localhost:8000")
+        sub = cfg.get("subscription_id", "")
+        rg = cfg.get("resource_group", "")
+        location = cfg.get("location", "eastus")
+        vm_size = cfg.get("vm_size", "Standard_B2s")
+        image = cfg.get("image", "")
+        admin_user = cfg.get("admin_username", "noodle")
+        admin_password = cfg.get("admin_password")
+        subnet_id = cfg.get("subnet_id", "")
+
+        if not (sub and rg and image and subnet_id):
+            logger.warning(
+                "Azure provisioning skipped — subscription_id, resource_group, "
+                "image and subnet_id are required"
+            )
+            return
+
+        runner_id, token = await self._create_runner_and_token(pool_id, "azure-auto")
+        import base64  # noqa: PLC0415
+        custom_data = base64.b64encode(
+            self._bootstrap_user_data(api_url, token, runner_id).encode()
+        ).decode()
+        vm_name = f"noodle-runner-{runner_id[:12]}"
+
+        def _create() -> None:
+            if cfg.get("client_secret"):
+                cred = ClientSecretCredential(
+                    tenant_id=cfg["tenant_id"],
+                    client_id=cfg["client_id"],
+                    client_secret=cfg["client_secret"],
+                )
+            else:
+                cred = DefaultAzureCredential()
+            client = ComputeManagementClient(cred, sub)
+            pub, offer, sku, version = (image.split(":") + ["", "", "", ""])[:4]
+            poller = client.virtual_machines.begin_create_or_update(
+                rg,
+                vm_name,
+                {
+                    "location": location,
+                    "hardware_profile": {"vm_size": vm_size},
+                    "storage_profile": {
+                        "image_reference": {
+                            "publisher": pub,
+                            "offer": offer,
+                            "sku": sku,
+                            "version": version or "latest",
+                        }
+                    },
+                    "os_profile": {
+                        "computer_name": vm_name,
+                        "admin_username": admin_user,
+                        "admin_password": admin_password,
+                        "custom_data": custom_data,
+                    },
+                    "network_profile": {
+                        "network_interface_configurations": [
+                            {
+                                "name": f"{vm_name}-nic",
+                                "ip_configurations": [
+                                    {
+                                        "name": f"{vm_name}-ip",
+                                        "subnet": {"id": subnet_id},
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                },
+            )
+            poller.result()
+
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(None, _create)
+            logger.info("provisioned Azure VM %s for pool %s", vm_name, pool_id)
+            await self._update_runner_instance_id(runner_id, vm_name)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Azure provisioning failed pool_id=%s: %s", pool_id, exc)
 
     async def _create_runner_and_token(self, pool_id: str, name_prefix: str) -> tuple[str, str]:
         from app.models import Runner  # noqa: PLC0415
@@ -851,7 +1087,7 @@ class RemoteDispatcher:
                 if pool is None:
                     continue
                 cfg = pool.provider_config
-                if cfg.get("cloud_provider") != "aws":
+                if cfg.get("cloud_provider") not in ("aws", "gcp", "azure"):
                     continue
                 idle_threshold = int(cfg.get("idle_terminate_seconds", 300))
                 if runner.last_seen_at is None:
@@ -869,7 +1105,7 @@ class RemoteDispatcher:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(
                     None,
-                    lambda iid=instance_id, c=cfg: _terminate_ec2(iid, c),
+                    lambda iid=instance_id, c=cfg: _terminate_cloud_instance(iid, c),
                 )
                 async with SessionLocal() as session:
                     r = await session.get(Runner, runner.id)
@@ -881,6 +1117,16 @@ class RemoteDispatcher:
                 logger.warning("failed to terminate instance %s: %s", instance_id, exc)
 
 
+def _terminate_cloud_instance(instance_id: str, cfg: dict) -> None:
+    provider = cfg.get("cloud_provider")
+    if provider == "aws":
+        _terminate_ec2(instance_id, cfg)
+    elif provider == "gcp":
+        _terminate_gce(instance_id, cfg)
+    elif provider == "azure":
+        _terminate_azure(instance_id, cfg)
+
+
 def _terminate_ec2(instance_id: str, cfg: dict) -> None:
     import boto3  # noqa: PLC0415
     kw: dict = {"region_name": cfg.get("region", "us-east-1")}
@@ -889,6 +1135,40 @@ def _terminate_ec2(instance_id: str, cfg: dict) -> None:
     if cfg.get("aws_secret_access_key"):
         kw["aws_secret_access_key"] = cfg["aws_secret_access_key"]
     boto3.client("ec2", **kw).terminate_instances(InstanceIds=[instance_id])
+
+
+def _terminate_gce(instance_name: str, cfg: dict) -> None:
+    from google.cloud import compute_v1  # noqa: PLC0415
+    from google.oauth2 import service_account  # noqa: PLC0415
+    creds = None
+    sa_json = cfg.get("service_account_json")
+    if sa_json:
+        import json as _json  # noqa: PLC0415
+        creds = service_account.Credentials.from_service_account_info(
+            _json.loads(sa_json) if isinstance(sa_json, str) else sa_json
+        )
+    client = compute_v1.InstancesClient(credentials=creds)
+    client.delete(
+        project=cfg["project"], zone=cfg.get("zone", "us-central1-a"),
+        instance=instance_name,
+    )
+
+
+def _terminate_azure(vm_name: str, cfg: dict) -> None:
+    from azure.identity import (  # noqa: PLC0415
+        ClientSecretCredential,
+        DefaultAzureCredential,
+    )
+    from azure.mgmt.compute import ComputeManagementClient  # noqa: PLC0415
+    if cfg.get("client_secret"):
+        cred = ClientSecretCredential(
+            tenant_id=cfg["tenant_id"], client_id=cfg["client_id"],
+            client_secret=cfg["client_secret"],
+        )
+    else:
+        cred = DefaultAzureCredential()
+    client = ComputeManagementClient(cred, cfg["subscription_id"])
+    client.virtual_machines.begin_delete(cfg["resource_group"], vm_name).result()
 
 
 def _uuid_hex() -> str:

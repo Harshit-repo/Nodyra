@@ -497,7 +497,21 @@ async def start_run(
 
 
 async def cancel_run(run_id: str) -> str | None:
-    """Cancel an active run, or mark a stale running record as cancelled."""
+    """Cancel an active run, or mark a stale running record as cancelled.
+
+    For runs dispatched to a remote runner, first tell the agent to stop its
+    subprocess (otherwise it keeps executing and later resolves a dead future),
+    then cancel the local awaiting task.
+    """
+    async with SessionLocal() as session:
+        run = await session.get(Run, run_id)
+        runner_id = run.runner_id if run else None
+    if runner_id:
+        try:
+            await dispatcher.cancel_remote_run(run_id, runner_id)
+        except Exception:  # noqa: BLE001 - notifying the agent is best-effort
+            pass
+
     task = _active_runs.get(run_id)
     if task is not None and not task.done():
         task.cancel()
@@ -507,7 +521,7 @@ async def cancel_run(run_id: str) -> str | None:
         run = await session.get(Run, run_id)
         if run is None:
             return None
-        if run.status == "running":
+        if run.status in ("running", "queued"):
             run.status = "cancelled"
             run.finished_at = datetime.now(UTC)
             await session.commit()

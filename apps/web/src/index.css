@@ -2291,6 +2291,11 @@ kbd {
   flex-direction: column;
   gap: 12px;
 }
+.pool-onboard-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 
 /* ---- Code Library page ---- */
 .codelib-tabs {

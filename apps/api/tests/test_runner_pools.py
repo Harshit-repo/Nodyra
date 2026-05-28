@@ -3,9 +3,11 @@
 from httpx import AsyncClient
 from sqlalchemy import select
 
-from app.models import Run, Workflow
-from app.services.crypto import create_payload_token, decode_payload_token
+from app.models import Run, Runner, Workflow
+from app.schemas import SSHOnboardRequest
+from app.services.crypto import create_payload_token, decode_payload_token, decrypt_data
 from app.services.remote_dispatch import build_env_payload
+from app.services.ssh_onboard import _install_script
 
 
 def _graph_with_trigger() -> dict:
@@ -268,3 +270,99 @@ async def test_artifact_upload_rejects_path_escape(client: AsyncClient) -> None:
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# SSH onboarding
+# ---------------------------------------------------------------------------
+
+
+async def test_ssh_onboard_creates_and_stores_encrypted(client, monkeypatch) -> None:
+    pool_id = (await client.post("/runner-pools", json={"name": "ssh-pool"})).json()["id"]
+
+    async def fake_onboard(req, api_url, token, name):
+        assert api_url == "http://noodle.example:8000"
+        return "[noodle] registered runner ok"
+
+    monkeypatch.setattr("app.routers.runner_pools.onboard_machine", fake_onboard)
+
+    resp = await client.post(
+        f"/runner-pools/{pool_id}/ssh-onboard",
+        json={
+            "host": "10.0.0.5", "username": "ubuntu",
+            "auth_method": "password", "password": "hunter2",
+            "api_url": "http://noodle.example:8000",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "registered runner" in body["install_log"]
+
+    from app.services.runner import SessionLocal  # patched in conftest
+
+    async with SessionLocal() as session:
+        runner = await session.get(Runner, body["runner_id"])
+        assert runner.ssh_host == "ubuntu@10.0.0.5:22"
+        assert runner.ssh_credentials  # encrypted, non-empty
+        creds = decrypt_data(runner.ssh_credentials)
+        assert creds["username"] == "ubuntu"
+        assert creds["password"] == "hunter2"
+
+
+async def test_ssh_onboard_failure_cleans_up_runner(client, monkeypatch) -> None:
+    pool_id = (await client.post("/runner-pools", json={"name": "p"})).json()["id"]
+
+    async def boom(req, api_url, token, name):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr("app.routers.runner_pools.onboard_machine", boom)
+
+    resp = await client.post(
+        f"/runner-pools/{pool_id}/ssh-onboard",
+        json={
+            "host": "h", "username": "u", "auth_method": "password",
+            "password": "p", "api_url": "http://x",
+        },
+    )
+    assert resp.status_code == 400
+    assert "connection refused" in resp.json()["detail"]
+    # The placeholder runner row was rolled back.
+    runners = (await client.get(f"/runner-pools/{pool_id}/runners")).json()
+    assert len(runners) == 0
+
+
+async def test_ssh_onboard_rejects_non_agent_pool(client) -> None:
+    pool_id = (
+        await client.post("/runner-pools", json={"name": "d", "provider": "docker"})
+    ).json()["id"]
+    resp = await client.post(
+        f"/runner-pools/{pool_id}/ssh-onboard",
+        json={"host": "h", "username": "u", "auth_method": "password",
+              "password": "p", "api_url": "http://x"},
+    )
+    assert resp.status_code == 400
+
+
+async def test_ssh_onboard_requires_api_url(client, monkeypatch) -> None:
+    pool_id = (await client.post("/runner-pools", json={"name": "p"})).json()["id"]
+    monkeypatch.setattr(
+        "app.routers.runner_pools.onboard_machine",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not connect")),
+    )
+    resp = await client.post(
+        f"/runner-pools/{pool_id}/ssh-onboard",
+        json={"host": "h", "username": "u", "auth_method": "password", "password": "p"},
+    )
+    assert resp.status_code == 400
+
+
+def test_install_script_quotes_injection() -> None:
+    req = SSHOnboardRequest(
+        host="h", username="ubuntu", auth_method="password", password="p",
+        use_systemd=False,
+    )
+    script = _install_script(req, "http://api", "tok", "evil; rm -rf /")
+    # The malicious name is shell-quoted (single-quoted), not interpolated raw,
+    # so the `;` can't break out into a second command.
+    assert "'evil; rm -rf /'" in script
+    assert "register --api-url http://api --token tok" in script
