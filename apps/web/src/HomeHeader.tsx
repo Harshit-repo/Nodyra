@@ -99,6 +99,13 @@ export function HomeHeader() {
         >
           Credentials
         </Link>
+        <Link
+          className={pathname.startsWith("/runner-pools") ? "active" : ""}
+          aria-current={pathname.startsWith("/runner-pools") ? "page" : undefined}
+          to="/runner-pools"
+        >
+          Runners
+        </Link>
         {user && (
           <div className="profile-menu" ref={menuRef}>
             <button

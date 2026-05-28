@@ -361,3 +361,49 @@ export interface AuthState {
   registration_open: boolean;
   user: UserInfo | null;
 }
+
+export interface RunnerPoolInfo {
+  id: string;
+  name: string;
+  provider: string;
+  provider_config: Record<string, unknown>;
+  max_concurrent_runs: number;
+  runner_count: number;
+  online_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RunnerInfo {
+  id: string;
+  pool_id: string;
+  name: string;
+  status: string;
+  capabilities: Record<string, unknown>;
+  last_seen_at: string | null;
+  current_runs: number;
+  max_concurrent_runs: number;
+  cached_env_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RegistrationTokenResponse {
+  token: string;
+  runner_id: string;
+  expires_at: string;
+}
+
+export interface RunBatchInfo {
+  id: string;
+  workflow_id: string;
+  deployment_id: string | null;
+  runner_pool_id: string | null;
+  status: string;
+  total_runs: number;
+  succeeded_runs: number;
+  failed_runs: number;
+  cancelled_runs: number;
+  created_at: string;
+  finished_at: string | null;
+}

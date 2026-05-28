@@ -8,9 +8,11 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+import app.routers.runner_pools as runner_pools_module
 import app.services.artifacts as artifacts_module
 import app.services.live_settings as live_settings_module
 import app.services.redaction as redaction_module
+import app.services.remote_dispatch as remote_dispatch_module
 import app.services.retention as retention_module
 import app.services.runner as runner_module
 import app.services.runtime_pool as runtime_pool_module
@@ -65,6 +67,8 @@ async def client() -> AsyncIterator[AsyncClient]:
         retention_module: retention_module.SessionLocal,
         live_settings_module: live_settings_module.SessionLocal,
         runtime_pool_module: runtime_pool_module.SessionLocal,
+        remote_dispatch_module: remote_dispatch_module.SessionLocal,
+        runner_pools_module: runner_pools_module.SessionLocal,
     }
     venv_module.SessionLocal = test_session
     artifacts_module.SessionLocal = test_session
@@ -73,6 +77,8 @@ async def client() -> AsyncIterator[AsyncClient]:
     retention_module.SessionLocal = test_session
     live_settings_module.SessionLocal = test_session
     runtime_pool_module.SessionLocal = test_session
+    remote_dispatch_module.SessionLocal = test_session
+    runner_pools_module.SessionLocal = test_session
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:

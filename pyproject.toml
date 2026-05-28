@@ -43,7 +43,7 @@ select = ["E", "F", "I", "UP", "B"]
 known-first-party = ["app", "worker", "noodle", "noodle_nodes", "noodle_runtime", "noodle_exporter"]
 
 [tool.ruff.lint.flake8-bugbear]
-extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body"]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body", "fastapi.File", "fastapi.Header"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

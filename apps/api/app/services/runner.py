@@ -36,6 +36,11 @@ from app.services.graph_utils import (
 )
 from app.services.live_settings import get_live_settings
 from app.services.redaction import load_secret_values, redact_value
+from app.services.remote_dispatch import (
+    _QueuedError,
+    build_env_payload,
+    dispatcher,
+)
 from app.services.runtime_pool import pool as runtime_pool
 from noodle.context import artifact_store, call_chain, workflow_caller
 from noodle.engine import execute
@@ -372,6 +377,18 @@ def _seed_parameters(
     return next_cache
 
 
+async def _build_env_payload_for_run(env_id: str | None) -> dict:
+    """Build the env descriptor sent to a remote runner."""
+    from app.models import Environment  # noqa: PLC0415
+    if env_id is None:
+        return build_env_payload("default", "3.12", [])
+    async with SessionLocal() as session:
+        env = await session.get(Environment, env_id)
+        if env is None:
+            return build_env_payload(env_id, "3.12", [])
+        return build_env_payload(env_id, env.python_version, env.packages)
+
+
 async def start_run(
     workflow_id: str,
     graph: dict,
@@ -424,6 +441,17 @@ async def start_run(
     )
 
     async with SessionLocal() as session:
+        # Resolve runner pool: deployment takes precedence, then workflow default.
+        runner_pool_id: str | None = None
+        if deployment_id:
+            dep = await session.get(Deployment, deployment_id)
+            if dep:
+                runner_pool_id = dep.runner_pool_id
+        if not runner_pool_id:
+            wf = await session.get(Workflow, workflow_id)
+            if wf:
+                runner_pool_id = wf.default_runner_pool_id
+
         run = Run(
             workflow_id=workflow_id,
             workflow_version=version,
@@ -433,6 +461,7 @@ async def start_run(
             mode=mode,
             trigger_type=trigger_type,
             status="running",
+            runner_pool_id=runner_pool_id,
         )
         session.add(run)
         await session.commit()
@@ -450,14 +479,16 @@ async def start_run(
             _active_runs[run_id] = current
         try:
             await _execute_run(
-                run_id, workflow_id, graph, targets, cache, prefer_draft=prefer_draft
+                run_id, workflow_id, graph, targets, cache,
+                prefer_draft=prefer_draft, runner_pool_id=runner_pool_id,
             )
         finally:
             _active_runs.pop(run_id, None)
     else:
         task = asyncio.create_task(
             _execute_run(
-                run_id, workflow_id, graph, targets, cache, prefer_draft=prefer_draft
+                run_id, workflow_id, graph, targets, cache,
+                prefer_draft=prefer_draft, runner_pool_id=runner_pool_id,
             )
         )
         _active_runs[run_id] = task
@@ -514,6 +545,7 @@ async def _execute_run(
     cache: dict[str, dict] | None = None,
     *,
     prefer_draft: bool = False,
+    runner_pool_id: str | None = None,
 ) -> None:
     node_events: dict[str, dict] = {}
     artifact_refs: list[dict] = []
@@ -605,16 +637,36 @@ async def _execute_run(
             chain_token = call_chain.set(frozenset({workflow_id}))
             caller_token = workflow_caller.set(_call_sub_workflow)
             try:
-                status = await runtime_pool.dispatch(
-                    run_id,
-                    env_id,
-                    graph_dict,
-                    cache,
-                    targets,
-                    on_event,
-                    sub_workflow_caller=_call_sub_workflow,
-                    workflow_modules=workflow_modules,
-                )
+                if runner_pool_id:
+                    # Remote runner path — build env descriptor and dispatch.
+                    env_payload = await _build_env_payload_for_run(env_id)
+                    try:
+                        status = await dispatcher.assign_run(
+                            run_id,
+                            runner_pool_id,
+                            env_payload,
+                            graph_dict,
+                            cache,
+                            targets,
+                            workflow_modules,
+                            on_event,
+                        )
+                    except _QueuedError:
+                        # Run was queued; do NOT mark it finished here.
+                        # The queue loop will retry when capacity becomes available.
+                        _prefer_draft_graphs.reset(prefer_draft_token)
+                        return
+                else:
+                    status = await runtime_pool.dispatch(
+                        run_id,
+                        env_id,
+                        graph_dict,
+                        cache,
+                        targets,
+                        on_event,
+                        sub_workflow_caller=_call_sub_workflow,
+                        workflow_modules=workflow_modules,
+                    )
             finally:
                 workflow_caller.reset(caller_token)
                 call_chain.reset(chain_token)
@@ -721,6 +773,70 @@ async def _execute_run(
         run_id, {"type": "run_finished", "run_id": run_id, "status": status}
     )
     _prefer_draft_graphs.reset(prefer_draft_token)
+
+
+async def _execute_queued_run(run_id: str) -> None:
+    """Re-attempt dispatch of a queued run when runner capacity frees up.
+
+    Reloads the run row, recomputes targets from the workflow graph (using
+    the same trigger-selection logic as ``start_run``), and delegates to
+    ``_execute_run``. Raises ``_QueuedError`` if still no capacity.
+    """
+    async with SessionLocal() as session:
+        run = await session.get(Run, run_id)
+        if run is None or run.status != "queued":
+            return
+        runner_pool_id = run.runner_pool_id
+        workflow_id = run.workflow_id
+        mode = run.mode
+        wf_version_id = run.workflow_version_id
+
+        workflow = await session.scalar(
+            select(Workflow)
+            .where(Workflow.id == workflow_id)
+            .options(selectinload(Workflow.versions))
+        )
+        if workflow is None or not workflow.versions:
+            run.status = "error"
+            run.finished_at = datetime.now(UTC)
+            await session.commit()
+            return
+
+        # Pick the version that was originally dispatched if available.
+        graph_dict: dict | None = None
+        if wf_version_id:
+            version_row = await session.scalar(
+                select(WorkflowVersion).where(WorkflowVersion.id == wf_version_id)
+            )
+            if version_row:
+                graph_dict = version_row.graph
+        if not graph_dict:
+            graph_dict = workflow.versions[-1].graph
+
+        if not graph_dict:
+            run.status = "error"
+            run.finished_at = datetime.now(UTC)
+            await session.commit()
+            return
+
+        pinned_rows = await session.scalars(
+            select(PinnedData).where(PinnedData.workflow_id == workflow_id)
+        )
+        pinned_cache: dict = {row.node_id: row.payload for row in pinned_rows.all()}
+
+        run.status = "running"
+        await session.commit()
+
+    trigger = first_trigger_node(graph_dict)
+    trigger_id = (trigger.id if hasattr(trigger, "id") else trigger["id"]) if trigger else None
+    targets = resolve_trigger_targets(graph_dict, trigger_id, None) if trigger_id else None
+    cache: dict | None = pinned_cache or None
+
+    await _execute_run(
+        run_id, workflow_id, graph_dict, targets, cache,
+        prefer_draft=(mode in ("manual", "test")),
+        runner_pool_id=runner_pool_id,
+    )
 
 
 def _first_failed_event(node_events: dict[str, dict]) -> dict | None:

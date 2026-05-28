@@ -52,6 +52,101 @@ class Environment(Base):
     )
 
 
+class RunnerPool(Base):
+    """A named pool of remote execution targets.
+
+    ``provider`` is one of ``"agent"`` (outbound-WS daemon on a VM),
+    ``"docker"`` (API manages containers via Docker SDK), or
+    ``"kubernetes"`` (API creates K8s Jobs). ``provider_config`` holds
+    provider-specific settings: Docker socket URL, kubeconfig YAML, AWS
+    credentials for cloud provisioning, etc.
+    """
+
+    __tablename__ = "runner_pools"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    provider: Mapped[str] = mapped_column(String(20), nullable=False, default="agent")
+    provider_config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    max_concurrent_runs: Mapped[int] = mapped_column(Integer, default=4, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    runners: Mapped[list["Runner"]] = relationship(
+        back_populates="pool", cascade="all, delete-orphan"
+    )
+
+
+class Runner(Base):
+    """An agent runner instance registered to a pool.
+
+    Only relevant for the ``agent`` provider — Docker/K8s pools have no
+    persistent runner rows. ``token_hash`` stores a bcrypt/sha256 digest
+    of the one-time registration JWT so artifact-upload requests can be
+    re-verified. ``cached_env_ids`` is a list of ``"{env_id}-{packages_hash}"``
+    strings representing envs this runner has already built locally.
+    """
+
+    __tablename__ = "runners"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    pool_id: Mapped[str] = mapped_column(
+        ForeignKey("runner_pools.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="offline")
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    capabilities: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    current_runs: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_concurrent_runs: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    cached_env_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    pool: Mapped["RunnerPool"] = relationship(back_populates="runners")
+
+
+class RunBatch(Base):
+    """A parameter-matrix batch job: one parent tracking N child runs.
+
+    Created by ``POST /workflows/{id}/batch-runs``. Each child run carries
+    ``batch_id`` pointing here. ``parameters`` is the full list of param
+    dicts supplied at creation time so the batch can be re-run or inspected.
+    """
+
+    __tablename__ = "run_batches"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    workflow_id: Mapped[str] = mapped_column(
+        ForeignKey("workflows.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    deployment_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    runner_pool_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
+    total_runs: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    succeeded_runs: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failed_runs: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cancelled_runs: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    parameters: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 class Workflow(Base):
     __tablename__ = "workflows"
 
@@ -60,6 +155,9 @@ class Workflow(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     environment_id: Mapped[str | None] = mapped_column(
         ForeignKey("environments.id"), nullable=True
+    )
+    default_runner_pool_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
     )
     draft_graph: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     published_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -188,6 +286,10 @@ class Run(Base):
     triggered_by_error_run_id: Mapped[str | None] = mapped_column(
         ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    runner_pool_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    runner_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    batch_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    queue_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mode: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
     trigger_type: Mapped[str] = mapped_column(
@@ -342,6 +444,7 @@ class Deployment(Base):
         nullable=True,
         index=True,
     )
+    runner_pool_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     error_workflow_id: Mapped[str | None] = mapped_column(
         ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True, index=True
     )

@@ -10,6 +10,7 @@ import { EditorPage } from "./EditorPage";
 import { EnvironmentsPage } from "./EnvironmentsPage";
 import { ExecutionsPage } from "./ExecutionsPage";
 import { LoginPage } from "./LoginPage";
+import { RunnerPoolsPage } from "./RunnerPoolsPage";
 import { SecurityPage } from "./SecurityPage";
 import { SettingsPage } from "./SettingsPage";
 import { ToastProvider } from "./ToastProvider";
@@ -106,6 +107,7 @@ export default function App() {
         <Route path="/executions" element={<ExecutionsPage />} />
         <Route path="/credentials" element={<CredentialsPage />} />
         <Route path="/activity" element={<ActivityPage />} />
+        <Route path="/runner-pools" element={<RunnerPoolsPage />} />
         <Route path="/security" element={<SecurityPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/workflows/:id" element={<EditorPage />} />

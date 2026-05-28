@@ -53,14 +53,36 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(digest, expected)
 
 
+def _sign(body: str) -> str:
+    return hmac.new(
+        settings.secret_key.encode(), body.encode(), hashlib.sha256
+    ).hexdigest()
+
+
+def _encode_body(payload: dict) -> str:
+    return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+
+
+def _decode_body(body: str) -> dict | None:
+    try:
+        padded = body + "=" * (-len(body) % 4)
+        return json.loads(base64.urlsafe_b64decode(padded))
+    except (ValueError, TypeError):
+        return None
+
+
 def create_token(user_id: str, ttl_seconds: int | None = None) -> str:
     ttl = ttl_seconds if ttl_seconds is not None else settings.auth_token_ttl_seconds
     payload = {"sub": user_id, "exp": int(time.time()) + ttl}
-    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
-    signature = hmac.new(
-        settings.secret_key.encode(), body.encode(), hashlib.sha256
-    ).hexdigest()
-    return f"{body}.{signature}"
+    body = _encode_body(payload)
+    return f"{body}.{_sign(body)}"
+
+
+def create_payload_token(payload: dict, ttl_seconds: int) -> str:
+    """Create a signed token carrying an arbitrary JSON payload."""
+    full = {**payload, "exp": int(time.time()) + ttl_seconds}
+    body = _encode_body(full)
+    return f"{body}.{_sign(body)}"
 
 
 def verify_token(token: str) -> str | None:
@@ -68,16 +90,23 @@ def verify_token(token: str) -> str | None:
         body, signature = token.split(".")
     except ValueError:
         return None
-    expected = hmac.new(
-        settings.secret_key.encode(), body.encode(), hashlib.sha256
-    ).hexdigest()
-    if not hmac.compare_digest(signature, expected):
+    if not hmac.compare_digest(signature, _sign(body)):
         return None
-    try:
-        padded = body + "=" * (-len(body) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded))
-    except (ValueError, TypeError):
-        return None
-    if payload.get("exp", 0) < time.time():
+    payload = _decode_body(body)
+    if payload is None or payload.get("exp", 0) < time.time():
         return None
     return payload.get("sub")
+
+
+def decode_payload_token(token: str) -> dict | None:
+    """Verify and decode a payload token, returning the full payload dict or None."""
+    try:
+        body, signature = token.split(".")
+    except ValueError:
+        return None
+    if not hmac.compare_digest(signature, _sign(body)):
+        return None
+    payload = _decode_body(body)
+    if payload is None or payload.get("exp", 0) < time.time():
+        return None
+    return payload

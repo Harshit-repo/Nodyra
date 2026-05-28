@@ -3,7 +3,7 @@ name = "noodle-runtime"
 version = "0.0.1"
 description = "Noodle env-runner subprocess server"
 requires-python = ">=3.12"
-dependencies = ["noodle-core", "noodle-nodes"]
+dependencies = ["noodle-core", "noodle-nodes", "httpx>=0.27"]
 
 [build-system]
 requires = ["hatchling"]

@@ -36,6 +36,7 @@ _PERMISSION_MIN_ROLE = {
     "credential:test": "editor",
     "credential:write": "admin",
     "environment:write": "admin",
+    "runner_pool:write": "admin",
     "audit:read": "admin",
     "user:manage": "admin",
 }

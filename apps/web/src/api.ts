@@ -13,8 +13,12 @@ import type {
   Deployment,
   DeploymentCreate,
   DeploymentUpdate,
+  RunBatchInfo,
   RunInfo,
   RunListItem,
+  RunnerInfo,
+  RunnerPoolInfo,
+  RegistrationTokenResponse,
   SystemSettings,
   UserAdminInfo,
   UserInfo,
@@ -459,3 +463,69 @@ export function subscribeToRunEvents(
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Runner pools
+// ---------------------------------------------------------------------------
+
+export const runnerPoolsApi = {
+  list: () => request<RunnerPoolInfo[]>("/runner-pools"),
+
+  create: (body: {
+    name: string;
+    provider?: string;
+    provider_config?: Record<string, unknown>;
+    max_concurrent_runs?: number;
+  }) =>
+    request<RunnerPoolInfo>("/runner-pools", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  get: (poolId: string) => request<RunnerPoolInfo>(`/runner-pools/${poolId}`),
+
+  update: (
+    poolId: string,
+    body: { name?: string; provider_config?: Record<string, unknown>; max_concurrent_runs?: number }
+  ) =>
+    request<RunnerPoolInfo>(`/runner-pools/${poolId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  delete: (poolId: string) =>
+    request<void>(`/runner-pools/${poolId}`, { method: "DELETE" }),
+
+  listRunners: (poolId: string) =>
+    request<RunnerInfo[]>(`/runner-pools/${poolId}/runners`),
+
+  deleteRunner: (poolId: string, runnerId: string) =>
+    request<void>(`/runner-pools/${poolId}/runners/${runnerId}`, { method: "DELETE" }),
+
+  createRegistrationToken: (poolId: string) =>
+    request<RegistrationTokenResponse>(`/runner-pools/${poolId}/registration-tokens`, {
+      method: "POST",
+    }),
+
+  createBatchRun: (
+    workflowId: string,
+    body: {
+      runner_pool_id?: string | null;
+      parameters: Record<string, unknown>[];
+      trigger_node_id?: string | null;
+    }
+  ) =>
+    request<{ batch_id: string; run_ids: string[]; total: number }>(
+      `/runner-pools/workflows/${workflowId}/batch-runs`,
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+
+  getBatchRun: (batchId: string) =>
+    request<RunBatchInfo>(`/runner-pools/run-batches/${batchId}`),
+
+  cancelBatchRun: (batchId: string) =>
+    request<{ batch_id: string; cancelled_runs: number }>(
+      `/runner-pools/run-batches/${batchId}/cancel`,
+      { method: "POST" }
+    ),
+};

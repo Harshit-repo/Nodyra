@@ -132,8 +132,21 @@ async def _handle_run(request: dict[str, Any]) -> None:
 
     caller_token = workflow_caller.set(_call_workflow_via_host)
     artifact_token = None
+    artifacts_upload_url = request.get("artifacts_upload_url")
     artifacts_dir = request.get("artifacts_dir")
-    if artifacts_dir:
+    if artifacts_upload_url:
+        from noodle_runtime.remote_artifacts import RemoteArtifactStore
+
+        artifact_token = artifact_store.set(
+            RemoteArtifactStore(
+                str(artifacts_upload_url),
+                str(request.get("artifacts_runner_token") or ""),
+                run_id,
+                max_bytes=int(request.get("max_artifact_bytes") or 0),
+                max_count=int(request.get("max_artifacts_per_run") or 0),
+            )
+        )
+    elif artifacts_dir:
         artifact_token = artifact_store.set(
             LocalArtifactStore(
                 str(artifacts_dir),

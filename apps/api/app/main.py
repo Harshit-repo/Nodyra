@@ -27,6 +27,7 @@ from app.routers import (
     nodes,
     ops,
     pinned,
+    runner_pools,
     runs,
     system_settings,
     webhooks,
@@ -34,6 +35,7 @@ from app.routers import (
 )
 from app.services.crypto import verify_token
 from app.services.events import broker_reaper_loop
+from app.services.remote_dispatch import dispatcher, queue_dispatch_loop
 from app.services.retention import retention_loop
 from app.services.runner import shutdown_active_runs
 from app.services.runtime_pool import idle_reaper_loop
@@ -145,14 +147,16 @@ async def lifespan(app: FastAPI):
     # Broker reaper: every replica owns its own pub/sub buffer, so it
     # always runs (independent of the scheduler flag).
     broker_reaper = asyncio.create_task(broker_reaper_loop())
+    queue_loop = asyncio.create_task(queue_dispatch_loop())
     yield
-    for task in (scheduler, retention, reaper, broker_reaper):
+    for task in (scheduler, retention, reaper, broker_reaper, queue_loop):
         if task is None:
             continue
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
     await _bounded(shutdown_active_runs())
+    await _bounded(dispatcher.shutdown())
     await _bounded(runtime_pool.shutdown())
     await _bounded(engine.dispose())
     await _bounded(redis_client.aclose())
@@ -174,6 +178,7 @@ _AUTH_EXEMPT_PREFIXES = (
     "/webhook",
     "/webhook-test",
     "/internal",
+    "/runner-pools/ws",  # agent runner WS — uses its own token query param
 )
 _AUTH_EXEMPT_PATHS = {"/", "/metrics", "/system/status"}
 
@@ -223,6 +228,7 @@ app.include_router(artifacts.router)
 app.include_router(ops.router)
 app.include_router(pinned.router)
 app.include_router(system_settings.router)
+app.include_router(runner_pools.router)
 
 
 @app.get("/")

@@ -28,6 +28,7 @@ export type Permission =
   | "credential:test"
   | "credential:write"
   | "environment:write"
+  | "runner_pool:write"
   | "audit:read"
   | "user:manage";
 
@@ -43,6 +44,7 @@ const PERMISSION_MIN_ROLE: Record<Permission, Role> = {
   "credential:test": "editor",
   "credential:write": "admin",
   "environment:write": "admin",
+  "runner_pool:write": "admin",
   "audit:read": "admin",
   "user:manage": "admin",
 };

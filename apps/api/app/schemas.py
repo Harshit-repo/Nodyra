@@ -16,6 +16,7 @@ class WorkflowUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     active: bool | None = None
     environment_id: str | None = None
+    default_runner_pool_id: str | None = None
     graph: WorkflowGraph | None = None
     error_workflow_id: str | None = None
     error_alerts: dict[str, Any] | None = None
@@ -182,6 +183,9 @@ class RunListItem(BaseModel):
     workflow_version_id: str | None = None
     deployment_id: str | None = None
     triggered_by_error_run_id: str | None = None
+    runner_pool_id: str | None = None
+    runner_id: str | None = None
+    batch_id: str | None = None
     mode: str
     status: str
     trigger_type: str
@@ -198,6 +202,9 @@ class RunInfo(BaseModel):
     workflow_version_id: str | None = None
     deployment_id: str | None = None
     triggered_by_error_run_id: str | None = None
+    runner_pool_id: str | None = None
+    runner_id: str | None = None
+    batch_id: str | None = None
     mode: str
     status: str
     trigger_type: str
@@ -343,6 +350,7 @@ class DeploymentCreate(BaseModel):
     default_parameters: dict[str, Any] = Field(default_factory=dict)
     active: bool = False
     environment_id: str | None = None
+    runner_pool_id: str | None = None
     workflow_version_id: str | None = None
     error_workflow_id: str | None = None
     error_alerts: dict[str, Any] = Field(default_factory=dict)
@@ -357,6 +365,7 @@ class DeploymentUpdate(BaseModel):
     default_parameters: dict[str, Any] | None = None
     active: bool | None = None
     environment_id: str | None = None
+    runner_pool_id: str | None = None
     workflow_version_id: str | None = None
     error_workflow_id: str | None = None
     error_alerts: dict[str, Any] | None = None
@@ -375,6 +384,7 @@ class DeploymentInfo(BaseModel):
     default_parameters: dict[str, Any]
     active: bool
     environment_id: str | None
+    runner_pool_id: str | None = None
     workflow_version_id: str | None = None
     workflow_version: int | None = None
     error_workflow_id: str | None = None
@@ -436,6 +446,77 @@ class CodeModuleFunctionPreview(BaseModel):
     # rather than make the user guess). Null when the workflow has no env.
     environment_id: str | None = None
     environment_name: str | None = None
+
+
+class RunnerPoolCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    provider: str = "agent"
+    provider_config: dict[str, Any] = Field(default_factory=dict)
+    max_concurrent_runs: int = Field(default=4, ge=1, le=1024)
+
+
+class RunnerPoolUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    provider_config: dict[str, Any] | None = None
+    max_concurrent_runs: int | None = Field(default=None, ge=1, le=1024)
+
+
+class RunnerPoolInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    provider: str
+    provider_config: dict[str, Any]
+    max_concurrent_runs: int
+    runner_count: int = 0
+    online_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class RunnerInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    pool_id: str
+    name: str
+    status: str
+    capabilities: dict[str, Any]
+    last_seen_at: datetime | None
+    current_runs: int
+    max_concurrent_runs: int
+    cached_env_ids: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class RegistrationTokenResponse(BaseModel):
+    token: str
+    runner_id: str
+    expires_at: datetime
+
+
+class RunBatchCreate(BaseModel):
+    runner_pool_id: str | None = None
+    parameters: list[dict[str, Any]] = Field(min_length=1)
+    trigger_node_id: str | None = None
+
+
+class RunBatchInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    workflow_id: str
+    deployment_id: str | None
+    runner_pool_id: str | None
+    status: str
+    total_runs: int
+    succeeded_runs: int
+    failed_runs: int
+    cancelled_runs: int
+    created_at: datetime
+    finished_at: datetime | None
 
 
 class PinPayload(BaseModel):
