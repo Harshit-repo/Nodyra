@@ -1,78 +1,474 @@
 import { useCallback, useEffect, useState } from "react";
+
 import { runnerPoolsApi } from "./api";
+import { HomeHeader } from "./HomeHeader";
 import { useCan } from "./permissions";
 import type { RegistrationTokenResponse, RunnerInfo, RunnerPoolInfo } from "./types";
 
-function statusDot(status: string) {
-  const color =
-    status === "online"
-      ? "bg-green-500"
-      : status === "busy"
-        ? "bg-yellow-500"
-        : "bg-gray-400";
-  return <span className={`inline-block w-2 h-2 rounded-full ${color} mr-1`} />;
+type Config = Record<string, unknown>;
+
+/** Drop empty-string / empty-array values so the stored config stays clean. */
+function cleanConfig(config: Config): Config {
+  const out: Config = {};
+  for (const [key, value] of Object.entries(config)) {
+    if (value === "" || value === null || value === undefined) continue;
+    if (Array.isArray(value) && value.length === 0) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+function poolConfigSummary(pool: RunnerPoolInfo): string | null {
+  const cfg = pool.provider_config || {};
+  if (pool.provider === "docker") {
+    return `host ${(cfg.docker_host as string) || "local socket"}`;
+  }
+  if (pool.provider === "kubernetes") {
+    return `ns ${(cfg.namespace as string) || "noodle"}`;
+  }
+  if (cfg.cloud_provider === "aws") {
+    return `auto-scale AWS ≤ ${(cfg.max_instances as number) ?? "?"}`;
+  }
+  return null;
+}
+
+function Field({
+  label,
+  desc,
+  children,
+}: {
+  label: string;
+  desc?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="field">
+      <div className="field-label">
+        <span className="field-name">{label}</span>
+      </div>
+      {desc && <p className="field-desc">{desc}</p>}
+      {children}
+    </div>
+  );
+}
+
+function TextField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  type = "text",
+  desc,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  type?: string;
+  desc?: string;
+}) {
+  return (
+    <Field label={label} desc={desc}>
+      <input
+        className="field-input"
+        type={type}
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </Field>
+  );
+}
+
+/** Provider-specific configuration inputs that read/write into `config`. */
+function ProviderConfigFields({
+  provider,
+  config,
+  onChange,
+}: {
+  provider: string;
+  config: Config;
+  onChange: (next: Config) => void;
+}) {
+  const set = (key: string, value: unknown) =>
+    onChange({ ...config, [key]: value });
+  const str = (key: string) => (config[key] as string) ?? "";
+
+  if (provider === "docker") {
+    return (
+      <>
+        <TextField
+          label="Docker host"
+          desc="Blank uses the local Docker socket."
+          value={str("docker_host")}
+          onChange={(v) => set("docker_host", v)}
+          placeholder="tcp://dockerd:2375"
+        />
+        <TextField
+          label="Network"
+          value={str("network") || "bridge"}
+          onChange={(v) => set("network", v)}
+          placeholder="bridge"
+        />
+      </>
+    );
+  }
+
+  if (provider === "kubernetes") {
+    return (
+      <>
+        <TextField
+          label="Namespace"
+          value={str("namespace") || "noodle"}
+          onChange={(v) => set("namespace", v)}
+          placeholder="noodle"
+        />
+        <TextField
+          label="Image registry"
+          desc="Blank uses in-cluster images."
+          value={str("image_registry")}
+          onChange={(v) => set("image_registry", v)}
+          placeholder="registry.example.com/noodle"
+        />
+        <Field
+          label="Kubeconfig YAML"
+          desc="Blank uses the in-cluster service account."
+        >
+          <textarea
+            className="field-input field-textarea"
+            value={str("kubeconfig_yaml")}
+            onChange={(e) => set("kubeconfig_yaml", e.target.value)}
+            placeholder="apiVersion: v1&#10;clusters: ..."
+          />
+        </Field>
+      </>
+    );
+  }
+
+  // agent — optional AWS auto-scaling
+  const cloudOn = config.cloud_provider === "aws";
+  return (
+    <>
+      <label className="cloud-toggle">
+        <input
+          type="checkbox"
+          checked={cloudOn}
+          onChange={(e) => {
+            if (e.target.checked) {
+              set("cloud_provider", "aws");
+            } else {
+              const next = { ...config };
+              delete next.cloud_provider;
+              onChange(next);
+            }
+          }}
+        />
+        Auto-scale with AWS (provision EC2 runners on demand)
+      </label>
+      {cloudOn && (
+        <div className="cloud-fields">
+          <div className="field-row">
+            <TextField
+              label="Region"
+              value={str("region") || "us-east-1"}
+              onChange={(v) => set("region", v)}
+            />
+            <TextField
+              label="Instance type"
+              value={str("instance_type") || "t3.medium"}
+              onChange={(v) => set("instance_type", v)}
+            />
+          </div>
+          <TextField
+            label="AMI id"
+            value={str("ami_id")}
+            onChange={(v) => set("ami_id", v)}
+            placeholder="ami-0123456789abcdef0"
+          />
+          <TextField
+            label="Key pair"
+            desc="Optional."
+            value={str("key_pair")}
+            onChange={(v) => set("key_pair", v)}
+          />
+          <TextField
+            label="Security group ids"
+            desc="Comma-separated."
+            value={
+              Array.isArray(config.security_group_ids)
+                ? (config.security_group_ids as string[]).join(", ")
+                : ""
+            }
+            onChange={(v) =>
+              set(
+                "security_group_ids",
+                v.split(",").map((s) => s.trim()).filter(Boolean),
+              )
+            }
+            placeholder="sg-abc123, sg-def456"
+          />
+          <div className="field-row">
+            <TextField
+              label="Max instances"
+              type="number"
+              value={String((config.max_instances as number) ?? 3)}
+              onChange={(v) => set("max_instances", Number(v) || 0)}
+            />
+            <TextField
+              label="Idle terminate (s)"
+              type="number"
+              value={String((config.idle_terminate_seconds as number) ?? 300)}
+              onChange={(v) => set("idle_terminate_seconds", Number(v) || 0)}
+            />
+          </div>
+          <TextField
+            label="AWS access key id"
+            value={str("aws_access_key_id")}
+            onChange={(v) => set("aws_access_key_id", v)}
+          />
+          <TextField
+            label="AWS secret access key"
+            type="password"
+            desc="Stored in the pool config. Blank uses the API host's IAM role."
+            value={str("aws_secret_access_key")}
+            onChange={(v) => set("aws_secret_access_key", v)}
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Shared create/edit modal. `pool` set = edit mode (provider is fixed). */
+function PoolDialog({
+  pool,
+  onClose,
+  onSaved,
+}: {
+  pool?: RunnerPoolInfo;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const editing = !!pool;
+  const [name, setName] = useState(pool?.name ?? "");
+  const [provider, setProvider] = useState(pool?.provider ?? "agent");
+  const [maxConcurrent, setMaxConcurrent] = useState(
+    pool?.max_concurrent_runs ?? 4,
+  );
+  const [config, setConfig] = useState<Config>(pool?.provider_config ?? {});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSave = async () => {
+    if (!name.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      if (editing) {
+        await runnerPoolsApi.update(pool!.id, {
+          name: name.trim(),
+          max_concurrent_runs: maxConcurrent,
+          provider_config: cleanConfig(config),
+        });
+      } else {
+        await runnerPoolsApi.create({
+          name: name.trim(),
+          provider,
+          max_concurrent_runs: maxConcurrent,
+          provider_config: cleanConfig(config),
+        });
+      }
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save pool");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+        <header className="modal-head">
+          <h2>{editing ? `Edit ${pool!.name}` : "New runner pool"}</h2>
+          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+            ✕
+          </button>
+        </header>
+        <div className="modal-body">
+          {error && <p className="error-text">{error}</p>}
+
+          <TextField
+            label="Name"
+            value={name}
+            onChange={setName}
+            placeholder="production-pool"
+          />
+
+          <div className="field-row">
+            <Field label="Provider">
+              {editing ? (
+                <input
+                  className="field-input"
+                  value={provider}
+                  disabled
+                  style={{ textTransform: "capitalize" }}
+                />
+              ) : (
+                <select
+                  className="field-input"
+                  value={provider}
+                  onChange={(e) => {
+                    setProvider(e.target.value);
+                    setConfig({});
+                  }}
+                >
+                  <option value="agent">Agent (VM / EC2)</option>
+                  <option value="docker">Docker</option>
+                  <option value="kubernetes">Kubernetes</option>
+                </select>
+              )}
+            </Field>
+            <TextField
+              label="Max concurrent"
+              type="number"
+              value={String(maxConcurrent)}
+              onChange={(v) => setMaxConcurrent(Number(v) || 1)}
+            />
+          </div>
+
+          <ProviderConfigFields
+            provider={provider}
+            config={config}
+            onChange={setConfig}
+          />
+        </div>
+        <footer className="modal-foot">
+          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="btn btn-sm btn-primary"
+            disabled={saving || !name.trim()}
+            onClick={handleSave}
+          >
+            {saving ? "Saving…" : editing ? "Save changes" : "Create pool"}
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
 }
 
 function PoolCard({
   pool,
-  onDelete,
+  onChanged,
   canWrite,
 }: {
   pool: RunnerPoolInfo;
-  onDelete: () => void;
+  onChanged: () => void;
   canWrite: boolean;
 }) {
   const [runners, setRunners] = useState<RunnerInfo[]>([]);
   const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [token, setToken] = useState<RegistrationTokenResponse | null>(null);
   const [loadingToken, setLoadingToken] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const loadRunners = useCallback(async () => {
     try {
-      const rs = await runnerPoolsApi.listRunners(pool.id);
-      setRunners(rs);
+      setRunners(await runnerPoolsApi.listRunners(pool.id));
     } catch {
       /* ignore */
     }
   }, [pool.id]);
 
   useEffect(() => {
-    if (expanded) loadRunners();
+    if (expanded) void loadRunners();
   }, [expanded, loadRunners]);
 
   const generateToken = async () => {
     setLoadingToken(true);
     try {
-      const t = await runnerPoolsApi.createRegistrationToken(pool.id);
-      setToken(t);
+      setToken(await runnerPoolsApi.createRegistrationToken(pool.id));
       await loadRunners();
     } finally {
       setLoadingToken(false);
     }
   };
 
+  const installCmd = token
+    ? `pip install noodle-runner
+noodle-runner register \\
+  --api-url ${window.location.origin} \\
+  --token ${token.token} \\
+  --name my-runner
+noodle-runner start`
+    : "";
+
+  const copyInstall = async () => {
+    try {
+      await navigator.clipboard.writeText(installCmd);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard blocked */
+    }
+  };
+
+  const summary = poolConfigSummary(pool);
+  const pillClass =
+    pool.online_count > 0 ? "status-run-success" : "status-run-skipped";
+  const pillText =
+    pool.runner_count > 0
+      ? `${pool.online_count}/${pool.runner_count} online`
+      : "no runners";
+
   return (
-    <div className="border rounded-lg p-4 bg-white dark:bg-zinc-900 dark:border-zinc-700">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold text-sm">{pool.name}</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            <span className="capitalize">{pool.provider}</span> ·{" "}
-            {pool.online_count}/{pool.runner_count} online · max{" "}
-            {pool.max_concurrent_runs} concurrent
-          </p>
+    <div className="pool-card">
+      <div className="pool-head">
+        <div className="pool-main">
+          <div className="pool-name">
+            {pool.name}
+            <span className={`run-pill ${pillClass}`}>{pillText}</span>
+          </div>
+          <div className="pool-meta">
+            {pool.provider} · max {pool.max_concurrent_runs} concurrent
+            {summary && <> · {summary}</>}
+          </div>
         </div>
-        <div className="flex gap-2">
+        <div className="pool-actions">
           <button
-            className="text-xs underline text-muted-foreground"
+            type="button"
+            className="btn btn-sm btn-ghost"
             onClick={() => setExpanded((v) => !v)}
           >
-            {expanded ? "Hide" : "Show"} runners
+            {expanded ? "Hide" : "Runners"}
           </button>
           {canWrite && (
             <button
-              className="text-xs text-red-500 underline"
-              onClick={onDelete}
+              type="button"
+              className="btn btn-sm btn-ghost"
+              onClick={() => setEditing(true)}
+            >
+              Edit
+            </button>
+          )}
+          {canWrite && (
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              onClick={async () => {
+                if (
+                  !confirm(
+                    "Delete this runner pool and all its registered runners?",
+                  )
+                )
+                  return;
+                await runnerPoolsApi.delete(pool.id);
+                onChanged();
+              }}
             >
               Delete
             </button>
@@ -81,21 +477,19 @@ function PoolCard({
       </div>
 
       {expanded && (
-        <div className="mt-3 space-y-2">
+        <div className="pool-body">
           {runners.length === 0 && (
-            <p className="text-xs text-muted-foreground">No runners registered yet.</p>
+            <p className="muted">No runners registered yet.</p>
           )}
           {runners.map((r) => (
-            <div
-              key={r.id}
-              className="flex items-center justify-between text-xs bg-zinc-50 dark:bg-zinc-800 rounded px-2 py-1"
-            >
+            <div key={r.id} className="runner-row">
               <span>
-                {statusDot(r.status)}
+                <span className={`status-dot ${r.status}`} />
                 {r.name}
               </span>
-              <span className="text-muted-foreground">
+              <span className="runner-row-meta">
                 {r.current_runs}/{r.max_concurrent_runs} runs ·{" "}
+                {r.cached_env_ids.length} envs ·{" "}
                 {r.last_seen_at
                   ? new Date(r.last_seen_at).toLocaleString()
                   : "never seen"}
@@ -103,55 +497,71 @@ function PoolCard({
             </div>
           ))}
 
-          {canWrite && (
-            <div className="pt-2">
+          {canWrite && pool.provider === "agent" && (
+            <div>
               <button
-                className="text-xs bg-primary text-primary-foreground rounded px-3 py-1 disabled:opacity-50"
+                type="button"
+                className="btn btn-sm"
                 disabled={loadingToken}
                 onClick={generateToken}
               >
-                {loadingToken ? "Generating…" : "Generate Registration Token"}
+                {loadingToken ? "Generating…" : "Generate registration token"}
               </button>
               {token && (
-                <div className="mt-2 p-2 bg-zinc-100 dark:bg-zinc-800 rounded text-xs font-mono break-all">
-                  <p className="font-semibold mb-1 font-sans">
-                    Install and register a new runner:
-                  </p>
-                  <pre className="whitespace-pre-wrap">{`pip install noodle-runner
-noodle-runner register \\
-  --api-url ${window.location.origin} \\
-  --token ${token.token} \\
-  --name my-runner
-noodle-runner start`}</pre>
-                  <p className="mt-1 text-muted-foreground font-sans">
-                    Token expires:{" "}
-                    {new Date(token.expires_at).toLocaleString()}
+                <div className="runner-install">
+                  <div className="runner-install-head">
+                    <strong>Install and register a new runner</strong>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      onClick={copyInstall}
+                    >
+                      {copied ? "Copied!" : "Copy"}
+                    </button>
+                  </div>
+                  <pre>{installCmd}</pre>
+                  <p className="runner-install-expiry">
+                    Token expires {new Date(token.expires_at).toLocaleString()}
                   </p>
                 </div>
               )}
             </div>
           )}
+          {pool.provider !== "agent" && (
+            <p className="muted">
+              {pool.provider === "docker"
+                ? "Docker pools have no registered runners — the API drives containers directly."
+                : "Kubernetes pools spawn a single-run pod per run — no persistent runners."}
+            </p>
+          )}
         </div>
+      )}
+
+      {editing && (
+        <PoolDialog
+          pool={pool}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            onChanged();
+          }}
+        />
       )}
     </div>
   );
 }
 
 export function RunnerPoolsPage() {
-  const [pools, setPools] = useState<RunnerPoolInfo[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newProvider, setNewProvider] = useState("agent");
+  const [pools, setPools] = useState<RunnerPoolInfo[] | null>(null);
   const [creating, setCreating] = useState(false);
+  const [error, setError] = useState("");
   const canWrite = useCan("runner_pool:write");
 
   const load = useCallback(async () => {
     try {
-      const ps = await runnerPoolsApi.list();
-      setPools(ps);
-    } finally {
-      setLoading(false);
+      setPools(await runnerPoolsApi.list());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
@@ -159,102 +569,72 @@ export function RunnerPoolsPage() {
     void load();
   }, [load]);
 
-  const handleCreate = async () => {
-    if (!newName.trim()) return;
-    setCreating(true);
-    try {
-      await runnerPoolsApi.create({ name: newName.trim(), provider: newProvider });
-      setNewName("");
-      setShowCreate(false);
-      await load();
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const handleDelete = async (poolId: string) => {
-    if (!confirm("Delete this runner pool and all its registered runners?")) return;
-    await runnerPoolsApi.delete(poolId);
-    await load();
-  };
-
   return (
-    <div className="max-w-3xl mx-auto py-8 px-4 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Runner Pools</h1>
-        {canWrite && (
-          <button
-            className="text-sm bg-primary text-primary-foreground rounded px-3 py-1.5"
-            onClick={() => setShowCreate((v) => !v)}
-          >
-            + New pool
-          </button>
+    <div className="home">
+      <HomeHeader />
+      <main className="home-main">
+        <div className="home-bar">
+          <h1>
+            Runner Pools
+            {pools && <span className="home-count">{pools.length}</span>}
+          </h1>
+          {canWrite && (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setCreating(true)}
+            >
+              + New pool
+            </button>
+          )}
+        </div>
+
+        {error && <p className="error-text">{error}</p>}
+        {!pools && !error && <p className="muted">Loading…</p>}
+
+        {pools && pools.length === 0 && (
+          <div className="empty-state">
+            <h2>No runner pools yet</h2>
+            <p className="muted">
+              {canWrite
+                ? "Create one to dispatch workflows to remote machines, Docker, or Kubernetes."
+                : "Ask an admin to create one."}
+            </p>
+            {canWrite && (
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setCreating(true)}
+              >
+                Create runner pool
+              </button>
+            )}
+          </div>
         )}
-      </div>
 
-      {showCreate && (
-        <div className="border rounded-lg p-4 bg-white dark:bg-zinc-900 dark:border-zinc-700 space-y-3">
-          <h2 className="font-semibold text-sm">New runner pool</h2>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Name</label>
-            <input
-              className="w-full border rounded px-2 py-1.5 text-sm dark:bg-zinc-800 dark:border-zinc-600"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="production-pool"
-            />
+        {pools && pools.length > 0 && (
+          <div className="pool-list">
+            {pools.map((pool) => (
+              <PoolCard
+                key={pool.id}
+                pool={pool}
+                canWrite={canWrite}
+                onChanged={() => void load()}
+              />
+            ))}
           </div>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Provider</label>
-            <select
-              className="w-full border rounded px-2 py-1.5 text-sm dark:bg-zinc-800 dark:border-zinc-600"
-              value={newProvider}
-              onChange={(e) => setNewProvider(e.target.value)}
-            >
-              <option value="agent">Agent (VM / EC2)</option>
-              <option value="docker">Docker</option>
-              <option value="kubernetes">Kubernetes</option>
-            </select>
-          </div>
-          <div className="flex gap-2">
-            <button
-              className="text-sm bg-primary text-primary-foreground rounded px-3 py-1.5 disabled:opacity-50"
-              disabled={creating || !newName.trim()}
-              onClick={handleCreate}
-            >
-              {creating ? "Creating…" : "Create"}
-            </button>
-            <button
-              className="text-sm border rounded px-3 py-1.5"
-              onClick={() => setShowCreate(false)}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+        )}
 
-      {loading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
-      ) : pools.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No runner pools yet.{" "}
-          {canWrite
-            ? "Create one to start dispatching workflows to remote machines."
-            : "Ask an admin to create one."}
-        </p>
-      ) : (
-        <div className="space-y-3">
-          {pools.map((pool) => (
-            <PoolCard
-              key={pool.id}
-              pool={pool}
-              canWrite={canWrite}
-              onDelete={() => handleDelete(pool.id)}
-            />
-          ))}
-        </div>
-      )}
+        {creating && (
+          <PoolDialog
+            onClose={() => setCreating(false)}
+            onSaved={() => {
+              setCreating(false);
+              void load();
+            }}
+          />
+        )}
+      </main>
     </div>
   );
 }

@@ -11,7 +11,9 @@ export function HomeHeader() {
   const profileActive =
     pathname.startsWith("/settings") ||
     pathname.startsWith("/security") ||
-    pathname.startsWith("/activity");
+    pathname.startsWith("/activity") ||
+    pathname.startsWith("/credentials") ||
+    pathname.startsWith("/code-library");
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const displayName = user?.name || user?.email || "User";
@@ -84,22 +86,6 @@ export function HomeHeader() {
           Environments
         </Link>
         <Link
-          className={pathname.startsWith("/code-library") ? "active" : ""}
-          aria-current={
-            pathname.startsWith("/code-library") ? "page" : undefined
-          }
-          to="/code-library"
-        >
-          Code Library
-        </Link>
-        <Link
-          className={pathname.startsWith("/credentials") ? "active" : ""}
-          aria-current={pathname.startsWith("/credentials") ? "page" : undefined}
-          to="/credentials"
-        >
-          Credentials
-        </Link>
-        <Link
           className={pathname.startsWith("/runner-pools") ? "active" : ""}
           aria-current={pathname.startsWith("/runner-pools") ? "page" : undefined}
           to="/runner-pools"
@@ -148,6 +134,13 @@ export function HomeHeader() {
                   onClick={() => setOpen(false)}
                 >
                   Credentials
+                </Link>
+                <Link
+                  to="/code-library"
+                  role="menuitem"
+                  onClick={() => setOpen(false)}
+                >
+                  Code Library
                 </Link>
                 {canAdmin && (
                   <>
