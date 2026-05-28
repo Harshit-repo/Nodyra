@@ -8,10 +8,12 @@ inside its assigned ``uv`` venv.
 The pool also brokers sub-workflow calls back to the host: when an
 ``execute_workflow`` node runs inside a subprocess, it writes a
 ``call_workflow`` event to stdout; the pool catches it, invokes the host-side
-``sub_workflow_caller`` passed by the runner, and writes the result back to
-the subprocess's stdin. The host-side caller still runs the engine
-in-process, so the call-chain contextvar enforces cycle detection across
-sub-workflow boundaries.
+``sub_workflow_caller`` passed by the runner (as an ``asyncio.create_task``
+so the new task inherits the caller's ContextVar context — including
+``call_chain`` — for cycle detection), and writes the result back to the
+subprocess's stdin. The host-side caller runs the engine in-process, so
+sub-workflows do not get their own env isolation today (see
+``_call_sub_workflow`` docstring).
 
 Each subprocess is serialized via an ``asyncio.Lock`` — concurrent runs to
 the same env queue rather than interleaving their stdio. Different envs run
@@ -34,7 +36,12 @@ from app.services.venv import ensure_environment_ready
 from noodle.serialization import deserialize_value, serialize_value
 
 EventCallback = Callable[[dict], Awaitable[None]]
-SubWorkflowCaller = Callable[[str, Any], Awaitable[Any]]
+# Signature accepts an optional ``parent_env_id`` kwarg. The runner's
+# ``_call_sub_workflow`` uses it to detect the same-env inline opportunity
+# and may return an ``InlineSubWorkflow`` sentinel instead of a leaf value.
+# Callers that don't care (in-process engine via the ``workflow_caller``
+# ContextVar) omit the kwarg and always get a real leaf back.
+SubWorkflowCaller = Callable[..., Awaitable[Any]]
 
 
 async def _resolve_pool_sizes(env_id: str | None) -> tuple[int, int]:
@@ -136,17 +143,36 @@ class _RuntimeProcess:
                 raise RuntimeError(
                     "subprocess runner has no host-side sub-workflow caller"
                 )
-            result = await sub_workflow_caller(
+            outcome = await sub_workflow_caller(
                 event.get("workflow_id", ""),
                 deserialize_value(event.get("input")),
+                parent_env_id=self.env_id,
             )
-            await self._write_message(
-                {
-                    "type": "call_workflow_response",
-                    "callback_id": callback_id,
-                    "result": result,
-                }
-            )
+            # Late import — InlineSubWorkflow is defined in runner.py which
+            # already imports this module; bringing it in at the top would
+            # create a cycle. Keeping it local also means the pool stays
+            # usable from contexts that don't need sub-workflow handling.
+            from app.services.runner import InlineSubWorkflow
+
+            if isinstance(outcome, InlineSubWorkflow):
+                await self._write_message(
+                    {
+                        "type": "call_workflow_response",
+                        "callback_id": callback_id,
+                        "inline_graph": outcome.graph,
+                        "inline_cache": outcome.cache,
+                        "inline_targets": outcome.targets,
+                        "inline_sources": outcome.sources,
+                    }
+                )
+            else:
+                await self._write_message(
+                    {
+                        "type": "call_workflow_response",
+                        "callback_id": callback_id,
+                        "result": outcome,
+                    }
+                )
         except Exception as exc:  # noqa: BLE001 - surface back to subprocess
             await self._write_message(
                 {
@@ -424,6 +450,55 @@ class RuntimePool:
                 ) from exc
             finally:
                 envpool.release(proc)
+
+    async def dispatch_subworkflow(
+        self,
+        run_id: str,
+        env_id: str | None,
+        graph: dict,
+        cache: dict | None,
+        targets: list[str] | None,
+        on_event: EventCallback,
+        sub_workflow_caller: SubWorkflowCaller | None = None,
+        workflow_modules: list[dict] | None = None,
+    ) -> str:
+        """Run a sub-workflow in its env's subprocess, bypassing the pool caps.
+
+        Both the global ``max_concurrent_runs`` semaphore and the per-env
+        pool semaphore are skipped on purpose: the parent run that
+        emitted the ``call_workflow`` event already holds both slots, and
+        making the sub-call wait for them would deadlock whenever a
+        parent + sub share an env at the cap.
+
+        A fresh short-lived ``_RuntimeProcess`` is spawned and closed
+        after the sub run finishes — it isn't pooled because pooling
+        them would re-introduce the cap math we're trying to bypass.
+        Memory cost: one extra subprocess per in-flight sub-workflow
+        call, which goes away the moment the parent's
+        ``execute_workflow`` node returns.
+        """
+        proc = await _RuntimeProcess.spawn(env_id)
+        try:
+            run = proc.run(
+                run_id,
+                graph,
+                cache,
+                targets,
+                on_event,
+                sub_workflow_caller,
+                workflow_modules=workflow_modules,
+            )
+            timeout = settings.workflow_run_timeout_seconds
+            if timeout and timeout > 0:
+                return await asyncio.wait_for(run, timeout=timeout)
+            return await run
+        except TimeoutError as exc:
+            raise RuntimeError(
+                f"sub-workflow run timed out after "
+                f"{settings.workflow_run_timeout_seconds}s"
+            ) from exc
+        finally:
+            await proc.close()
 
     async def reap_idle(self, threshold_seconds: float) -> int:
         """Sweep every env pool, closing warm processes idle past the threshold."""

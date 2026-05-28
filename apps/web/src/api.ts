@@ -383,3 +383,79 @@ export function runEventsUrl(runId: string): string {
   const query = token ? `?token=${encodeURIComponent(token)}` : "";
   return `${proto}//${window.location.host}/ws/runs/${runId}${query}`;
 }
+
+/** Subscribe to a run's live events with auto-reconnect.
+ *
+ * Returns a handle whose ``close()`` tears down the socket and prevents
+ * further reconnects. The backoff schedule (1s → 2s → 4s → 8s, capped at
+ * 5 attempts) handles transient drops without spinning forever. The
+ * broker replays buffered events on subscribe, so a mid-run reconnect
+ * doesn't lose the run's history.
+ *
+ * ``onReconnecting`` fires on each failed attempt so the UI can surface a
+ * "reconnecting…" state. ``onClosed`` fires once when the socket is
+ * permanently closed (either ``close()`` was called or we exhausted
+ * retries).
+ */
+export interface RunStreamHandle {
+  close: () => void;
+}
+
+const RUN_STREAM_BACKOFF_MS = [1000, 2000, 4000, 8000];
+
+export function subscribeToRunEvents(
+  runId: string,
+  handlers: {
+    onMessage: (data: unknown) => void;
+    onReconnecting?: (attempt: number) => void;
+    onClosed?: () => void;
+  },
+): RunStreamHandle {
+  let socket: WebSocket | null = null;
+  let attempt = 0;
+  let closedByCaller = false;
+
+  function open(): void {
+    if (closedByCaller) return;
+    socket = new WebSocket(runEventsUrl(runId));
+    socket.onmessage = (event) => {
+      // Reset the backoff once any message arrives — the connection is healthy.
+      attempt = 0;
+      try {
+        handlers.onMessage(JSON.parse(event.data as string));
+      } catch {
+        /* malformed event — drop */
+      }
+    };
+    socket.onclose = (event) => {
+      socket = null;
+      if (closedByCaller) {
+        handlers.onClosed?.();
+        return;
+      }
+      // 1000 (normal) or 1008 (auth refused) → no point reconnecting.
+      if (event.code === 1000 || event.code === 1008) {
+        handlers.onClosed?.();
+        return;
+      }
+      if (attempt >= RUN_STREAM_BACKOFF_MS.length) {
+        handlers.onClosed?.();
+        return;
+      }
+      const delay = RUN_STREAM_BACKOFF_MS[attempt];
+      attempt += 1;
+      handlers.onReconnecting?.(attempt);
+      window.setTimeout(open, delay);
+    };
+  }
+
+  open();
+
+  return {
+    close() {
+      closedByCaller = true;
+      if (socket && socket.readyState === WebSocket.OPEN) socket.close(1000);
+      else if (socket) socket.close();
+    },
+  };
+}

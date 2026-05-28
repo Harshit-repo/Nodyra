@@ -2,7 +2,7 @@ import { ReactFlowProvider } from "@xyflow/react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { api, runEventsUrl } from "./api";
+import { api, type RunStreamHandle, subscribeToRunEvents } from "./api";
 import { Canvas } from "./editor/Canvas";
 import { FunctionsPanel } from "./editor/FunctionsPanel";
 import { Inspector } from "./editor/Inspector";
@@ -11,6 +11,7 @@ import { NodePalette } from "./editor/NodePalette";
 import { PortDataViewer } from "./editor/PortDataViewer";
 import { pickEditorRunTrigger, type RunOptions, useEditor } from "./editor/store";
 import { Logo } from "./Logo";
+import { useCan } from "./permissions";
 import { useToast } from "./ToastProvider";
 import type {
   AiWorkflowDraftResponse,
@@ -134,7 +135,7 @@ export function EditorPage() {
   const [publishSummary, setPublishSummary] = useState<PublishSummary | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const { notify } = useToast();
-  const wsRef = useRef<WebSocket | null>(null);
+  const wsRef = useRef<RunStreamHandle | null>(null);
   const webhookTimerRef = useRef<number | null>(null);
 
   const setManifests = useEditor((s) => s.setManifests);
@@ -147,6 +148,8 @@ export function EditorPage() {
   const selectedId = useEditor((s) => s.selectedId);
   const deleteNode = useEditor((s) => s.deleteNode);
   const duplicateNode = useEditor((s) => s.duplicateNode);
+  const canRun = useCan("workflow:run");
+  const canWrite = useCan("workflow:write");
   const runId = useEditor((s) => s.runId);
   const running = useEditor((s) => s.running);
   const runError = useEditor((s) => s.runError);
@@ -457,25 +460,34 @@ export function EditorPage() {
 
   function connectRunStream(runId: string, targets?: string[]): void {
     startRun(runId, targets);
-    const ws = new WebSocket(runEventsUrl(runId));
-    wsRef.current = ws;
-    ws.onmessage = (event) => {
-      const payload = JSON.parse(event.data as string) as RunEvent;
-      applyRunEvent(payload);
-      if (payload.type === "run_finished") {
-        notify(
-          payload.status === "success"
-            ? "Workflow run succeeded."
-            : `Workflow run ${payload.status ?? "finished"}.`,
-          payload.status === "success" ? "success" : "error",
-        );
-      } else if (payload.type === "run_error") {
-        notify(payload.error ? `Run failed: ${payload.error}` : "Run failed.", "error");
-      }
-    };
-    ws.onclose = () => {
-      wsRef.current = null;
-    };
+    wsRef.current = subscribeToRunEvents(runId, {
+      onMessage: (data) => {
+        const payload = data as RunEvent;
+        applyRunEvent(payload);
+        if (payload.type === "run_finished") {
+          notify(
+            payload.status === "success"
+              ? "Workflow run succeeded."
+              : `Workflow run ${payload.status ?? "finished"}.`,
+            payload.status === "success" ? "success" : "error",
+          );
+        } else if (payload.type === "run_error") {
+          notify(
+            payload.error ? `Run failed: ${payload.error}` : "Run failed.",
+            "error",
+          );
+        }
+      },
+      onReconnecting: (attempt) => {
+        // Don't spam toasts on the first attempt — most drops are 1s blips.
+        if (attempt >= 2) {
+          notify(`Reconnecting to run stream (attempt ${attempt})…`, "info");
+        }
+      },
+      onClosed: () => {
+        wsRef.current = null;
+      },
+    });
   }
 
   async function startWebhookTestRun(
@@ -831,7 +843,7 @@ export function EditorPage() {
               </div>
             )}
           </div>
-          <button
+          {canRun && <button
             className="btn btn-run"
             onClick={() => void run()}
             disabled={running || Boolean(webhookListen) || !hasTrigger}
@@ -851,7 +863,7 @@ export function EditorPage() {
             ) : (
               "▶ Run"
             )}
-          </button>
+          </button>}
           {running && (
             <button
               className="btn btn-danger"
@@ -861,18 +873,18 @@ export function EditorPage() {
               {cancellingRun ? "Stopping…" : "■ Stop"}
             </button>
           )}
-          <button className="btn btn-primary" onClick={() => void save()} disabled={saving}>
+          {canWrite && <button className="btn btn-primary" onClick={() => void save()} disabled={saving}>
             {dirty && <span className="dirty-dot" />}
             {saving ? "Saving…" : "Save draft"}
-          </button>
-          <button
+          </button>}
+          {canWrite && <button
             className="btn"
             onClick={openPublishReview}
             disabled={saving || publishing}
             title="Publish the saved draft as a new production version"
           >
             {publishing ? "Publishing…" : "Publish"}
-          </button>
+          </button>}
         </div>
       </header>
 
@@ -923,7 +935,7 @@ export function EditorPage() {
                 >
                   {cancellingRun ? "Stopping…" : "■ Stop"}
                 </button>
-              ) : (
+              ) : canRun ? (
                 <button
                   type="button"
                   className="canvas-run-btn"
@@ -937,7 +949,7 @@ export function EditorPage() {
                 >
                   ▶ Execute Workflow
                 </button>
-              )}
+              ) : null}
             </div>
             <PortDataViewer />
           </div>

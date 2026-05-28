@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -206,6 +207,13 @@ class Run(Base):
         back_populates="run", cascade="all, delete-orphan"
     )
 
+    # Composite indices backing hot list queries — per-workflow runs feed,
+    # status-based sweeps (retention prune, interrupted-runs cleanup).
+    __table_args__ = (
+        Index("ix_runs_workflow_id_started_at", "workflow_id", "started_at"),
+        Index("ix_runs_status_started_at", "status", "started_at"),
+    )
+
 
 class NodeRun(Base):
     """The result of executing a single node within a run."""
@@ -227,6 +235,11 @@ class NodeRun(Base):
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     run: Mapped[Run] = relationship(back_populates="node_runs")
+
+    # Composite index for fast per-run, per-node lookup during replay/retry.
+    __table_args__ = (
+        Index("ix_node_runs_run_id_node_id", "run_id", "node_id"),
+    )
 
 
 class Artifact(Base):

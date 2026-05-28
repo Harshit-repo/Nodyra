@@ -8,7 +8,10 @@ Sets up the runtime context (``noodle.context.workflow_caller`` and
 """
 
 import asyncio
+import logging
+import uuid
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -49,6 +52,8 @@ from noodle.serialization import (
     serialize_value,
     truncate_serialized_value,
 )
+
+logger = logging.getLogger(__name__)
 
 _active_runs: dict[str, asyncio.Task[None]] = {}
 
@@ -139,12 +144,105 @@ async def _load_workflow_graph(
     return published, pinned
 
 
-async def _call_sub_workflow(workflow_id: str, input_value: Any) -> Any:
+@dataclass(frozen=True)
+class InlineSubWorkflow:
+    """Sentinel returned by the sub-workflow caller asking the parent's
+    runtime to execute the sub in-process — no fresh subprocess spawn.
+
+    Carried by ``_handle_call_workflow`` from the host back to the
+    parent's subprocess via the existing ``call_workflow_response``
+    message (with ``inline_*`` fields). The runtime runs the engine on
+    ``graph`` and completes the awaiting callback with the leaf result,
+    saving one subprocess spawn + the credential resolution and graph
+    load are already done here on the host.
+    """
+
+    graph: dict
+    cache: dict | None
+    targets: list[str] | None
+    sources: list[str]
+
+
+def _has_nested_workflow_call(graph: dict) -> bool:
+    """True if the graph has any ``execute_workflow`` node.
+
+    Inline execution is only safe when the sub doesn't fan out into more
+    sub-workflows: the host's ``call_chain`` ContextVar wouldn't be
+    extended with this sub's id (we never enter the chain-set block on
+    the host for inline subs), so deep cycle detection beyond one level
+    of inlining would break. Falling back to the spawn-fresh path keeps
+    chain tracking correct via the existing mechanism.
+    """
+    nodes = graph.get("nodes") or [] if isinstance(graph, dict) else []
+    return any(
+        isinstance(n, dict) and n.get("type") == "execute_workflow" for n in nodes
+    )
+
+
+def _extract_sub_leaf(
+    sources: set[str],
+    node_status: dict[str, str],
+    node_outputs: dict[str, dict],
+) -> Any:
+    """Extract the leaf-node output(s) from a sub-workflow run.
+
+    Same selection rule used by both execution paths: the "leaf" is any
+    successful node that no edge originates from (i.e. it has no
+    downstream consumers in this graph). One leaf → return its ``main``
+    output; multiple leaves → dict keyed by node id; none → ``None``.
+    """
+    leaves = [
+        nid
+        for nid, status in node_status.items()
+        if status == "success" and nid not in sources
+    ]
+    if len(leaves) == 1:
+        return (node_outputs.get(leaves[0]) or {}).get("main")
+    if leaves:
+        return {nid: (node_outputs.get(nid) or {}).get("main") for nid in leaves}
+    return None
+
+
+async def _call_sub_workflow(
+    workflow_id: str,
+    input_value: Any,
+    *,
+    parent_env_id: str | None = None,
+) -> Any:
     """Implementation of ``noodle.context.workflow_caller`` for the API.
 
     Loads the target workflow's graph, seeds its trigger node with the
-    supplied input, runs it through the engine, and returns the output of its
-    leaf node (or a dict keyed by leaf id when there are several).
+    supplied input, runs it through the engine, and returns the output of
+    its leaf node (or a dict keyed by leaf id when there are several).
+
+    Three execution paths:
+
+    * **Inline-in-parent** (subprocess mode + parent and sub share an env
+      + sub has no nested ``execute_workflow`` nodes) — returns an
+      ``InlineSubWorkflow`` sentinel. The pool's callback handler forwards
+      the prepared graph/cache/targets back to the parent's subprocess,
+      which runs the engine inline and completes the awaiting callback.
+      Zero subprocess spawns, zero round-trips through the host runtime
+      pool. Fastest path for the common pattern (parent → sub on same env).
+    * **Spawn-fresh subprocess** (subprocess mode + different env, OR sub
+      contains ``execute_workflow`` nodes) — dispatches through
+      ``runtime_pool.dispatch_subworkflow`` which spawns a short-lived
+      ``_RuntimeProcess`` for the sub's env outside both pool caps.
+    * **In-process** (tests / ``use_subprocess_runner=False``) — runs on
+      the host's engine + ``node_registry``.
+
+    Cycle detection: the host-side ``call_chain`` ContextVar is
+    inherited by the asyncio task that handles ``call_workflow``
+    callbacks from the subprocess. Detection works for the spawn-fresh
+    and in-process paths because we enter the ``chain_token`` block
+    before invoking the engine. The inline path is restricted to subs
+    with no nested workflow calls (see ``_has_nested_workflow_call``),
+    so chain depth never exceeds one level past where we set it.
+
+    ``parent_env_id`` is supplied by the pool's callback handler so we
+    can detect the inline opportunity; in-process callers (host engine
+    invocations via the ``workflow_caller`` ContextVar) leave it ``None``
+    and always fall through to the spawn-fresh or in-process branches.
     """
     chain = call_chain.get()
     if workflow_id in chain:
@@ -153,6 +251,8 @@ async def _call_sub_workflow(workflow_id: str, input_value: Any) -> Any:
         )
 
     async with SessionLocal() as session:
+        workflow = await session.get(Workflow, workflow_id)
+        sub_env_id = workflow.environment_id if workflow else None
         graph_dict, pinned_cache = await _load_workflow_graph(session, workflow_id)
         graph_dict = await resolve_credential_refs(
             session, graph_dict, workflow_id=workflow_id
@@ -178,24 +278,71 @@ async def _call_sub_workflow(workflow_id: str, input_value: Any) -> Any:
         else None
     )
 
+    # Inline opportunity — see docstring. Returned BEFORE the chain_token
+    # block because the parent's runtime will execute this sub itself; the
+    # restriction to subs without nested workflow calls keeps us from
+    # needing to thread chain state into the subprocess.
+    inline_eligible = (
+        settings.use_subprocess_runner
+        and parent_env_id is not None
+        and parent_env_id == sub_env_id
+        and not _has_nested_workflow_call(graph_dict)
+    )
+    if inline_eligible:
+        logger.info(
+            "sub-workflow inline workflow_id=%s env_id=%s",
+            workflow_id,
+            sub_env_id,
+        )
+        return InlineSubWorkflow(
+            graph=graph_dict,
+            cache=cache or None,
+            targets=sub_targets,
+            sources=sorted(sources),
+        )
+
     chain_token = call_chain.set(chain | {workflow_id})
     try:
+        if settings.use_subprocess_runner:
+            node_status: dict[str, str] = {}
+            node_outputs: dict[str, dict] = {}
+
+            async def collect(event: dict) -> None:
+                if event.get("type") != "node_finished":
+                    return
+                nid = event.get("node_id")
+                if not isinstance(nid, str):
+                    return
+                node_status[nid] = str(event.get("status") or "")
+                outputs = deserialize_value(event.get("outputs"))
+                if isinstance(outputs, dict):
+                    node_outputs[nid] = outputs
+
+            sub_run_id = f"sub_{workflow_id}_{uuid.uuid4().hex[:8]}"
+            logger.info(
+                "sub-workflow spawn workflow_id=%s env_id=%s parent_env_id=%s",
+                workflow_id, sub_env_id, parent_env_id,
+            )
+            await runtime_pool.dispatch_subworkflow(
+                sub_run_id,
+                sub_env_id,
+                graph_dict,
+                cache or None,
+                sub_targets,
+                collect,
+                sub_workflow_caller=_call_sub_workflow,
+            )
+            return _extract_sub_leaf(sources, node_status, node_outputs)
+
+        # In-process fallback for tests / dev. Same leaf rule as above.
         result = await execute(
             graph, node_registry, cache=cache or None, targets=sub_targets
         )
+        node_status = {nid: str(r.status) for nid, r in result.nodes.items()}
+        node_outputs = {nid: dict(r.outputs) for nid, r in result.nodes.items()}
+        return _extract_sub_leaf(sources, node_status, node_outputs)
     finally:
         call_chain.reset(chain_token)
-
-    leaves = [
-        nid
-        for nid, run in result.nodes.items()
-        if run.status == "success" and nid not in sources
-    ]
-    if len(leaves) == 1:
-        return result.nodes[leaves[0]].outputs.get("main")
-    if leaves:
-        return {nid: result.nodes[nid].outputs.get("main") for nid in leaves}
-    return None
 
 
 def _seed_parameters(
@@ -262,6 +409,18 @@ async def start_run(
 
     cache = _seed_parameters(
         graph, cache, parameters, trigger_id=trigger_node_id
+    )
+
+    logger.info(
+        "dispatch workflow_id=%s mode=%s trigger_type=%s trigger_node_id=%s "
+        "targets=%d cache_keys=%s deployment_id=%s",
+        workflow_id,
+        mode,
+        trigger_type,
+        trigger_node_id,
+        len(targets) if targets else 0,
+        list(cache.keys()) if cache else [],
+        deployment_id,
     )
 
     async with SessionLocal() as session:

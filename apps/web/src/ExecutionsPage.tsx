@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
-import { api, runEventsUrl } from "./api";
+import { api, type RunStreamHandle, subscribeToRunEvents } from "./api";
 import { HomeHeader } from "./HomeHeader";
 import type {
   NodeRunResult,
@@ -235,7 +235,7 @@ function RunDetailPanel({
   const [actionPending, setActionPending] = useState<"rerun" | "retry" | null>(
     null,
   );
-  const wsRef = useRef<WebSocket | null>(null);
+  const wsRef = useRef<RunStreamHandle | null>(null);
 
   useEffect(() => {
     setRun(null);
@@ -271,21 +271,24 @@ function RunDetailPanel({
     }
   }
 
-  // Re-fetch on each live event while the run is in flight.
+  // Re-fetch on each live event while the run is in flight. Uses the
+  // shared reconnect helper so transient WebSocket drops are recovered
+  // automatically instead of leaving the panel stuck on stale data.
   useEffect(() => {
     if (!run || run.status !== "running") return;
-    const ws = new WebSocket(runEventsUrl(runId));
-    wsRef.current = ws;
-    ws.onmessage = () => {
-      api
-        .getRun(runId)
-        .then(setRun)
-        .catch(() => {
-          /* keep current state */
-        });
-    };
+    const handle = subscribeToRunEvents(runId, {
+      onMessage: () => {
+        api
+          .getRun(runId)
+          .then(setRun)
+          .catch(() => {
+            /* keep current state */
+          });
+      },
+    });
+    wsRef.current = handle;
     return () => {
-      ws.close();
+      handle.close();
       wsRef.current = null;
     };
   }, [runId, run?.status]);

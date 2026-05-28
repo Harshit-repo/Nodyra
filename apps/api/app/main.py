@@ -33,6 +33,7 @@ from app.routers import (
     workflows,
 )
 from app.services.crypto import verify_token
+from app.services.events import broker_reaper_loop
 from app.services.retention import retention_loop
 from app.services.runner import shutdown_active_runs
 from app.services.runtime_pool import idle_reaper_loop
@@ -141,8 +142,11 @@ async def lifespan(app: FastAPI):
         if settings.use_subprocess_runner and settings.runner_idle_seconds > 0
         else None
     )
+    # Broker reaper: every replica owns its own pub/sub buffer, so it
+    # always runs (independent of the scheduler flag).
+    broker_reaper = asyncio.create_task(broker_reaper_loop())
     yield
-    for task in (scheduler, retention, reaper):
+    for task in (scheduler, retention, reaper, broker_reaper):
         if task is None:
             continue
         task.cancel()

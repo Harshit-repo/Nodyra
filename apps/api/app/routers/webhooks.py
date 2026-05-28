@@ -4,19 +4,52 @@
   webhook node receives while you build a workflow.
 * ``/webhook/{path}`` is the production URL — it dispatches a run of every
   active workflow that starts with a matching webhook node.
+
+Capture buffer: every editor "Listen" session pushes a new path through here,
+so the in-memory ``_captured`` dict used to grow unbounded for the life of
+the API process. It's now bounded two ways: each entry carries a timestamp
+and is evicted after ``WEBHOOK_CAPTURE_TTL_SECONDS``, and the dict is capped
+at ``WEBHOOK_CAPTURE_MAX_ENTRIES`` with oldest-first eviction.
 """
 
 import json
+import logging
+import time
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request, status
 
 from app.services.triggers import dispatch_webhook
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["webhooks"])
 
-_captured: dict[str, dict] = {}
+# Stored as ``(monotonic_seen_at, payload)`` so we can age entries out
+# without paying for a separate timestamp dict.
+_captured: dict[str, tuple[float, dict]] = {}
 _METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
+
+WEBHOOK_CAPTURE_TTL_SECONDS = 5 * 60  # 5 min — typical Listen-then-test loop
+WEBHOOK_CAPTURE_MAX_ENTRIES = 256
+
+
+def _evict_stale(now: float) -> None:
+    """Drop entries older than the TTL. Cheap O(N) scan; N is tiny."""
+    cutoff = now - WEBHOOK_CAPTURE_TTL_SECONDS
+    for path, (seen_at, _payload) in list(_captured.items()):
+        if seen_at < cutoff:
+            _captured.pop(path, None)
+
+
+def _record_capture(path: str, payload: dict) -> None:
+    now = time.monotonic()
+    _evict_stale(now)
+    # If still over cap (every entry fresh), drop the oldest.
+    while len(_captured) >= WEBHOOK_CAPTURE_MAX_ENTRIES:
+        oldest_path = min(_captured, key=lambda p: _captured[p][0])
+        _captured.pop(oldest_path, None)
+    _captured[path] = (now, payload)
 
 
 async def _payload(request: Request) -> dict:
@@ -42,9 +75,13 @@ async def capture_webhook(path: str, request: Request) -> dict:
     apply). Workflow ``active`` is ignored on this path; auth IS still
     checked, so the user can validate their Basic/Header/Query setup."""
     payload = await _payload(request)
-    _captured[path] = payload
+    _record_capture(path, payload)
     run_ids, any_path_matched = await dispatch_webhook(
         path, payload, prefer_draft=True
+    )
+    logger.info(
+        "webhook test path=%s matched=%s runs=%d",
+        path, any_path_matched, len(run_ids),
     )
     if not run_ids and any_path_matched:
         raise HTTPException(
@@ -61,7 +98,9 @@ async def capture_webhook(path: str, request: Request) -> dict:
 @router.get("/webhook-test/{path}/last")
 async def last_webhook(path: str) -> dict | None:
     """Return the most recent request captured for this webhook path."""
-    return _captured.get(path)
+    _evict_stale(time.monotonic())
+    entry = _captured.get(path)
+    return entry[1] if entry is not None else None
 
 
 @router.delete("/webhook-test/{path}/last", status_code=204)
@@ -74,8 +113,12 @@ async def clear_webhook(path: str) -> None:
 async def trigger_webhook(path: str, request: Request) -> dict:
     """Production webhook — dispatch a run of matching active workflows."""
     payload = await _payload(request)
-    _captured[path] = payload
+    _record_capture(path, payload)
     run_ids, any_path_matched = await dispatch_webhook(path, payload)
+    logger.info(
+        "webhook prod path=%s matched=%s runs=%d",
+        path, any_path_matched, len(run_ids),
+    )
     if not run_ids and any_path_matched:
         # Path matched at least one workflow, but every candidate's auth check
         # failed. Surface a clear 401 so the caller knows it wasn't an

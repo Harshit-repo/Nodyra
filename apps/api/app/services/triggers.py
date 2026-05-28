@@ -383,6 +383,13 @@ async def _tick() -> None:
 
         await session.commit()
 
+    if due_workflow or due_deployment:
+        logger.info(
+            "scheduler tick: %d workflow schedule(s), %d deployment(s) due",
+            len(due_workflow),
+            len(due_deployment),
+        )
+
     # Dispatch outside the state transaction; start_run opens its own session.
     for workflow_id, graph, version, version_id, trigger_id in due_workflow:
         await start_run(

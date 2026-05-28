@@ -19,9 +19,16 @@ Protocol — every streamed event includes the originating ``request_id``:
         # subprocess asks the host to run another workflow
         {"type": "call_workflow", "callback_id": "x", "request_id": "abc",
          "workflow_id": "...", "input": ...}
-        # host replies via stdin
+        # host replies via stdin — three response shapes:
         {"type": "call_workflow_response", "callback_id": "x", "result": ...}
         {"type": "call_workflow_error",    "callback_id": "x", "error": "..."}
+        # OR: "run this sub graph yourself in-process, return its leaf as
+        # the result". Sent by the host when the sub shares the parent's
+        # env and contains no nested execute_workflow nodes — avoids a
+        # subprocess spawn + round-trip.
+        {"type": "call_workflow_response", "callback_id": "x",
+         "inline_graph": {...}, "inline_cache": {...} | null,
+         "inline_targets": [...] | null, "inline_sources": [...]}
 
     Terminal:
         {"type": "result", "status": "success" | "error"}
@@ -45,14 +52,23 @@ from noodle.models import WorkflowGraph
 from noodle.sdk import register_module_functions, registry, unregister_module
 from noodle.serialization import deserialize_value, serialize_value
 
+# Capture the REAL stdout BEFORE the engine ever installs its per-node
+# capture proxy on ``sys.stdout`` (Slice 1, for log collection). Writing
+# to the proxy from inside a running node sends the bytes into the node's
+# log buffer instead of out to the host. ``_emit`` needs the protocol
+# stream to always reach the host — including for the ``call_workflow``
+# callback, which fires *inside* an executing node — so we hold a
+# reference to the original stream that bypasses the proxy.
+_PROTOCOL_OUT = sys.stdout
+
 _pending_callbacks: dict[str, asyncio.Future] = {}
 _RUNTIME_DEFAULT_TIMEOUTS = {"http_request": 45.0}
 
 
 def _emit(event: dict) -> None:
-    sys.stdout.write(json.dumps(serialize_value(event)))
-    sys.stdout.write("\n")
-    sys.stdout.flush()
+    _PROTOCOL_OUT.write(json.dumps(serialize_value(event)))
+    _PROTOCOL_OUT.write("\n")
+    _PROTOCOL_OUT.flush()
 
 
 async def _read_line() -> str | None:
@@ -171,9 +187,58 @@ def _resolve_callback(message: dict[str, Any]) -> bool:
         future.set_exception(
             RuntimeError(message.get("error", "remote call_workflow error"))
         )
+    elif "inline_graph" in message:
+        # Inline path — host wants us to run this sub graph ourselves.
+        # Spawn a task so the stdin reader loop keeps draining; the task
+        # completes the future when the inline run finishes.
+        asyncio.create_task(_resolve_inline(future, message))
     else:
         future.set_result(deserialize_value(message.get("result")))
     return True
+
+
+async def _resolve_inline(
+    future: asyncio.Future, message: dict[str, Any]
+) -> None:
+    """Run an inlined sub-workflow graph in this process and complete the
+    awaiting ``execute_workflow`` callback with its leaf result.
+
+    Uses the same engine + ``workflow_caller`` set up for top-level runs,
+    so a nested ``execute_workflow`` node inside the inline graph still
+    round-trips through the host (which then decides spawn vs nested
+    inline based on its own rules — the host restricts inline to subs
+    with no nested calls, so practically this won't recurse).
+    """
+    try:
+        graph = WorkflowGraph.model_validate(message["inline_graph"])
+        cache = deserialize_value(message.get("inline_cache")) or None
+        targets = message.get("inline_targets") or None
+        sources: set[str] = set(message.get("inline_sources") or [])
+        result = await execute(
+            graph,
+            registry,
+            cache=cache,
+            targets=targets,
+            default_timeouts=_RUNTIME_DEFAULT_TIMEOUTS,
+        )
+        leaves = [
+            nid
+            for nid, run in result.nodes.items()
+            if str(run.status) == "success" and nid not in sources
+        ]
+        if len(leaves) == 1:
+            value: Any = result.nodes[leaves[0]].outputs.get("main")
+        elif leaves:
+            value = {
+                nid: result.nodes[nid].outputs.get("main") for nid in leaves
+            }
+        else:
+            value = None
+        if not future.done():
+            future.set_result(value)
+    except Exception as exc:  # noqa: BLE001 - surface to the awaiter
+        if not future.done():
+            future.set_exception(exc)
 
 
 def _needs_host_callbacks(message: dict[str, Any]) -> bool:
