@@ -635,6 +635,12 @@ class QueueStats(BaseModel):
     oldest_queued_age_seconds: float | None = None
 
 
+class DrainRequest(BaseModel):
+    """Toggle the run-queue dispatcher's drain mode."""
+
+    draining: bool
+
+
 class RunTimelineEvent(BaseModel):
     """One ordered event in a run's lifecycle.
 

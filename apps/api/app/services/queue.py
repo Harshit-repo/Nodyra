@@ -29,19 +29,35 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db import SessionLocal
 from app.models import RunQueueEntry
 
 logger = logging.getLogger(__name__)
 
-# Default lease duration. A worker must ``heartbeat`` within this window or the
-# lease is considered lost and the entry is requeued by
-# ``requeue_expired_leases``.
+# Defaults; the *active* values are read from ``settings.queue_*`` at call
+# time (see "Production-readiness gaps" in
+# docs/architecture-improvement-plan.md, item 4). Kept as module constants
+# for back-compat with tests that import them directly.
 DEFAULT_LEASE_SECONDS = 30
-
-# Retry backoff for retryable failures: ``base * 2 ** (attempts - 1)`` capped.
 RETRY_BACKOFF_BASE_SECONDS = 5
 RETRY_BACKOFF_MAX_SECONDS = 300
+
+
+def _lease_seconds(override: int | None = None) -> int:
+    return override if override is not None else settings.queue_lease_seconds
+
+
+def _retry_backoff_base() -> int:
+    return settings.queue_retry_backoff_base_seconds
+
+
+def _retry_backoff_max() -> int:
+    return settings.queue_retry_backoff_max_seconds
+
+
+def _default_max_attempts() -> int:
+    return settings.queue_default_max_attempts
 
 # Orchestration states that are still "live" (occupy the run's single queue slot).
 ACTIVE_STATUSES = ("queued", "leased", "running")
@@ -77,7 +93,7 @@ async def enqueue(
     priority: int = 0,
     environment_id: str | None = None,
     runner_pool_id: str | None = None,
-    max_attempts: int = 3,
+    max_attempts: int | None = None,
     available_at: datetime | None = None,
 ) -> RunQueueEntry:
     """Add a run to the queue, or reset an existing entry for the same run.
@@ -109,7 +125,7 @@ async def enqueue(
         status="queued",
         queue_reason=reason,
         priority=priority,
-        max_attempts=max_attempts,
+        max_attempts=max_attempts if max_attempts is not None else _default_max_attempts(),
         available_at=available_at or _now(None),
     )
     session.add(entry)
@@ -121,7 +137,7 @@ async def lease(
     session: AsyncSession,
     *,
     worker_id: str,
-    lease_seconds: int = DEFAULT_LEASE_SECONDS,
+    lease_seconds: int | None = None,
     now: datetime | None = None,
 ) -> RunQueueEntry | None:
     """Claim the next eligible queued entry for ``worker_id``.
@@ -157,7 +173,7 @@ async def lease(
 
     entry.status = "leased"
     entry.leased_by = worker_id
-    entry.lease_expires_at = moment + timedelta(seconds=lease_seconds)
+    entry.lease_expires_at = moment + timedelta(seconds=_lease_seconds(lease_seconds))
     entry.attempts += 1
     await session.flush()
     return entry
@@ -176,7 +192,7 @@ async def heartbeat(
     session: AsyncSession,
     *,
     run_id: str,
-    lease_seconds: int = DEFAULT_LEASE_SECONDS,
+    lease_seconds: int | None = None,
     now: datetime | None = None,
 ) -> bool:
     """Extend the lease on an active entry. Returns ``False`` if there is no
@@ -184,7 +200,7 @@ async def heartbeat(
     entry = await _get(session, run_id)
     if entry is None or entry.status not in ("leased", "running"):
         return False
-    entry.lease_expires_at = _now(now) + timedelta(seconds=lease_seconds)
+    entry.lease_expires_at = _now(now) + timedelta(seconds=_lease_seconds(lease_seconds))
     return True
 
 
@@ -229,8 +245,8 @@ async def fail(
 
     if retryable and entry.attempts < entry.max_attempts:
         backoff = min(
-            RETRY_BACKOFF_BASE_SECONDS * (2 ** max(entry.attempts - 1, 0)),
-            RETRY_BACKOFF_MAX_SECONDS,
+            _retry_backoff_base() * (2 ** max(entry.attempts - 1, 0)),
+            _retry_backoff_max(),
         )
         entry.status = "queued"
         entry.available_at = moment + timedelta(seconds=backoff)
@@ -399,17 +415,11 @@ async def stats(session: AsyncSession, *, now: datetime | None = None) -> dict:
 # Background dispatch loop
 # ---------------------------------------------------------------------------
 
-# Poll interval for the dispatch loop. Kept short so the local-mode promise
-# ("queued runs become live as soon as capacity frees") holds without operators
-# tuning anything. Each tick is cheap: one indexed SELECT per
-# requeue_expired_leases + lease pair.
+# Defaults used when ``settings`` hasn't been loaded yet (e.g. tooling
+# scripts). The dispatch loop reads from ``settings.queue_*`` at runtime so
+# operators can tune backpressure without code changes.
 DISPATCH_POLL_SECONDS = 1.0
-
-# Cap how many entries one tick will dispatch so a backlog doesn't monopolise
-# the loop and starve heartbeat/requeue work.
 MAX_DISPATCHES_PER_TICK = 25
-
-# How long to wait for an in-flight dispatch task to settle on shutdown.
 DISPATCH_SHUTDOWN_TIMEOUT = 5.0
 
 
@@ -442,7 +452,7 @@ async def run_queue_dispatch_loop() -> None:
 
     try:
         while True:
-            await asyncio.sleep(DISPATCH_POLL_SECONDS)
+            await asyncio.sleep(settings.queue_dispatch_poll_seconds)
             try:
                 async with SessionLocal() as session:
                     requeued = await requeue_expired_leases(session)
@@ -450,7 +460,13 @@ async def run_queue_dispatch_loop() -> None:
                 if requeued:
                     logger.info("queue: requeued %d expired lease(s)", requeued)
 
-                for _ in range(MAX_DISPATCHES_PER_TICK):
+                # Drain mode: keep requeueing expired leases and let in-flight
+                # tasks finish, but stop pulling new work so the process can
+                # exit cleanly without producing avoidable cancelled runs.
+                if settings.queue_drain:
+                    continue
+
+                for _ in range(settings.queue_max_dispatches_per_tick):
                     async with SessionLocal() as session:
                         entry = await lease(session, worker_id=worker)
                         if entry is None:
@@ -469,5 +485,5 @@ async def run_queue_dispatch_loop() -> None:
         # Best-effort drain on shutdown so in-flight runs persist their state.
         if in_flight:
             await asyncio.wait(
-                in_flight, timeout=DISPATCH_SHUTDOWN_TIMEOUT
+                in_flight, timeout=settings.queue_dispatch_shutdown_timeout_seconds
             )

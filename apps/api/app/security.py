@@ -39,6 +39,7 @@ _PERMISSION_MIN_ROLE = {
     "runner_pool:write": "admin",
     "audit:read": "admin",
     "user:manage": "admin",
+    "ops:drain": "admin",
 }
 
 

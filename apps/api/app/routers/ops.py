@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import get_session
 from app.models import Credential, Environment, Run, RunnerPool, Workflow
-from app.schemas import QueueStats, RuntimeModeStatus
+from app.schemas import DrainRequest, QueueStats, RuntimeModeStatus
+from app.security import require_permission
 from app.services import queue as run_queue
 
 router = APIRouter(tags=["ops"])
@@ -89,6 +90,27 @@ async def queue_stats(session: AsyncSession = Depends(get_session)) -> QueueStat
     """
     data = await run_queue.stats(session)
     return QueueStats(**data)
+
+
+@router.get("/ops/drain")
+async def drain_status() -> dict:
+    """Whether the dispatch loop is currently draining (no new leases)."""
+    return {"draining": settings.queue_drain}
+
+
+@router.post(
+    "/ops/drain",
+    dependencies=[Depends(require_permission("ops:drain"))],
+)
+async def set_drain(payload: DrainRequest) -> dict:
+    """Toggle drain mode. While true the dispatch loop stops leasing new
+    queue entries; leased/running entries continue to completion. Used by
+    deploy scripts to drain a replica before sending SIGTERM, avoiding
+    avoidable ``cancelled`` runs (see "Production-readiness gaps" #2 in
+    docs/architecture-improvement-plan.md).
+    """
+    settings.queue_drain = bool(payload.draining)
+    return {"draining": settings.queue_drain}
 
 
 @router.get("/metrics")

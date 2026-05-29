@@ -456,3 +456,21 @@ async def test_replay_rejects_active_entry(session) -> None:
     result = await queue.replay(session, run_id="r1")
     assert result is None
 
+
+
+async def test_lease_uses_config_lease_seconds(session) -> None:
+    from app.config import settings as app_settings
+    from app.services import queue
+
+    original = app_settings.queue_lease_seconds
+    app_settings.queue_lease_seconds = 7
+    try:
+        await queue.enqueue(session, run_id='r-cfg', workflow_id='wf')
+        before = datetime.now(UTC)
+        entry = await queue.lease(session, worker_id='w1')
+        assert entry is not None
+        assert entry.lease_expires_at is not None
+        delta = (entry.lease_expires_at.replace(tzinfo=UTC) if entry.lease_expires_at.tzinfo is None else entry.lease_expires_at) - before
+        assert 5 <= delta.total_seconds() <= 9
+    finally:
+        app_settings.queue_lease_seconds = original

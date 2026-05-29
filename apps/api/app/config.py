@@ -60,6 +60,21 @@ class Settings(BaseSettings):
     # server's local timezone at startup; set explicitly in .env to pin it
     # (e.g. APP_TIMEZONE=Australia/Sydney).
     app_timezone: str = ""
+    # Durable run-queue tuning. These were hard-coded in
+    # ``app.services.queue`` and are surfaced as config so operators can tune
+    # backpressure without code changes (see "Production-readiness gaps" in
+    # docs/architecture-improvement-plan.md, item 4).
+    queue_lease_seconds: int = 30
+    queue_retry_backoff_base_seconds: int = 5
+    queue_retry_backoff_max_seconds: int = 300
+    queue_default_max_attempts: int = 3
+    queue_dispatch_poll_seconds: float = 1.0
+    queue_max_dispatches_per_tick: int = 25
+    queue_dispatch_shutdown_timeout_seconds: float = 5.0
+    # When true, the dispatch loop stops leasing new entries; in-flight
+    # leased runs continue. Set this before shutdown to drain gracefully.
+    queue_drain: bool = False
+
     # Run history retention. The retention loop ticks periodically and drops
     # old runs so the DB stays bounded. 0 disables the corresponding rule.
     run_retention_days: int = 14

@@ -91,3 +91,27 @@ async def test_queue_stats_reflects_queue_entries(client: AsyncClient) -> None:
     assert body["dead_lettered"] == 1
     assert body["oldest_queued_age_seconds"] is not None
     assert body["oldest_queued_age_seconds"] >= 0
+
+
+async def test_drain_status_default_false(client: AsyncClient) -> None:
+    resp = await client.get('/ops/drain')
+    assert resp.status_code == 200
+    assert resp.json() == {'draining': False}
+
+
+async def test_drain_toggle_round_trips(client: AsyncClient) -> None:
+    from app.config import settings as app_settings
+    try:
+        resp = await client.post('/ops/drain', json={'draining': True})
+        assert resp.status_code == 200
+        assert resp.json() == {'draining': True}
+        assert app_settings.queue_drain is True
+
+        resp = await client.get('/ops/drain')
+        assert resp.json() == {'draining': True}
+
+        resp = await client.post('/ops/drain', json={'draining': False})
+        assert resp.json() == {'draining': False}
+        assert app_settings.queue_drain is False
+    finally:
+        app_settings.queue_drain = False
