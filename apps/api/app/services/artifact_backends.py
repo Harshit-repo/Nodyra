@@ -83,6 +83,18 @@ class ArtifactBackend(Protocol):
         of an empty 'directory' to reclaim.
         """
 
+    def upload_from_local(self, artifact: "Artifact", local_path: Path) -> None:
+        """Persist bytes for ``artifact`` from a local file.
+
+        The worker always writes to the host filesystem via
+        ``LocalArtifactStore`` (warm-pool subprocess can't talk to S3 directly
+        without per-worker credentials). The API rehomes those bytes to the
+        configured backend in ``persist_artifact_refs`` by calling this.
+        For ``LocalBackend`` this is a no-op when the file is already in the
+        artifacts dir; remote backends upload and the caller flips
+        ``storage_backend`` on the row.
+        """
+
 
 # --- Local filesystem backend ------------------------------------------------
 
@@ -189,6 +201,10 @@ class LocalBackend:
             pass
         except OSError:
             pass
+
+    def upload_from_local(self, artifact: "Artifact", local_path: Path) -> None:
+        # Bytes are already on the local FS; nothing to do.
+        return None
 
 
 # --- Registry ----------------------------------------------------------------

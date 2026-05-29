@@ -420,3 +420,118 @@ def test_s3_backend_requires_bucket_setting(monkeypatch) -> None:
         S3Backend()
 
 
+
+
+# --- S3 write-path: persist_artifact_refs rehomes local bytes to backend ---
+
+
+async def test_persist_artifact_refs_rehomes_to_configured_backend(
+    client: AsyncClient, monkeypatch
+) -> None:
+    from pathlib import Path as _P
+    from app.services import artifacts as artifacts_svc
+    from app.services.artifact_backends import register_backend, reset_backends_for_tests
+
+    tmp_path = _P(settings.artifacts_dir)
+    monkeypatch.setattr(settings, 'artifact_storage_backend', 'memory')
+    reset_backends_for_tests()
+
+    uploads: list[tuple[str, str]] = []
+
+    class _RehomeBackend:
+        name = 'memory'
+
+        def delete(self, artifacts): pass
+        def open_download(self, artifact): raise FileNotFoundError
+        def signed_url(self, artifact, *, expires_in=300): return None
+        def stats(self): return {'backend': self.name}
+        def delete_run(self, run_id): pass
+
+        def upload_from_local(self, artifact, local_path):
+            uploads.append((artifact.id, str(local_path)))
+
+    register_backend(_RehomeBackend())
+
+    # Stage the local scratch file the worker would have written.
+    run_id = 'r-rehome'
+    node_dir = tmp_path / 'runs' / run_id / 'n1'
+    node_dir.mkdir(parents=True)
+    storage_key = f'runs/{run_id}/n1/aid-payload.bin'
+    local_path = tmp_path / storage_key
+    local_path.write_bytes(b'payload-bytes')
+
+    ref = {
+        '__noodle_artifact__': True,
+        'artifact_id': 'aid',
+        'run_id': run_id,
+        'node_id': 'n1',
+        'name': 'payload.bin',
+        'kind': 'binary',
+        'content_type': 'application/octet-stream',
+        'size_bytes': 13,
+        'storage_backend': 'local',
+        'storage_key': storage_key,
+    }
+    await artifacts_svc.persist_artifact_refs(run_id, [ref])
+
+    assert uploads == [('aid', str(local_path))]
+    assert not local_path.exists(), 'local scratch should be reclaimed after upload'
+
+    # Row was stored with the new backend.
+    async with artifacts_svc.SessionLocal() as session:
+        row = await session.get(Artifact, 'aid')
+        assert row is not None
+        assert row.storage_backend == 'memory'
+
+    reset_backends_for_tests()
+
+
+async def test_persist_artifact_refs_keeps_local_when_upload_fails(
+    client: AsyncClient, monkeypatch
+) -> None:
+    from pathlib import Path as _P
+    from app.services import artifacts as artifacts_svc
+    from app.services.artifact_backends import register_backend, reset_backends_for_tests
+
+    tmp_path = _P(settings.artifacts_dir)
+    monkeypatch.setattr(settings, 'artifact_storage_backend', 'memory')
+    reset_backends_for_tests()
+
+    class _FailingBackend:
+        name = 'memory'
+
+        def delete(self, artifacts): pass
+        def open_download(self, artifact): raise FileNotFoundError
+        def signed_url(self, artifact, *, expires_in=300): return None
+        def stats(self): return {'backend': self.name}
+        def delete_run(self, run_id): pass
+        def upload_from_local(self, artifact, local_path):
+            raise RuntimeError('boom')
+
+    register_backend(_FailingBackend())
+
+    run_id = 'r-fail'
+    storage_key = f'runs/{run_id}/n1/aid-payload.bin'
+    local_path = tmp_path / storage_key
+    local_path.parent.mkdir(parents=True)
+    local_path.write_bytes(b'x')
+
+    ref = {
+        '__noodle_artifact__': True,
+        'artifact_id': 'aid-fail',
+        'run_id': run_id,
+        'node_id': 'n1',
+        'name': 'payload.bin',
+        'storage_backend': 'local',
+        'storage_key': storage_key,
+        'size_bytes': 1,
+    }
+    await artifacts_svc.persist_artifact_refs(run_id, [ref])
+
+    assert local_path.exists(), 'local bytes must be kept when upload fails'
+    async with artifacts_svc.SessionLocal() as session:
+        row = await session.get(Artifact, 'aid-fail')
+        assert row is not None
+        assert row.storage_backend == 'local'
+
+    reset_backends_for_tests()

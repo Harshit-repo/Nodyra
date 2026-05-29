@@ -115,6 +115,8 @@ async def persist_artifact_refs(run_id: str, refs: Iterable[dict[str, Any]]) -> 
     if not unique:
         return
 
+    configured_backend = (settings.artifact_storage_backend or "local").lower()
+
     async with SessionLocal() as session:
         secret_values = await load_secret_values(session)
         existing = set(
@@ -128,11 +130,39 @@ async def persist_artifact_refs(run_id: str, refs: Iterable[dict[str, Any]]) -> 
             if artifact_id in existing:
                 continue
             row = _row_from_ref(ref, run_id, secret_values)
+            local_path: Path | None = None
             if row.storage_backend == "local":
                 try:
-                    path_for_artifact(row)
+                    local_path = path_for_artifact(row)
                 except ValueError:
                     continue
+            # Rehome to the configured backend when it isn't local. Workers
+            # always write to the local FS via LocalArtifactStore (no
+            # per-worker S3 credentials, warm-pool reuse); the API uploads
+            # those bytes here so production deployments keep artifacts in
+            # the durable backend instead of local scratch.
+            if (
+                configured_backend != "local"
+                and row.storage_backend == "local"
+                and local_path is not None
+                and local_path.exists()
+            ):
+                try:
+                    target = get_backend(configured_backend)
+                    row.storage_backend = configured_backend
+                    target.upload_from_local(row, local_path)
+                except Exception:  # noqa: BLE001
+                    # Upload failed; keep the local row so the bytes are
+                    # still served via the local backend rather than losing
+                    # them. The error has already been logged by the backend.
+                    row.storage_backend = "local"
+                else:
+                    # Reclaim local scratch — the durable copy is in the
+                    # configured backend now.
+                    try:
+                        local_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
             session.add(row)
         await session.commit()
 
@@ -172,7 +202,8 @@ async def delete_artifacts_for_run_ids(
 
 def delete_run_artifact_dir(run_id: str) -> None:
     """Reclaim per-run scratch space across all backends."""
-    for backend_name in ("local",):
+    backends = {"local", (settings.artifact_storage_backend or "local").lower()}
+    for backend_name in backends:
         try:
             get_backend(backend_name).delete_run(run_id)
         except KeyError:

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Iterator
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from app.config import settings
@@ -160,6 +161,26 @@ class S3Backend:
                 )
         except Exception:  # noqa: BLE001
             log.exception("S3 delete_run failed for %s", run_id)
+
+    def upload_from_local(self, artifact: "Artifact", local_path: Path) -> None:
+        """Upload bytes written by the worker (local FS) to the S3 bucket.
+
+        Workers cannot write directly to S3 (no per-worker credentials, warm
+        pool reuse) so the API rehomes bytes here. Caller flips
+        ``artifact.storage_backend = "s3"`` and may then delete the local
+        scratch file.
+        """
+        key = self._key(artifact)
+        try:
+            self.client.upload_file(
+                str(local_path),
+                self.bucket,
+                key,
+                ExtraArgs={"ContentType": artifact.content_type},
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("S3 upload failed for %s -> %s", local_path, key)
+            raise
 
 
 def register_s3_backend() -> S3Backend:
