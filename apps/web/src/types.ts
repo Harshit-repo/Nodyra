@@ -65,6 +65,14 @@ export interface WorkflowGraph {
   edges: GraphEdge[];
 }
 
+export interface WorkflowVersionInfo {
+  id: string;
+  version: number;
+  graph: WorkflowGraph;
+  created_at: string;
+  published: boolean;
+}
+
 export interface WorkflowSummary {
   id: string;
   name: string;
@@ -221,6 +229,7 @@ export interface DeploymentCreate {
   workflow_version_id?: string | null;
   error_workflow_id?: string | null;
   error_alerts?: Record<string, unknown>;
+  approve_unsafe_nodes?: boolean;
 }
 
 export interface DeploymentUpdate {
@@ -235,6 +244,7 @@ export interface DeploymentUpdate {
   workflow_version_id?: string | null;
   error_workflow_id?: string | null;
   error_alerts?: Record<string, unknown>;
+  approve_unsafe_nodes?: boolean;
 }
 
 export interface CodeModule {
@@ -319,6 +329,20 @@ export interface CredentialTestResponse {
   details: Record<string, unknown>;
 }
 
+export type AiDraftMode = "draft" | "fix";
+export type AiFixStrategy = "minimal" | "replacement";
+
+export interface AiWorkflowDraftRequest {
+  prompt: string;
+  apply?: boolean;
+  mode?: AiDraftMode;
+  current_graph?: WorkflowGraph;
+  failed_run_id?: string | null;
+  failed_node_id?: string | null;
+  error?: string | null;
+  fix_strategy?: AiFixStrategy;
+}
+
 export interface AiWorkflowDraftResponse {
   workflow_id: string;
   graph: WorkflowGraph;
@@ -326,6 +350,11 @@ export interface AiWorkflowDraftResponse {
   missing_credentials: string[];
   required_packages: string[];
   explanation: string;
+  mode: AiDraftMode;
+  change_summary: string[];
+  confidence: "low" | "medium" | "high";
+  focus_node_id: string | null;
+  planner: "llm" | "deterministic_fallback" | string;
 }
 
 export interface AuditEvent {

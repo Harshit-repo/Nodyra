@@ -93,6 +93,17 @@ def _predecessors(graph: WorkflowGraph) -> dict[str, set[str]]:
 
 
 def _topo_order(graph: WorkflowGraph) -> list[str]:
+    """Return a deterministic topological order of node ids.
+
+    Contract:
+      * Order depends only on edges and node insertion order in ``graph.nodes``.
+      * Canvas position (``GraphNode.position`` / x,y) is never read here and
+        must never influence execution order — the editor may reorder nodes
+        visually without changing semantics.
+      * Among nodes with equal indegree, ties are broken by their index in
+        ``graph.nodes`` (stable insertion order), not by node id.
+    """
+    node_index = {n.id: i for i, n in enumerate(graph.nodes)}
     preds = _predecessors(graph)
     successors: dict[str, set[str]] = defaultdict(set)
     for target, sources in preds.items():
@@ -100,17 +111,20 @@ def _topo_order(graph: WorkflowGraph) -> list[str]:
             successors[source].add(target)
 
     indegree = {nid: len(sources) for nid, sources in preds.items()}
-    ready = sorted(nid for nid, deg in indegree.items() if deg == 0)
+    by_index = lambda nid: node_index[nid]  # noqa: E731
+    ready = sorted(
+        (nid for nid, deg in indegree.items() if deg == 0), key=by_index
+    )
     order: list[str] = []
 
     while ready:
         nid = ready.pop(0)
         order.append(nid)
-        for succ in sorted(successors[nid]):
+        for succ in sorted(successors[nid], key=by_index):
             indegree[succ] -= 1
             if indegree[succ] == 0:
                 ready.append(succ)
-        ready.sort()
+        ready.sort(key=by_index)
 
     if len(order) != len(graph.nodes):
         raise GraphError("Workflow graph has a cycle")

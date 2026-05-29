@@ -11,9 +11,10 @@ import type { DragEvent } from "react";
 import { categoryColor } from "../categories";
 import { CANVAS_STARTERS } from "../workflowTemplates";
 import { NodeCard } from "./NodeCard";
+import { StickyNote } from "./StickyNote";
 import { pickEditorRunTrigger, type NoodleNode, useEditor } from "./store";
 
-const nodeTypes = { noodle: NodeCard };
+const nodeTypes = { noodle: NodeCard, sticky: StickyNote };
 
 function CanvasControls() {
   const { fitView, zoomIn, zoomOut } = useReactFlow();
@@ -22,6 +23,10 @@ function CanvasControls() {
   const running = useEditor((s) => s.running);
   const runHandler = useEditor((s) => s.runHandler);
   const hasTrigger = useEditor((s) => pickEditorRunTrigger(s.nodes) !== null);
+  const undo = useEditor((s) => s.undo);
+  const redo = useEditor((s) => s.redo);
+  const canUndo = useEditor((s) => s._past.length > 0);
+  const canRedo = useEditor((s) => s._future.length > 0);
 
   return (
     <div className="canvas-controls" aria-label="Canvas controls">
@@ -64,10 +69,22 @@ function CanvasControls() {
       >
         ⇥
       </button>
-      <button type="button" title="Undo (coming soon)" aria-label="Undo" disabled>
+      <button
+        type="button"
+        title="Undo (Ctrl+Z)"
+        aria-label="Undo"
+        disabled={!canUndo}
+        onClick={() => undo()}
+      >
         ↶
       </button>
-      <button type="button" title="Redo (coming soon)" aria-label="Redo" disabled>
+      <button
+        type="button"
+        title="Redo (Ctrl+Shift+Z)"
+        aria-label="Redo"
+        disabled={!canRedo}
+        onClick={() => redo()}
+      >
         ↷
       </button>
       <span className="canvas-control-sep" />
@@ -95,6 +112,7 @@ export function Canvas() {
   const loadGraph = useEditor((s) => s.loadGraph);
   const setSelected = useEditor((s) => s.setSelected);
   const openNdv = useEditor((s) => s.openNdv);
+  const autoLayout = useEditor((s) => s.autoLayout);
   const { fitView, screenToFlowPosition } = useReactFlow();
 
   const onDrop = useCallback(
@@ -124,6 +142,36 @@ export function Canvas() {
     return () => window.removeEventListener("noodle:fit-view", onFitView);
   }, [fitView]);
 
+  useEffect(() => {
+    function onAutoLayout(): void {
+      autoLayout();
+      setTimeout(() => { void fitView({ padding: 0.22, duration: 220 }); }, 30);
+    }
+    window.addEventListener("noodle:auto-layout", onAutoLayout);
+    return () => window.removeEventListener("noodle:auto-layout", onAutoLayout);
+  }, [autoLayout, fitView]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent): void {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return;
+      }
+      const meta = e.ctrlKey || e.metaKey;
+      if (!meta) return;
+      const key = e.key.toLowerCase();
+      if (key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        useEditor.getState().undo();
+      } else if ((key === "z" && e.shiftKey) || key === "y") {
+        e.preventDefault();
+        useEditor.getState().redo();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   function applyStarter(templateId: string): void {
     const template = CANVAS_STARTERS.find((item) => item.id === templateId);
     if (!template?.graph) return;
@@ -131,11 +179,17 @@ export function Canvas() {
     window.setTimeout(() => void fitView({ padding: 0.24, duration: 220 }), 30);
   }
 
+  const labeledEdges = edges.map((e) =>
+    e.sourceHandle && e.sourceHandle !== "main" && e.sourceHandle !== "output"
+      ? { ...e, label: e.sourceHandle }
+      : e,
+  );
+
   return (
     <div className="canvas" onDrop={onDrop} onDragOver={onDragOver}>
       <ReactFlow
         nodes={nodes}
-        edges={edges}
+        edges={labeledEdges}
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}

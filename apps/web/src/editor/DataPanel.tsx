@@ -90,6 +90,20 @@ function pretty(value: unknown): string {
   }
 }
 
+function findHtmlPreview(value: unknown): string | null {
+  const display = typedDisplayValue(value);
+  if (!isPlainObject(display)) return null;
+  const mode = String(display.body_format ?? display.content_type ?? "").toLowerCase();
+  for (const key of ["html_preview", "body_html", "html"]) {
+    const candidate = display[key];
+    if (typeof candidate === "string" && candidate.trim()) return candidate;
+  }
+  if (mode.includes("html") && typeof display.body === "string") {
+    return display.body;
+  }
+  return null;
+}
+
 function copyText(text: string): void {
   void navigator.clipboard.writeText(text);
 }
@@ -545,6 +559,18 @@ function DataTable({
   return <pre className="data-json">{JSON.stringify(display, null, 2)}</pre>;
 }
 
+function HtmlPreview({ html }: { html: string }) {
+  return (
+    <div className="html-preview">
+      <iframe
+        title="HTML output preview"
+        sandbox=""
+        srcDoc={html}
+      />
+    </div>
+  );
+}
+
 function VariableExplorer({
   variables,
 }: {
@@ -679,6 +705,8 @@ export function DataPanel({
 }) {
   const display = unwrapSingleOutput(data);
   const canTable = isTableable(display);
+  const htmlPreview = findHtmlPreview(display);
+  const canHtml = Boolean(htmlPreview);
   const hasLogStream = logs !== undefined;
   const hasLogs = hasLogStream && logs.length > 0;
   const hasVariables = Boolean(variables?.length);
@@ -692,29 +720,45 @@ export function DataPanel({
         finishedAt,
       })
     : "";
-  const [view, setView] = useState<"json" | "table" | "logs" | "variables">(
-    canTable ? "table" : "json",
+  const [view, setView] = useState<
+    "json" | "table" | "html" | "logs" | "variables"
+  >(
+    canHtml ? "html" : canTable ? "table" : "json",
   );
   const empty = data === undefined || data === null;
-  let effectiveView: "json" | "table" | "logs" | "variables" = view;
+  let effectiveView: "json" | "table" | "html" | "logs" | "variables" = view;
   if (view === "table" && !canTable) effectiveView = "json";
+  if (view === "html" && !canHtml) effectiveView = canTable ? "table" : "json";
   if (view === "logs" && !hasLogStream) {
-    effectiveView = canTable ? "table" : "json";
+    effectiveView = canHtml ? "html" : canTable ? "table" : "json";
   }
   if (view === "variables" && !hasVariables) {
-    effectiveView = canTable ? "table" : "json";
+    effectiveView = canHtml ? "html" : canTable ? "table" : "json";
   }
 
   useEffect(() => {
     if (error && hasLogStream && empty) setView("logs");
   }, [empty, error, hasLogStream]);
+  useEffect(() => {
+    if (htmlPreview) {
+      setView((current) =>
+        current === "logs" || current === "variables" ? current : "html",
+      );
+    } else {
+      setView((current) =>
+        current === "html" ? (canTable ? "table" : "json") : current,
+      );
+    }
+  }, [canTable, htmlPreview]);
 
   const copyPayload =
     effectiveView === "logs"
       ? executionLog
       : effectiveView === "variables"
         ? pretty(variables ?? [])
-        : pretty(display);
+        : effectiveView === "html"
+          ? htmlPreview ?? ""
+          : pretty(display);
 
   return (
     <section className="ndv-panel">
@@ -744,6 +788,16 @@ export function DataPanel({
           >
             Table
           </button>
+          {canHtml && (
+            <button
+              type="button"
+              className={effectiveView === "html" ? "active" : ""}
+              onClick={() => setView("html")}
+              title="Render HTML output"
+            >
+              HTML
+            </button>
+          )}
           {logs !== undefined && (
             <button
               type="button"
@@ -795,6 +849,8 @@ export function DataPanel({
           <VariableExplorer variables={variables} />
         ) : effectiveView === "logs" ? (
           <pre className="data-json data-logs">{executionLog}</pre>
+        ) : effectiveView === "html" && htmlPreview ? (
+          <HtmlPreview html={htmlPreview} />
         ) : empty ? (
           <p className="ndv-panel-empty muted">
             {emptyMessage ?? "No data yet."}

@@ -102,6 +102,7 @@ interface EditorStore {
   onEdgesChange: (changes: EdgeChange[]) => void;
   onConnect: (connection: Connection) => void;
   addNode: (manifestId: string, position: { x: number; y: number }) => void;
+  addStickyNote: (position: { x: number; y: number }) => void;
   autoLayout: () => void;
   duplicateNode: (id: string) => void;
   updateParams: (id: string, params: Record<string, unknown>) => void;
@@ -139,6 +140,14 @@ interface EditorStore {
   pinned: Record<string, unknown>;
   setPinned: (pinned: Record<string, unknown>) => void;
   setPinnedFor: (nodeId: string, payload: unknown | null) => void;
+
+  // History (undo/redo) — snapshots of {nodes, edges} only. Reset whenever
+  // `loadGraph` is called for a different workflow so undo never crosses
+  // workflow boundaries.
+  _past: Array<{ nodes: NoodleNode[]; edges: Edge[] }>;
+  _future: Array<{ nodes: NoodleNode[]; edges: Edge[] }>;
+  undo: () => void;
+  redo: () => void;
 }
 
 let seq = 0;
@@ -163,6 +172,18 @@ function defaultParams(manifest: NodeManifest): Record<string, unknown> {
 }
 
 const STRUCTURAL = new Set(["position", "remove", "add", "replace"]);
+const HISTORY_LIMIT = 50;
+
+/** Detect when a node/edge change should commit a history entry.
+ *  Position changes only commit on drop (`dragging===false`); everything
+ *  structural always commits.
+ */
+function shouldCommitChanges(changes: Array<{ type: string; dragging?: boolean }>): boolean {
+  return changes.some((c) => {
+    if (c.type === "position") return c.dragging === false;
+    return c.type === "remove" || c.type === "add" || c.type === "replace";
+  });
+}
 
 function cloneParams(params: Record<string, unknown>): Record<string, unknown> {
   try {
@@ -305,7 +326,14 @@ export const useEditor = create<EditorStore>((set, get) => ({
       target: e.target,
       targetHandle: e.target_input,
     }));
-    set({ nodes, edges, selectedId: null, dirty: Boolean(opts?.dirty) });
+    set({
+      nodes,
+      edges,
+      selectedId: null,
+      dirty: Boolean(opts?.dirty),
+      _past: [],
+      _future: [],
+    });
   },
 
   toGraph: () => {
@@ -344,33 +372,56 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
   onNodesChange: (changes) => {
     const structural = changes.some((c) => STRUCTURAL.has(c.type));
+    const commit = shouldCommitChanges(changes as Array<{ type: string; dragging?: boolean }>);
+    const state = get();
     set({
-      nodes: applyNodeChanges(changes, get().nodes),
-      dirty: get().dirty || structural,
+      nodes: applyNodeChanges(changes, state.nodes),
+      dirty: state.dirty || structural,
+      ...(commit
+        ? {
+            _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+            _future: [],
+          }
+        : {}),
     });
   },
 
   onEdgesChange: (changes) => {
     const structural = changes.some((c) => STRUCTURAL.has(c.type));
+    const commit = shouldCommitChanges(changes as Array<{ type: string; dragging?: boolean }>);
+    const state = get();
     set({
-      edges: applyEdgeChanges(changes, get().edges),
-      dirty: get().dirty || structural,
+      edges: applyEdgeChanges(changes, state.edges),
+      dirty: state.dirty || structural,
+      ...(commit
+        ? {
+            _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+            _future: [],
+          }
+        : {}),
     });
   },
 
   onConnect: (connection) => {
-    const kept = get().edges.filter(
+    const state = get();
+    const kept = state.edges.filter(
       (e) =>
         !(
           e.target === connection.target &&
           e.targetHandle === connection.targetHandle
         ),
     );
-    set({ edges: addEdge(connection, kept), dirty: true });
+    set({
+      edges: addEdge(connection, kept),
+      dirty: true,
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
+    });
   },
 
   addNode: (manifestId, position) => {
-    const manifest = get().manifestsById[manifestId];
+    const state = get();
+    const manifest = state.manifestsById[manifestId];
     if (!manifest) return;
     const node: NoodleNode = {
       id: newNodeId(),
@@ -391,11 +442,35 @@ export const useEditor = create<EditorStore>((set, get) => ({
         timeoutSeconds: null,
       },
     };
-    set({ nodes: [...get().nodes, node], selectedId: node.id, dirty: true });
+    set({
+      nodes: [...state.nodes, node],
+      selectedId: node.id,
+      dirty: true,
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
+    });
+  },
+
+  addStickyNote: (position) => {
+    const state = get();
+    const node = {
+      id: newNodeId(),
+      type: "sticky",
+      position,
+      data: { content: "", color: "yellow" },
+    } as unknown as NoodleNode;
+    set({
+      nodes: [...state.nodes, node],
+      selectedId: node.id,
+      dirty: true,
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
+    });
   },
 
   autoLayout: () => {
-    const { nodes, edges } = get();
+    const state = get();
+    const { nodes, edges } = state;
     if (nodes.length === 0) return;
     const positions = layoutPositions(nodes, edges);
     set({
@@ -404,11 +479,14 @@ export const useEditor = create<EditorStore>((set, get) => ({
         position: positions[node.id] ?? node.position,
       })),
       dirty: true,
+      _past: [...state._past, { nodes, edges }].slice(-HISTORY_LIMIT),
+      _future: [],
     });
   },
 
   duplicateNode: (id) => {
-    const source = get().nodes.find((node) => node.id === id);
+    const state = get();
+    const source = state.nodes.find((node) => node.id === id);
     if (!source) return;
     const node: NoodleNode = {
       ...source,
@@ -424,9 +502,11 @@ export const useEditor = create<EditorStore>((set, get) => ({
       },
     };
     set({
-      nodes: [...get().nodes, node],
+      nodes: [...state.nodes, node],
       selectedId: node.id,
       dirty: true,
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
     });
   },
 
@@ -450,6 +530,8 @@ export const useEditor = create<EditorStore>((set, get) => ({
       ),
       edges,
       dirty: true,
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
     });
   },
 
@@ -459,32 +541,44 @@ export const useEditor = create<EditorStore>((set, get) => ({
   openNdv: (id) => set({ ndvOpenId: id, selectedId: id }),
   closeNdv: () => set({ ndvOpenId: null }),
 
-  deleteNode: (id) =>
+  deleteNode: (id) => {
+    const state = get();
     set({
-      nodes: get().nodes.filter((n) => n.id !== id),
-      edges: get().edges.filter((e) => e.source !== id && e.target !== id),
-      selectedId: get().selectedId === id ? null : get().selectedId,
-      ndvOpenId: get().ndvOpenId === id ? null : get().ndvOpenId,
+      nodes: state.nodes.filter((n) => n.id !== id),
+      edges: state.edges.filter((e) => e.source !== id && e.target !== id),
+      selectedId: state.selectedId === id ? null : state.selectedId,
+      ndvOpenId: state.ndvOpenId === id ? null : state.ndvOpenId,
       dirty: true,
-    }),
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
+    });
+  },
 
-  toggleDisabled: (id) =>
+  toggleDisabled: (id) => {
+    const state = get();
     set({
-      nodes: get().nodes.map((n) =>
+      nodes: state.nodes.map((n) =>
         n.id === id
           ? { ...n, data: { ...n.data, disabled: !n.data.disabled } }
           : n,
       ),
       dirty: true,
-    }),
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
+    });
+  },
 
-  updateNodeSettings: (id, patch) =>
+  updateNodeSettings: (id, patch) => {
+    const state = get();
     set({
-      nodes: get().nodes.map((n) =>
+      nodes: state.nodes.map((n) =>
         n.id === id ? { ...n, data: { ...n.data, ...patch } } : n,
       ),
       dirty: true,
-    }),
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
+    });
+  },
 
   setRunHandler: (fn) => set({ runHandler: fn }),
   runFromNode: (id, options = { reuseUpstream: true }) => {
@@ -675,4 +769,31 @@ export const useEditor = create<EditorStore>((set, get) => ({
       }
       return { pinned: next };
     }),
+
+  _past: [],
+  _future: [],
+  undo: () => {
+    const { _past, _future, nodes, edges } = get();
+    if (_past.length === 0) return;
+    const prev = _past[_past.length - 1];
+    set({
+      _past: _past.slice(0, -1),
+      _future: [..._future, { nodes, edges }].slice(-HISTORY_LIMIT),
+      nodes: prev.nodes,
+      edges: prev.edges,
+      dirty: true,
+    });
+  },
+  redo: () => {
+    const { _past, _future, nodes, edges } = get();
+    if (_future.length === 0) return;
+    const next = _future[_future.length - 1];
+    set({
+      _future: _future.slice(0, -1),
+      _past: [..._past, { nodes, edges }].slice(-HISTORY_LIMIT),
+      nodes: next.nodes,
+      edges: next.edges,
+      dirty: true,
+    });
+  },
 }));

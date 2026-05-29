@@ -366,3 +366,259 @@ def test_install_script_quotes_injection() -> None:
     # so the `;` can't break out into a second command.
     assert "'evil; rm -rf /'" in script
     assert "register --api-url http://api --token tok" in script
+
+
+# --- Task 7: runner heartbeats + lease expiry --------------------------------
+
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from app.models import RunQueueEntry
+from app.services.remote_dispatch import dispatcher
+
+
+async def test_mark_stale_runners_offline_marks_and_requeues(client: AsyncClient) -> None:
+    """A runner that hasn't sent a pong in N seconds is marked offline and
+    its in-flight Run + RunQueueEntry are returned to ``queued``."""
+    from app.db import get_session as _get_session
+    override = client._transport.app.dependency_overrides[_get_session]
+
+    # Create pool + an online runner that hasn't been seen in 5 minutes.
+    pool_id = (await client.post(
+        "/runner-pools",
+        json={"name": "p1", "provider": "agent", "provider_config": {}},
+    )).json()["id"]
+
+    workflow_id = (await client.post("/workflows", json={"name": "WF"})).json()["id"]
+
+    runner_id: str | None = None
+    run_id: str | None = None
+    async for session in override():
+        runner = Runner(
+            pool_id=pool_id,
+            name="r-stale",
+            status="online",
+            last_seen_at=datetime.now(UTC) - timedelta(minutes=5),
+            current_runs=1,
+            max_concurrent_runs=1,
+        )
+        session.add(runner)
+        await session.flush()
+        runner_id = runner.id
+
+        run = Run(
+            workflow_id=workflow_id,
+            status="running",
+            runner_id=runner_id,
+            runner_pool_id=pool_id,
+        )
+        session.add(run)
+        await session.flush()
+        run_id = run.id
+
+        entry = RunQueueEntry(
+            run_id=run_id,
+            workflow_id=workflow_id,
+            runner_pool_id=pool_id,
+            status="leased",
+            leased_by="some-worker",
+            lease_expires_at=datetime.now(UTC) + timedelta(minutes=10),
+            attempts=1,
+        )
+        session.add(entry)
+        await session.commit()
+        break
+
+    marked = await dispatcher.mark_stale_runners_offline(offline_after_seconds=60)
+    assert runner_id in marked
+
+    async for session in override():
+        runner = await session.get(Runner, runner_id)
+        assert runner.status == "offline"
+        assert runner.current_runs == 0
+        run = await session.get(Run, run_id)
+        assert run.status == "pending"
+        assert run.runner_id is None
+        entry = await session.scalar(
+            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
+        )
+        assert entry.status == "queued"
+        assert entry.leased_by is None
+        assert entry.lease_expires_at is None
+        assert entry.queue_reason == "runner_offline"
+        assert entry.attempts_log[-1]["event"] == "runner_offline"
+        break
+
+
+async def test_mark_stale_runners_offline_leaves_healthy_alone(client: AsyncClient) -> None:
+    from app.db import get_session as _get_session
+    override = client._transport.app.dependency_overrides[_get_session]
+
+    pool_id = (await client.post(
+        "/runner-pools",
+        json={"name": "p2", "provider": "agent", "provider_config": {}},
+    )).json()["id"]
+
+    runner_id: str | None = None
+    async for session in override():
+        runner = Runner(
+            pool_id=pool_id,
+            name="r-fresh",
+            status="online",
+            last_seen_at=datetime.now(UTC),  # just heard
+            current_runs=0,
+            max_concurrent_runs=1,
+        )
+        session.add(runner)
+        await session.flush()
+        runner_id = runner.id
+        await session.commit()
+        break
+
+    marked = await dispatcher.mark_stale_runners_offline(offline_after_seconds=60)
+    assert runner_id not in marked
+
+    async for session in override():
+        runner = await session.get(Runner, runner_id)
+        assert runner.status == "online"
+        break
+
+
+async def test_mark_stale_runners_handles_never_seen_runner(client: AsyncClient) -> None:
+    """``last_seen_at`` is NULL for an online runner — treat it as offline."""
+    from app.db import get_session as _get_session
+    override = client._transport.app.dependency_overrides[_get_session]
+
+    pool_id = (await client.post(
+        "/runner-pools",
+        json={"name": "p3", "provider": "agent", "provider_config": {}},
+    )).json()["id"]
+
+    runner_id: str | None = None
+    async for session in override():
+        runner = Runner(
+            pool_id=pool_id,
+            name="r-zombie",
+            status="online",
+            last_seen_at=None,
+            current_runs=0,
+            max_concurrent_runs=1,
+        )
+        session.add(runner)
+        await session.flush()
+        runner_id = runner.id
+        await session.commit()
+        break
+
+    marked = await dispatcher.mark_stale_runners_offline(offline_after_seconds=60)
+    assert runner_id in marked
+
+
+async def test_ping_connected_agents_sends_to_each_connection() -> None:
+    """``ping_connected_agents`` walks the in-memory registry without DB IO."""
+    from app.services.remote_dispatch import _AgentConnection
+
+    class _FakeWS:
+        def __init__(self) -> None:
+            self.sent: list[dict] = []
+
+        async def send_text(self, text: str) -> None:
+            import json
+            self.sent.append(json.loads(text))
+
+    ws1 = _FakeWS()
+    ws2 = _FakeWS()
+    conn1 = _AgentConnection(runner_id="r-1", ws=ws1)
+    conn2 = _AgentConnection(runner_id="r-2", ws=ws2)
+    async with dispatcher._lock:
+        dispatcher._agents["r-1"] = conn1
+        dispatcher._agents["r-2"] = conn2
+    try:
+        sent = await dispatcher.ping_connected_agents()
+        assert sent == 2
+        assert ws1.sent[-1]["type"] == "ping"
+        assert ws2.sent[-1]["type"] == "ping"
+    finally:
+        async with dispatcher._lock:
+            dispatcher._agents.pop("r-1", None)
+            dispatcher._agents.pop("r-2", None)
+
+
+
+
+# ---------------------------------------------------------------------------
+# Runner machine details (PATCH + token body)
+# ---------------------------------------------------------------------------
+
+
+async def test_registration_token_accepts_machine_details(client: AsyncClient) -> None:
+    pool_id = (await client.post('/runner-pools', json={'name': 'p'})).json()['id']
+    resp = await client.post(
+        f'/runner-pools/{pool_id}/registration-tokens',
+        json={
+            'name': 'ci-worker-3',
+            'max_concurrent_runs': 8,
+            'capabilities': {'region': 'eu', 'gpu': 'a100'},
+        },
+    )
+    assert resp.status_code == 200
+    runners = (await client.get(f'/runner-pools/{pool_id}/runners')).json()
+    assert len(runners) == 1
+    assert runners[0]['name'] == 'ci-worker-3'
+    assert runners[0]['max_concurrent_runs'] == 8
+    assert runners[0]['capabilities'] == {'region': 'eu', 'gpu': 'a100'}
+
+
+async def test_registration_token_without_body_still_uses_defaults(client: AsyncClient) -> None:
+    pool_id = (await client.post('/runner-pools', json={'name': 'p'})).json()['id']
+    resp = await client.post(f'/runner-pools/{pool_id}/registration-tokens')
+    assert resp.status_code == 200
+    runners = (await client.get(f'/runner-pools/{pool_id}/runners')).json()
+    assert runners[0]['max_concurrent_runs'] == 1
+    assert runners[0]['capabilities'] == {}
+
+
+async def test_patch_runner_updates_editable_fields(client: AsyncClient) -> None:
+    pool_id = (await client.post('/runner-pools', json={'name': 'p'})).json()['id']
+    runner_id = (
+        await client.post(f'/runner-pools/{pool_id}/registration-tokens')
+    ).json()['runner_id']
+
+    resp = await client.patch(
+        f'/runner-pools/{pool_id}/runners/{runner_id}',
+        json={
+            'name': 'renamed',
+            'max_concurrent_runs': 4,
+            'capabilities': {'env': 'prod'},
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body['name'] == 'renamed'
+    assert body['max_concurrent_runs'] == 4
+    assert body['capabilities'] == {'env': 'prod'}
+
+
+async def test_patch_runner_404_for_unknown_runner(client: AsyncClient) -> None:
+    pool_id = (await client.post('/runner-pools', json={'name': 'p'})).json()['id']
+    resp = await client.patch(
+        f'/runner-pools/{pool_id}/runners/no-such',
+        json={'name': 'x'},
+    )
+    assert resp.status_code == 404
+
+
+async def test_patch_runner_404_when_runner_belongs_to_other_pool(client: AsyncClient) -> None:
+    pool_a = (await client.post('/runner-pools', json={'name': 'a'})).json()['id']
+    pool_b = (await client.post('/runner-pools', json={'name': 'b'})).json()['id']
+    runner_id = (
+        await client.post(f'/runner-pools/{pool_a}/registration-tokens')
+    ).json()['runner_id']
+
+    # Path uses pool_b but runner lives in pool_a -> 404.
+    resp = await client.patch(
+        f'/runner-pools/{pool_b}/runners/{runner_id}',
+        json={'name': 'x'},
+    )
+    assert resp.status_code == 404

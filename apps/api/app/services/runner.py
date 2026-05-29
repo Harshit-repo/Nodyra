@@ -22,7 +22,7 @@ from sqlalchemy.orm import selectinload
 import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
 from app.config import settings
 from app.db import SessionLocal
-from app.models import CodeModule, Deployment, NodeRun, PinnedData, Run, Workflow, WorkflowVersion
+from app.models import CodeModule, Deployment, NodeRun, PinnedData, Run, RunQueueEntry, Workflow, WorkflowVersion
 from app.services.artifacts import (
     collect_artifact_refs,
     make_artifact_store,
@@ -41,6 +41,7 @@ from app.services.remote_dispatch import (
     build_env_payload,
     dispatcher,
 )
+from app.services import queue as run_queue
 from app.services.runtime_pool import pool as runtime_pool
 from noodle.context import artifact_store, call_chain, workflow_caller
 from noodle.engine import execute
@@ -464,8 +465,19 @@ async def start_run(
             runner_pool_id=runner_pool_id,
         )
         session.add(run)
-        await session.commit()
+        await session.flush()
         run_id = run.id
+        # Durable queue ledger entry; immediate dispatch happens below so this
+        # only adds latency cost when capacity is unavailable (failure path
+        # transitions the entry back to ``queued`` for the worker to retry).
+        await run_queue.enqueue(
+            session,
+            run_id=run_id,
+            workflow_id=workflow_id,
+            runner_pool_id=runner_pool_id,
+            reason="start_run",
+        )
+        await session.commit()
 
     # Editor "manual" and "test" (test-URL webhook) runs iterate on the
     # draft; any production trigger (webhook, schedule, deployment, error
@@ -524,6 +536,7 @@ async def cancel_run(run_id: str) -> str | None:
         if run.status in ("running", "queued"):
             run.status = "cancelled"
             run.finished_at = datetime.now(UTC)
+            await run_queue.cancel(session, run_id=run_id)
             await session.commit()
             broker.publish(
                 run_id,
@@ -592,6 +605,17 @@ async def _execute_run(
 
     workflow_modules: list[dict] = []
     try:
+        # Mark the durable queue entry as running. Inside the outer try so a
+        # cancel arriving here still routes through the terminal state writer.
+        try:
+            async with SessionLocal() as session:
+                await run_queue.mark_running(session, run_id=run_id)
+                await session.commit()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - queue ledger must never block execution
+            logger.exception("queue mark_running failed run_id=%s", run_id)
+
         try:
             live = await get_live_settings()
             output_cap = live.max_output_bytes
@@ -665,9 +689,29 @@ async def _execute_run(
                             workflow_modules,
                             on_event,
                         )
-                    except _QueuedError:
-                        # Run was queued; do NOT mark it finished here.
-                        # The queue loop will retry when capacity becomes available.
+                    except _QueuedError as queued_exc:
+                        # No runner capacity right now. Reset both ledgers
+                        # to "queued" so the durable queue's dispatch loop
+                        # retries with backoff when capacity frees. If the
+                        # queue has exhausted its retry budget the entry is
+                        # dead-lettered; mirror that onto Run.status="error"
+                        # so the run doesn't appear queued forever.
+                        async with SessionLocal() as session:
+                            entry = await run_queue.fail(
+                                session,
+                                run_id=run_id,
+                                retryable=True,
+                                error=str(queued_exc) or "no runner capacity",
+                            )
+                            run = await session.get(Run, run_id)
+                            if run is not None:
+                                if entry is not None and entry.status == "queued":
+                                    run.status = "queued"
+                                    run.finished_at = None
+                                else:
+                                    run.status = "error"
+                                    run.finished_at = datetime.now(UTC)
+                            await session.commit()
                         _prefer_draft_graphs.reset(prefer_draft_token)
                         return
                 else:
@@ -776,6 +820,19 @@ async def _execute_run(
                         duration_ms=event.get("duration_ms"),
                     )
                 )
+            # Mirror the run outcome onto the durable queue entry so the
+            # queue is the single source of truth for orchestration state.
+            if status == "success":
+                await run_queue.complete(session, run_id=run_id)
+            elif status == "cancelled":
+                await run_queue.cancel(session, run_id=run_id)
+            else:
+                await run_queue.fail(
+                    session,
+                    run_id=run_id,
+                    retryable=False,
+                    error=f"run finished with status={status}",
+                )
             await session.commit()
 
     await persist_artifact_refs(run_id, artifact_refs)
@@ -789,12 +846,13 @@ async def _execute_run(
     _prefer_draft_graphs.reset(prefer_draft_token)
 
 
-async def _execute_queued_run(run_id: str) -> None:
-    """Re-attempt dispatch of a queued run when runner capacity frees up.
+async def _execute_queued_entry(run_id: str) -> None:
+    """Re-attempt dispatch of a queued run after a queue worker leases its entry.
 
     Reloads the run row, recomputes targets from the workflow graph (using
     the same trigger-selection logic as ``start_run``), and delegates to
-    ``_execute_run``. Raises ``_QueuedError`` if still no capacity.
+    ``_execute_run``. ``_execute_run`` handles queue lifecycle transitions
+    (mark_running / complete / fail / cancel) end-to-end.
     """
     async with SessionLocal() as session:
         run = await session.get(Run, run_id)
@@ -804,6 +862,17 @@ async def _execute_queued_run(run_id: str) -> None:
         workflow_id = run.workflow_id
         mode = run.mode
         wf_version_id = run.workflow_version_id
+
+        # Pick up any replay-from-failure seed left by the replay endpoint
+        # before we transition the entry to running.
+        queue_entry = await session.scalar(
+            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
+        )
+        replay_seed: dict | None = (
+            dict(queue_entry.replay_seed) if queue_entry and queue_entry.replay_seed else None
+        )
+        if queue_entry is not None and queue_entry.replay_seed:
+            queue_entry.replay_seed = None  # consumed; don't re-apply on later retries
 
         workflow = await session.scalar(
             select(Workflow)
@@ -816,7 +885,10 @@ async def _execute_queued_run(run_id: str) -> None:
             await session.commit()
             return
 
-        # Pick the version that was originally dispatched if available.
+        # Pick the version that was originally dispatched if available, else
+        # the workflow's draft graph (the editor's working copy) so manual /
+        # test runs replay correctly. Falling back to the latest *published*
+        # version would replay against the wrong graph entirely.
         graph_dict: dict | None = None
         if wf_version_id:
             version_row = await session.scalar(
@@ -825,7 +897,9 @@ async def _execute_queued_run(run_id: str) -> None:
             if version_row:
                 graph_dict = version_row.graph
         if not graph_dict:
-            graph_dict = workflow.versions[-1].graph
+            graph_dict = workflow.draft_graph or (
+                workflow.versions[-1].graph if workflow.versions else None
+            )
 
         if not graph_dict:
             run.status = "error"
@@ -845,6 +919,16 @@ async def _execute_queued_run(run_id: str) -> None:
     trigger_id = (trigger.id if hasattr(trigger, "id") else trigger["id"]) if trigger else None
     targets = resolve_trigger_targets(graph_dict, trigger_id, None) if trigger_id else None
     cache: dict | None = pinned_cache or None
+
+    if replay_seed:
+        seed_cache = replay_seed.get("cache")
+        seed_targets = replay_seed.get("targets")
+        if isinstance(seed_cache, dict) and seed_cache:
+            merged: dict = dict(cache or {})
+            merged.update(seed_cache)
+            cache = merged
+        if isinstance(seed_targets, list) and seed_targets:
+            targets = list(seed_targets)
 
     await _execute_run(
         run_id, workflow_id, graph_dict, targets, cache,

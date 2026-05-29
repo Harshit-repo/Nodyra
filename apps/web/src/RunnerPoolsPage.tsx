@@ -239,6 +239,85 @@ function ProviderConfigFields({
   );
 }
 
+/** Serialize a labels map to lines (``key=value``) for the textarea input. */
+function labelsToText(labels: Record<string, unknown>): string {
+  return Object.entries(labels)
+    .map(([k, v]) => `${k}=${String(v)}`)
+    .join("\n");
+}
+
+/** Parse a ``key=value`` (one per line) textarea back into a labels map.
+ * Blank lines and lines without ``=`` are silently dropped so the field stays
+ * forgiving when the operator pastes in messy YAML-ish input. */
+function parseLabels(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const eq = line.indexOf("=");
+    if (eq < 0) continue;
+    const k = line.slice(0, eq).trim();
+    const v = line.slice(eq + 1).trim();
+    if (k) out[k] = v;
+  }
+  return out;
+}
+
+/** Reusable machine-details panel: friendly name, max concurrent, labels.
+ * Shared by the add-machine, SSH-onboard, and edit-runner dialogs so every
+ * surface that touches a runner row collects the same metadata. */
+function MachineDetailsFields({
+  name,
+  setName,
+  maxConcurrent,
+  setMaxConcurrent,
+  labelsText,
+  setLabelsText,
+  nameLabel = "Machine name",
+  namePlaceholder = "ci-worker-3",
+  nameDesc = "Friendly name shown in the runners list (e.g. host or role).",
+}: {
+  name: string;
+  setName: (v: string) => void;
+  maxConcurrent: string;
+  setMaxConcurrent: (v: string) => void;
+  labelsText: string;
+  setLabelsText: (v: string) => void;
+  nameLabel?: string;
+  namePlaceholder?: string;
+  nameDesc?: string;
+}) {
+  return (
+    <>
+      <TextField
+        label={nameLabel}
+        desc={nameDesc}
+        value={name}
+        onChange={setName}
+        placeholder={namePlaceholder}
+      />
+      <TextField
+        label="Max concurrent runs"
+        desc="How many workflow runs this single machine will accept in parallel."
+        type="number"
+        value={maxConcurrent}
+        onChange={setMaxConcurrent}
+      />
+      <Field
+        label="Labels"
+        desc="Free-form key=value lines (e.g. region=eu, gpu=a100). Used by future label-aware dispatch."
+      >
+        <textarea
+          className="field-input field-textarea"
+          value={labelsText}
+          onChange={(e) => setLabelsText(e.target.value)}
+          placeholder={"region=eu\ngpu=a100"}
+        />
+      </Field>
+    </>
+  );
+}
+
 /** Shared create/edit modal. `pool` set = edit mode (provider is fixed). */
 function PoolDialog({
   pool,
@@ -378,6 +457,9 @@ function SSHOnboardDialog({
   const [passphrase, setPassphrase] = useState("");
   const [apiUrl, setApiUrl] = useState(window.location.origin);
   const [useSystemd, setUseSystemd] = useState(true);
+  const [name, setName] = useState("");
+  const [maxConcurrent, setMaxConcurrent] = useState("1");
+  const [labelsText, setLabelsText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [log, setLog] = useState<string | null>(null);
@@ -387,6 +469,7 @@ function SSHOnboardDialog({
     setBusy(true);
     setError(null);
     try {
+      const labels = parseLabels(labelsText);
       const res = await runnerPoolsApi.sshOnboard(poolId, {
         host: host.trim(),
         port: Number(port) || 22,
@@ -397,6 +480,9 @@ function SSHOnboardDialog({
         passphrase: authMethod === "key" ? passphrase || undefined : undefined,
         api_url: apiUrl.trim() || undefined,
         use_systemd: useSystemd,
+        name: name.trim() || undefined,
+        max_concurrent_runs: Number(maxConcurrent) || 1,
+        capabilities: Object.keys(labels).length ? labels : undefined,
       });
       setLog(res.install_log || "Onboarded.");
       onDone();
@@ -479,6 +565,18 @@ function SSHOnboardDialog({
                 />
                 Install as a systemd service (survives reboot; falls back to nohup)
               </label>
+
+              <MachineDetailsFields
+                name={name}
+                setName={setName}
+                maxConcurrent={maxConcurrent}
+                setMaxConcurrent={setMaxConcurrent}
+                labelsText={labelsText}
+                setLabelsText={setLabelsText}
+                nameLabel="Machine name (optional)"
+                namePlaceholder="ssh-<host>"
+                nameDesc="Defaults to ssh-<host>. Override to give the runner a friendlier name."
+              />
             </>
           )}
         </div>
@@ -501,6 +599,197 @@ function SSHOnboardDialog({
   );
 }
 
+function AddMachineDialog({
+  poolId,
+  onClose,
+  onDone,
+}: {
+  poolId: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [maxConcurrent, setMaxConcurrent] = useState("1");
+  const [labelsText, setLabelsText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [token, setToken] = useState<RegistrationTokenResponse | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const labels = parseLabels(labelsText);
+      const res = await runnerPoolsApi.createRegistrationToken(poolId, {
+        name: name.trim() || undefined,
+        max_concurrent_runs: Number(maxConcurrent) || 1,
+        capabilities: Object.keys(labels).length ? labels : undefined,
+      });
+      setToken(res);
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to mint token");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const installCmd = token
+    ? `pip install noodle-runner
+noodle-runner register \\
+  --api-url ${window.location.origin} \\
+  --token ${token.token} \\
+  --name ${name.trim() || "my-runner"}
+noodle-runner start`
+    : "";
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(installCmd);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard blocked */
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+        <header className="modal-head">
+          <h2>Add a machine to this pool</h2>
+          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+            ✕
+          </button>
+        </header>
+        <div className="modal-body">
+          {error && <p className="error-text">{error}</p>}
+          {token ? (
+            <>
+              <p className="muted">
+                Run the snippet below on the machine you want to register. The
+                token expires{" "}
+                {new Date(token.expires_at).toLocaleString()}.
+              </p>
+              <div className="runner-install">
+                <div className="runner-install-head">
+                  <strong>Install and register</strong>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    onClick={copy}
+                  >
+                    {copied ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+                <pre>{installCmd}</pre>
+              </div>
+            </>
+          ) : (
+            <MachineDetailsFields
+              name={name}
+              setName={setName}
+              maxConcurrent={maxConcurrent}
+              setMaxConcurrent={setMaxConcurrent}
+              labelsText={labelsText}
+              setLabelsText={setLabelsText}
+            />
+          )}
+        </div>
+        <footer className="modal-foot">
+          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+            {token ? "Done" : "Cancel"}
+          </button>
+          {!token && (
+            <button
+              className="btn btn-sm btn-primary"
+              disabled={busy}
+              onClick={submit}
+            >
+              {busy ? "Minting…" : "Mint install token"}
+            </button>
+          )}
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function EditRunnerDialog({
+  poolId,
+  runner,
+  onClose,
+  onSaved,
+}: {
+  poolId: string;
+  runner: RunnerInfo;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(runner.name);
+  const [maxConcurrent, setMaxConcurrent] = useState(
+    String(runner.max_concurrent_runs),
+  );
+  const [labelsText, setLabelsText] = useState(labelsToText(runner.capabilities));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (!name.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await runnerPoolsApi.updateRunner(poolId, runner.id, {
+        name: name.trim(),
+        max_concurrent_runs: Number(maxConcurrent) || 1,
+        capabilities: parseLabels(labelsText),
+      });
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save runner");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+        <header className="modal-head">
+          <h2>Edit {runner.name}</h2>
+          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+            ✕
+          </button>
+        </header>
+        <div className="modal-body">
+          {error && <p className="error-text">{error}</p>}
+          <MachineDetailsFields
+            name={name}
+            setName={setName}
+            maxConcurrent={maxConcurrent}
+            setMaxConcurrent={setMaxConcurrent}
+            labelsText={labelsText}
+            setLabelsText={setLabelsText}
+          />
+        </div>
+        <footer className="modal-foot">
+          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="btn btn-sm btn-primary"
+            disabled={busy || !name.trim()}
+            onClick={submit}
+          >
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
 function PoolCard({
   pool,
   onChanged,
@@ -514,9 +803,8 @@ function PoolCard({
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [sshOpen, setSshOpen] = useState(false);
-  const [token, setToken] = useState<RegistrationTokenResponse | null>(null);
-  const [loadingToken, setLoadingToken] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [editingRunner, setEditingRunner] = useState<RunnerInfo | null>(null);
 
   const loadRunners = useCallback(async () => {
     try {
@@ -529,35 +817,6 @@ function PoolCard({
   useEffect(() => {
     if (expanded) void loadRunners();
   }, [expanded, loadRunners]);
-
-  const generateToken = async () => {
-    setLoadingToken(true);
-    try {
-      setToken(await runnerPoolsApi.createRegistrationToken(pool.id));
-      await loadRunners();
-    } finally {
-      setLoadingToken(false);
-    }
-  };
-
-  const installCmd = token
-    ? `pip install noodle-runner
-noodle-runner register \\
-  --api-url ${window.location.origin} \\
-  --token ${token.token} \\
-  --name my-runner
-noodle-runner start`
-    : "";
-
-  const copyInstall = async () => {
-    try {
-      await navigator.clipboard.writeText(installCmd);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* clipboard blocked */
-    }
-  };
 
   const summary = poolConfigSummary(pool);
   const pillClass =
@@ -623,31 +882,67 @@ noodle-runner start`
           {runners.length === 0 && (
             <p className="muted">No runners registered yet.</p>
           )}
-          {runners.map((r) => (
-            <div key={r.id} className="runner-row">
-              <span>
-                <span className={`status-dot ${r.status}`} />
-                {r.name}
-              </span>
-              <span className="runner-row-meta">
-                {r.current_runs}/{r.max_concurrent_runs} runs ·{" "}
-                {r.cached_env_ids.length} envs ·{" "}
-                {r.last_seen_at
-                  ? new Date(r.last_seen_at).toLocaleString()
-                  : "never seen"}
-              </span>
-            </div>
-          ))}
+          {runners.map((r) => {
+            const labels = Object.entries(r.capabilities || {});
+            return (
+              <div key={r.id} className="runner-row">
+                <span>
+                  <span className={`status-dot ${r.status}`} />
+                  {r.name}
+                </span>
+                <span className="runner-row-meta">
+                  {r.current_runs}/{r.max_concurrent_runs} runs ·{" "}
+                  {r.cached_env_ids.length} envs ·{" "}
+                  {r.last_seen_at
+                    ? new Date(r.last_seen_at).toLocaleString()
+                    : "never seen"}
+                  {labels.length > 0 && (
+                    <>
+                      {" · "}
+                      {labels.map(([k, v]) => (
+                        <span key={k} className="runner-label-pill">
+                          {k}={String(v)}
+                        </span>
+                      ))}
+                    </>
+                  )}
+                  {canWrite && (
+                    <>
+                      {" "}
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-ghost"
+                        onClick={() => setEditingRunner(r)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-ghost"
+                        onClick={async () => {
+                          if (!confirm(`Remove runner "${r.name}"?`)) return;
+                          await runnerPoolsApi.deleteRunner(pool.id, r.id);
+                          await loadRunners();
+                          onChanged();
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </>
+                  )}
+                </span>
+              </div>
+            );
+          })}
 
           {canWrite && pool.provider === "agent" && (
             <div className="pool-onboard-actions">
               <button
                 type="button"
-                className="btn btn-sm"
-                disabled={loadingToken}
-                onClick={generateToken}
+                className="btn btn-sm btn-primary"
+                onClick={() => setAddOpen(true)}
               >
-                {loadingToken ? "Generating…" : "Generate registration token"}
+                + Add machine
               </button>
               <button
                 type="button"
@@ -656,24 +951,6 @@ noodle-runner start`
               >
                 Onboard via SSH
               </button>
-              {token && (
-                <div className="runner-install">
-                  <div className="runner-install-head">
-                    <strong>Install and register a new runner</strong>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-ghost"
-                      onClick={copyInstall}
-                    >
-                      {copied ? "Copied!" : "Copy"}
-                    </button>
-                  </div>
-                  <pre>{installCmd}</pre>
-                  <p className="runner-install-expiry">
-                    Token expires {new Date(token.expires_at).toLocaleString()}
-                  </p>
-                </div>
-              )}
             </div>
           )}
           {pool.provider !== "agent" && (
@@ -704,6 +981,29 @@ noodle-runner start`
           onDone={() => {
             void loadRunners();
             onChanged();
+          }}
+        />
+      )}
+
+      {addOpen && (
+        <AddMachineDialog
+          poolId={pool.id}
+          onClose={() => setAddOpen(false)}
+          onDone={() => {
+            void loadRunners();
+            onChanged();
+          }}
+        />
+      )}
+
+      {editingRunner && (
+        <EditRunnerDialog
+          poolId={pool.id}
+          runner={editingRunner}
+          onClose={() => setEditingRunner(null)}
+          onSaved={() => {
+            setEditingRunner(null);
+            void loadRunners();
           }}
         />
       )}

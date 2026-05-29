@@ -535,3 +535,67 @@ class SystemSetting(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class RunQueueEntry(Base):
+    """A durable queue entry for a run awaiting dispatch.
+
+    This is the production source of truth for *run scheduling and backpressure*.
+    It is distinct from :class:`Run`: ``Run.status`` stays the user-facing run
+    state (``pending``/``running``/``queued``/``success``/``error``/``cancelled``)
+    and is not renamed, while ``RunQueueEntry.status`` is the orchestration state
+    (``queued``/``leased``/``running``/``completed``/``failed``/``dead_lettered``/
+    ``cancelled``). The queue service maps between the two.
+
+    ``run_id`` is unique: a run has at most one live queue entry. Replay/retry
+    resets the existing entry rather than inserting a second one, so the queue
+    can rely on this invariant when leasing.
+    """
+
+    __tablename__ = "run_queue"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("runs.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    workflow_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    environment_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    runner_pool_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Why this run is waiting, for the backpressure UI: e.g.
+    # ``global_concurrency_limit``, ``environment_limit``, ``runner_pool_capacity``,
+    # ``missing_runner``, ``queue_outage``. Empty when freshly enqueued.
+    queue_reason: Mapped[str] = mapped_column(String(40), default="", nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    # When the entry becomes eligible for leasing (retry backoff sets this).
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    leased_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Append-only retry/replay history. Each entry: ``{"attempt": int, "event":
+    # str, "error": str | None, "ts": ISO8601}``. ``event`` is one of
+    # ``failed``/``dead_lettered``/``replay``. Kept on the queue row so the
+    # operations UI can render attempt history without joining a side table.
+    attempts_log: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    # Optional seed used by replay-from-failure: ``{"cache": {node_id: {port: value}},
+    # "targets": [node_id, ...]}``. ``_execute_queued_entry`` merges this onto the
+    # pinned cache and uses ``targets`` instead of the trigger-derived ones.
+    replay_seed: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # Hot path: lease the oldest eligible entry in a status. Index supports the
+    # ``status + available_at`` selection the queue service runs.
+    __table_args__ = (
+        Index("ix_run_queue_status_available_at", "status", "available_at"),
+    )

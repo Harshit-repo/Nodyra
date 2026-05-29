@@ -33,13 +33,14 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
 
+from app.config import settings
 from app.db import SessionLocal
-from app.models import Run, Runner, RunnerPool
+from app.models import Run, Runner, RunnerPool, RunQueueEntry
 from noodle.serialization import serialize_value
 
 logger = logging.getLogger(__name__)
@@ -228,6 +229,114 @@ class RemoteDispatcher:
             except Exception:  # noqa: BLE001
                 pass
         self._agents.clear()
+
+    # ------------------------------------------------------------------
+    # Heartbeat + offline reaper
+    # ------------------------------------------------------------------
+
+    async def ping_connected_agents(self) -> int:
+        """Send a ``ping`` to every connected agent. Returns the count sent.
+
+        Agents reply ``pong`` which the message handler turns into a
+        ``last_seen_at`` write. Failures are tolerated — the ws will surface
+        the disconnect on its own iteration.
+        """
+        async with self._lock:
+            conns = list(self._agents.values())
+        sent = 0
+        for conn in conns:
+            try:
+                await conn.send({"type": "ping"})
+                sent += 1
+            except Exception:  # noqa: BLE001
+                pass
+        return sent
+
+    async def mark_stale_runners_offline(
+        self, *, offline_after_seconds: int
+    ) -> list[str]:
+        """Find runners whose ``last_seen_at`` is older than the threshold,
+        mark them offline, and requeue their in-flight runs.
+
+        Returns the runner ids that were marked offline. Idempotent — runners
+        already offline are skipped, and runs whose queue entry is already in
+        a terminal state are left alone.
+        """
+        threshold = datetime.now(UTC) - timedelta(seconds=offline_after_seconds)
+        marked: list[str] = []
+        async with SessionLocal() as session:
+            stale = (
+                await session.scalars(
+                    select(Runner).where(
+                        Runner.status == "online",
+                        Runner.last_seen_at.is_not(None),
+                        Runner.last_seen_at < threshold,
+                    )
+                )
+            ).all()
+            if not stale:
+                # Also handle the boundary case: status=online but last_seen_at
+                # is NULL (never sent a hello). Treat them as offline so a
+                # zombie row never permanently blocks dispatch.
+                never_seen = (
+                    await session.scalars(
+                        select(Runner).where(
+                            Runner.status == "online",
+                            Runner.last_seen_at.is_(None),
+                        )
+                    )
+                ).all()
+                stale = never_seen
+            for runner in stale:
+                runner.status = "offline"
+                runner.current_runs = 0
+                marked.append(runner.id)
+                # Drop the in-memory connection (if any) so the next assign
+                # call doesn't try to route to a dead socket.
+                async with self._lock:
+                    self._agents.pop(runner.id, None)
+                # Requeue any non-terminal runs assigned to this runner so
+                # another runner in the pool can pick them up. The queue
+                # service is the source of truth — clear the lease and reset
+                # the entry to ``queued``.
+                runs = (
+                    await session.scalars(
+                        select(Run).where(
+                            Run.runner_id == runner.id,
+                            Run.status.in_(("running", "queued", "pending")),
+                        )
+                    )
+                ).all()
+                for run in runs:
+                    entry = await session.scalar(
+                        select(RunQueueEntry).where(RunQueueEntry.run_id == run.id)
+                    )
+                    if entry is None:
+                        continue
+                    if entry.status in ("completed", "failed", "dead_lettered", "cancelled"):
+                        continue
+                    entry.status = "queued"
+                    entry.leased_by = None
+                    entry.lease_expires_at = None
+                    entry.available_at = datetime.now(UTC)
+                    entry.queue_reason = "runner_offline"
+                    log = list(entry.attempts_log or [])
+                    log.append({
+                        "attempt": entry.attempts,
+                        "event": "runner_offline",
+                        "error": f"runner {runner.id} went offline",
+                        "ts": datetime.now(UTC).isoformat(),
+                    })
+                    entry.attempts_log = log
+                    run.status = "pending"
+                    run.runner_id = None
+            await session.commit()
+        if marked:
+            logger.warning(
+                "marked %d runner(s) offline (no heartbeat in %ss): %s",
+                len(marked), offline_after_seconds, marked,
+            )
+        return marked
 
     # ------------------------------------------------------------------
     # Agent provider
@@ -1196,75 +1305,53 @@ class _QueuedError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Queue dispatch background loop
+# Cloud runner idle-terminate background loop
 # ---------------------------------------------------------------------------
 
-async def queue_dispatch_loop() -> None:
-    """Retry queued runs every 30 seconds.
+async def cloud_idle_terminate_loop() -> None:
+    """Periodically terminate idle cloud runners.
 
-    Also triggers idle-terminate of cloud runners on each tick.
+    Run-queue dispatch lives in :mod:`app.services.queue.run_queue_dispatch_loop`
+    now; this loop is the residual non-queue work the old
+    ``queue_dispatch_loop`` did (cleaning up cloud runner instances that have
+    been idle long enough to release).
     """
     dispatcher._reset_loop_state()
     while True:
         await asyncio.sleep(30)
         try:
-            await _dispatch_queued_runs()
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001
-            pass
-        try:
             await dispatcher.idle_terminate_cloud_runners()
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception:  # noqa: BLE001 - never let one tick kill the loop
+            logger.exception("cloud_idle_terminate_loop tick failed")
 
 
-async def _dispatch_queued_runs() -> None:
-    """Attempt to dispatch pending queued runs.
+async def runner_heartbeat_loop() -> None:
+    """Send pings to connected agents and reap unresponsive runners.
 
-    Runs that have sat queued longer than ``_QUEUE_TTL_SECONDS`` are failed
-    with a "queue timeout" rather than retried forever.
+    Single loop so the cadence stays predictable: ping every
+    ``runner_heartbeat_interval_seconds``; after ``runner_offline_after_seconds``
+    of silence a runner is marked offline and its in-flight runs are requeued.
+
+    Disabled when either knob is set to 0 — useful for local dev where agents
+    aren't part of the picture.
     """
-    from app.services.runner import _execute_queued_run  # noqa: PLC0415
-
-    async with SessionLocal() as session:
-        queued = (await session.scalars(
-            select(Run)
-            .where(Run.status == "queued", Run.runner_pool_id.is_not(None))
-            .order_by(Run.started_at.asc())
-            .limit(50)
-        )).all()
-
-    now = datetime.now(UTC)
-    for run in queued:
-        started = run.started_at
-        if started is not None:
-            if started.tzinfo is None:
-                started = started.replace(tzinfo=UTC)
-            if (now - started).total_seconds() >= _QUEUE_TTL_SECONDS:
-                await _fail_queued_run(run.id, "queue timeout — no runner became available")
-                continue
+    interval = max(1, settings.runner_heartbeat_interval_seconds)
+    offline_after = settings.runner_offline_after_seconds
+    if offline_after <= 0:
+        return
+    while True:
+        await asyncio.sleep(interval)
         try:
-            await _execute_queued_run(run.id)
-        except _QueuedError:
-            pass  # Still no capacity — will retry next tick
+            await dispatcher.ping_connected_agents()
+            await dispatcher.mark_stale_runners_offline(
+                offline_after_seconds=offline_after
+            )
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("queued run dispatch error run_id=%s: %s", run.id, exc)
-
-
-async def _fail_queued_run(run_id: str, error: str) -> None:
-    async with SessionLocal() as session:
-        run = await session.get(Run, run_id)
-        if run is None or run.status != "queued":
-            return
-        run.status = "error"
-        run.finished_at = datetime.now(UTC)
-        await session.commit()
-    logger.warning("failed queued run %s: %s", run_id, error)
+        except Exception:  # noqa: BLE001
+            logger.exception("runner_heartbeat_loop tick failed")
 
 
 # Singleton

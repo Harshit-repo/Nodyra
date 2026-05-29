@@ -215,10 +215,14 @@ async def _test_smtp(data: dict[str, str], context: dict[str, Any]) -> dict[str,
     use_tls = _truthy(context.get("use_tls", data.get("use_tls")), default=True)
 
     def connect() -> dict[str, Any]:
-        with smtplib.SMTP(host, port, timeout=10) as smtp:
+        import ssl
+
+        smtp_cls = smtplib.SMTP_SSL if use_tls and port == 465 else smtplib.SMTP
+        with smtp_cls(timeout=10) as smtp:
+            smtp.connect(host, port)
             smtp.ehlo()
-            if use_tls:
-                smtp.starttls()
+            if use_tls and smtp_cls is smtplib.SMTP:
+                smtp.starttls(context=ssl.create_default_context())
                 smtp.ehlo()
             if username or password:
                 smtp.login(username, password)
@@ -341,6 +345,20 @@ _TESTERS: dict[str, TestFn] = {
     "mysql": _test_mysql,
     "aws": _test_aws,
 }
+
+
+def available_test_services() -> list[str]:
+    """Return the credential service ids that have a registered test handler.
+
+    Sorted for stable UI rendering. Consumed by ``GET /credentials/test-handlers``
+    and used by the editor to decide whether to surface a "Test on save" action
+    next to a credential's manifest entry.
+    """
+    return sorted(_TESTERS.keys())
+
+
+def has_test_handler(service: str) -> bool:
+    return service in _TESTERS
 
 
 async def test_credential_connection(

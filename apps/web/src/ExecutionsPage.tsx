@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
-import { api, type RunStreamHandle, subscribeToRunEvents } from "./api";
+import {
+  api,
+  type QueueStats,
+  type RunStreamHandle,
+  type RuntimeModeStatus,
+  type RunTimeline,
+  subscribeToRunEvents,
+} from "./api";
 import { HomeHeader } from "./HomeHeader";
 import type {
   NodeRunResult,
@@ -30,6 +37,168 @@ function formatDuration(startedAt: string, finishedAt: string | null): string {
   const seconds = Math.round((ms % 60000) / 1000);
   return `${minutes}m ${seconds}s`;
 }
+
+function formatAge(seconds: number | null): string {
+  if (seconds === null || seconds === undefined) return "—";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${(seconds / 60).toFixed(1)}m`;
+  return `${(seconds / 3600).toFixed(1)}h`;
+}
+
+function OpsDashboard() {
+  const [runtime, setRuntime] = useState<RuntimeModeStatus | null>(null);
+  const [queue, setQueue] = useState<QueueStats | null>(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function tick() {
+      try {
+        const [r, q] = await Promise.all([api.runtimeMode(), api.queueStats()]);
+        if (cancelled) return;
+        setRuntime(r);
+        setQueue(q);
+        setErr("");
+      } catch (e) {
+        if (!cancelled) setErr(String(e));
+      }
+    }
+    tick();
+    const t = window.setInterval(tick, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(t);
+    };
+  }, []);
+
+  if (err && !runtime && !queue) {
+    return <p className="error-text">Ops: {err}</p>;
+  }
+  if (!runtime || !queue) {
+    return <p className="muted">Loading ops…</p>;
+  }
+
+  const inFlight = queue.leased + queue.running;
+  const oldestLabel = formatAge(queue.oldest_queued_age_seconds);
+  const oldestWarn =
+    queue.oldest_queued_age_seconds !== null &&
+    queue.oldest_queued_age_seconds > 60;
+
+  return (
+    <section className="ops-dash">
+      <div className="ops-cards">
+        <div className="ops-card">
+          <div className="ops-card-label">Queue depth</div>
+          <div className="ops-card-value">{queue.queued}</div>
+          <div className="ops-card-sub">
+            {queue.dead_lettered} dead-lettered · {queue.failed} failed
+          </div>
+        </div>
+        <div className="ops-card">
+          <div className="ops-card-label">Oldest queued</div>
+          <div className={`ops-card-value${oldestWarn ? " warn" : ""}`}>
+            {oldestLabel}
+          </div>
+          <div className="ops-card-sub">
+            {oldestWarn ? "backpressure" : "fresh"}
+          </div>
+        </div>
+        <div className="ops-card">
+          <div className="ops-card-label">In-flight</div>
+          <div className="ops-card-value">{inFlight}</div>
+          <div className="ops-card-sub">
+            {queue.leased} leased · {queue.running} running
+          </div>
+        </div>
+        <div className="ops-card">
+          <div className="ops-card-label">Runtime</div>
+          <div className="ops-card-value small">
+            {runtime.mode}
+            {runtime.allow_insecure ? " (insecure)" : ""}
+          </div>
+          <div className="ops-card-sub">
+            db={runtime.database_dialect} · queue={runtime.queue_backend} ·
+            artifacts={runtime.artifact_backend}
+          </div>
+        </div>
+        <div className="ops-card">
+          <div className="ops-card-label">Topology</div>
+          <div className="ops-card-value small">
+            sched={runtime.scheduler_role} · web={runtime.webhook_role}
+          </div>
+          <div className="ops-card-sub">
+            providers:{" "}
+            {runtime.runner_providers.length
+              ? runtime.runner_providers.join(", ")
+              : "none"}
+          </div>
+        </div>
+      </div>
+      {runtime.warnings.length > 0 && (
+        <ul className="ops-warnings">
+          {runtime.warnings.map((w, i) => (
+            <li key={i}>{w}</li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function RunTimelinePanel({ runId }: { runId: string }) {
+  const [timeline, setTimeline] = useState<RunTimeline | null>(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    setTimeline(null);
+    setErr("");
+    api
+      .runTimeline(runId)
+      .then(setTimeline)
+      .catch((e) => setErr(String(e)));
+  }, [runId]);
+
+  if (err) return <p className="error-text">Timeline: {err}</p>;
+  if (!timeline) return <p className="muted">Loading timeline…</p>;
+  if (timeline.events.length === 0) {
+    return <p className="muted">No timeline events yet.</p>;
+  }
+  return (
+    <ol className="run-timeline">
+      {timeline.events.map((e, i) => {
+        const summary = formatTimelineSummary(e);
+        return (
+          <li key={i} className={`run-timeline-event evt-${e.type}`}>
+            <span className="run-timeline-type">{e.type}</span>
+            {summary && <span className="run-timeline-summary">{summary}</span>}
+            {e.ts && (
+              <span className="run-timeline-ts">
+                {new Date(e.ts).toLocaleTimeString()}
+              </span>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function formatTimelineSummary(e: RunTimelineEvent): string {
+  const d = e.data as Record<string, unknown>;
+  if (typeof d.node_id === "string") {
+    const parts: string[] = [d.node_id as string];
+    if (typeof d.duration_ms === "number") {
+      parts.push(`${d.duration_ms}ms`);
+    }
+    if (typeof d.error === "string") parts.push(d.error as string);
+    return parts.join(" · ");
+  }
+  if (typeof d.attempt === "number") return `attempt ${d.attempt}`;
+  if (typeof d.reason === "string") return d.reason as string;
+  return "";
+}
+
+type RunTimelineEvent = RunTimeline["events"][number];
 
 export function ExecutionsPage() {
   const [params, setParams] = useSearchParams();
@@ -111,6 +280,8 @@ export function ExecutionsPage() {
             {runs && <span className="home-count">{runs.length}</span>}
           </h1>
         </div>
+
+        <OpsDashboard />
 
         <div className="exec-filters">
           <select
@@ -330,6 +501,15 @@ function RunDetailPanel({
               {actionPending === "retry" ? "Starting…" : "↺ Retry from failure"}
             </button>
           )}
+          {run && run.status === "error" && (
+            <a
+              className="btn btn-sm"
+              href={`/workflows/${run.workflow_id}?debug_run=${run.id}`}
+              title="Open this run in the editor with the failed node selected and upstream outputs pinned"
+            >
+              🐞 Debug in editor
+            </a>
+          )}
           <button
             type="button"
             className="btn btn-sm btn-ghost"
@@ -351,6 +531,13 @@ function RunDetailPanel({
             run.node_runs.map((n) => <NodeRunRow key={n.node_id} node={n} />)
           )}
         </div>
+      )}
+
+      {run && (
+        <details className="exec-timeline-wrap">
+          <summary>Lifecycle timeline</summary>
+          <RunTimelinePanel runId={runId} />
+        </details>
       )}
     </aside>
   );

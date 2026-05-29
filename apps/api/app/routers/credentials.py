@@ -15,7 +15,10 @@ from app.schemas import (
 )
 from app.security import require_permission
 from app.services.audit import log_audit
-from app.services.credential_tests import test_credential_connection
+from app.services.credential_tests import (
+    available_test_services,
+    test_credential_connection,
+)
 from app.services.crypto import decrypt_data, encrypt_data
 from app.services.redaction import invalidate_secret_cache
 
@@ -123,6 +126,21 @@ async def _resolve(
         return None
     candidates.sort(key=lambda item: item[0], reverse=True)
     return candidates[0][1]
+
+
+@router.get(
+    "/test-handlers",
+    response_model=list[str],
+    dependencies=[Depends(require_permission("credential:read"))],
+)
+async def list_credential_test_handlers() -> list[str]:
+    """Service ids whose credentials can be validated via ``POST /credentials/{id}/test``.
+
+    The editor reads this to decide whether to surface a "Test connection" action
+    next to a credential whose ``CredentialSpec.test_service`` (or ``type`` fallback)
+    appears in the list. Stable alphabetical order.
+    """
+    return available_test_services()
 
 
 @router.get(

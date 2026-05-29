@@ -3,17 +3,22 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { api, type RunStreamHandle, subscribeToRunEvents } from "./api";
+import { AiDraftModal } from "./AiDraftModal";
 import { Canvas } from "./editor/Canvas";
+import { CommandPalette } from "./editor/CommandPalette";
 import { FunctionsPanel } from "./editor/FunctionsPanel";
 import { Inspector } from "./editor/Inspector";
 import { NodeDetailModal } from "./editor/NodeDetailModal";
 import { NodePalette } from "./editor/NodePalette";
 import { PortDataViewer } from "./editor/PortDataViewer";
+import { WorkflowHistory } from "./editor/WorkflowHistory";
 import { pickEditorRunTrigger, type RunOptions, useEditor } from "./editor/store";
 import { Logo } from "./Logo";
 import { useCan } from "./permissions";
 import { useToast } from "./ToastProvider";
 import type {
+  AiDraftMode,
+  AiFixStrategy,
   AiWorkflowDraftResponse,
   Environment,
   GraphNode,
@@ -126,14 +131,20 @@ export function EditorPage() {
   );
   const [functionsOpen, setFunctionsOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
+  const [aiMode, setAiMode] = useState<AiDraftMode>("draft");
+  const [aiFixStrategy, setAiFixStrategy] = useState<AiFixStrategy>("minimal");
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiPreview, setAiPreview] = useState<AiWorkflowDraftResponse | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
+  const [aiFailedNodeId, setAiFailedNodeId] = useState<string | null>(null);
+  const [aiFailedError, setAiFailedError] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [publishReviewOpen, setPublishReviewOpen] = useState(false);
   const [publishUpdateDeployments, setPublishUpdateDeployments] = useState(false);
   const [publishSummary, setPublishSummary] = useState<PublishSummary | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [cmdOpen, setCmdOpen] = useState(false);
   const { notify } = useToast();
   const wsRef = useRef<RunStreamHandle | null>(null);
   const webhookTimerRef = useRef<number | null>(null);
@@ -206,6 +217,40 @@ export function EditorPage() {
       cancelled = true;
     };
   }, [id, setManifests, loadGraph, clearRun, closeNdv, setWorkflowId, setPinned]);
+
+  // Task 20: Debug in editor. When ExecutionsPage links to
+  // /workflows/<id>?debug_run=<run_id>, load that run's snapshot once the
+  // workflow is ready: rehydrate the graph as it ran, pin every successful
+  // upstream output, and open the failed node so the user can iterate.
+  const openNdv = useEditor((s) => s.openNdv);
+  useEffect(() => {
+    if (!id || status !== "ready") return;
+    const search = new URLSearchParams(window.location.search);
+    const debugRunId = search.get("debug_run");
+    if (!debugRunId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await api.runDebugSnapshot(debugRunId);
+        if (cancelled) return;
+        loadGraph(snap.graph);
+        setPinned(snap.upstream_cache);
+        if (snap.failed_node_id) openNdv(snap.failed_node_id);
+        setMessage(
+          snap.failed_node_id
+            ? `Loaded debug snapshot from run ${debugRunId}. ` +
+                `Failed node "${snap.failed_node_id}" is open; upstream outputs are pinned.`
+            : `Loaded debug snapshot from run ${debugRunId}.`,
+        );
+      } catch (err) {
+        if (cancelled) return;
+        setMessage(`Failed to load debug snapshot: ${String(err)}`);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, status, loadGraph, setPinned, openNdv]);
 
   function stopWebhookListen(): void {
     if (webhookTimerRef.current !== null) {
@@ -293,6 +338,12 @@ export function EditorPage() {
       const draft = await api.aiWorkflowDraft(id, {
         prompt: aiPrompt.trim(),
         apply: false,
+        mode: aiMode,
+        current_graph: aiMode === "fix" ? toGraph() : undefined,
+        failed_run_id: aiMode === "fix" ? runId : undefined,
+        failed_node_id: aiMode === "fix" ? aiFailedNodeId : undefined,
+        error: aiMode === "fix" ? aiFailedError : undefined,
+        fix_strategy: aiFixStrategy,
       });
       setAiPreview(draft);
       notify("AI draft preview ready.", "success");
@@ -334,6 +385,10 @@ export function EditorPage() {
       ([, status]) => status === "error",
     )?.[0];
     const failedError = failedNodeId ? runMetaMap[failedNodeId]?.error : runError;
+    setAiMode("fix");
+    setAiFixStrategy("minimal");
+    setAiFailedNodeId(failedNodeId ?? null);
+    setAiFailedError(failedError ?? null);
     setAiPrompt(
       [
         "Fix this failed workflow run.",
@@ -646,6 +701,11 @@ export function EditorPage() {
         void save();
         return;
       }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCmdOpen(true);
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault();
         void run();
@@ -667,6 +727,16 @@ export function EditorPage() {
         window.dispatchEvent(new Event("noodle:fit-view"));
         return;
       }
+      if (e.shiftKey && e.key.toLowerCase() === "l") {
+        e.preventDefault();
+        window.dispatchEvent(new Event("noodle:auto-layout"));
+        return;
+      }
+      if (e.shiftKey && e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        useEditor.getState().addStickyNote({ x: 200 + Math.random() * 200, y: 200 + Math.random() * 100 });
+        return;
+      }
       if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
         e.preventDefault();
         deleteNode(selectedId);
@@ -680,6 +750,12 @@ export function EditorPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [deleteNode, duplicateNode, environmentId, run, save, selectedId]);
+
+  useEffect(() => {
+    function onOpenShortcuts() { setShortcutsOpen(true); }
+    window.addEventListener("noodle:open-shortcuts", onOpenShortcuts);
+    return () => window.removeEventListener("noodle:open-shortcuts", onOpenShortcuts);
+  }, []);
 
   async function openRuns(): Promise<void> {
     if (!id) return;
@@ -812,6 +888,10 @@ export function EditorPage() {
           <button
             className="btn"
             onClick={() => {
+              setAiMode("draft");
+              setAiFixStrategy("minimal");
+              setAiFailedNodeId(null);
+              setAiFailedError(null);
               setAiPreview(null);
               setAiOpen(true);
             }}
@@ -885,6 +965,13 @@ export function EditorPage() {
           >
             {publishing ? "Publishing…" : "Publish"}
           </button>}
+          <button
+            className="btn"
+            onClick={() => setShowHistory(true)}
+            title="View version history"
+          >
+            History
+          </button>
         </div>
       </header>
 
@@ -960,96 +1047,27 @@ export function EditorPage() {
       {ndvOpenId && <NodeDetailModal nodeId={ndvOpenId} />}
 
       {aiOpen && (
-        <div
-          className="modal-overlay"
-          onClick={() => {
+        <AiDraftModal
+          mode={aiMode}
+          prompt={aiPrompt}
+          preview={aiPreview}
+          busy={aiBusy}
+          fixStrategy={aiFixStrategy}
+          onPromptChange={(value) => {
+            setAiPrompt(value);
+            setAiPreview(null);
+          }}
+          onFixStrategyChange={(value) => {
+            setAiFixStrategy(value);
+            setAiPreview(null);
+          }}
+          onPreview={() => void previewAiDraft()}
+          onApply={() => void applyAiDraft()}
+          onClose={() => {
             setAiOpen(false);
             setAiPreview(null);
           }}
-        >
-          <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
-            <header className="modal-head">
-              <h2>AI workflow draft</h2>
-              <button
-                className="btn btn-sm btn-ghost"
-                onClick={() => {
-                  setAiOpen(false);
-                  setAiPreview(null);
-                }}
-              >
-                ✕
-              </button>
-            </header>
-            <div className="modal-body">
-              <p className="field-desc">
-                Creates a normal editable draft on the canvas. Review credentials
-                and parameters before publishing.
-              </p>
-              <textarea
-                className="field-input field-code"
-                rows={6}
-                value={aiPrompt}
-                onChange={(e) => setAiPrompt(e.target.value)}
-                placeholder="When a GitHub issue is opened, summarize it with OpenAI and post to Slack."
-                spellCheck={false}
-              />
-              {aiPreview && (
-                <div className="ai-preview">
-                  <div className="ai-preview-head">
-                    <strong>{aiPreview.graph.nodes.length} nodes</strong>
-                    <span>{aiPreview.graph.edges.length} connections</span>
-                  </div>
-                  <p>{aiPreview.explanation}</p>
-                  {aiPreview.missing_credentials.length > 0 && (
-                    <p className="error-text">
-                      Missing credentials: {aiPreview.missing_credentials.join(", ")}
-                    </p>
-                  )}
-                  {aiPreview.required_packages.length > 0 && (
-                    <p className="field-desc">
-                      Packages: {aiPreview.required_packages.join(", ")}
-                    </p>
-                  )}
-                  {aiPreview.assumptions.length > 0 && (
-                    <ul className="ai-preview-list">
-                      {aiPreview.assumptions.map((assumption) => (
-                        <li key={assumption}>{assumption}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-            </div>
-            <footer className="modal-foot">
-              <button
-                className="btn btn-ghost"
-                onClick={() => {
-                  setAiOpen(false);
-                  setAiPreview(null);
-                }}
-                disabled={aiBusy}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn"
-                onClick={() => void previewAiDraft()}
-                disabled={aiBusy || !aiPrompt.trim()}
-              >
-                {aiBusy ? "Building..." : "Preview draft"}
-              </button>
-              {aiPreview && (
-                <button
-                  className="btn btn-primary"
-                  onClick={() => void applyAiDraft()}
-                  disabled={aiBusy}
-                >
-                  Apply draft
-                </button>
-              )}
-            </footer>
-          </div>
-        </div>
+        />
       )}
 
       {shortcutsOpen && (
@@ -1083,6 +1101,9 @@ export function EditorPage() {
               <span>Fit view</span>
               <kbd>Shift</kbd>
               <kbd>F</kbd>
+              <span>Auto-layout</span>
+              <kbd>Shift</kbd>
+              <kbd>L</kbd>
               <span>Delete selected node</span>
               <kbd>Delete</kbd>
               <span />
@@ -1204,6 +1225,19 @@ export function EditorPage() {
           }}
         />
       )}
+
+      {showHistory && id && (
+        <WorkflowHistory
+          workflowId={id}
+          onClose={() => setShowHistory(false)}
+          onRestore={(graph) => {
+            loadGraph(graph, { dirty: true });
+            setShowHistory(false);
+          }}
+        />
+      )}
+
+      <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
     </div>
   );
 }

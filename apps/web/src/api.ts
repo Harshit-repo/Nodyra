@@ -2,6 +2,7 @@ import type {
   AuditEvent,
   AuthState,
   ArtifactInfo,
+  AiWorkflowDraftRequest,
   AiWorkflowDraftResponse,
   Credential,
   CredentialTestResponse,
@@ -26,6 +27,7 @@ import type {
   WorkflowGraph,
   WorkflowPublishResponse,
   WorkflowSummary,
+  WorkflowVersionInfo,
 } from "./types";
 
 const BASE = "/api";
@@ -58,6 +60,17 @@ export function onUnauthorized(handler: (() => void) | null): void {
   unauthorizedHandler = handler;
 }
 
+export class ApiError extends Error {
+  status: number;
+  detail: unknown;
+  constructor(status: number, message: string, detail: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
   const baseHeaders: Record<string, string> = {
@@ -76,14 +89,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error("401 Unauthorized");
   }
   if (!resp.ok) {
-    let detail = resp.statusText;
+    let detail: unknown = resp.statusText;
     try {
-      const body = (await resp.json()) as { detail?: string };
-      if (body.detail) detail = body.detail;
+      const body = (await resp.json()) as { detail?: unknown };
+      if (body.detail !== undefined && body.detail !== null) detail = body.detail;
     } catch {
       /* response had no JSON body */
     }
-    throw new Error(`${resp.status} ${detail}`);
+    const message =
+      typeof detail === "string"
+        ? detail
+        : (detail as { message?: string })?.message ?? JSON.stringify(detail);
+    throw new ApiError(resp.status, `${resp.status} ${message}`, detail);
   }
   if (resp.status === 204) return undefined as T;
   return (await resp.json()) as T;
@@ -120,16 +137,20 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  aiWorkflowDraft: (
-    id: string,
-    body: { prompt: string; apply?: boolean },
-  ) =>
+  aiWorkflowDraft: (id: string, body: AiWorkflowDraftRequest) =>
     request<AiWorkflowDraftResponse>(`/workflows/${id}/ai-draft`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
   deleteWorkflow: (id: string) =>
     request<void>(`/workflows/${id}`, { method: "DELETE" }),
+  listWorkflowVersions: (workflowId: string) =>
+    request<WorkflowVersionInfo[]>(`/workflows/${workflowId}/versions`),
+  restoreWorkflowVersion: (workflowId: string, versionId: string) =>
+    request<WorkflowDetail>(`/workflows/${workflowId}`, {
+      method: "PUT",
+      body: JSON.stringify({ restore_version_id: versionId }),
+    }),
 
   listEnvironments: () => request<Environment[]>("/environments"),
   createEnvironment: (body: {
@@ -199,6 +220,25 @@ export const api = {
     request<ArtifactInfo>(`/artifacts/${artifactId}`),
   deleteArtifact: (artifactId: string) =>
     request<void>(`/artifacts/${artifactId}`, { method: "DELETE" }),
+
+  previewExpression: (body: {
+    value: string;
+    json?: unknown;
+    inputs?: Record<string, unknown>;
+    nodes?: Record<string, unknown>;
+  }) =>
+    request<{
+      result: unknown;
+      error: string | null;
+      parts: Array<
+        | { kind: "text"; value: string }
+        | { kind: "expr"; raw: string; value: unknown }
+        | { kind: "error"; raw: string; error: string }
+      >;
+    }>("/expression-preview", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   listRuns: (id: string) => request<RunInfo[]>(`/workflows/${id}/runs`),
   listAllRuns: (filters: {
     workflow_id?: string;
@@ -379,7 +419,62 @@ export const api = {
     request<void>(`/workflows/${workflowId}/pinned/${nodeId}`, {
       method: "DELETE",
     }),
+  // --- Ops dashboard --------------------------------------------------------
+  runtimeMode: () => request<RuntimeModeStatus>("/ops/runtime-mode"),
+  queueStats: () => request<QueueStats>("/ops/queue"),
+  runTimeline: (runId: string) => request<RunTimeline>(`/runs/${runId}/timeline`),
+  runDebugSnapshot: (runId: string) =>
+    request<RunDebugSnapshot>(`/runs/${runId}/debug-snapshot`),
 };
+
+// --- Ops dashboard types -----------------------------------------------------
+
+export interface RuntimeModeStatus {
+  mode: string;
+  database_dialect: string;
+  queue_backend: string;
+  scheduler_role: string;
+  webhook_role: string;
+  artifact_backend: string;
+  runner_providers: string[];
+  allow_insecure: boolean;
+  warnings: string[];
+}
+
+export interface QueueStats {
+  queued: number;
+  leased: number;
+  running: number;
+  completed: number;
+  failed: number;
+  dead_lettered: number;
+  cancelled: number;
+  oldest_queued_age_seconds: number | null;
+}
+
+export interface RunTimelineEvent {
+  type: string;
+  ts: string | null;
+  data: Record<string, unknown>;
+}
+
+export interface RunTimeline {
+  run_id: string;
+  status: string;
+  events: RunTimelineEvent[];
+}
+
+export interface RunDebugSnapshot {
+  run_id: string;
+  workflow_id: string;
+  workflow_version: number | null;
+  workflow_version_id: string | null;
+  status: string;
+  graph: WorkflowGraph;
+  failed_node_id: string | null;
+  upstream_cache: Record<string, unknown>;
+  node_errors: Record<string, string>;
+}
 
 export function runEventsUrl(runId: string): string {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -502,9 +597,31 @@ export const runnerPoolsApi = {
   deleteRunner: (poolId: string, runnerId: string) =>
     request<void>(`/runner-pools/${poolId}/runners/${runnerId}`, { method: "DELETE" }),
 
-  createRegistrationToken: (poolId: string) =>
+  updateRunner: (
+    poolId: string,
+    runnerId: string,
+    body: {
+      name?: string;
+      max_concurrent_runs?: number;
+      capabilities?: Record<string, unknown>;
+    },
+  ) =>
+    request<RunnerInfo>(`/runner-pools/${poolId}/runners/${runnerId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  createRegistrationToken: (
+    poolId: string,
+    body?: {
+      name?: string;
+      max_concurrent_runs?: number;
+      capabilities?: Record<string, unknown>;
+    },
+  ) =>
     request<RegistrationTokenResponse>(`/runner-pools/${poolId}/registration-tokens`, {
       method: "POST",
+      body: body ? JSON.stringify(body) : undefined,
     }),
 
   sshOnboard: (
@@ -518,6 +635,8 @@ export const runnerPoolsApi = {
       private_key?: string;
       passphrase?: string;
       name?: string;
+      max_concurrent_runs?: number;
+      capabilities?: Record<string, unknown>;
       api_url?: string;
       use_systemd?: boolean;
     }

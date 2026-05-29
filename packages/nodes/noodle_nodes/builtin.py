@@ -5,6 +5,9 @@ A node has a single wired data input (triggers have none), config parameters
 edited in the inspector, and one or more named outputs.
 """
 
+import base64
+import hashlib
+import hmac
 import json
 from types import ModuleType
 from typing import Any
@@ -143,6 +146,36 @@ def webhook_trigger(
     return {}
 
 
+@node(name="Error Trigger", id="error_trigger", category="Triggers", icon="alert",
+      inputs=[], params={
+          "error": {
+              "description": (
+                  "Sample error payload for testing an error workflow. Production "
+                  "error workflows receive the failing workflow/run/node context."
+              ),
+          },
+      })
+def error_trigger(error: dict | None = None) -> dict:
+    """Start an error-handling workflow with normalized failure context."""
+    raw = error or {}
+    if isinstance(raw, dict):
+        message = raw.get("message") or raw.get("error") or "Workflow failed"
+        return {
+            "message": str(message),
+            "node_id": raw.get("node_id"),
+            "workflow_id": raw.get("workflow_id"),
+            "run_id": raw.get("run_id"),
+            "raw": raw,
+        }
+    return {
+        "message": str(raw),
+        "node_id": None,
+        "workflow_id": None,
+        "run_id": None,
+        "raw": raw,
+    }
+
+
 # ==========================================================================
 # Logic — branching and merging
 # ==========================================================================
@@ -214,6 +247,45 @@ def merge_node(input_a: Any = None, input_b: Any = None, mode: str = "append") -
         elif value is not None:
             merged.append(value)
     return merged
+
+
+@node(name="Loop Over Items", id="loop_over_items", category="Logic", icon="repeat",
+      outputs=["item", "done"], params={
+          "max_items": {
+              "description": "Optional maximum number of items to emit (0 = all).",
+          },
+      })
+def loop_over_items(input: Any = None, max_items: int = 0) -> dict:
+    """Fan a list into an item branch and a done summary branch.
+
+    Noodle's current DAG engine executes a node once per run rather than once
+    per item. This node therefore emits the selected items as a list on the
+    ``item`` output while also emitting a completion summary on ``done``. It is
+    the UI/runtime-compatible foundation for n8n-style loop authoring.
+    """
+    items = _as_list(input)
+    limit = int(max_items or 0)
+    if limit > 0:
+        items = items[:limit]
+    return {"item": items, "done": {"items": items, "count": len(items)}}
+
+
+@node(name="Stop And Error", id="stop_and_error", category="Logic", icon="alert",
+      params={
+          "message": {
+              "placeholder": "Workflow stopped intentionally",
+              "description": "Error message shown on the failed node/run.",
+          },
+      })
+def stop_and_error(input: Any = None, message: str = "Workflow stopped intentionally") -> Any:
+    """Intentionally fail the workflow, similar to n8n's Stop And Error node."""
+    if isinstance(input, dict) and not message:
+        message = str(
+            input.get("message")
+            or input.get("error")
+            or "Workflow stopped intentionally"
+        )
+    raise RuntimeError(message or "Workflow stopped intentionally")
 
 
 # ==========================================================================
@@ -503,6 +575,149 @@ def http_request(input: Any = None, url: str = "", method: str = "GET",
             label = f"{label} {reason}"
         raise RuntimeError(f"{label} from {url}: {detail}")
     return payload
+
+
+@node(name="GraphQL Request", id="graphql_request", category="Transform", icon="globe", params={
+    "url": {"placeholder": "https://api.example.com/graphql"},
+    "query": {"multiline": True, "description": "GraphQL query or mutation."},
+    "variables": {"description": "GraphQL variables object.", "key_value": True},
+    "headers": {"description": "Request headers.", "key_value": True},
+})
+def graphql_request(
+    input: Any = None,
+    url: str = "",
+    query: str = "",
+    variables: dict | None = None,
+    headers: dict | None = None,
+) -> Any:
+    """Execute a GraphQL query/mutation over HTTP POST."""
+    import requests
+
+    if not url:
+        raise ValueError("graphql_request: url is required")
+    if not query:
+        raise ValueError("graphql_request: query is required")
+    request_variables = (
+        variables if variables is not None else (input if isinstance(input, dict) else {})
+    )
+    response = requests.request(
+        "POST",
+        url,
+        headers=headers or None,
+        json={"query": query, "variables": request_variables},
+        timeout=30,
+    )
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = response.text
+    if response.status_code >= 400:
+        detail = payload if isinstance(payload, str) else json.dumps(payload, default=str)
+        raise RuntimeError(f"HTTP {response.status_code} from {url}: {detail}")
+    if isinstance(payload, dict) and payload.get("errors"):
+        errors = json.dumps(payload["errors"], default=str)
+        raise RuntimeError(f"GraphQL errors from {url}: {errors}")
+    return payload
+
+
+@node(
+    name="Respond to Webhook",
+    id="respond_to_webhook",
+    category="Transform",
+    icon="webhook",
+    params={
+        "status_code": {"description": "HTTP status code for the webhook response."},
+        "headers": {"description": "Response headers.", "key_value": True},
+        "body_field": {
+            "placeholder": "payload",
+            "description": (
+                "Optional field to read from an object input; blank returns the whole input."
+            ),
+        },
+    },
+)
+def respond_to_webhook(
+    input: Any = None,
+    status_code: int = 200,
+    headers: dict | None = None,
+    body_field: str = "",
+) -> dict:
+    """Shape the HTTP response body/status for a webhook-triggered workflow."""
+    body = input.get(body_field, input) if body_field and isinstance(input, dict) else input
+    return {"status_code": int(status_code), "headers": headers or {}, "body": body}
+
+
+_JWT_ALGORITHMS = {
+    "HS256": hashlib.sha256,
+    "HS384": hashlib.sha384,
+    "HS512": hashlib.sha512,
+}
+
+
+def _b64url_encode(payload: bytes) -> str:
+    return base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(payload: str) -> bytes:
+    padding = "=" * (-len(payload) % 4)
+    return base64.urlsafe_b64decode((payload + padding).encode("ascii"))
+
+
+@node(name="JWT", id="jwt", category="Transform", icon="key", params={
+    "operation": {"choices": ["sign", "verify", "decode"]},
+    "secret": {"description": "HMAC secret for sign/verify. Not required for decode."},
+    "algorithm": {"choices": ["HS256", "HS384", "HS512"]},
+})
+def jwt_node(
+    input: Any = None,
+    operation: str = "decode",
+    secret: str = "",
+    algorithm: str = "HS256",
+) -> Any:
+    """Sign, verify, or decode HMAC JWTs without external dependencies."""
+    if algorithm not in _JWT_ALGORITHMS:
+        raise ValueError(f"unsupported JWT algorithm {algorithm!r}")
+    if operation == "sign":
+        claims = input if isinstance(input, dict) else {"value": input}
+        header = {"typ": "JWT", "alg": algorithm}
+        signing_input = ".".join(
+            [
+                _b64url_encode(json.dumps(header, separators=(",", ":")).encode("utf-8")),
+                _b64url_encode(
+                    json.dumps(claims, separators=(",", ":"), default=str).encode("utf-8")
+                ),
+            ]
+        )
+        digest = hmac.new(
+            secret.encode("utf-8"),
+            signing_input.encode("ascii"),
+            _JWT_ALGORITHMS[algorithm],
+        ).digest()
+        return f"{signing_input}.{_b64url_encode(digest)}"
+
+    if not isinstance(input, str):
+        raise ValueError("jwt: input must be a token string for decode/verify")
+    parts = input.split(".")
+    if len(parts) != 3:
+        raise ValueError("jwt: token must have header.payload.signature")
+    header = json.loads(_b64url_decode(parts[0]))
+    payload = json.loads(_b64url_decode(parts[1]))
+    if operation == "verify":
+        token_algorithm = header.get("alg") or algorithm
+        if token_algorithm not in _JWT_ALGORITHMS:
+            raise ValueError(f"unsupported JWT algorithm {token_algorithm!r}")
+        signing_input = f"{parts[0]}.{parts[1]}"
+        expected = hmac.new(
+            secret.encode("utf-8"),
+            signing_input.encode("ascii"),
+            _JWT_ALGORITHMS[token_algorithm],
+        ).digest()
+        actual = _b64url_decode(parts[2])
+        if not hmac.compare_digest(expected, actual):
+            raise ValueError("jwt: signature verification failed")
+    elif operation != "decode":
+        raise ValueError(f"unknown JWT operation {operation!r}")
+    return {**payload, "header": header}
 
 
 @node(name="Date & Time", id="datetime", category="Transform", icon="calendar", params={

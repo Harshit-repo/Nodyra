@@ -29,6 +29,7 @@ from app.config import settings
 from app.db import SessionLocal, get_session
 from app.models import Artifact, Run, RunBatch, Runner, RunnerPool, Workflow, WorkflowVersion
 from app.schemas import (
+    RegistrationTokenRequest,
     RegistrationTokenResponse,
     RunBatchCreate,
     RunBatchInfo,
@@ -36,6 +37,7 @@ from app.schemas import (
     RunnerPoolCreate,
     RunnerPoolInfo,
     RunnerPoolUpdate,
+    RunnerUpdate,
     SSHOnboardRequest,
     SSHOnboardResponse,
 )
@@ -217,6 +219,39 @@ async def delete_runner(
     await session.commit()
 
 
+@router.patch(
+    "/{pool_id}/runners/{runner_id}",
+    response_model=RunnerInfo,
+    dependencies=[Depends(require_permission("runner_pool:write"))],
+)
+async def update_runner(
+    pool_id: str,
+    runner_id: str,
+    body: RunnerUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> RunnerInfo:
+    """Update editable machine metadata for a registered runner.
+
+    Useful after the agent has self-registered with the default placeholder
+    name so the operator can rename it ("ci-worker-3"), tune its concurrency,
+    or attach labels (``{"region": "eu", "gpu": "a100"}``) used by future
+    label-aware dispatch policies.
+    """
+    runner = await session.get(Runner, runner_id)
+    if runner is None or runner.pool_id != pool_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Runner not found")
+    if body.name is not None:
+        runner.name = body.name
+    if body.max_concurrent_runs is not None:
+        runner.max_concurrent_runs = body.max_concurrent_runs
+    if body.capabilities is not None:
+        runner.capabilities = body.capabilities
+    runner.updated_at = datetime.now(UTC)
+    await session.commit()
+    await session.refresh(runner)
+    return _runner_info(runner)
+
+
 # ---------------------------------------------------------------------------
 # Registration token
 # ---------------------------------------------------------------------------
@@ -229,9 +264,14 @@ async def delete_runner(
 )
 async def create_registration_token(
     pool_id: str,
+    body: RegistrationTokenRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> RegistrationTokenResponse:
     """Generate a one-time registration token for a new agent runner.
+
+    The optional body lets the operator capture machine details (name, max
+    concurrent runs, free-form capability labels) up-front so the placeholder
+    row is already populated when the agent connects.
 
     The agent uses this token to connect to /ws/runners/{runner_id} and
     authenticate. On first connect, the API hashes and stores the token.
@@ -240,10 +280,13 @@ async def create_registration_token(
     if pool is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Runner pool not found")
 
+    body = body or RegistrationTokenRequest()
     runner = Runner(
         pool_id=pool_id,
-        name=f"runner-{pool.name[:20]}",
+        name=(body.name or f"runner-{pool.name[:20]}"),
         status="offline",
+        max_concurrent_runs=body.max_concurrent_runs or 1,
+        capabilities=body.capabilities or {},
     )
     session.add(runner)
     await session.commit()
@@ -297,7 +340,13 @@ async def ssh_onboard(
         )
 
     name = body.name or f"ssh-{body.host}"
-    runner = Runner(pool_id=pool_id, name=name, status="offline")
+    runner = Runner(
+        pool_id=pool_id,
+        name=name,
+        status="offline",
+        max_concurrent_runs=body.max_concurrent_runs or 1,
+        capabilities=body.capabilities or {},
+    )
     session.add(runner)
     await session.commit()
     await session.refresh(runner)

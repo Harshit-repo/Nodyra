@@ -14,6 +14,14 @@ class CredentialSpec(BaseModel):
     single "Credentials" picker rather than one per field, matching the n8n
     convention. When ``multi`` is False (default), the param resolves to a
     single field's decrypted string.
+
+    ``test_service`` names the credential-test handler that can validate the
+    stored credential (the key into ``app.services.credential_tests._TESTERS``).
+    When omitted, the UI falls back to ``type`` — the common case where the
+    manifest's credential type and the tester id match (``slack_bot``,
+    ``github``, ...). Set explicitly when a node uses a custom credential
+    type but wants to borrow another service's test handler, or pass an
+    empty string to opt a credential out of test-on-save.
     """
 
     type: str = "generic"
@@ -21,6 +29,7 @@ class CredentialSpec(BaseModel):
     label: str = "Credential"
     fields: list[str] = Field(default_factory=list)
     multi: bool = False
+    test_service: str | None = None
 
 
 class ParamSpec(BaseModel):

@@ -63,10 +63,7 @@ async def _global_env_id(session: AsyncSession) -> str | None:
 
 async def _latest_run(session: AsyncSession, workflow_id: str) -> Run | None:
     return await session.scalar(
-        select(Run)
-        .where(Run.workflow_id == workflow_id)
-        .order_by(Run.started_at.desc())
-        .limit(1)
+        select(Run).where(Run.workflow_id == workflow_id).order_by(Run.started_at.desc()).limit(1)
     )
 
 
@@ -110,9 +107,7 @@ def _detail(workflow: Workflow) -> WorkflowDetail:
 
 @router.get("", response_model=list[WorkflowSummary])
 async def list_workflows(session: AsyncSession = Depends(get_session)):
-    result = await session.scalars(
-        select(Workflow).options(selectinload(Workflow.versions))
-    )
+    result = await session.scalars(select(Workflow).options(selectinload(Workflow.versions)))
     return [await _summary(session, w) for w in result.all()]
 
 
@@ -122,9 +117,7 @@ async def list_workflows(session: AsyncSession = Depends(get_session)):
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_permission("workflow:write"))],
 )
-async def create_workflow(
-    body: WorkflowCreate, session: AsyncSession = Depends(get_session)
-):
+async def create_workflow(body: WorkflowCreate, session: AsyncSession = Depends(get_session)):
     workflow = Workflow(
         name=body.name,
         environment_id=await _global_env_id(session),
@@ -144,9 +137,7 @@ async def get_workflow(workflow_id: str, session: AsyncSession = Depends(get_ses
 
 
 @router.get("/{workflow_id}/versions", response_model=list[WorkflowVersionInfo])
-async def list_versions(
-    workflow_id: str, session: AsyncSession = Depends(get_session)
-):
+async def list_versions(workflow_id: str, session: AsyncSession = Depends(get_session)):
     workflow = await _load(session, workflow_id)
     return [
         WorkflowVersionInfo(
@@ -230,9 +221,7 @@ async def publish_workflow(
         from app.models import Deployment
 
         deployments = (
-            await session.scalars(
-                select(Deployment).where(Deployment.workflow_id == workflow.id)
-            )
+            await session.scalars(select(Deployment).where(Deployment.workflow_id == workflow.id))
         ).all()
         for deployment in deployments:
             deployment.workflow_version_id = version.id
@@ -265,7 +254,7 @@ async def create_ai_workflow_draft(
     session: AsyncSession = Depends(get_session),
 ):
     workflow = await _load(session, workflow_id)
-    draft = await build_workflow_draft(session, workflow_id, body.prompt)
+    draft = await build_workflow_draft(session, workflow_id, body)
     if body.apply:
         workflow.draft_graph = draft.graph.model_dump()
         await log_audit(
@@ -284,9 +273,7 @@ async def create_ai_workflow_draft(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_permission("workflow:write"))],
 )
-async def delete_workflow(
-    workflow_id: str, session: AsyncSession = Depends(get_session)
-):
+async def delete_workflow(workflow_id: str, session: AsyncSession = Depends(get_session)):
     workflow = await _load(session, workflow_id)
     await log_audit(session, "delete", "workflow", workflow_id, workflow.name)
     await session.delete(workflow)

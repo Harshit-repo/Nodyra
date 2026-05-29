@@ -259,3 +259,41 @@ async def test_credential_connection_test_respects_scope(
     ).json()
     assert allowed["ok"] is False
     assert "spreadsheet_id" in allowed["message"]
+
+
+async def test_list_credential_test_handlers_returns_registered_services(
+    client: AsyncClient,
+) -> None:
+    """The editor uses this list to gate "Test connection" actions per credential type."""
+    resp = await client.get("/credentials/test-handlers")
+    assert resp.status_code == 200
+    services = resp.json()
+    assert isinstance(services, list)
+    assert services == sorted(services)  # stable ordering
+    # A few known testers should be present.
+    for expected in ("slack_bot", "github", "openai", "smtp"):
+        assert expected in services
+
+
+async def test_credential_spec_carries_test_service_metadata() -> None:
+    """``CredentialSpec.test_service`` rides through to node manifests."""
+    from noodle.models import CredentialSpec, NodeManifest, ParamSpec
+
+    spec = CredentialSpec(
+        type="github",
+        key="token",
+        label="GitHub Token",
+        test_service="github",
+    )
+    assert spec.test_service == "github"
+
+    # Defaults to None so existing manifests don't change shape.
+    assert CredentialSpec().test_service is None
+
+    manifest = NodeManifest(
+        id="x",
+        name="X",
+        params=[ParamSpec(name="token", type="credential", credential=spec)],
+    )
+    dumped = manifest.model_dump()
+    assert dumped["params"][0]["credential"]["test_service"] == "github"

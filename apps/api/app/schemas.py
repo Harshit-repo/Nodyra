@@ -354,6 +354,9 @@ class DeploymentCreate(BaseModel):
     workflow_version_id: str | None = None
     error_workflow_id: str | None = None
     error_alerts: dict[str, Any] = Field(default_factory=dict)
+    # Operator opt-in required when ``UNSAFE_NODE_POLICY=require_approval``
+    # and the workflow contains risky nodes. Ignored otherwise.
+    approve_unsafe_nodes: bool = False
 
 
 class DeploymentUpdate(BaseModel):
@@ -369,6 +372,7 @@ class DeploymentUpdate(BaseModel):
     workflow_version_id: str | None = None
     error_workflow_id: str | None = None
     error_alerts: dict[str, Any] | None = None
+    approve_unsafe_nodes: bool = False
 
 
 class DeploymentInfo(BaseModel):
@@ -491,10 +495,30 @@ class RunnerInfo(BaseModel):
     updated_at: datetime
 
 
+class RegistrationTokenRequest(BaseModel):
+    """Optional machine details captured when minting a token.
+
+    All fields default to the legacy auto-values so existing clients (and the
+    CLI's bare ``--token`` path) keep working untouched.
+    """
+
+    name: str | None = Field(default=None, max_length=200)
+    max_concurrent_runs: int | None = Field(default=None, ge=1, le=64)
+    capabilities: dict[str, Any] | None = None
+
+
 class RegistrationTokenResponse(BaseModel):
     token: str
     runner_id: str
     expires_at: datetime
+
+
+class RunnerUpdate(BaseModel):
+    """Editable machine metadata for an existing runner row."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    max_concurrent_runs: int | None = Field(default=None, ge=1, le=64)
+    capabilities: dict[str, Any] | None = None
 
 
 class SSHOnboardRequest(BaseModel):
@@ -506,6 +530,8 @@ class SSHOnboardRequest(BaseModel):
     private_key: str | None = None
     passphrase: str | None = None
     name: str | None = None
+    max_concurrent_runs: int | None = Field(default=None, ge=1, le=64)
+    capabilities: dict[str, Any] | None = None
     api_url: str | None = None  # URL the runner connects back to
     use_systemd: bool = True
 
@@ -573,3 +599,101 @@ class AiWorkflowDraftResponse(BaseModel):
     confidence: str = "medium"
     focus_node_id: str | None = None
     planner: str = "llm"
+
+
+class RuntimeModeStatus(BaseModel):
+    """Active runtime topology, surfaced so the API and UI can show whether a
+    deployment is running in local or production mode and where it silently
+    falls back to local-only behaviour."""
+
+    mode: str
+    database_dialect: str
+    queue_backend: str
+    scheduler_role: str
+    webhook_role: str
+    artifact_backend: str
+    runner_providers: list[str]
+    allow_insecure: bool
+    warnings: list[str]
+
+
+class QueueStats(BaseModel):
+    """Aggregated run-queue health for the ops/backpressure surface.
+
+    ``oldest_queued_age_seconds`` is the wait of the oldest entry still in
+    ``queued``; ``None`` when the queue is empty. Counts mirror
+    ``RunQueueEntry.status``.
+    """
+
+    queued: int = 0
+    leased: int = 0
+    running: int = 0
+    completed: int = 0
+    failed: int = 0
+    dead_lettered: int = 0
+    cancelled: int = 0
+    oldest_queued_age_seconds: float | None = None
+
+
+class RunTimelineEvent(BaseModel):
+    """One ordered event in a run's lifecycle.
+
+    ``ts`` is the event's wall-clock time when known. ``data`` carries
+    type-specific payload (e.g. ``{"node_id": ..., "duration_ms": ...}``).
+    """
+
+    type: str
+    ts: datetime | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunTimeline(BaseModel):
+    run_id: str
+    status: str
+    events: list[RunTimelineEvent]
+
+
+class RunReplayResponse(BaseModel):
+    """Result of replaying a terminal run via the durable queue.
+
+    ``previous_status`` is the queue entry's status before replay
+    (``failed``/``dead_lettered``/``cancelled``); the entry is now back in
+    ``queued`` and will be dispatched on the next loop tick.
+    """
+
+    run_id: str
+    previous_status: str
+    status: str = "queued"
+
+
+class RunReplayRequest(BaseModel):
+    """Body for ``POST /runs/{run_id}/replay``.
+
+    ``from_node_id`` enables replay-from-failure: the engine is seeded with
+    the prior run's successful upstream NodeRun outputs and execution is
+    restricted to ``from_node_id`` plus its forward descendants. Omit to
+    replay the whole run from scratch.
+    """
+
+    from_node_id: str | None = None
+
+
+class RunDebugSnapshot(BaseModel):
+    """Editor-side payload for the 'Debug in editor' flow.
+
+    Bundles the exact graph the failed run executed against, the failing node
+    id, and a per-node cache of successful upstream outputs. The editor pins
+    those outputs so the author can iterate on the failing node without
+    re-running the whole upstream chain, then drives `POST /runs/{id}/replay`
+    with `from_node_id` to actually re-execute.
+    """
+
+    run_id: str
+    workflow_id: str
+    workflow_version: int
+    workflow_version_id: str | None = None
+    status: str
+    graph: dict[str, Any]
+    failed_node_id: str | None
+    upstream_cache: dict[str, Any] = Field(default_factory=dict)
+    node_errors: dict[str, str] = Field(default_factory=dict)

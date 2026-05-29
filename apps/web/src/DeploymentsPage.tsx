@@ -1,10 +1,23 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
-import { api } from "./api";
+import { api, ApiError } from "./api";
 import { HomeHeader } from "./HomeHeader";
 import { useToast } from "./ToastProvider";
 import type { Deployment, WorkflowSummary } from "./types";
+
+interface UnsafeFinding {
+  node_id: string;
+  node_type: string;
+  kind: string;
+  detail?: string;
+}
+interface UnsafePromptState {
+  deployment: Deployment;
+  policy: string;
+  findings: UnsafeFinding[];
+  message: string;
+}
 
 function when(iso: string | null): string {
   if (!iso) return "never";
@@ -32,6 +45,7 @@ export function DeploymentsPage() {
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<Deployment | null>(null);
   const [creating, setCreating] = useState(false);
+  const [unsafePrompt, setUnsafePrompt] = useState<UnsafePromptState | null>(null);
   const { notify } = useToast();
 
   function refresh(): void {
@@ -62,12 +76,43 @@ export function DeploymentsPage() {
     }
   }
 
-  async function toggleActive(d: Deployment, active: boolean): Promise<void> {
+  async function toggleActive(
+    d: Deployment,
+    active: boolean,
+    approveUnsafe = false,
+  ): Promise<void> {
     try {
-      await api.updateDeployment(d.id, { active });
+      await api.updateDeployment(d.id, {
+        active,
+        ...(approveUnsafe ? { approve_unsafe_nodes: true } : {}),
+      });
       notify(active ? "Deployment activated." : "Deployment paused.", "success");
+      setUnsafePrompt(null);
       refresh();
     } catch (err) {
+      if (
+        active &&
+        err instanceof ApiError &&
+        err.status === 409 &&
+        err.detail &&
+        typeof err.detail === "object" &&
+        Array.isArray((err.detail as { findings?: unknown }).findings)
+      ) {
+        const detail = err.detail as {
+          message?: string;
+          policy?: string;
+          findings: UnsafeFinding[];
+        };
+        setUnsafePrompt({
+          deployment: d,
+          policy: detail.policy ?? "require_approval",
+          findings: detail.findings,
+          message:
+            detail.message ??
+            "Workflow contains risky nodes; explicit approval is required.",
+        });
+        return;
+      }
       setError(String(err));
       notify("Could not update deployment.", "error");
     }
@@ -205,7 +250,68 @@ export function DeploymentsPage() {
             }}
           />
         )}
+        {unsafePrompt && (
+          <UnsafeNodesDialog
+            state={unsafePrompt}
+            onCancel={() => setUnsafePrompt(null)}
+            onApprove={() =>
+              void toggleActive(unsafePrompt.deployment, true, true)
+            }
+          />
+        )}
       </main>
+    </div>
+  );
+}
+
+function UnsafeNodesDialog({
+  state,
+  onCancel,
+  onApprove,
+}: {
+  state: UnsafePromptState;
+  onCancel: () => void;
+  onApprove: () => void;
+}) {
+  const blocked = state.policy === "block";
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2>Risky nodes detected</h2>
+        <p className="muted">{state.message}</p>
+        <ul className="ops-warnings">
+          {state.findings.map((f) => (
+            <li key={f.node_id}>
+              <strong>{f.node_type}</strong>
+              {" · "}
+              <span className="muted">{f.kind}</span>
+              {f.detail ? <> — {f.detail}</> : null}
+            </li>
+          ))}
+        </ul>
+        <p className="muted" style={{ marginTop: 12 }}>
+          Policy: <code>{state.policy}</code>
+        </p>
+        <div className="modal-actions">
+          <button type="button" className="btn btn-ghost" onClick={onCancel}>
+            Cancel
+          </button>
+          {!blocked && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={onApprove}
+            >
+              Approve and activate
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

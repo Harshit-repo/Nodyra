@@ -317,3 +317,36 @@ def test_is_due_different_timezones_fire_at_different_utc() -> None:
     )
     assert ny_due is True
     assert sydney_due is False
+
+
+# --- Task 8: webhook ingress role split --------------------------------------
+
+async def test_webhook_role_inline_mounts_router(client: AsyncClient) -> None:
+    """Default webhook_role=='inline' — /webhook/* is reachable."""
+    resp = await client.post("/webhook/no-such-path", json={})
+    # 200 is the "accepted, no matching trigger" reply; we just need NOT 404.
+    assert resp.status_code != 404
+
+
+async def test_webhook_role_disabled_unmounts_router(monkeypatch) -> None:
+    """webhook_role=='disabled' — /webhook/* is not registered on the app."""
+    import importlib
+    from app import config as _config
+    from app.config import Settings
+
+    # Build a settings instance with webhook_role=disabled, then reload main.
+    new_settings = Settings(webhook_role="disabled")
+    monkeypatch.setattr(_config, "settings", new_settings)
+
+    import app.main as _main
+    reloaded = importlib.reload(_main)
+    paths = {getattr(r, "path", "") for r in reloaded.app.routes}
+    assert not any(p.startswith("/webhook") for p in paths), (
+        "/webhook routes should not be mounted when webhook_role=disabled"
+    )
+
+    # Restore normal inline behaviour for subsequent tests in the session.
+    monkeypatch.setattr(_config, "settings", Settings())
+    importlib.reload(_main)
+
+

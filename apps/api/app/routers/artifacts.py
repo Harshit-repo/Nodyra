@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -7,7 +7,8 @@ from app.db import get_session
 from app.models import Artifact, Run
 from app.schemas import ArtifactInfo
 from app.security import require_permission
-from app.services.artifacts import delete_artifact_files, path_for_artifact
+from app.services.artifact_backends import get_backend
+from app.services.artifacts import delete_artifact_files
 
 router = APIRouter(tags=["artifacts"])
 
@@ -60,19 +61,58 @@ async def get_artifact(
 @router.get("/artifacts/{artifact_id}/download")
 async def download_artifact(
     artifact_id: str, session: AsyncSession = Depends(get_session)
-) -> FileResponse:
+):
     row = await _get_artifact(session, artifact_id)
     try:
-        path = path_for_artifact(row)
+        backend = get_backend(row.storage_backend)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    # Backends that produce time-limited URLs (S3) skip the API process for
+    # the actual bytes — saves bandwidth and keeps long downloads off the
+    # event loop.
+    redirect = backend.signed_url(row)
+    if redirect:
+        return RedirectResponse(redirect, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+    try:
+        download = backend.open_download(row)
+    except FileNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Artifact file not found") from None
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    if not path.exists():
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Artifact file not found")
-    return FileResponse(
-        path,
-        media_type=row.content_type,
-        filename=row.name,
+    if download.path is not None:
+        return FileResponse(
+            download.path,
+            media_type=download.content_type,
+            filename=download.filename,
+        )
+    if download.stream is not None:
+        return StreamingResponse(
+            download.stream,
+            media_type=download.content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{download.filename}"',
+            },
+        )
+    raise HTTPException(
+        status.HTTP_500_INTERNAL_SERVER_ERROR,
+        "Backend produced no download payload",
     )
+
+
+@router.get("/artifacts/{artifact_id}/url")
+async def get_artifact_signed_url(
+    artifact_id: str,
+    expires_in: int = 300,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str | int | None]:
+    """Return a time-limited URL for object-store backends (or ``null`` locally)."""
+    row = await _get_artifact(session, artifact_id)
+    try:
+        backend = get_backend(row.storage_backend)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    url = backend.signed_url(row, expires_in=max(1, int(expires_in)))
+    return {"url": url, "expires_in": expires_in if url else None}
 
 
 @router.delete(

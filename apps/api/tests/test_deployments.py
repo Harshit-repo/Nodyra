@@ -169,3 +169,154 @@ async def test_active_deployment_overrides_in_graph_schedule(
     # Exactly one run, fired with trigger_type=deployment, not "schedule".
     assert len(runs) == 1
     assert runs[0]["trigger_type"] == "deployment"
+
+
+# --- Task 16: unsafe-node policy gate ----------------------------------------
+
+import pytest
+
+from app.config import settings
+from app.services.unsafe_nodes import classify as classify_unsafe_nodes
+
+
+def _http_graph(url: str) -> dict:
+    return {
+        "nodes": [
+            {"id": "trig", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
+            {
+                "id": "fetch",
+                "type": "http_request",
+                "params": {"url": url, "method": "GET"},
+                "position": {"x": 250, "y": 0},
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "trig", "source_output": "main", "target": "fetch", "target_input": "input"}
+        ],
+    }
+
+
+async def _publish(client: AsyncClient, graph: dict) -> str:
+    wf_id = (await client.post("/workflows", json={"name": "WF"})).json()["id"]
+    await client.put(f"/workflows/{wf_id}", json={"graph": graph})
+    await client.post(f"/workflows/{wf_id}/publish", json={})
+    return wf_id
+
+
+def test_classify_flags_code_http_private_and_sql_expressions() -> None:
+    graph = {
+        "nodes": [
+            {"id": "c1", "type": "code", "params": {"code": "output = 1"}},
+            {"id": "h1", "type": "http_request", "params": {"url": "http://10.0.0.1/api"}},
+            {"id": "h2", "type": "http_request", "params": {"url": "https://example.com/x"}},
+            {"id": "q1", "type": "postgres_query", "params": {"query": "select {{ input.id }}"}},
+            {"id": "q2", "type": "postgres_query", "params": {"query": "select 1"}},
+            {"id": "x1", "type": "execute_command", "params": {"command": "ls"}},
+            {"id": "s1", "type": "ssh_execute", "params": {}},
+            {"id": "n1", "type": "manual_trigger", "params": {}},
+        ],
+        "edges": [],
+    }
+    findings = classify_unsafe_nodes(graph)
+    kinds = {(f["node_id"], f["kind"]) for f in findings}
+    assert kinds == {
+        ("c1", "code"),
+        ("h1", "http_private_ip"),
+        ("q1", "sql_with_expressions"),
+        ("x1", "execute_command"),
+        ("s1", "ssh"),
+    }
+
+
+async def test_warn_policy_allows_activation_with_risky_node(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "unsafe_node_policy", "warn")
+    workflow_id = await _create_workflow(client)  # contains a Code node
+    resp = await client.post(
+        "/deployments",
+        json={"workflow_id": workflow_id, "name": "warn-ok", "active": True},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["active"] is True
+
+
+async def test_require_approval_blocks_without_flag_then_passes_with_flag(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "unsafe_node_policy", "require_approval")
+    workflow_id = await _create_workflow(client)
+    blocked = await client.post(
+        "/deployments",
+        json={"workflow_id": workflow_id, "name": "needs-approval", "active": True},
+    )
+    assert blocked.status_code == 409
+    detail = blocked.json()["detail"]
+    assert detail["policy"] == "require_approval"
+    assert any(f["kind"] == "code" for f in detail["findings"])
+
+    approved = await client.post(
+        "/deployments",
+        json={
+            "workflow_id": workflow_id,
+            "name": "needs-approval-2",
+            "active": True,
+            "approve_unsafe_nodes": True,
+        },
+    )
+    assert approved.status_code == 201
+
+
+async def test_block_policy_rejects_even_with_approval(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "unsafe_node_policy", "block")
+    workflow_id = await _create_workflow(client)
+    resp = await client.post(
+        "/deployments",
+        json={
+            "workflow_id": workflow_id,
+            "name": "never",
+            "active": True,
+            "approve_unsafe_nodes": True,
+        },
+    )
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["policy"] == "block"
+
+
+async def test_policy_only_checked_when_activating(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "unsafe_node_policy", "block")
+    workflow_id = await _create_workflow(client)
+    # Inactive deployment with risky nodes is fine — it never runs on a schedule.
+    resp = await client.post(
+        "/deployments",
+        json={"workflow_id": workflow_id, "name": "draft", "active": False},
+    )
+    assert resp.status_code == 201
+    # And flipping it active later must trigger the gate.
+    deployment_id = resp.json()["id"]
+    flip = await client.put(f"/deployments/{deployment_id}", json={"active": True})
+    assert flip.status_code == 409
+
+
+async def test_safe_workflow_passes_block_policy(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "unsafe_node_policy", "block")
+    safe_graph = {
+        "nodes": [
+            {"id": "trig", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
+        ],
+        "edges": [],
+    }
+    workflow_id = await _publish(client, safe_graph)
+    resp = await client.post(
+        "/deployments",
+        json={"workflow_id": workflow_id, "name": "safe", "active": True},
+    )
+    assert resp.status_code == 201
+
+

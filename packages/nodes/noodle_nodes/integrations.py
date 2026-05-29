@@ -123,6 +123,7 @@ def _credential(
     key: str,
     label: str,
     fields: list[str] | None = None,
+    multi: bool = False,
 ) -> dict[str, Any]:
     return {
         "credential": {
@@ -130,6 +131,7 @@ def _credential(
             "key": key,
             "label": label,
             "fields": fields or [key],
+            "multi": multi,
         }
     }
 
@@ -211,54 +213,109 @@ def discord_send_message(
     params={
         "host": {"placeholder": "smtp.gmail.com"},
         "port": {"description": "SMTP port, usually 587 for STARTTLS."},
-        "username": {
+        "credentials": {
             **_credential(
-                "smtp", "username", "SMTP username/password", ["username", "password"]
+                "smtp",
+                "*",
+                "SMTP username/password",
+                ["username", "password"],
+                multi=True,
             ),
-            "description": "SMTP username.",
-        },
-        "password": {
-            **_credential(
-                "smtp", "password", "SMTP username/password", ["username", "password"]
-            ),
-            "description": "SMTP password or app password.",
+            "description": "Stored SMTP username and password/app password.",
         },
         "use_tls": {"description": "Use STARTTLS before sending."},
         "from_email": {"placeholder": "sender@example.com"},
         "to_email": {"placeholder": "one@example.com, two@example.com"},
         "subject": {"placeholder": "Email subject"},
-        "body": {"multiline": True, "description": "Plain text body. Blank uses input."},
+        "body_format": {
+            "choices": ["text", "html"],
+            "description": "Send the body as plain text or HTML.",
+        },
+        "body": {"multiline": True, "description": "Email body. Blank uses input."},
     },
 )
 def smtp_send_email(
     input: Any = None,
     host: str = "",
     port: int = 587,
-    username: str = "",
-    password: str = "",
+    credentials: dict | None = None,
     use_tls: bool = True,
     from_email: str = "",
     to_email: str = "",
     subject: str = "",
+    body_format: str = "text",
     body: str = "",
+    **legacy: Any,
 ) -> dict:
-    """Send a plain text email through any SMTP server, including Gmail SMTP."""
+    """Send a text or HTML email through any SMTP server, including Gmail SMTP."""
     import smtplib
+    import ssl
 
+    creds = credentials if isinstance(credentials, dict) else {}
+    username = str(creds.get("username") or legacy.get("username") or "")
+    password = str(
+        creds.get("password")
+        or creds.get("app_password")
+        or legacy.get("password")
+        or ""
+    )
     recipients = [email.strip() for email in to_email.split(",") if email.strip()]
+    if not host:
+        raise ValueError("smtp_send_email: host is required")
+    if not recipients:
+        raise ValueError("smtp_send_email: to_email is required")
+
+    body_value = _text_from_input(input, body)
+    mode = str(body_format or "text").lower()
+    if mode not in {"text", "html"}:
+        raise ValueError("smtp_send_email: body_format must be 'text' or 'html'")
+
     message = EmailMessage()
     message["From"] = from_email or username
     message["To"] = ", ".join(recipients)
     message["Subject"] = subject
-    message.set_content(_text_from_input(input, body))
+    if mode == "html":
+        message.set_content("This email contains HTML. View it in an HTML-capable client.")
+        message.add_alternative(body_value, subtype="html")
+    else:
+        message.set_content(body_value)
 
-    with smtplib.SMTP(host, int(port), timeout=30) as smtp:
-        if use_tls:
-            smtp.starttls()
+    port_num = int(port)
+    context = ssl.create_default_context()
+    # Pass the host to the constructor (which connects) so ``smtp._host`` is
+    # set. STARTTLS uses ``_host`` as the TLS ``server_hostname``, and a default
+    # SSL context has ``check_hostname=True`` — so constructing without a host
+    # and calling ``connect()`` separately leaves ``_host`` empty and makes
+    # ``starttls()`` raise "check_hostname requires server_hostname", which the
+    # context-manager exit then masks as ``SMTPResponseException(-1, ...)``.
+    #
+    # Port 465 is implicit TLS (encrypted from the first byte) so it uses
+    # SMTP_SSL regardless of ``use_tls``; STARTTLS applies to plain ports (587).
+    implicit_ssl = port_num == 465
+    if implicit_ssl:
+        smtp = smtplib.SMTP_SSL(host, port_num, timeout=30, context=context)
+    else:
+        smtp = smtplib.SMTP(host, port_num, timeout=30)
+    with smtp:
+        smtp.ehlo()
+        if use_tls and not implicit_ssl:
+            smtp.starttls(context=context)
+            smtp.ehlo()
         if username or password:
             smtp.login(username, password)
         smtp.send_message(message)
-    return {"sent": True, "to": recipients}
+    preview: dict[str, Any] = {
+        "sent": True,
+        "to": recipients,
+        "from": message["From"],
+        "subject": subject,
+        "body_format": mode,
+    }
+    if mode == "html":
+        preview["html_preview"] = body_value
+    else:
+        preview["text_preview"] = body_value
+    return preview
 
 
 @node(
@@ -505,17 +562,15 @@ def postgres_query(
     params={
         "host": {"placeholder": "localhost"},
         "port": {"description": "MySQL port."},
-        "username": {
+        "credentials": {
             **_credential(
-                "mysql", "username", "MySQL username/password", ["username", "password"]
+                "mysql",
+                "*",
+                "MySQL username/password",
+                ["username", "password"],
+                multi=True,
             ),
-            "description": "MySQL username.",
-        },
-        "password": {
-            **_credential(
-                "mysql", "password", "MySQL username/password", ["username", "password"]
-            ),
-            "description": "MySQL password.",
+            "description": "Stored MySQL username and password.",
         },
         "database": {"placeholder": "app"},
         "sql": {"multiline": True, "placeholder": "select * from users limit 10"},
@@ -526,11 +581,11 @@ def mysql_query(
     input: Any = None,  # noqa: ARG001 - input ignored
     host: str = "localhost",
     port: int = 3306,
-    username: str = "",
-    password: str = "",
+    credentials: dict | None = None,
     database: str = "",
     sql: str = "",
     parameters: Any = None,
+    **legacy: Any,
 ) -> Any:
     """Run a SQL statement against MySQL and return rows for queries."""
     try:
@@ -539,6 +594,9 @@ def mysql_query(
     except ImportError as exc:  # pragma: no cover - depends on user env
         raise _missing_dependency("MySQL Query", "PyMySQL") from exc
 
+    creds = credentials if isinstance(credentials, dict) else {}
+    username = str(creds.get("username") or legacy.get("username") or "")
+    password = str(creds.get("password") or legacy.get("password") or "")
     connection = pymysql.connect(
         host=host,
         port=int(port),

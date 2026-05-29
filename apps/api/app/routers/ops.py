@@ -5,11 +5,14 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, Response
 from sqlalchemy import func, select
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_session
-from app.models import Credential, Environment, Run, Workflow
+from app.models import Credential, Environment, Run, RunnerPool, Workflow
+from app.schemas import QueueStats, RuntimeModeStatus
+from app.services import queue as run_queue
 
 router = APIRouter(tags=["ops"])
 
@@ -49,6 +52,43 @@ async def system_status(session: AsyncSession = Depends(get_session)) -> dict:
         "server_time": datetime.now().astimezone().isoformat(),
         **counts,
     }
+
+
+@router.get("/ops/runtime-mode", response_model=RuntimeModeStatus)
+async def runtime_mode(
+    session: AsyncSession = Depends(get_session),
+) -> RuntimeModeStatus:
+    """Report the active runtime topology and any production misconfigurations."""
+    try:
+        dialect = make_url(settings.database_url).get_backend_name()
+    except Exception:  # noqa: BLE001 - never let a malformed URL 500 this probe
+        dialect = "unknown"
+
+    providers = await session.scalars(select(RunnerPool.provider).distinct())
+    runner_providers = sorted({p for p in providers if p})
+
+    return RuntimeModeStatus(
+        mode=settings.runtime_mode,
+        database_dialect=dialect,
+        queue_backend=settings.queue_backend,
+        scheduler_role=settings.scheduler_role,
+        webhook_role=settings.webhook_role,
+        artifact_backend=settings.artifact_storage_backend,
+        runner_providers=runner_providers,
+        allow_insecure=settings.runtime_allow_insecure,
+        warnings=settings.runtime_warnings(),
+    )
+
+
+@router.get("/ops/queue", response_model=QueueStats)
+async def queue_stats(session: AsyncSession = Depends(get_session)) -> QueueStats:
+    """Aggregate run-queue health for the ops/backpressure surface.
+
+    Pulls straight from ``services.queue.stats`` so the endpoint stays in sync
+    with the durable queue state without re-deriving counts here.
+    """
+    data = await run_queue.stats(session)
+    return QueueStats(**data)
 
 
 @router.get("/metrics")

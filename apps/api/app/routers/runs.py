@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, status
 from sqlalchemy import select
@@ -7,13 +8,18 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.db import get_session
-from app.models import PinnedData, Run, Workflow, WorkflowVersion
+from app.models import NodeRun, PinnedData, Run, RunQueueEntry, Workflow, WorkflowVersion
 from app.schemas import (
     RunCancelResponse,
     RunCreated,
+    RunDebugSnapshot,
     RunInfo,
     RunListItem,
+    RunReplayRequest,
+    RunReplayResponse,
     RunRequest,
+    RunTimeline,
+    RunTimelineEvent,
 )
 from app.security import require_permission
 from app.services.crypto import verify_token
@@ -23,6 +29,7 @@ from app.services.graph_utils import (
     forward_descendants,
 )
 from app.services.runner import cancel_run, start_run
+from app.services import queue as run_queue
 
 router = APIRouter(tags=["runs"])
 
@@ -271,6 +278,272 @@ async def cancel_workflow_run(run_id: str) -> RunCancelResponse:
     if result is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
     return RunCancelResponse(run_id=run_id, status=result)
+
+
+@router.post(
+    "/runs/{run_id}/replay",
+    response_model=RunReplayResponse,
+    dependencies=[Depends(require_permission("workflow:run"))],
+)
+async def replay_workflow_run(
+    run_id: str,
+    body: RunReplayRequest | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> RunReplayResponse:
+    """Re-queue a terminal run for another dispatch attempt.
+
+    Eligible when the durable queue entry is ``failed``, ``dead_lettered``, or
+    ``cancelled``. The next dispatch loop tick will pick it up; ``Run.status``
+    is reset to ``queued`` so the UI reflects the pending replay immediately.
+
+    When ``from_node_id`` is supplied (replay-from-failure), the engine is
+    seeded with the prior run's successful upstream NodeRun outputs and
+    execution is restricted to ``from_node_id`` plus its forward descendants.
+    """
+    run = await session.get(Run, run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
+
+    entry = await session.scalar(
+        select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
+    )
+    if entry is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Run has no durable queue entry to replay.",
+        )
+    previous = entry.status
+
+    from_node_id = body.from_node_id if body is not None else None
+    replay_cache: dict | None = None
+    replay_targets: list[str] | None = None
+
+    if from_node_id is not None:
+        workflow = await session.get(
+            Workflow, run.workflow_id, options=[selectinload(Workflow.versions)]
+        )
+        if workflow is None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Workflow for run no longer exists."
+            )
+        graph: dict | None = None
+        if run.workflow_version_id:
+            version = await session.get(WorkflowVersion, run.workflow_version_id)
+            if version is not None:
+                graph = version.graph
+        if not graph:
+            graph = _draft_graph(workflow)
+
+        node_ids = {n.get("id") for n in graph.get("nodes") or [] if isinstance(n, dict)}
+        if from_node_id not in node_ids:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"from_node_id '{from_node_id}' is not a node in this workflow.",
+            )
+
+        # Targets: the failed node + everything downstream.
+        replay_targets = sorted(forward_descendants(graph, {from_node_id}))
+
+        # Cache: most-recent successful NodeRun outputs for every node that is
+        # NOT in the replay set (i.e. the upstream ancestors). The engine's
+        # ``_needed_nodes`` traversal stops at cached nodes, so ancestors of
+        # cached nodes are skipped automatically.
+        prior_runs = (
+            await session.scalars(
+                select(NodeRun)
+                .where(NodeRun.run_id == run_id, NodeRun.status == "success")
+                .order_by(NodeRun.finished_at.asc())
+            )
+        ).all()
+        latest_outputs: dict[str, dict] = {}
+        replay_set = set(replay_targets)
+        for nr in prior_runs:
+            if nr.node_id in replay_set:
+                continue
+            if isinstance(nr.output, dict):
+                latest_outputs[nr.node_id] = nr.output  # later wins (most recent)
+        replay_cache = latest_outputs or None
+
+    replayed = await run_queue.replay(
+        session, run_id=run_id, cache=replay_cache, targets=replay_targets
+    )
+    if replayed is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Run queue entry is in '{previous}'; only failed/dead_lettered/"
+            "cancelled entries can be replayed.",
+        )
+    run.status = "queued"
+    run.finished_at = None
+    await session.commit()
+    return RunReplayResponse(run_id=run_id, previous_status=previous)
+
+
+def _epoch_to_dt(value: float | None) -> datetime | None:
+    if value is None:
+        return None
+    return datetime.fromtimestamp(value, tz=UTC)
+
+
+@router.get("/runs/{run_id}/timeline", response_model=RunTimeline)
+async def run_timeline(
+    run_id: str, session: AsyncSession = Depends(get_session)
+) -> RunTimeline:
+    """Ordered lifecycle events for a single run.
+
+    Composes ``Run`` start/finish, ``RunQueueEntry`` enqueue/lease/retry, and
+    ``NodeRun`` start/finish into one chronological feed. Designed for the
+    backpressure UI and replay/debug views; clients can render it directly
+    without re-deriving timings from disparate records.
+    """
+    run = await session.get(Run, run_id, options=[selectinload(Run.node_runs)])
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
+
+    entry = await session.scalar(
+        select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
+    )
+
+    events: list[RunTimelineEvent] = []
+
+    if entry is not None:
+        events.append(
+            RunTimelineEvent(
+                type="enqueued",
+                ts=entry.created_at,
+                data={
+                    "reason": entry.queue_reason or None,
+                    "priority": entry.priority,
+                    "max_attempts": entry.max_attempts,
+                },
+            )
+        )
+        if entry.leased_by is not None or entry.status in ("leased", "running"):
+            events.append(
+                RunTimelineEvent(
+                    type="leased",
+                    ts=entry.lease_expires_at,
+                    data={
+                        "leased_by": entry.leased_by,
+                        "attempts": entry.attempts,
+                    },
+                )
+            )
+        if entry.status == "dead_lettered":
+            events.append(
+                RunTimelineEvent(
+                    type="dead_lettered",
+                    ts=entry.updated_at,
+                    data={"last_error": entry.last_error},
+                )
+            )
+        elif entry.status == "failed" and entry.last_error:
+            events.append(
+                RunTimelineEvent(
+                    type="queue_failed",
+                    ts=entry.updated_at,
+                    data={
+                        "last_error": entry.last_error,
+                        "attempts": entry.attempts,
+                    },
+                )
+            )
+
+    events.append(
+        RunTimelineEvent(
+            type="started",
+            ts=run.started_at,
+            data={"trigger_type": run.trigger_type, "mode": run.mode},
+        )
+    )
+
+    node_events: list[RunTimelineEvent] = []
+    for nr in run.node_runs:
+        node_events.append(
+            RunTimelineEvent(
+                type="node_started",
+                ts=_epoch_to_dt(nr.started_at),
+                data={"node_id": nr.node_id},
+            )
+        )
+        node_events.append(
+            RunTimelineEvent(
+                type="node_finished",
+                ts=_epoch_to_dt(nr.finished_at),
+                data={
+                    "node_id": nr.node_id,
+                    "status": nr.status,
+                    "duration_ms": nr.duration_ms,
+                    "error": nr.error,
+                },
+            )
+        )
+    # Stable order: events with a timestamp sort first by time, then by type so
+    # node_started precedes node_finished for the same instant; events without a
+    # timestamp keep their list position at the end.
+    node_events.sort(
+        key=lambda e: (
+            e.ts is None,
+            e.ts or datetime.max.replace(tzinfo=UTC),
+            0 if e.type == "node_started" else 1,
+        )
+    )
+    events.extend(node_events)
+
+    if run.finished_at is not None:
+        terminal_type = {
+            "success": "completed",
+            "error": "failed",
+            "cancelled": "cancelled",
+        }.get(run.status, run.status)
+        events.append(
+            RunTimelineEvent(
+                type=terminal_type,
+                ts=run.finished_at,
+                data={"status": run.status},
+            )
+        )
+
+    return RunTimeline(run_id=run_id, status=run.status, events=events)
+
+
+@router.get("/runs/{run_id}/debug-snapshot", response_model=RunDebugSnapshot)
+async def run_debug_snapshot(
+    run_id: str, session: AsyncSession = Depends(get_session)
+) -> RunDebugSnapshot:
+    """Bundle the editor needs to "debug" a failed run.
+
+    Returns the workflow graph as it ran, the first failed node id, every
+    successful node's recorded output (so the editor can pin them as fake
+    upstream values), and the error string for any failed nodes. The editor
+    then drives ``POST /runs/{run_id}/replay`` with ``from_node_id`` set to
+    actually re-execute from the failure point with this cache seeded.
+    """
+    run, workflow = await _load_run_and_workflow(session, run_id)
+    graph, version, version_id = await _graph_for_run(session, run, workflow)
+
+    failed_nodes = [nr for nr in run.node_runs if nr.status == "error"]
+    failed_node_id = failed_nodes[0].node_id if failed_nodes else None
+
+    upstream_cache: dict[str, Any] = {}
+    node_errors: dict[str, str] = {}
+    for nr in run.node_runs:
+        if nr.status == "success" and nr.output is not None:
+            upstream_cache[nr.node_id] = nr.output
+        if nr.status == "error" and nr.error:
+            node_errors[nr.node_id] = nr.error
+
+    return RunDebugSnapshot(
+        run_id=run.id,
+        workflow_id=run.workflow_id,
+        workflow_version=version,
+        workflow_version_id=version_id,
+        status=run.status,
+        graph=graph,
+        failed_node_id=failed_node_id,
+        upstream_cache=upstream_cache,
+        node_errors=node_errors,
+    )
 
 
 @router.websocket("/ws/runs/{run_id}")

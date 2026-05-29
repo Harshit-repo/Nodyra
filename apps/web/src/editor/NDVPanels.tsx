@@ -299,8 +299,164 @@ function SettingsTab({ nodeId }: { nodeId: string }) {
   );
 }
 
+function DocsTab({ nodeId }: { nodeId: string }) {
+  const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
+  if (!node) return null;
+  const m = node.data.manifest;
+  return (
+    <>
+      <p className="field-desc">Reference for this node.</p>
+      <div className="field">
+        <div className="field-label">
+          <span className="field-name">{m.name}</span>
+        </div>
+        <p className="field-desc">{m.description || "No description provided."}</p>
+        <p className="field-desc">
+          <strong>Category:</strong> {m.category} · <strong>Version:</strong> {m.version} · <strong>Type:</strong> <code>{m.id}</code>
+        </p>
+      </div>
+      {m.inputs.length > 0 && (
+        <div className="field">
+          <div className="field-label">
+            <span className="field-name">Inputs</span>
+          </div>
+          <ul className="field-desc" style={{ margin: 0, paddingLeft: 18 }}>
+            {m.inputs.map((p) => (
+              <li key={p.name}>
+                <code>{p.name}</code>
+                {p.description ? ` — ${p.description}` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {m.outputs.length > 0 && (
+        <div className="field">
+          <div className="field-label">
+            <span className="field-name">Outputs</span>
+          </div>
+          <ul className="field-desc" style={{ margin: 0, paddingLeft: 18 }}>
+            {m.outputs.map((p) => (
+              <li key={p.name}>
+                <code>{p.name}</code>
+                {p.description ? ` — ${p.description}` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {m.params.length > 0 && (
+        <div className="field">
+          <div className="field-label">
+            <span className="field-name">Parameters</span>
+          </div>
+          <ul className="field-desc" style={{ margin: 0, paddingLeft: 18 }}>
+            {m.params.map((p) => (
+              <li key={p.name}>
+                <code>{p.name}</code> ({p.type}
+                {p.required ? ", required" : ""})
+                {p.description ? ` — ${p.description}` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </>
+  );
+}
+
+function CredentialsTab({ nodeId }: { nodeId: string }) {
+  const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
+  if (!node) return null;
+  const credSpecs = node.data.manifest.params.filter((p) => p.credential);
+  if (credSpecs.length === 0) {
+    return (
+      <p className="field-desc">
+        This node does not use stored credentials. Anything sensitive is set
+        directly in its parameters.
+      </p>
+    );
+  }
+  return (
+    <>
+      <p className="field-desc">
+        Credentials required by this node. Manage stored credentials from{" "}
+        <a href="/credentials" target="_blank" rel="noreferrer">
+          Settings → Credentials
+        </a>
+        .
+      </p>
+      {credSpecs.map((spec) => {
+        const value = node.data.params[spec.name];
+        const ref =
+          value && typeof value === "object" && "credential_id" in (value as object)
+            ? (value as { credential_id: string }).credential_id
+            : null;
+        return (
+          <div className="field" key={spec.name}>
+            <div className="field-label">
+              <span className="field-name">{spec.credential?.label ?? spec.name}</span>
+            </div>
+            <p className="field-desc">
+              Type: <code>{spec.credential?.type}</code>
+            </p>
+            <p className="field-desc">
+              {ref ? (
+                <>Linked to credential <code>{ref}</code></>
+              ) : (
+                "No credential selected. Pick one in the Parameters tab."
+              )}
+            </p>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+function LogsTab({ nodeId }: { nodeId: string }) {
+  const runMeta = useEditor((s) => s.runMeta[nodeId]);
+  const logs = runMeta?.logs ?? [];
+  const error = runMeta?.error;
+  if (logs.length === 0 && !error) {
+    return (
+      <p className="field-desc">
+        No logs yet. Run this node (or the workflow) to capture stdout, stderr,
+        and any error trace.
+      </p>
+    );
+  }
+  return (
+    <>
+      {error && (
+        <div className="field">
+          <div className="field-label">
+            <span className="field-name">Error</span>
+          </div>
+          <pre className="field-desc" style={{ whiteSpace: "pre-wrap", color: "var(--error, #d97706)" }}>
+            {String(error)}
+          </pre>
+        </div>
+      )}
+      {logs.length > 0 && (
+        <div className="field">
+          <div className="field-label">
+            <span className="field-name">Logs</span>
+          </div>
+          <pre
+            className="field-desc"
+            style={{ whiteSpace: "pre-wrap", maxHeight: 400, overflow: "auto", margin: 0 }}
+          >
+            {logs.join("\n")}
+          </pre>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function NDVPanels({ nodeId }: { nodeId: string }) {
-  const [tab, setTab] = useState<"parameters" | "settings">("parameters");
+  const [tab, setTab] = useState<"parameters" | "settings" | "docs" | "credentials" | "logs">("parameters");
   const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
   const edges = useEditor((s) => s.edges);
   const runOutputs = useEditor((s) => s.runOutputs);
@@ -405,12 +561,39 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
           >
             Settings
           </button>
+          <button
+            type="button"
+            className={tab === "docs" ? "active" : ""}
+            onClick={() => setTab("docs")}
+          >
+            Docs
+          </button>
+          <button
+            type="button"
+            className={tab === "credentials" ? "active" : ""}
+            onClick={() => setTab("credentials")}
+          >
+            Credentials
+          </button>
+          <button
+            type="button"
+            className={tab === "logs" ? "active" : ""}
+            onClick={() => setTab("logs")}
+          >
+            Logs
+          </button>
         </div>
         <div className="ndv-middle-body">
           {tab === "parameters" ? (
             <ParametersTab nodeId={nodeId} />
-          ) : (
+          ) : tab === "settings" ? (
             <SettingsTab nodeId={nodeId} />
+          ) : tab === "docs" ? (
+            <DocsTab nodeId={nodeId} />
+          ) : tab === "credentials" ? (
+            <CredentialsTab nodeId={nodeId} />
+          ) : (
+            <LogsTab nodeId={nodeId} />
           )}
         </div>
       </section>

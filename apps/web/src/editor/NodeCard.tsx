@@ -42,6 +42,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const { inputs } = manifest;
   const outputNames = outputsOverride ?? manifest.outputs.map((o) => o.name);
   const runStatus = useEditor((s) => s.runStatus[id]);
+  const runMeta = useEditor((s) => s.runMeta[id]);
   const running = useEditor((s) => s.running);
   const isPinned = useEditor((s) => Boolean(s.pinned[id]));
   const credentialSpecs = manifest.params.filter((param) => param.credential);
@@ -197,6 +198,25 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
             <span title="Uses stored credential">lock</span>
           )}
         </div>
+
+        {runMeta?.error && runStatus === "error" && (
+          <div
+            className="node-error-callout nodrag nopan"
+            title={runMeta.error}
+          >
+            {runMeta.error.length > 52
+              ? runMeta.error.slice(0, 49) + "…"
+              : runMeta.error}
+          </div>
+        )}
+
+        {runMeta?.durationMs != null && runStatus !== "running" && (
+          <div className="node-duration nodrag nopan">
+            {runMeta.durationMs < 1000
+              ? `${Math.round(runMeta.durationMs)}ms`
+              : `${(runMeta.durationMs / 1000).toFixed(1)}s`}
+          </div>
+        )}
 
         {inputs.map((port, i) => (
           <Handle

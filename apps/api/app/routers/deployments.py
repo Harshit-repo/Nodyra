@@ -24,8 +24,42 @@ from app.security import require_permission
 from app.services.audit import log_audit
 from app.services.graph_utils import first_trigger_node
 from app.services.runner import start_run
+from app.services.unsafe_nodes import classify as classify_unsafe_nodes
+from app.config import settings
 
 router = APIRouter(prefix="/deployments", tags=["deployments"])
+
+
+def _enforce_unsafe_node_policy(
+    version: WorkflowVersion, *, approved: bool
+) -> None:
+    """Raise 409 (with the findings) when the configured policy blocks activation.
+
+    Findings travel back in the response detail so the UI can render the
+    same list the operator needs to acknowledge. Callers must already know
+    the deployment is becoming ``active=True`` — this helper assumes that.
+    """
+    policy = settings.unsafe_node_policy
+    if policy == "allow":
+        return
+    findings = classify_unsafe_nodes(version.graph or {})
+    if not findings:
+        return
+    if policy == "warn":
+        return
+    if policy == "require_approval" and approved:
+        return
+    raise HTTPException(
+        status.HTTP_409_CONFLICT,
+        detail={
+            "message": (
+                "Workflow contains risky nodes that the unsafe-node policy "
+                f"({policy!r}) does not allow."
+            ),
+            "policy": policy,
+            "findings": findings,
+        },
+    )
 
 
 async def _load(session: AsyncSession, deployment_id: str) -> Deployment:
@@ -115,6 +149,9 @@ async def create_deployment(
     ) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Error workflow not found")
 
+    if body.active:
+        _enforce_unsafe_node_policy(version, approved=body.approve_unsafe_nodes)
+
     deployment = Deployment(
         workflow_id=body.workflow_id,
         name=body.name,
@@ -166,8 +203,6 @@ async def update_deployment(
         deployment.schedule_tz = body.schedule_tz
     if body.default_parameters is not None:
         deployment.default_parameters = body.default_parameters
-    if body.active is not None:
-        deployment.active = body.active
     if body.environment_id is not None:
         deployment.environment_id = body.environment_id
     if body.workflow_version_id is not None:
@@ -182,6 +217,25 @@ async def update_deployment(
             session, workflow, body.workflow_version_id
         )
         deployment.workflow_version_id = version.id
+    if body.active is not None:
+        # When flipping from inactive → active we must re-evaluate the
+        # unsafe-node policy against the version that *will* run after the
+        # commit (post any workflow_version_id update above).
+        if body.active and not deployment.active:
+            workflow = await session.scalar(
+                select(Workflow)
+                .where(Workflow.id == deployment.workflow_id)
+                .options(selectinload(Workflow.versions))
+            )
+            if workflow is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
+            version = await _version_for_deployment(
+                session, workflow, deployment.workflow_version_id
+            )
+            _enforce_unsafe_node_policy(
+                version, approved=body.approve_unsafe_nodes
+            )
+        deployment.active = body.active
     if body.error_workflow_id is not None:
         if await session.get(Workflow, body.error_workflow_id) is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Error workflow not found")

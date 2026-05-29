@@ -51,7 +51,17 @@ port is not passed to functions that don't declare it.
 
 The engine (`noodle.engine.execute`) walks the graph in topological order,
 resolving each node's wired inputs from upstream outputs and its config
-parameters from the inspector. It supports:
+parameters from the inspector.
+
+**Ordering contract.** Execution order is a function of edges and node
+insertion order in `WorkflowGraph.nodes` only. Canvas position
+(`GraphNode.position` / x,y) is never read by the engine — moving nodes
+around the editor canvas cannot change semantics. Among nodes with equal
+indegree, ties are broken by their index in `graph.nodes`, so the branch
+that was added first runs first. Regression coverage:
+`packages/core/tests/test_engine.py::test_branch_order_depends_on_insertion_not_position`.
+
+It supports:
 
 - **branching** — consumers of an untaken branch are skipped;
 - **partial execution** — `cache` supplies precomputed outputs;

@@ -159,3 +159,31 @@ def contains_expression(value: Any) -> bool:
     if isinstance(value, list):
         return any(contains_expression(v) for v in value)
     return False
+
+
+def evaluate_parts(value: str, context: dict[str, Any]) -> list[dict[str, Any]]:
+    """Split ``value`` into literal/expression parts with each expression
+    individually evaluated. Used by the editor preview so each ``{{ }}`` block
+    can be colorized with its resolved value while the surrounding literal text
+    stays plain.
+
+    Each part is one of:
+      * ``{"kind": "text",  "value": <literal>}``
+      * ``{"kind": "expr",  "raw": "{{ ... }}", "value": <resolved>}``
+      * ``{"kind": "error", "raw": "{{ ... }}", "error": <message>}``
+    """
+    parts: list[dict[str, Any]] = []
+    cursor = 0
+    for match in _EXPR_RE.finditer(value):
+        if match.start() > cursor:
+            parts.append({"kind": "text", "value": value[cursor:match.start()]})
+        raw = match.group(0)
+        result = _eval_one(match.group(1), context)
+        if isinstance(result, str) and result.startswith("[expr error:"):
+            parts.append({"kind": "error", "raw": raw, "error": result.strip("[]")})
+        else:
+            parts.append({"kind": "expr", "raw": raw, "value": result})
+        cursor = match.end()
+    if cursor < len(value):
+        parts.append({"kind": "text", "value": value[cursor:]})
+    return parts

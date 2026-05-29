@@ -22,6 +22,7 @@ from app.routers import (
     deployments,
     environments,
     export,
+    expressions,
     health,
     internal,
     nodes,
@@ -35,7 +36,12 @@ from app.routers import (
 )
 from app.services.crypto import verify_token
 from app.services.events import broker_reaper_loop
-from app.services.remote_dispatch import dispatcher, queue_dispatch_loop
+from app.services.queue import run_queue_dispatch_loop
+from app.services.remote_dispatch import (
+    cloud_idle_terminate_loop,
+    dispatcher,
+    runner_heartbeat_loop,
+)
 from app.services.retention import retention_loop
 from app.services.runner import shutdown_active_runs
 from app.services.runtime_pool import idle_reaper_loop
@@ -124,18 +130,40 @@ async def lifespan(app: FastAPI):
 
     await _ensure_global_environment()
     await _mark_interrupted_runs()
-    scheduler = (
-        asyncio.create_task(scheduler_loop())
-        if settings.enable_inprocess_scheduler
-        else None
-    )
+    # Register the configured artifact backend. ``local`` self-registers on
+    # first use; ``s3`` needs an explicit hook so a missing boto3 install or
+    # bad bucket name surfaces at startup rather than on the first download.
+    if settings.artifact_storage_backend == "s3":
+        from app.services.s3_artifact_backend import register_s3_backend
+
+        try:
+            register_s3_backend()
+        except Exception:  # noqa: BLE001
+            logging.getLogger("noodle").exception(
+                "Failed to register S3 artifact backend; falling back to local."
+            )
+    # Scheduler / retention loops respect both ``enable_inprocess_scheduler``
+    # (legacy on/off knob) and ``scheduler_role``:
+    #   inline    -> run unconditionally (single-process dev)
+    #   leader    -> run only while we hold the DB advisory lock
+    #   disabled  -> never run
+    from app.services.leader_election import run_with_leader_election
+
+    def _make_loop_task(loop_fn, lock_name: str):
+        if not settings.enable_inprocess_scheduler:
+            return None
+        if settings.scheduler_role == "disabled":
+            return None
+        if settings.scheduler_role == "leader":
+            return asyncio.create_task(
+                run_with_leader_election(loop_fn, name=lock_name)
+            )
+        return asyncio.create_task(loop_fn())
+
+    scheduler = _make_loop_task(scheduler_loop, "noodle.scheduler")
     # Retention prune is gated on the same flag — it's another in-process
     # loop and we want at most one owner across replicas.
-    retention = (
-        asyncio.create_task(retention_loop())
-        if settings.enable_inprocess_scheduler
-        else None
-    )
+    retention = _make_loop_task(retention_loop, "noodle.retention")
     # Idle reaper closes warm runner subprocesses that have been sitting
     # unused past ``runner_idle_seconds``. Independent of the scheduler flag
     # because every replica should reap its own pool.
@@ -147,9 +175,11 @@ async def lifespan(app: FastAPI):
     # Broker reaper: every replica owns its own pub/sub buffer, so it
     # always runs (independent of the scheduler flag).
     broker_reaper = asyncio.create_task(broker_reaper_loop())
-    queue_loop = asyncio.create_task(queue_dispatch_loop())
+    queue_loop = asyncio.create_task(run_queue_dispatch_loop())
+    cloud_idle = asyncio.create_task(cloud_idle_terminate_loop())
+    heartbeat = asyncio.create_task(runner_heartbeat_loop())
     yield
-    for task in (scheduler, retention, reaper, broker_reaper, queue_loop):
+    for task in (scheduler, retention, reaper, broker_reaper, queue_loop, cloud_idle, heartbeat):
         if task is None:
             continue
         task.cancel()
@@ -214,7 +244,12 @@ async def auth_gate(request: Request, call_next):
 app.include_router(health.router)
 app.include_router(nodes.router)
 app.include_router(environments.router)
-app.include_router(webhooks.router)
+# Webhook ingress role:
+#   inline    -> serve /webhooks/* from this process (default; dev)
+#   ingress   -> serve /webhooks/* (this process IS the ingress tier)
+#   disabled  -> do not mount /webhooks/* (control-plane only)
+if settings.webhook_role != "disabled":
+    app.include_router(webhooks.router)
 app.include_router(workflows.router)
 app.include_router(runs.router)
 app.include_router(deployments.router)
@@ -229,6 +264,7 @@ app.include_router(ops.router)
 app.include_router(pinned.router)
 app.include_router(system_settings.router)
 app.include_router(runner_pools.router)
+app.include_router(expressions.router)
 
 
 @app.get("/")

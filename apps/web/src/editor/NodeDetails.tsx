@@ -445,6 +445,7 @@ const CRED_TYPE_LABELS: Record<string, string> = {
   openai: "OpenAI API Key",
   anthropic: "Anthropic API Key",
   slack_bot: "Slack Bot Token",
+  smtp: "SMTP Credentials",
   github: "GitHub Token",
   aws: "AWS Credentials",
   ssh: "SSH Credentials",
@@ -496,7 +497,7 @@ function CredentialCreateModal({
   typeLabel: string;
   workflowId: string | null;
   onClose: () => void;
-  onCreated: (id: string, key: string) => void;
+  onCreated: (id: string, key: string, credential: Credential) => void;
 }) {
   const displayLabel = CRED_TYPE_LABELS[credType] ?? typeLabel;
   const [name, setName] = useState(displayLabel);
@@ -530,7 +531,7 @@ function CredentialCreateModal({
         data,
       });
       notify("Credential created.", "success");
-      onCreated(created.id, refKey);
+      onCreated(created.id, refKey, created);
     } catch (err) {
       setError(String(err));
       setBusy(false);
@@ -841,7 +842,11 @@ function CredentialParamField({
           typeLabel={meta.label || spec.name}
           workflowId={workflowId}
           onClose={() => setModalOpen(false)}
-          onCreated={(id, key) => {
+          onCreated={(id, key, created) => {
+            setCredentials((items) => [
+              created,
+              ...items.filter((item) => item.id !== created.id),
+            ]);
             onChange(makeCredentialRef(id, key));
             setModalOpen(false);
             load();
@@ -852,17 +857,315 @@ function CredentialParamField({
   );
 }
 
+export interface ExprContext {
+  json?: unknown;
+  inputs?: Record<string, unknown>;
+  nodes?: Record<string, unknown>;
+}
+
+const EXPR_RE = /\{\{[\s\S]+?\}\}/;
+const EXPR_RE_GLOBAL = /\{\{[\s\S]+?\}\}/g;
+
+function formatResultText(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "object") return JSON.stringify(value, null, 2);
+  return String(value);
+}
+
+type PreviewPart =
+  | { kind: "text"; value: string }
+  | { kind: "expr"; raw: string; value: unknown }
+  | { kind: "error"; raw: string; error: string };
+
+type ResultView = "text" | "html";
+
+/** Textarea that paints `{{ }}` blocks in accent green using the
+ *  mirror-overlay technique: a styled <div> renders the highlighted text under
+ *  a transparent <textarea> that handles caret + editing. Scroll position stays
+ *  in sync. */
+function HighlightedTextarea({
+  value,
+  onChange,
+  className = "",
+  placeholder,
+  autoFocus,
+  spellCheck = false,
+  rows,
+  onDrop,
+  onDragOver,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  className?: string;
+  placeholder?: string;
+  autoFocus?: boolean;
+  spellCheck?: boolean;
+  rows?: number;
+  onDrop?: React.DragEventHandler<HTMLTextAreaElement>;
+  onDragOver?: React.DragEventHandler<HTMLTextAreaElement>;
+}) {
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const mirrorRef = useRef<HTMLDivElement>(null);
+
+  const segments = (() => {
+    const out: Array<{ text: string; expr: boolean }> = [];
+    let lastIndex = 0;
+    EXPR_RE_GLOBAL.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = EXPR_RE_GLOBAL.exec(value)) !== null) {
+      if (m.index > lastIndex) {
+        out.push({ text: value.slice(lastIndex, m.index), expr: false });
+      }
+      out.push({ text: m[0], expr: true });
+      lastIndex = m.index + m[0].length;
+    }
+    if (lastIndex < value.length) {
+      out.push({ text: value.slice(lastIndex), expr: false });
+    }
+    return out;
+  })();
+
+  const syncScroll = () => {
+    const ta = taRef.current;
+    const m = mirrorRef.current;
+    if (!ta || !m) return;
+    m.scrollTop = ta.scrollTop;
+    m.scrollLeft = ta.scrollLeft;
+  };
+
+  return (
+    <div className={`hl-ta-wrap ${className}`}>
+      <div ref={mirrorRef} className="hl-ta-mirror" aria-hidden>
+        {segments.map((s, i) =>
+          s.expr ? (
+            <span key={i} className="hl-ta-expr">
+              {s.text}
+            </span>
+          ) : (
+            <span key={i}>{s.text}</span>
+          ),
+        )}
+        {/* Trailing newline ensures the mirror grows when the textarea does. */}
+        {value.endsWith("\n") && "\n"}
+        {/* Non-breaking space keeps empty lines/empty content rendering. */}
+        {value === "" && " "}
+      </div>
+      <textarea
+        ref={taRef}
+        className="hl-ta-input"
+        value={value}
+        rows={rows}
+        placeholder={placeholder}
+        spellCheck={spellCheck}
+        autoFocus={autoFocus}
+        onChange={(e) => onChange(e.target.value)}
+        onScroll={syncScroll}
+        onDrop={onDrop}
+        onDragOver={onDragOver}
+      />
+    </div>
+  );
+}
+
+/** n8n-style expand modal: editor on the left, live Result preview on the right.
+ *  Result evaluates faithfully via the backend on a debounce, so HTML/text bodies
+ *  are visible as they will be at runtime — no need to execute the workflow. */
+function ExpressionEditorModal({
+  label,
+  value,
+  onChange,
+  ctx,
+  onClose,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  ctx?: ExprContext;
+  onClose: () => void;
+}) {
+  const [view, setView] = useState<ResultView>("text");
+  const [state, setState] = useState<{
+    result?: unknown;
+    error?: string | null;
+    parts?: PreviewPart[];
+    loading: boolean;
+  }>({ loading: false });
+
+  const hasData =
+    ctx !== undefined &&
+    (ctx.json !== undefined ||
+      Object.keys(ctx.nodes ?? {}).length > 0 ||
+      Object.keys(ctx.inputs ?? {}).length > 0);
+  const hasExpr = EXPR_RE.test(value);
+
+  useEffect(() => {
+    // No expression to evaluate → result is just the literal value.
+    if (!hasExpr) {
+      setState({
+        result: value,
+        error: null,
+        parts: value ? [{ kind: "text", value }] : [],
+        loading: false,
+      });
+      return;
+    }
+    if (!hasData) {
+      setState({ result: undefined, error: null, parts: [], loading: false });
+      return;
+    }
+    let cancelled = false;
+    setState((s) => ({ ...s, loading: true }));
+    const handle = setTimeout(() => {
+      api
+        .previewExpression({
+          value,
+          json: ctx?.json,
+          inputs: ctx?.inputs,
+          nodes: ctx?.nodes,
+        })
+        .then((res) => {
+          if (!cancelled)
+            setState({ ...res, parts: res.parts as PreviewPart[], loading: false });
+        })
+        .catch((err) => {
+          if (!cancelled)
+            setState({
+              error: String(err),
+              result: undefined,
+              parts: [],
+              loading: false,
+            });
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [value, ctx, hasExpr, hasData]);
+
+  const resultText = formatResultText(state.result);
+  const parts = state.parts ?? [];
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div
+        className="modal modal-wide expr-modal"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="modal-head">
+          <h2>
+            Editing <span className="expr-modal-label">{label}</span>
+          </h2>
+          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+            ✕
+          </button>
+        </header>
+        <div className="expr-modal-body">
+          <section className="expr-modal-pane">
+            <div className="expr-modal-pane-head">
+              <span>Expression</span>
+              <span className="muted expr-modal-hint">
+                Anything inside <code>{"{{ }}"}</code> is evaluated
+              </span>
+            </div>
+            <HighlightedTextarea
+              className="expr-modal-editor"
+              value={value}
+              onChange={onChange}
+              autoFocus
+            />
+          </section>
+          <section className="expr-modal-pane">
+            <div className="expr-modal-pane-head">
+              <span>Result</span>
+              <div className="expr-modal-tabs">
+                <button
+                  type="button"
+                  className={view === "text" ? "active" : ""}
+                  onClick={() => setView("text")}
+                >
+                  Text
+                </button>
+                <button
+                  type="button"
+                  className={view === "html" ? "active" : ""}
+                  onClick={() => setView("html")}
+                >
+                  HTML
+                </button>
+              </div>
+            </div>
+            <div className="expr-modal-result">
+              {state.loading && <p className="muted">Evaluating…</p>}
+              {!state.loading && hasExpr && !hasData && (
+                <p className="muted">
+                  Run the workflow once to feed this preview with real input
+                  data — until then, only the literal text is shown.
+                </p>
+              )}
+              {!state.loading && state.error && (
+                <p className="expr-preview-error">⚠ {state.error}</p>
+              )}
+              {!state.loading &&
+                !state.error &&
+                state.result !== undefined &&
+                (view === "html" ? (
+                  <iframe
+                    title="HTML preview"
+                    sandbox=""
+                    srcDoc={resultText}
+                    className="expr-modal-iframe"
+                  />
+                ) : (
+                  <pre className="expr-modal-text">
+                    {parts.length === 0
+                      ? resultText
+                      : parts.map((part, i) => {
+                          if (part.kind === "text") {
+                            return <span key={i}>{part.value}</span>;
+                          }
+                          if (part.kind === "error") {
+                            return (
+                              <span
+                                key={i}
+                                className="expr-part-error"
+                                title={part.error}
+                              >
+                                {part.raw}
+                              </span>
+                            );
+                          }
+                          return (
+                            <span key={i} className="expr-part-resolved">
+                              {formatResultText(part.value)}
+                            </span>
+                          );
+                        })}
+                  </pre>
+                ))}
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ParamField({
   spec,
   value,
   onChange,
   credentialContext,
+  exprContext,
 }: {
   spec: ParamSpec;
   value: unknown;
   onChange: (v: unknown) => void;
   credentialContext?: Record<string, unknown>;
+  exprContext?: ExprContext;
 }) {
+  const [expanderOpen, setExpanderOpen] = useState(false);
   if (spec.credential) {
     return (
       <CredentialParamField
@@ -895,6 +1198,30 @@ export function ParamField({
     );
   }
   if (spec.choices && spec.choices.length > 0) {
+    const simpleChoices = spec.choices.filter(
+      (choice): choice is string | number =>
+        typeof choice === "string" || typeof choice === "number",
+    );
+    if (simpleChoices.length === spec.choices.length && simpleChoices.length <= 3) {
+      return (
+        <div className="segmented-field" role="group" aria-label={spec.name}>
+          {simpleChoices.map((choice) => {
+            const stringChoice = String(choice);
+            const active = String(value ?? "") === stringChoice;
+            return (
+              <button
+                type="button"
+                key={stringChoice}
+                className={active ? "active" : ""}
+                onClick={() => onChange(stringChoice)}
+              >
+                {formatParamLabel(stringChoice)}
+              </button>
+            );
+          })}
+        </div>
+      );
+    }
     return (
       <select
         className="field-input"
@@ -946,15 +1273,34 @@ export function ParamField({
     const drop = exprDropHandlers(current, onChange);
     if (spec.multiline) {
       return (
-        <textarea
-          className="field-input field-code"
-          rows={7}
-          spellCheck={false}
-          placeholder={spec.placeholder}
-          value={current}
-          onChange={(e) => onChange(e.target.value)}
-          {...drop}
-        />
+        <div className="textarea-wrap">
+          <HighlightedTextarea
+            className="field-code"
+            rows={7}
+            placeholder={spec.placeholder}
+            value={current}
+            onChange={(v) => onChange(v)}
+            onDrop={drop.onDrop}
+            onDragOver={drop.onDragOver}
+          />
+          <button
+            type="button"
+            className="textarea-expand"
+            title="Expand editor with live result preview"
+            onClick={() => setExpanderOpen(true)}
+          >
+            ⤢
+          </button>
+          {expanderOpen && (
+            <ExpressionEditorModal
+              label={spec.name}
+              value={current}
+              onChange={onChange}
+              ctx={exprContext}
+              onClose={() => setExpanderOpen(false)}
+            />
+          )}
+        </div>
       );
     }
     const isExpr = /\{\{[\s\S]+?\}\}/.test(current);
@@ -967,6 +1313,7 @@ export function ParamField({
         onChange(`{{ ${current} }}`);
       }
     };
+    const isCredField = spec.credential != null;
     return (
       <div className={`field-wrap${isExpr ? " field-wrap-expr" : ""}`}>
         <input
@@ -986,6 +1333,21 @@ export function ParamField({
         >
           ƒx
         </button>
+        {!isCredField && (
+          <div className="expr-tokens-hint">
+            <span className="expr-tokens-label">tokens:</span>
+            {["$json.field", '$node["id"].main', "$env.KEY", "$run.id"].map((token) => (
+              <code
+                key={token}
+                className="expr-token"
+                title={`Click to insert ${token}`}
+                onClick={() => onChange(`{{ ${token} }}`)}
+              >
+                {token}
+              </code>
+            ))}
+          </div>
+        )}
       </div>
     );
   }

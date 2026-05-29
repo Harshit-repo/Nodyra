@@ -235,3 +235,188 @@ async def test_retention_prune_deletes_artifact_metadata_and_file(
     async with retention.SessionLocal() as session:
         remaining = (await session.scalars(select(Artifact))).all()
     assert remaining == []
+
+
+# --- Task 10/11: pluggable artifact backend ----------------------------------
+
+from collections.abc import Iterable
+
+from app.services import artifact_backends
+from app.services.artifact_backends import (
+    ArtifactDownload,
+    LocalBackend,
+    get_backend,
+    register_backend,
+    reset_backends_for_tests,
+)
+
+
+def test_local_backend_is_default_and_stats_reports_files(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "artifacts_dir", str(tmp_path))
+    reset_backends_for_tests()
+    backend = get_backend()
+    assert isinstance(backend, LocalBackend)
+    # Stats survives an empty dir.
+    stats = backend.stats()
+    assert stats["backend"] == "local"
+    assert stats["file_count"] == 0
+    assert stats["bytes"] == 0
+    # And reports real content.
+    (tmp_path / "runs" / "r1" / "n1").mkdir(parents=True)
+    (tmp_path / "runs" / "r1" / "n1" / "a-x.bin").write_bytes(b"abcd")
+    stats = backend.stats()
+    assert stats["file_count"] == 1
+    assert stats["bytes"] == 4
+    reset_backends_for_tests()
+
+
+def test_local_backend_signed_url_is_none() -> None:
+    # Signals to the router that it must stream bytes rather than 307.
+    assert LocalBackend().signed_url(object()) is None  # type: ignore[arg-type]
+
+
+def test_get_backend_raises_for_unknown_name() -> None:
+    reset_backends_for_tests()
+    import pytest
+
+    with pytest.raises(KeyError):
+        get_backend("s3-mystery")
+    reset_backends_for_tests()
+
+
+class _RecordingBackend:
+    """Test double that satisfies ``ArtifactBackend`` and records calls."""
+
+    name = "memory"
+
+    def __init__(self) -> None:
+        self.deleted: list[str] = []
+        self.downloads: list[str] = []
+        self.signed: list[tuple[str, int]] = []
+        self.runs_deleted: list[str] = []
+
+    def delete(self, artifacts: Iterable[Artifact]) -> None:
+        for a in artifacts:
+            self.deleted.append(a.id)
+
+    def open_download(self, artifact: Artifact) -> ArtifactDownload:
+        self.downloads.append(artifact.id)
+
+        def chunks():
+            yield b"hello-from-memory"
+
+        return ArtifactDownload(
+            content_type=artifact.content_type,
+            filename=artifact.name,
+            size_bytes=len(b"hello-from-memory"),
+            stream=chunks(),
+        )
+
+    def signed_url(self, artifact: Artifact, *, expires_in: int = 300) -> str | None:
+        self.signed.append((artifact.id, expires_in))
+        return f"https://signed.example.test/{artifact.id}?ttl={expires_in}"
+
+    def stats(self) -> dict:
+        return {"backend": self.name, "objects": 0}
+
+    def delete_run(self, run_id: str) -> None:
+        self.runs_deleted.append(run_id)
+
+
+async def test_router_redirects_when_backend_returns_signed_url(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """Backends with ``signed_url`` short-circuit the bytes path with a 307."""
+    workflow_id = (await client.post("/workflows", json={"name": "S3-like"})).json()["id"]
+    graph = {
+        "nodes": [
+            {"id": "t", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
+            {
+                "id": "w",
+                "type": "code",
+                "params": {
+                    "code": "output = artifacts.write_text('x', name='x.txt')"
+                },
+                "position": {"x": 250, "y": 0},
+            },
+        ],
+        "edges": [
+            {"id": "e", "source": "t", "source_output": "main", "target": "w", "target_input": "input"}
+        ],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
+    await client.post(f"/workflows/{workflow_id}/run", json={})
+
+    # Look up the artifact via the test-bound dependency.
+    from app.db import get_session as _get_session
+    override = client._transport.app.dependency_overrides[_get_session]
+    artifact_id: str | None = None
+    async for session in override():
+        artifact = (await session.scalars(select(Artifact))).first()
+        assert artifact is not None
+        artifact_id = artifact.id
+        break
+
+    # Repoint that row's backend to our recorder and register the recorder.
+    fake = _RecordingBackend()
+    register_backend(fake)
+    async for session in override():
+        row = await session.get(Artifact, artifact_id)
+        row.storage_backend = "memory"
+        await session.commit()
+        break
+
+    try:
+        resp = await client.get(
+            f"/artifacts/{artifact_id}/download", follow_redirects=False
+        )
+        assert resp.status_code == 307
+        assert "signed.example.test" in resp.headers["location"]
+        assert fake.signed and fake.signed[0][0] == artifact_id
+    finally:
+        reset_backends_for_tests()
+
+
+async def test_signed_url_endpoint_returns_null_for_local_backend(
+    client: AsyncClient,
+) -> None:
+    """Local backend has no concept of pre-signed URLs; UI falls back to /download."""
+    workflow_id = (await client.post("/workflows", json={"name": "LocalURL"})).json()["id"]
+    graph = {
+        "nodes": [
+            {"id": "t", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
+            {
+                "id": "w",
+                "type": "code",
+                "params": {"code": "output = artifacts.write_text('y', name='y.txt')"},
+                "position": {"x": 250, "y": 0},
+            },
+        ],
+        "edges": [
+            {"id": "e", "source": "t", "source_output": "main", "target": "w", "target_input": "input"}
+        ],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
+    await client.post(f"/workflows/{workflow_id}/run", json={})
+
+    from app.db import get_session as _get_session
+    override = client._transport.app.dependency_overrides[_get_session]
+    artifact_id: str | None = None
+    async for session in override():
+        artifact = (await session.scalars(select(Artifact))).first()
+        artifact_id = artifact.id
+        break
+    resp = await client.get(f"/artifacts/{artifact_id}/url")
+    assert resp.status_code == 200
+    assert resp.json() == {"url": None, "expires_in": None}
+
+
+def test_s3_backend_requires_bucket_setting(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "artifact_s3_bucket", "")
+    from app.services.s3_artifact_backend import S3Backend
+    import pytest
+
+    with pytest.raises(RuntimeError, match="ARTIFACT_S3_BUCKET"):
+        S3Backend()
+
+

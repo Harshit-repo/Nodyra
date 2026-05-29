@@ -342,3 +342,47 @@ async def test_cycle_is_detected() -> None:
     )
     with pytest.raises(GraphError):
         await execute(graph, reg)
+
+
+async def test_branch_order_depends_on_insertion_not_position() -> None:
+    """Shuffling node x/y positions must not change execution order.
+
+    Two independent branches fan out from a common source. The branch that
+    appears first in ``graph.nodes`` must run first regardless of canvas
+    coordinates or lexical id order.
+    """
+    from noodle.engine import _topo_order
+    from noodle.models import Position
+
+    def build(positions: dict[str, tuple[float, float]]) -> WorkflowGraph:
+        return WorkflowGraph(
+            nodes=[
+                GraphNode(
+                    id="src", type="const", params={"value": 1},
+                    position=Position(x=positions["src"][0], y=positions["src"][1]),
+                ),
+                # "z_first" is inserted before "a_second" but sorts after by id.
+                GraphNode(
+                    id="z_first", type="double",
+                    position=Position(x=positions["z_first"][0], y=positions["z_first"][1]),
+                ),
+                GraphNode(
+                    id="a_second", type="double",
+                    position=Position(x=positions["a_second"][0], y=positions["a_second"][1]),
+                ),
+            ],
+            edges=[
+                Edge(source="src", target="z_first"),
+                Edge(source="src", target="a_second"),
+            ],
+        )
+
+    layout_a = {"src": (0, 0), "z_first": (100, 0), "a_second": (200, 0)}
+    layout_b = {"src": (999, 999), "z_first": (-50, -50), "a_second": (-999, 999)}
+
+    order_a = _topo_order(build(layout_a))
+    order_b = _topo_order(build(layout_b))
+
+    # Insertion order wins; lexical id sort would have placed "a_second" before "z_first".
+    assert order_a == ["src", "z_first", "a_second"]
+    assert order_a == order_b

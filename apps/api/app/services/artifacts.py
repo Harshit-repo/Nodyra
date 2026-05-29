@@ -1,8 +1,13 @@
-"""Artifact storage and metadata helpers."""
+"""Artifact storage and metadata helpers.
+
+Bytes live in a pluggable :class:`~app.services.artifact_backends.ArtifactBackend`
+(local filesystem by default; S3-compatible in production). This module only
+owns the metadata side: persisting refs to the ``artifacts`` table, redacting
+previews, and orchestrating backend deletes.
+"""
 
 from __future__ import annotations
 
-import shutil
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -13,6 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import SessionLocal
 from app.models import Artifact
+from app.services.artifact_backends import (
+    LocalBackend,
+    _resolve_local_path as _artifact_path,
+    get_backend,
+)
 from app.services.redaction import load_secret_values, redact_value
 from noodle.artifacts import ARTIFACT_MARKER, LocalArtifactStore, is_artifact_ref
 
@@ -53,20 +63,19 @@ def collect_artifact_refs(value: Any) -> list[dict[str, Any]]:
     return list(refs.values())
 
 
-def _artifact_path(storage_key: str) -> Path:
-    base = artifact_base_dir()
-    path = (base / storage_key).resolve()
-    try:
-        path.relative_to(base)
-    except ValueError as exc:
-        raise ValueError("artifact storage key escapes the artifact directory") from exc
-    return path
-
-
 def path_for_artifact(artifact: Artifact) -> Path:
-    if artifact.storage_backend != "local":
-        raise ValueError(f"unsupported artifact backend {artifact.storage_backend!r}")
-    return _artifact_path(artifact.storage_key)
+    """Local filesystem path for an artifact.
+
+    Backwards-compatible shim: prefer ``get_backend(artifact.storage_backend)
+    .open_download(artifact)`` for any new code path. Only callers that need
+    a real ``Path`` (e.g. file writers) should keep using this.
+    """
+    backend = get_backend(artifact.storage_backend)
+    if not isinstance(backend, LocalBackend):
+        raise ValueError(
+            f"path_for_artifact requires a local backend (got {backend.name!r})"
+        )
+    return backend.path_for_artifact(artifact)
 
 
 def _row_from_ref(
@@ -129,25 +138,20 @@ async def persist_artifact_refs(run_id: str, refs: Iterable[dict[str, Any]]) -> 
 
 
 def delete_artifact_files(rows: Iterable[Artifact]) -> None:
+    """Delete bytes via each row's storage backend.
+
+    Groups by ``storage_backend`` so each backend gets one batched call —
+    important for object stores where per-object DELETEs are billed.
+    """
+    by_backend: dict[str, list[Artifact]] = {}
     for row in rows:
-        if row.storage_backend != "local":
-            continue
+        by_backend.setdefault(row.storage_backend or "local", []).append(row)
+    for name, group in by_backend.items():
         try:
-            path = path_for_artifact(row)
-        except ValueError:
+            backend = get_backend(name)
+        except KeyError:
             continue
-        try:
-            path.unlink(missing_ok=True)
-            # Remove now-empty artifact-id/node/run directories opportunistically.
-            for parent in (path.parent, path.parent.parent, path.parent.parent.parent):
-                if parent == artifact_base_dir() or not parent.exists():
-                    break
-                try:
-                    parent.rmdir()
-                except OSError:
-                    break
-        except OSError:
-            pass
+        backend.delete(group)
 
 
 async def delete_artifacts_for_run_ids(
@@ -167,10 +171,9 @@ async def delete_artifacts_for_run_ids(
 
 
 def delete_run_artifact_dir(run_id: str) -> None:
-    path = artifact_base_dir() / "runs" / run_id
-    try:
-        shutil.rmtree(path)
-    except FileNotFoundError:
-        pass
-    except OSError:
-        pass
+    """Reclaim per-run scratch space across all backends."""
+    for backend_name in ("local",):
+        try:
+            get_backend(backend_name).delete_run(run_id)
+        except KeyError:
+            continue
