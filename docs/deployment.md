@@ -76,9 +76,48 @@ source of truth.
 | Setting | Default | Purpose |
 |---------|---------|---------|
 | `ARTIFACTS_DIR` | `./artifacts` | Local artifact storage root. |
-| `ARTIFACT_STORAGE_BACKEND` | `local` | Only `local` shipped today; S3/GCS/Blob are future work. |
+| `ARTIFACT_STORAGE_BACKEND` | `local` | `local` or `s3`. With `s3`, workers still write bytes to `ARTIFACTS_DIR` and the API rehomes them to the bucket in `persist_artifact_refs`; on upload failure the row is kept on the local backend so refs are never orphaned. |
+| `ARTIFACT_S3_BUCKET` | unset | Required when backend is `s3`. |
+| `ARTIFACT_S3_REGION` | unset | AWS region; empty for non-AWS endpoints. |
+| `ARTIFACT_S3_ENDPOINT` | unset | Custom endpoint for MinIO/R2/B2 (S3 API). Credentials come from the standard boto3 chain — the API never stores access keys. |
 | `MAX_ARTIFACT_BYTES` | `52428800` (50 MB) | Per-write size cap. 0 = unlimited. |
 | `MAX_ARTIFACTS_PER_RUN` | `100` | Per-run count cap. 0 = unlimited. |
+
+### Queue & dispatch
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `QUEUE_LEASE_SECONDS` | `30` | Lease TTL for a leased run queue entry. Heartbeats extend by this amount; expired leases are requeued. |
+| `QUEUE_RETRY_BACKOFF_BASE_SECONDS` | `5` | Base for exponential backoff on retry (`base * 2^(attempts-1)`). |
+| `QUEUE_RETRY_BACKOFF_MAX_SECONDS` | `300` | Backoff cap. |
+| `QUEUE_DEFAULT_MAX_ATTEMPTS` | `3` | Default `max_attempts` for new queue entries. |
+| `QUEUE_DISPATCH_POLL_SECONDS` | `1.0` | Dispatch loop tick. |
+| `QUEUE_MAX_DISPATCHES_PER_TICK` | `25` | Upper bound on leases granted per tick. |
+| `QUEUE_DISPATCH_SHUTDOWN_TIMEOUT_SECONDS` | `5.0` | How long the dispatch loop waits for in-flight work on shutdown. |
+| `QUEUE_DRAIN` | `false` | When `true`, the dispatch loop stops leasing new entries but keeps requeueing expired leases. Use the `/ops/drain` endpoint to toggle at runtime — see below. |
+
+#### Graceful drain
+
+Production deploys/restarts should drain before terminating:
+
+```sh
+# Stop accepting new leases (leased runs continue until done).
+curl -X POST -H 'Authorization: Bearer $ADMIN_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{"draining": true}' \
+  https://noodle.example.com/ops/drain
+
+# Wait for /ops/queue stats to settle (no leased entries), then terminate.
+# Re-enable after the new revision is up:
+curl -X POST -H 'Authorization: Bearer $ADMIN_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{"draining": false}' \
+  https://noodle.example.com/ops/drain
+```
+
+`GET /ops/drain` returns `{"draining": bool}` and is unauthenticated for use
+in readiness scripts. `POST /ops/drain` requires the `ops:drain` permission
+(admin role).
 
 ### Auth & security
 
@@ -88,6 +127,23 @@ source of truth.
 | `SECRET_KEY` | dev placeholder | Encrypts credentials + signs session tokens. **Must** be rotated for production. |
 | `INTERNAL_API_TOKEN` | unset | Shared secret for `/internal/*` worker callbacks when `AUTH_REQUIRED=true`. |
 | `CORS_ORIGINS` | `*` (dev) | Comma-separated allowed origins. |
+
+## Migration ordering
+
+Always run `alembic upgrade head` to completion **before** starting any
+process that opens a write connection (API, worker, Beat). The Helm chart
+runs an init container for this and the `docker-compose` API entrypoint
+gates on it. Out-of-order startup is the most common cause of "column does
+not exist" errors after a deploy.
+
+Migration policy:
+
+- Migrations are forward-only. Additive nullable columns + backfills are
+  preferred so a brief window of mixed-revision processes is safe.
+- Drops are split across releases: nullable + stop-writing in release N,
+  drop in release N+1 once every replica has rolled.
+- The same migration head must be deployed to API, worker, and Beat in
+  lockstep. The Helm chart does this by sharing the same image tag.
 
 ## Observability
 
