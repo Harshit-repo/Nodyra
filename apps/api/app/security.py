@@ -40,6 +40,8 @@ _PERMISSION_MIN_ROLE = {
     "audit:read": "admin",
     "user:manage": "admin",
     "ops:drain": "admin",
+    "ops:dead-letter:read": "editor",
+    "ops:dead-letter:replay": "admin",
 }
 
 

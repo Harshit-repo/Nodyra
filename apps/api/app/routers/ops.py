@@ -10,8 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_session
-from app.models import Credential, Environment, Run, RunnerPool, Workflow
-from app.schemas import DrainRequest, QueueStats, RuntimeModeStatus
+from app.models import Credential, Environment, Run, RunnerPool, RunQueueEntry, Workflow
+from app.schemas import (
+    DeadLetterEntry,
+    DeadLetterListResponse,
+    DeadLetterReplayResponse,
+    DrainRequest,
+    QueueStats,
+    RuntimeModeStatus,
+)
 from app.security import require_permission
 from app.services import queue as run_queue
 
@@ -113,9 +120,93 @@ async def set_drain(payload: DrainRequest) -> dict:
     return {"draining": settings.queue_drain}
 
 
+@router.get(
+    "/ops/dead-letter",
+    response_model=DeadLetterListResponse,
+    dependencies=[Depends(require_permission("ops:dead-letter:read"))],
+)
+async def list_dead_letter(
+    limit: int = 100,
+    offset: int = 0,
+    session: AsyncSession = Depends(get_session),
+) -> DeadLetterListResponse:
+    """List run-queue entries currently in the dead-letter state.
+
+    Powers the ops UI's dead-letter triage view. Operators can decide whether
+    to replay (via the replay endpoints below) or leave for manual investigation.
+    """
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    total = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(RunQueueEntry)
+            .where(RunQueueEntry.status == "dead_lettered")
+        )
+        or 0
+    )
+    rows = (
+        await session.scalars(
+            select(RunQueueEntry)
+            .where(RunQueueEntry.status == "dead_lettered")
+            .order_by(RunQueueEntry.updated_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+    ).all()
+    entries = [
+        DeadLetterEntry(
+            run_id=r.run_id,
+            workflow_id=r.workflow_id,
+            status=r.status,
+            attempts=r.attempts,
+            max_attempts=r.max_attempts,
+            queue_reason=r.queue_reason or "",
+            last_error=r.last_error,
+            available_at=r.available_at,
+        )
+        for r in rows
+    ]
+    return DeadLetterListResponse(entries=entries, total=total)
+
+
+@router.post(
+    "/ops/dead-letter/replay",
+    response_model=DeadLetterReplayResponse,
+    dependencies=[Depends(require_permission("ops:dead-letter:replay"))],
+)
+async def replay_dead_letter(
+    session: AsyncSession = Depends(get_session),
+) -> DeadLetterReplayResponse:
+    """Bulk-replay every dead-letter entry currently on the queue.
+
+    Useful after fixing a transient upstream outage (e.g. a runner pool came
+    back) where the dead-letter queue is full of recoverable failures. Each
+    entry is reset to ``queued`` via the same ``run_queue.replay`` path used
+    by single-run replay, so attempt history is preserved.
+    """
+    rows = (
+        await session.scalars(
+            select(RunQueueEntry).where(RunQueueEntry.status == "dead_lettered")
+        )
+    ).all()
+    replayed: list[str] = []
+    skipped: list[str] = []
+    for entry in rows:
+        result = await run_queue.replay(session, run_id=entry.run_id)
+        if result is None:
+            skipped.append(entry.run_id)
+        else:
+            replayed.append(entry.run_id)
+    await session.commit()
+    return DeadLetterReplayResponse(replayed=replayed, skipped=skipped)
+
+
 @router.get("/metrics")
 async def metrics(session: AsyncSession = Depends(get_session)) -> Response:
     counts = await _counts(session)
+    queue = await run_queue.stats(session)
+    queue_oldest = queue.get("oldest_queued_age_seconds")
     lines = [
         "# HELP noodle_workflows Total workflows.",
         "# TYPE noodle_workflows gauge",
@@ -141,6 +232,25 @@ async def metrics(session: AsyncSession = Depends(get_session)) -> Response:
         "# HELP noodle_uptime_seconds API process uptime.",
         "# TYPE noodle_uptime_seconds gauge",
         f"noodle_uptime_seconds {int(time.time() - _started_at)}",
+        # Run queue gauges — one series per orchestration state so operators
+        # can alert on "queue backed up" (queued > N), "stuck leases"
+        # (leased > N), or "dead-letter growth" (dead_lettered > 0) without
+        # polling /ops/queue JSON.
+        "# HELP noodle_queue_depth Run queue entries grouped by orchestration status.",
+        "# TYPE noodle_queue_depth gauge",
+        f'noodle_queue_depth{{status="queued"}} {queue["queued"]}',
+        f'noodle_queue_depth{{status="leased"}} {queue["leased"]}',
+        f'noodle_queue_depth{{status="running"}} {queue["running"]}',
+        f'noodle_queue_depth{{status="completed"}} {queue["completed"]}',
+        f'noodle_queue_depth{{status="failed"}} {queue["failed"]}',
+        f'noodle_queue_depth{{status="dead_lettered"}} {queue["dead_lettered"]}',
+        f'noodle_queue_depth{{status="cancelled"}} {queue["cancelled"]}',
+        "# HELP noodle_queue_oldest_queued_age_seconds Wait of the oldest queued entry; -1 when empty.",
+        "# TYPE noodle_queue_oldest_queued_age_seconds gauge",
+        f"noodle_queue_oldest_queued_age_seconds {queue_oldest if queue_oldest is not None else -1}",
+        "# HELP noodle_queue_draining 1 if the dispatch loop is currently draining, else 0.",
+        "# TYPE noodle_queue_draining gauge",
+        f"noodle_queue_draining {1 if settings.queue_drain else 0}",
     ]
     return Response(
         content="\n".join(lines) + "\n",

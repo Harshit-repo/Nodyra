@@ -641,6 +641,36 @@ class DrainRequest(BaseModel):
     draining: bool
 
 
+class DeadLetterEntry(BaseModel):
+    """One row in the dead-letter listing for the ops UI / API.
+
+    Mirrors ``RunQueueEntry`` plus the parent ``Run.workflow_id`` so the
+    operator can decide whether to replay or discard without an extra
+    workflow lookup.
+    """
+
+    run_id: str
+    workflow_id: str
+    status: str
+    attempts: int
+    max_attempts: int
+    queue_reason: str = ""
+    last_error: str | None = None
+    available_at: datetime | None = None
+
+
+class DeadLetterListResponse(BaseModel):
+    entries: list[DeadLetterEntry]
+    total: int
+
+
+class DeadLetterReplayResponse(BaseModel):
+    """Result of bulk-replaying dead-letter entries."""
+
+    replayed: list[str]
+    skipped: list[str] = []
+
+
 class RunTimelineEvent(BaseModel):
     """One ordered event in a run's lifecycle.
 

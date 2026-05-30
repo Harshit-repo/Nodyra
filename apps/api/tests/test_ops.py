@@ -115,3 +115,82 @@ async def test_drain_toggle_round_trips(client: AsyncClient) -> None:
         assert app_settings.queue_drain is False
     finally:
         app_settings.queue_drain = False
+
+
+async def _seed_dead_letter(run_ids: list[str]) -> None:
+    """Helper: insert dead-lettered queue entries via the test session factory."""
+    from app.db import get_session
+    from app.main import app as fastapi_app
+    from app.models import RunQueueEntry
+
+    override = fastapi_app.dependency_overrides[get_session]
+    async for session in override():
+        for rid in run_ids:
+            session.add(
+                RunQueueEntry(
+                    run_id=rid,
+                    workflow_id="wf-dlq",
+                    status="dead_lettered",
+                    attempts=3,
+                    max_attempts=3,
+                    last_error="boom",
+                )
+            )
+        await session.commit()
+        break
+
+
+async def test_dead_letter_list_empty(client: AsyncClient) -> None:
+    resp = await client.get("/ops/dead-letter")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {"entries": [], "total": 0}
+
+
+async def test_dead_letter_list_returns_dead_lettered_entries(
+    client: AsyncClient,
+) -> None:
+    await _seed_dead_letter(["dl-1", "dl-2"])
+
+    resp = await client.get("/ops/dead-letter")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 2
+    rids = sorted(e["run_id"] for e in body["entries"])
+    assert rids == ["dl-1", "dl-2"]
+    entry = body["entries"][0]
+    assert entry["status"] == "dead_lettered"
+    assert entry["workflow_id"] == "wf-dlq"
+    assert entry["attempts"] == 3
+    assert entry["last_error"] == "boom"
+
+
+async def test_dead_letter_replay_bulk_resets_entries(client: AsyncClient) -> None:
+    from app.db import get_session
+    from app.main import app as fastapi_app
+    from app.models import RunQueueEntry
+    from sqlalchemy import select
+
+    await _seed_dead_letter(["dl-a", "dl-b"])
+
+    resp = await client.post("/ops/dead-letter/replay")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert sorted(body["replayed"]) == ["dl-a", "dl-b"]
+    assert body["skipped"] == []
+
+    override = fastapi_app.dependency_overrides[get_session]
+    async for session in override():
+        rows = (await session.scalars(select(RunQueueEntry))).all()
+        statuses = {r.run_id: r.status for r in rows}
+        assert statuses == {"dl-a": "queued", "dl-b": "queued"}
+        # Attempts reset; replay event appended to history.
+        for r in rows:
+            assert r.attempts == 0
+            events = [e.get("event") for e in (r.attempts_log or [])]
+            assert "replay" in events
+        break
+
+    # Subsequent bulk replay is a no-op now that nothing is dead-lettered.
+    resp = await client.post("/ops/dead-letter/replay")
+    assert resp.json() == {"replayed": [], "skipped": []}
