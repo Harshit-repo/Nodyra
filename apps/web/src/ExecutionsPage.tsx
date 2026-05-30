@@ -100,7 +100,18 @@ function OpsDashboard() {
             {oldestLabel}
           </div>
           <div className="ops-card-sub">
-            {oldestWarn ? "backpressure" : "fresh"}
+            {oldestWarn ? (
+              <span
+                className="backpressure-link"
+                title="This run waited in the queue because the concurrency limit was reached. Check Settings to adjust max_concurrent_runs."
+                style={{ cursor: "pointer", textDecoration: "underline dotted" }}
+                onClick={() => window.location.assign("/settings")}
+              >
+                ⚠ backpressure
+              </span>
+            ) : (
+              "fresh"
+            )}
           </div>
         </div>
         <div className="ops-card">
@@ -490,7 +501,7 @@ function RunDetailPanel({
               {actionPending === "rerun" ? "Starting…" : "↻ Re-run"}
             </button>
           )}
-          {run && run.status === "error" && (
+          {run && (run.status === "error" || run.status === "failed") && (
             <button
               type="button"
               className="btn btn-sm"
@@ -501,7 +512,7 @@ function RunDetailPanel({
               {actionPending === "retry" ? "Starting…" : "↺ Retry from failure"}
             </button>
           )}
-          {run && run.status === "error" && (
+          {run && (run.status === "error" || run.status === "failed") && (
             <a
               className="btn btn-sm"
               href={`/workflows/${run.workflow_id}?debug_run=${run.id}`}

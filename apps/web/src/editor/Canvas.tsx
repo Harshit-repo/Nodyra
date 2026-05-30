@@ -11,10 +11,11 @@ import type { DragEvent } from "react";
 import { categoryColor } from "../categories";
 import { CANVAS_STARTERS } from "../workflowTemplates";
 import { NodeCard } from "./NodeCard";
+import { NodeGroup } from "./NodeGroup";
 import { StickyNote } from "./StickyNote";
 import { pickEditorRunTrigger, type NoodleNode, useEditor } from "./store";
 
-const nodeTypes = { noodle: NodeCard, sticky: StickyNote };
+const nodeTypes = { noodle: NodeCard, sticky: StickyNote, group: NodeGroup };
 
 function CanvasControls() {
   const { fitView, zoomIn, zoomOut } = useReactFlow();

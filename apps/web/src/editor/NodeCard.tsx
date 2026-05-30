@@ -4,6 +4,7 @@ import type { CSSProperties, MouseEvent } from "react";
 
 import { categoryColor } from "../categories";
 import { NodeIcon } from "../NodeIcon";
+import { SdkModal } from "./SdkModal";
 import { type NoodleNode, useEditor } from "./store";
 
 const TILE = 72;
@@ -61,6 +62,8 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const runFromNode = useEditor((s) => s.runFromNode);
   const runFromTrigger = useEditor((s) => s.runFromTrigger);
   const isTrigger = manifest.category === "Triggers";
+  const devMode = useEditor((s) => s.devMode);
+  const [sdkModalOpen, setSdkModalOpen] = useState(false);
 
   const tileClass = ["node-tile"];
   if (selected) tileClass.push("selected");
@@ -175,7 +178,28 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
         >
           ×
         </button>
+        {devMode && (
+          <button
+            type="button"
+            className="toolbar-sdk"
+            title="Python SDK snippet"
+            onClick={(e) => {
+              stop(e);
+              setSdkModalOpen(true);
+            }}
+          >
+            {"</>"}
+          </button>
+        )}
       </div>
+
+      {sdkModalOpen && (
+        <SdkModal
+          nodeId={id}
+          manifestId={manifest.id}
+          onClose={() => setSdkModalOpen(false)}
+        />
+      )}
 
       <div className={tileClass.join(" ")}>
         <NodeIcon name={manifest.icon} size={26} />

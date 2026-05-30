@@ -884,6 +884,59 @@ type ResultView = "text" | "html";
  *  mirror-overlay technique: a styled <div> renders the highlighted text under
  *  a transparent <textarea> that handles caret + editing. Scroll position stays
  *  in sync. */
+// ---------------------------------------------------------------------------
+// Expression autocomplete helpers
+// ---------------------------------------------------------------------------
+
+function getTokenBeforeCursor(value: string, cursorPos: number): string {
+  const before = value.slice(0, cursorPos);
+  // Grab the last contiguous token that starts with $
+  const m = before.match(/\$[\w.\["\]]*$/);
+  return m ? m[0] : "";
+}
+
+export function computeSuggestions(
+  value: string,
+  cursorPos: number,
+  ctx?: ExprContext,
+): string[] {
+  const token = getTokenBeforeCursor(value, cursorPos);
+  if (!token) return [];
+
+  const results: string[] = [];
+
+  if (token.startsWith("$json.")) {
+    const prefix = token.slice("$json.".length);
+    const keys =
+      ctx?.json && typeof ctx.json === "object" && ctx.json !== null
+        ? Object.keys(ctx.json as Record<string, unknown>)
+        : [];
+    for (const k of keys) {
+      if (k.startsWith(prefix)) results.push(`$json.${k}`);
+    }
+  } else if (token.startsWith("$json")) {
+    results.push("$json.");
+    const keys =
+      ctx?.json && typeof ctx.json === "object" && ctx.json !== null
+        ? Object.keys(ctx.json as Record<string, unknown>)
+        : [];
+    for (const k of keys) results.push(`$json.${k}`);
+  } else if (token.startsWith("$node")) {
+    const nodeIds = Object.keys(ctx?.nodes ?? {});
+    for (const id of nodeIds) results.push(`$node["${id}"].`);
+  } else if (token.startsWith("$env")) {
+    results.push("$env.KEY");
+  } else if (token.startsWith("$run")) {
+    results.push("$run.id", "$run.status", "$run.startedAt");
+  } else if (token.startsWith("$")) {
+    results.push('$json.', '$node["', "$env.", "$run.");
+  }
+
+  return results.slice(0, 10);
+}
+
+// ---------------------------------------------------------------------------
+
 function HighlightedTextarea({
   value,
   onChange,
@@ -894,6 +947,8 @@ function HighlightedTextarea({
   rows,
   onDrop,
   onDragOver,
+  onKeyDown,
+  taRef: taRefProp,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -904,8 +959,11 @@ function HighlightedTextarea({
   rows?: number;
   onDrop?: React.DragEventHandler<HTMLTextAreaElement>;
   onDragOver?: React.DragEventHandler<HTMLTextAreaElement>;
+  onKeyDown?: React.KeyboardEventHandler<HTMLTextAreaElement>;
+  taRef?: React.RefObject<HTMLTextAreaElement>;
 }) {
-  const taRef = useRef<HTMLTextAreaElement>(null);
+  const taRefInternal = useRef<HTMLTextAreaElement>(null);
+  const taRef = taRefProp ?? taRefInternal;
   const mirrorRef = useRef<HTMLDivElement>(null);
 
   const segments = (() => {
@@ -961,6 +1019,7 @@ function HighlightedTextarea({
         autoFocus={autoFocus}
         onChange={(e) => onChange(e.target.value)}
         onScroll={syncScroll}
+        onKeyDown={onKeyDown}
         onDrop={onDrop}
         onDragOver={onDragOver}
       />
@@ -991,6 +1050,53 @@ function ExpressionEditorModal({
     parts?: PreviewPart[];
     loading: boolean;
   }>({ loading: false });
+
+  // Autocomplete state
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [selectedSuggestion, setSelectedSuggestion] = useState(0);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  function updateSuggestions(val: string) {
+    const pos = taRef.current?.selectionStart ?? val.length;
+    const s = computeSuggestions(val, pos, ctx);
+    setSuggestions(s);
+    setSelectedSuggestion(0);
+  }
+
+  function applySuggestion(suggestion: string) {
+    const ta = taRef.current;
+    const pos = ta?.selectionStart ?? value.length;
+    const token = getTokenBeforeCursor(value, pos);
+    const before = value.slice(0, pos - token.length);
+    const after = value.slice(pos);
+    const newVal = before + suggestion + after;
+    onChange(newVal);
+    setSuggestions([]);
+    // Move cursor to end of inserted text
+    setTimeout(() => {
+      if (ta) {
+        const newPos = before.length + suggestion.length;
+        ta.setSelectionRange(newPos, newPos);
+        ta.focus();
+      }
+    }, 0);
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (suggestions.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setSelectedSuggestion((s) => Math.min(s + 1, suggestions.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setSelectedSuggestion((s) => Math.max(s - 1, 0));
+    } else if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      applySuggestion(suggestions[selectedSuggestion]);
+    } else if (e.key === "Escape") {
+      setSuggestions([]);
+    }
+  }
 
   const hasData =
     ctx !== undefined &&
@@ -1069,12 +1175,30 @@ function ExpressionEditorModal({
                 Anything inside <code>{"{{ }}"}</code> is evaluated
               </span>
             </div>
-            <HighlightedTextarea
-              className="expr-modal-editor"
-              value={value}
-              onChange={onChange}
-              autoFocus
-            />
+            <div style={{ position: "relative" }}>
+              <HighlightedTextarea
+                className="expr-modal-editor"
+                value={value}
+                onChange={(v) => { onChange(v); updateSuggestions(v); }}
+                autoFocus
+                taRef={taRef}
+                onKeyDown={handleKeyDown}
+              />
+              {suggestions.length > 0 && (
+                <ul className="expr-autocomplete">
+                  {suggestions.map((s, i) => (
+                    <li
+                      key={s}
+                      className={i === selectedSuggestion ? "active" : ""}
+                      onMouseDown={(e) => { e.preventDefault(); applySuggestion(s); }}
+                      onMouseEnter={() => setSelectedSuggestion(i)}
+                    >
+                      {s}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </section>
           <section className="expr-modal-pane">
             <div className="expr-modal-pane-head">

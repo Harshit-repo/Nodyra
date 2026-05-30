@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { api } from "../api";
+import type { ArtifactInfo } from "../types";
 import { DataPanel } from "./DataPanel";
 import {
   ParamField,
@@ -12,6 +13,7 @@ import {
   webhookParamLabel,
 } from "./NodeDetails";
 import { useEditor } from "./store";
+import { asArtifactRef, artifactDownloadUrl, artifactSummary, formatBytes } from "./artifactValues";
 
 /**
  * The three-column body of the NDV modal: Input | Parameters/Settings | Output.
@@ -455,6 +457,110 @@ function LogsTab({ nodeId }: { nodeId: string }) {
   );
 }
 
+function ArtifactBrowser({ runId, runOutput }: { runId: string; runOutput: unknown }) {
+  const [artifacts, setArtifacts] = useState<ArtifactInfo[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.listRunArtifacts(runId).then(
+      (list: ArtifactInfo[]) => { if (!cancelled) setArtifacts(list); },
+      (err: unknown) => { if (!cancelled) setError(String(err)); },
+    );
+    return () => { cancelled = true; };
+  }, [runId]);
+
+  // Also scan runOutput for embedded ArtifactRef objects
+  const embeddedRefs: Array<ReturnType<typeof asArtifactRef> & object> = [];
+  if (runOutput && typeof runOutput === "object") {
+    for (const val of Object.values(runOutput as Record<string, unknown>)) {
+      const ref = asArtifactRef(val);
+      if (ref) embeddedRefs.push(ref);
+    }
+  }
+
+  const apiArtifacts = artifacts ?? [];
+  const hasContent = apiArtifacts.length > 0 || embeddedRefs.length > 0;
+
+  if (error) {
+    return (
+      <div style={{ padding: "8px 12px", fontSize: "0.8rem", color: "var(--color-danger, red)" }}>
+        Failed to load artifacts: {error}
+      </div>
+    );
+  }
+  if (!hasContent && artifacts !== null) return null;
+  if (artifacts === null && embeddedRefs.length === 0) {
+    return (
+      <div style={{ padding: "8px 12px", fontSize: "0.8rem", opacity: 0.6 }}>
+        Loading artifacts…
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ borderTop: "1px solid var(--color-border, #e0e0e0)", padding: "12px" }}>
+      <h4 style={{ margin: "0 0 8px", fontSize: "0.8rem", textTransform: "uppercase", opacity: 0.6 }}>
+        Artifacts
+      </h4>
+      {apiArtifacts.map((a) => {
+        const url = `/api/artifacts/${encodeURIComponent(a.id)}/download`;
+        return (
+          <div key={a.id} style={{ marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <strong style={{ fontSize: "0.875rem" }}>{a.name}</strong>
+              <span style={{ fontSize: "0.75rem", opacity: 0.6 }}>{formatBytes(a.size_bytes)}</span>
+              <a href={url} download={a.name} style={{ fontSize: "0.75rem", marginLeft: "auto" }}>
+                Download
+              </a>
+            </div>
+            {a.content_type.startsWith("image/") && (
+              <img src={url} alt={a.name} style={{ maxWidth: "100%", borderRadius: 4 }} />
+            )}
+            {a.content_type.startsWith("text/") && a.preview != null && (
+              <pre style={{ fontSize: "0.75rem", maxHeight: 120, overflow: "auto", background: "var(--color-surface-alt, #1e1e1e)", padding: 8, borderRadius: 4 }}>
+                {String(a.preview).slice(0, 500)}
+              </pre>
+            )}
+            {a.content_type === "application/json" && a.preview != null && (
+              <pre style={{ fontSize: "0.75rem", maxHeight: 120, overflow: "auto", background: "var(--color-surface-alt, #1e1e1e)", padding: 8, borderRadius: 4 }}>
+                {JSON.stringify(a.preview, null, 2).slice(0, 500)}
+              </pre>
+            )}
+          </div>
+        );
+      })}
+      {embeddedRefs.map((ref) => {
+        const url = artifactDownloadUrl(ref);
+        return (
+          <div key={ref.artifact_id} style={{ marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <strong style={{ fontSize: "0.875rem" }}>{ref.name}</strong>
+              <span style={{ fontSize: "0.75rem", opacity: 0.6 }}>{artifactSummary(ref)}</span>
+              <a href={url} download={ref.name} style={{ fontSize: "0.75rem", marginLeft: "auto" }}>
+                Download
+              </a>
+            </div>
+            {ref.content_type.startsWith("image/") && (
+              <img src={url} alt={ref.name} style={{ maxWidth: "100%", borderRadius: 4 }} />
+            )}
+            {ref.content_type.startsWith("text/") && ref.preview != null && (
+              <pre style={{ fontSize: "0.75rem", maxHeight: 120, overflow: "auto", background: "var(--color-surface-alt, #1e1e1e)", padding: 8, borderRadius: 4 }}>
+                {String(ref.preview).slice(0, 500)}
+              </pre>
+            )}
+            {ref.content_type === "application/json" && ref.preview != null && (
+              <pre style={{ fontSize: "0.75rem", maxHeight: 120, overflow: "auto", background: "var(--color-surface-alt, #1e1e1e)", padding: 8, borderRadius: 4 }}>
+                {JSON.stringify(ref.preview, null, 2).slice(0, 500)}
+              </pre>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function NDVPanels({ nodeId }: { nodeId: string }) {
   const [tab, setTab] = useState<"parameters" | "settings" | "docs" | "credentials" | "logs">("parameters");
   const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
@@ -463,6 +569,7 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
   const runOutput = useEditor((s) => s.runOutputs[nodeId]);
   const runStatus = useEditor((s) => s.runStatus[nodeId]);
   const runMeta = useEditor((s) => s.runMeta[nodeId]);
+  const runId = useEditor((s) => s.runId);
   const workflowId = useEditor((s) => s.workflowId);
   const pinned = useEditor((s) => s.pinned[nodeId]);
   const setPinnedFor = useEditor((s) => s.setPinnedFor);
@@ -611,6 +718,9 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
         startedAt={runMeta?.startedAt}
         finishedAt={runMeta?.finishedAt}
       />
+      {runId && runOutput !== undefined && (
+        <ArtifactBrowser runId={runId} runOutput={runOutput} />
+      )}
     </div>
   );
 }

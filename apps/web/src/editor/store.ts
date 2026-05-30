@@ -103,6 +103,7 @@ interface EditorStore {
   onConnect: (connection: Connection) => void;
   addNode: (manifestId: string, position: { x: number; y: number }) => void;
   addStickyNote: (position: { x: number; y: number }) => void;
+  addGroupNode: (position: { x: number; y: number }) => void;
   autoLayout: () => void;
   duplicateNode: (id: string) => void;
   updateParams: (id: string, params: Record<string, unknown>) => void;
@@ -148,6 +149,9 @@ interface EditorStore {
   _future: Array<{ nodes: NoodleNode[]; edges: Edge[] }>;
   undo: () => void;
   redo: () => void;
+
+  devMode: boolean;
+  toggleDevMode: () => void;
 }
 
 let seq = 0;
@@ -280,6 +284,8 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
   workflowId: null,
   pinned: {},
+
+  devMode: false,
 
   setManifests: (manifests) =>
     set({
@@ -461,6 +467,24 @@ export const useEditor = create<EditorStore>((set, get) => ({
     } as unknown as NoodleNode;
     set({
       nodes: [...state.nodes, node],
+      selectedId: node.id,
+      dirty: true,
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
+    });
+  },
+
+  addGroupNode: (position) => {
+    const state = get();
+    const node = {
+      id: newNodeId(),
+      type: "group",
+      position,
+      data: { label: "Group", color: "rgba(99,102,241,0.08)" },
+      style: { width: 320, height: 220, zIndex: -1 },
+    } as unknown as NoodleNode;
+    set({
+      nodes: [node, ...state.nodes],
       selectedId: node.id,
       dirty: true,
       _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
@@ -796,4 +820,6 @@ export const useEditor = create<EditorStore>((set, get) => ({
       dirty: true,
     });
   },
+
+  toggleDevMode: () => set((s) => ({ devMode: !s.devMode })),
 }));

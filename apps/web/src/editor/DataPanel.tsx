@@ -360,19 +360,94 @@ function JsonTree({
   );
 }
 
+const PAGE_SIZE = 100;
+
+function colStats(
+  data: Record<string, unknown>[],
+  col: string,
+): { min: number; max: number; mean: number } | null {
+  const nums = data
+    .map((r) => Number(r[col]))
+    .filter((n) => !isNaN(n));
+  if (nums.length === 0) return null;
+  const min = Math.min(...nums);
+  const max = Math.max(...nums);
+  const mean = nums.reduce((a, b) => a + b, 0) / nums.length;
+  return { min, max, mean };
+}
+
 function RecordTable({
   data,
   dragPrefix,
+  dtypes,
 }: {
   data: Record<string, unknown>[];
   dragPrefix?: string;
+  dtypes?: Record<string, string>;
 }) {
+  const [sortCol, setSortCol] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+
   const columns = Array.from(new Set(data.flatMap((row) => Object.keys(row))));
+
+  // Filter
+  const lower = search.toLowerCase();
+  const filtered = search
+    ? data.filter((row) =>
+        columns.some((col) =>
+          formatCell(row[col]).toLowerCase().includes(lower),
+        ),
+      )
+    : data;
+
+  // Sort
+  const sorted = sortCol
+    ? [...filtered].sort((a, b) => {
+        const av = formatCell(a[sortCol]);
+        const bv = formatCell(b[sortCol]);
+        const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+        return sortDir === "asc" ? cmp : -cmp;
+      })
+    : filtered;
+
+  // Pagination
+  const totalRows = sorted.length;
+  const pageCount = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const startIdx = safePage * PAGE_SIZE;
+  const endIdx = Math.min(startIdx + PAGE_SIZE, totalRows);
+  const pageRows = sorted.slice(startIdx, endIdx);
+
+  function toggleSort(col: string) {
+    if (sortCol === col) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortCol(col);
+      setSortDir("asc");
+    }
+    setPage(0);
+  }
+
   // For a list, each row's iteration sees $json as that record.
   // Headers carry $json.col; cells carry $json.col too — both yield the
   // same per-item path, which is what the user almost always wants.
   return (
     <div className="data-table-wrap">
+      <div className="data-table-filter">
+        <input
+          type="search"
+          placeholder="Search rows…"
+          value={search}
+          onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+        />
+        {search && (
+          <span className="df-truncated">
+            {filtered.length} / {data.length} rows
+          </span>
+        )}
+      </div>
       <table className="data-table">
         <thead>
           <tr>
@@ -381,27 +456,52 @@ function RecordTable({
               const expr = dragPrefix
                 ? buildExpression(dragPrefix, [col])
                 : undefined;
+              const dtype = dtypes?.[col];
+              const isNumeric = dtype
+                ? /int|float/i.test(dtype)
+                : false;
+              const stats = isNumeric ? colStats(data, col) : null;
+              const sortIndicator =
+                sortCol === col ? (sortDir === "asc" ? " ▲" : " ▼") : "";
+              const tooltipParts: string[] = [];
+              if (expr) tooltipParts.push(`Drag to insert ${expr}`);
+              if (stats) {
+                tooltipParts.push(
+                  `min: ${stats.min.toPrecision(4)}  max: ${stats.max.toPrecision(4)}  mean: ${stats.mean.toPrecision(4)}`,
+                );
+              }
+              const title = tooltipParts.join("\n") || undefined;
+              const classes = [
+                expr ? "draggable" : "",
+                "sortable",
+              ]
+                .filter(Boolean)
+                .join(" ");
               return (
                 <th
                   key={col}
-                  className={expr ? "draggable" : undefined}
+                  className={classes || undefined}
                   draggable={Boolean(expr)}
                   onDragStart={
                     expr ? (e) => startExpressionDrag(e, expr) : undefined
                   }
-                  title={expr ? `Drag to insert ${expr}` : undefined}
+                  title={title}
+                  onClick={() => toggleSort(col)}
                 >
                   {expr && <span className="drag-grip" aria-hidden>⠿</span>}
-                  {col}
+                  {col}{sortIndicator}
+                  {dtype && (
+                    <span className="col-dtype">{dtype}</span>
+                  )}
                 </th>
               );
             })}
           </tr>
         </thead>
         <tbody>
-          {data.map((row, i) => (
-            <tr key={i}>
-              <td className="data-table-index">{i}</td>
+          {pageRows.map((row, i) => (
+            <tr key={startIdx + i}>
+              <td className="data-table-index">{startIdx + i}</td>
               {columns.map((col) => {
                 const expr = dragPrefix
                   ? buildExpression(dragPrefix, [col])
@@ -424,6 +524,27 @@ function RecordTable({
           ))}
         </tbody>
       </table>
+      {totalRows > PAGE_SIZE && (
+        <div className="data-table-pagination">
+          <button
+            type="button"
+            disabled={safePage === 0}
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+          >
+            ← Prev
+          </button>
+          <span>
+            Showing rows {startIdx + 1}–{endIdx} of {totalRows}
+          </span>
+          <button
+            type="button"
+            disabled={safePage >= pageCount - 1}
+            onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+          >
+            Next →
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -489,6 +610,9 @@ function DataTable({
           <RecordTable
             data={records}
             dragPrefix={dragPrefix ? `${dragPrefix}.value.records` : undefined}
+            dtypes={Object.fromEntries(
+              Object.entries(dtypes).map(([k, v]) => [k, String(v)]),
+            )}
           />
         ) : (
           <p className="ndv-panel-empty muted">No preview rows captured.</p>

@@ -3257,3 +3257,19 @@ body.is-resizing {
   font-size: 13px; color: #1a1a1a; padding: 8px; line-height: 1.5;
   font-family: inherit;
 }
+
+/* ----- DataFrame rich viewer ------------------------------------------- */
+.data-table-filter { margin-bottom:6px; display:flex; gap:6px; align-items:center; }
+.data-table-filter input { flex:1; font-size:12px; padding:3px 6px; background:var(--bg-3); border:1px solid var(--border); border-radius:4px; color:inherit; }
+.data-table-pagination { display:flex; gap:8px; align-items:center; font-size:12px; margin-top:4px; color:var(--muted); }
+.df-stats { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:6px; font-size:11px; }
+.df-dtype-badge { background:var(--bg-3); border-radius:3px; padding:1px 5px; font-family:monospace; color:var(--muted); }
+.df-truncated { color:var(--warn); font-size:11px; }
+th .col-dtype { font-size:10px; color:var(--muted); display:block; font-weight:normal; }
+th.sortable { cursor:pointer; user-select:none; }
+th.sortable:hover { background:var(--bg-3); }
+
+/* ----- Expression autocomplete ----------------------------------------- */
+.expr-autocomplete { position:absolute; z-index:200; background: var(--bg-2); border: 1px solid var(--border); border-radius:6px; max-height:200px; overflow:auto; list-style:none; margin:0; padding:4px; width:280px; }
+.expr-autocomplete li { padding:4px 8px; cursor:pointer; border-radius:4px; font-family:monospace; font-size:12px; }
+.expr-autocomplete li:hover, .expr-autocomplete li.active { background:var(--accent-muted); }
