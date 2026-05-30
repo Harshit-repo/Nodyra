@@ -14,6 +14,18 @@ function portTop(index: number, count: number): number {
   return (TILE * (index + 1)) / (count + 1);
 }
 
+const PORT_KIND_COLOR: Record<string, string> = {
+  dataset: "#7c5cff",
+  artifact: "#f59e0b",
+  file: "#f59e0b",
+  control: "#94a3b8",
+};
+
+function portColor(kind: string | undefined, fallback: string): string {
+  if (!kind || kind === "any") return fallback;
+  return PORT_KIND_COLOR[kind] ?? fallback;
+}
+
 const STATUS_GLYPH: Record<string, string> = {
   success: "✓",
   error: "!",
@@ -242,19 +254,22 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
             type="target"
             position={Position.Left}
             id={port.name}
-            style={{ top: portTop(i, inputs.length), background: color }}
+            style={{ top: portTop(i, inputs.length), background: portColor(port.data_kind, color) }}
           />
         ))}
 
-        {outputNames.map((name, i) => (
-          <Handle
-            key={`out-${name}`}
-            type="source"
-            position={Position.Right}
-            id={name}
-            style={{ top: portTop(i, outputNames.length), background: color }}
-          />
-        ))}
+        {outputNames.map((name, i) => {
+          const spec = manifest.outputs.find((o) => o.name === name);
+          return (
+            <Handle
+              key={`out-${name}`}
+              type="source"
+              position={Position.Right}
+              id={name}
+              style={{ top: portTop(i, outputNames.length), background: portColor(spec?.data_kind, color) }}
+            />
+          );
+        })}
 
         {outputNames.length > 1 &&
           outputNames.map((name, i) => (

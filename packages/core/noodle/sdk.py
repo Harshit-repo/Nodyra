@@ -136,6 +136,8 @@ def _build_manifest(
     inputs: list[str],
     outputs: list[str],
     icon: str | None,
+    input_kinds: dict[str, str] | None = None,
+    output_kinds: dict[str, str] | None = None,
 ) -> NodeManifest:
     hints = get_type_hints(func)
     signature = inspect.signature(func)
@@ -171,6 +173,8 @@ def _build_manifest(
             )
         )
 
+    in_kinds = input_kinds or {}
+    out_kinds = output_kinds or {}
     return NodeManifest(
         id=node_id,
         name=name,
@@ -178,9 +182,15 @@ def _build_manifest(
         version=version,
         description=description,
         icon=icon,
-        inputs=[PortSpec(name=n) for n in inputs],
+        inputs=[
+            PortSpec(name=n, data_kind=in_kinds.get(n, "any"))
+            for n in inputs
+        ],
         params=params,
-        outputs=[PortSpec(name=o) for o in outputs],
+        outputs=[
+            PortSpec(name=o, data_kind=out_kinds.get(o, "any"))
+            for o in outputs
+        ],
     )
 
 
@@ -446,6 +456,8 @@ def node(
     params: dict[str, dict[str, Any]] | None = None,
     inputs: list[str] | None = None,
     outputs: list[str] | None = None,
+    input_kinds: dict[str, str] | None = None,
+    output_kinds: dict[str, str] | None = None,
     icon: str | None = None,
     registry: NodeRegistry = registry,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
@@ -471,6 +483,8 @@ def node(
             inputs=["input"] if inputs is None else inputs,
             outputs=outputs or ["main"],
             icon=icon,
+            input_kinds=input_kinds,
+            output_kinds=output_kinds,
         )
         param_names, has_var_kw = _signature_info(func)
         node_def = NodeDef(

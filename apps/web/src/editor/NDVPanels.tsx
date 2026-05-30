@@ -504,7 +504,9 @@ function ArtifactBrowser({ runId, runOutput }: { runId: string; runOutput: unkno
         Artifacts
       </h4>
       {apiArtifacts.map((a) => {
-        const url = `/api/artifacts/${encodeURIComponent(a.id)}/download`;
+        const token = localStorage.getItem("noodle_token");
+        const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+        const url = `/api/artifacts/${encodeURIComponent(a.id)}/download${qs}`;
         return (
           <div key={a.id} style={{ marginBottom: 12 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>

@@ -13,9 +13,8 @@ import pytest
 
 import noodle_nodes  # noqa: F401 - registers nodes
 from noodle.sdk import registry
+from noodle_nodes.datasets import csv_parse, csv_write, dataset_to_records
 from noodle_nodes.transform_extra import (
-    csv_parse,
-    csv_write,
     decrypt_fernet,
     encrypt_fernet,
     gzip_compress,
@@ -95,21 +94,46 @@ def test_template_render_autoescape() -> None:
 # --- CSV --------------------------------------------------------------------
 
 
-def test_csv_parse_with_header_returns_dicts() -> None:
-    rows = csv_parse(text="a,b\n1,2\n3,4\n", has_header=True)
-    assert rows == [{"a": "1", "b": "2"}, {"a": "3", "b": "4"}]
+def _with_store(tmp_path):
+    from noodle.artifacts import LocalArtifactStore
+    from noodle.context import artifact_store, current_node_id
+
+    store = LocalArtifactStore(tmp_path, run_id="test-run")
+    a = artifact_store.set(store)
+    n = current_node_id.set("test-node")
+    return store, a, n
 
 
-def test_csv_parse_without_header_returns_lists() -> None:
-    rows = csv_parse(text="1,2\n3,4\n", has_header=False)
-    assert rows == [["1", "2"], ["3", "4"]]
+def test_csv_parse_with_header_returns_dataset_ref(tmp_path) -> None:
+    from noodle.context import artifact_store, current_node_id
+    from noodle.datasets import is_dataset_ref
+
+    _, a, n = _with_store(tmp_path)
+    try:
+        ref = csv_parse(text="a,b\n1,2\n3,4\n", has_header=True)
+        assert is_dataset_ref(ref)
+        assert ref["row_count"] == 2
+        assert [c["name"] for c in ref["schema"]] == ["a", "b"]
+        rows = dataset_to_records(input=ref, max_rows=10)
+        assert rows == [{"a": 1, "b": 2}, {"a": 3, "b": 4}]
+    finally:
+        current_node_id.reset(n)
+        artifact_store.reset(a)
 
 
-def test_csv_write_dicts_round_trips() -> None:
-    out = csv_write(input=[{"a": "1", "b": "2"}, {"a": "3", "b": "4"}])
-    # Use platform-agnostic split — csv writer emits \r\n.
-    lines = [line for line in out.splitlines() if line]
-    assert lines == ["a,b", "1,2", "3,4"]
+def test_csv_write_dataset_returns_artifact_ref(tmp_path) -> None:
+    from noodle.artifacts import is_artifact_ref
+    from noodle.context import artifact_store, current_node_id
+
+    _, a, n = _with_store(tmp_path)
+    try:
+        ds = csv_parse(text="a,b\n1,2\n3,4\n", has_header=True)
+        out = csv_write(input=ds)
+        assert is_artifact_ref(out)
+        assert out["content_type"].startswith("text/csv")
+    finally:
+        current_node_id.reset(n)
+        artifact_store.reset(a)
 
 
 # --- XML --------------------------------------------------------------------

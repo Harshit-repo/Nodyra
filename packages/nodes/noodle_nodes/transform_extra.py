@@ -9,9 +9,7 @@ a Code node for. Each node has a single wired ``input`` port.
 from __future__ import annotations
 
 import base64
-import csv as csv_mod
 import gzip
-import io
 import json
 import xml.etree.ElementTree as ET
 from typing import Any
@@ -84,80 +82,9 @@ def template_render(
 # CSV / XML / YAML
 # ============================================================================
 
-
-@node(
-    name="CSV Parse",
-    id="csv_parse",
-    category="Transform",
-    icon="table",
-    params={
-        "text": {
-            "description": "CSV text to parse. Falls back to the wired input if blank.",
-            "multiline": True,
-        },
-        "delimiter": {
-            "placeholder": ",",
-            "description": "Field delimiter (default ,).",
-        },
-        "has_header": {
-            "description": "First row is the header row; emit dicts instead of lists.",
-        },
-    },
-)
-def csv_parse(
-    input: Any = None,
-    text: str = "",
-    delimiter: str = ",",
-    has_header: bool = True,
-) -> list:
-    """Parse a CSV string into a list of dicts (or lists if no header)."""
-    payload = text or (str(input) if input is not None else "")
-    reader_io = io.StringIO(payload)
-    delim = delimiter or ","
-    if has_header:
-        return list(csv_mod.DictReader(reader_io, delimiter=delim))
-    return list(csv_mod.reader(reader_io, delimiter=delim))
-
-
-@node(
-    name="CSV Write",
-    id="csv_write",
-    category="Transform",
-    icon="table",
-    params={
-        "delimiter": {
-            "placeholder": ",",
-            "description": "Field delimiter (default ,).",
-        },
-        "include_header": {
-            "description": "Write a header row inferred from the first record's keys.",
-        },
-    },
-)
-def csv_write(
-    input: Any = None,
-    delimiter: str = ",",
-    include_header: bool = True,
-) -> str:
-    """Serialize a list of dicts (or rows) into a CSV string."""
-    rows = input if isinstance(input, list) else []
-    if not rows:
-        return ""
-    delim = delimiter or ","
-    buffer = io.StringIO()
-    first = rows[0]
-    if isinstance(first, dict):
-        fieldnames = list(first.keys())
-        writer = csv_mod.DictWriter(buffer, fieldnames=fieldnames, delimiter=delim)
-        if include_header:
-            writer.writeheader()
-        for row in rows:
-            writer.writerow({k: row.get(k, "") for k in fieldnames})
-    else:
-        writer = csv_mod.writer(buffer, delimiter=delim)
-        for row in rows:
-            writer.writerow(row if isinstance(row, list | tuple) else [row])
-    return buffer.getvalue()
+# NOTE: CSV Parse / CSV Write were intentionally moved to
+# ``noodle_nodes.datasets`` and now return DatasetRef / ArtifactRef rather
+# than inline rows / strings. See the dataset engine plan.
 
 
 def _xml_to_dict(element: ET.Element) -> Any:

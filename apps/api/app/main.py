@@ -261,6 +261,12 @@ async def auth_gate(request: Request, call_next):
 
     header = request.headers.get("authorization", "")
     if not header.startswith("Bearer "):
+        # Allow ``?token=`` on routes that are typically opened via plain
+        # browser navigation (artifact downloads, ws upgrade is handled
+        # elsewhere). The query token is the same bearer token.
+        query_token = request.query_params.get("token")
+        if query_token and verify_token(query_token) is not None:
+            return await call_next(request)
         return JSONResponse(
             {"detail": "Authentication required"}, status_code=401
         )

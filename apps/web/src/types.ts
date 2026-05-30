@@ -22,6 +22,7 @@ export interface ParamSpec {
 export interface PortSpec {
   name: string;
   description: string;
+  data_kind?: "any" | "control" | "dataset" | "artifact" | "file";
 }
 
 export interface NodeManifest {

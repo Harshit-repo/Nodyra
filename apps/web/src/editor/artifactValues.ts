@@ -41,5 +41,7 @@ export function artifactSummary(ref: ArtifactRef): string {
 }
 
 export function artifactDownloadUrl(ref: ArtifactRef): string {
-  return `/api/artifacts/${encodeURIComponent(ref.artifact_id)}/download`;
+  const token = localStorage.getItem("noodle_token");
+  const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+  return `/api/artifacts/${encodeURIComponent(ref.artifact_id)}/download${qs}`;
 }

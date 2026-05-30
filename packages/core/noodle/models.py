@@ -47,11 +47,27 @@ class ParamSpec(BaseModel):
     credential: CredentialSpec | None = None
 
 
+class PortDataKind(StrEnum):
+    """Declares what shape of value a port produces/consumes.
+
+    Used by the engine to validate that dataset/artifact ports actually
+    receive the right kind of value, and by the UI to color handles and
+    suggest compatible nodes. ``any`` is the permissive default.
+    """
+
+    any = "any"
+    control = "control"
+    dataset = "dataset"
+    artifact = "artifact"
+    file = "file"
+
+
 class PortSpec(BaseModel):
     """A named input or output port of a node."""
 
     name: str
     description: str = ""
+    data_kind: PortDataKind = PortDataKind.any
 
 
 class NodeManifest(BaseModel):

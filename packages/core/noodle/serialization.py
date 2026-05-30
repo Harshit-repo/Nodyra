@@ -133,6 +133,22 @@ def _serialize_bytes(value: bytes | bytearray, kind: str) -> dict[str, Any]:
     )
 
 
+def _is_dataset_ref_dict(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and value.get("__noodle_dataset__") is True
+        and isinstance(value.get("dataset_id"), str)
+    )
+
+
+def _is_artifact_ref_dict(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and value.get("__noodle_artifact__") is True
+        and isinstance(value.get("artifact_id"), str)
+    )
+
+
 def serialize_value(
     value: Any,
     *,
@@ -143,6 +159,11 @@ def serialize_value(
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if is_typed_envelope(value):
+        return value
+    # Dataset / artifact refs are already JSON-compatible by construction —
+    # passing them through serialize_value() unchanged keeps the marker
+    # fields intact and prevents the truncator from blowing them away.
+    if _is_dataset_ref_dict(value) or _is_artifact_ref_dict(value):
         return value
 
     seen = _seen if _seen is not None else set()

@@ -38,6 +38,12 @@ EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 PROCESS_ISOLATED_NODE_TYPES: frozenset[str] = frozenset({"code"})
 
+# Node types whose outputs the engine will inspect and auto-promote heavy
+# values (DataFrames, large row lists, big bytes/text) into Dataset/Artifact
+# refs before the output-size cap is applied. Used for Code-like nodes where
+# the user might intentionally produce table-shaped data.
+AUTO_PROMOTE_NODE_TYPES: frozenset[str] = frozenset({"code"})
+
 _process_pool: concurrent.futures.ProcessPoolExecutor | None = None
 
 
@@ -211,6 +217,94 @@ def _normalize_outputs(raw: Any, output_names: list[str], node_id: str) -> dict[
     return {name: raw[name] for name in output_names if name in raw}
 
 
+def _validate_input_kinds(
+    node_def: Any,
+    kwargs: dict[str, Any],
+    node_id: str,
+) -> None:
+    """Validate inputs declared as dataset/artifact actually receive that kind."""
+    from noodle.artifacts import is_artifact_ref
+    from noodle.datasets import is_dataset_ref
+
+    for port in node_def.manifest.inputs:
+        kind = getattr(port, "data_kind", "any")
+        if kind in ("any", "control") or port.name not in kwargs:
+            continue
+        value = kwargs[port.name]
+        if value is None:
+            continue
+        if kind == "dataset" and not is_dataset_ref(value):
+            raise ValueError(
+                f"node '{node_id}' input '{port.name}' expected a DatasetRef. "
+                f"Add a Records To Dataset or CSV Parse node upstream."
+            )
+        if kind in ("artifact", "file") and not is_artifact_ref(value):
+            raise ValueError(
+                f"node '{node_id}' input '{port.name}' expected an ArtifactRef."
+            )
+
+
+def _validate_output_kinds(
+    node_def: Any,
+    outputs: dict[str, Any],
+    node_id: str,
+) -> None:
+    from noodle.artifacts import is_artifact_ref
+    from noodle.datasets import is_dataset_ref
+
+    for port in node_def.manifest.outputs:
+        kind = getattr(port, "data_kind", "any")
+        if kind in ("any", "control") or port.name not in outputs:
+            continue
+        value = outputs[port.name]
+        if value is None:
+            continue
+        if kind == "dataset" and not is_dataset_ref(value):
+            raise ValueError(
+                f"node '{node_id}' output '{port.name}' was declared as a "
+                f"dataset port but produced {type(value).__name__}."
+            )
+        if kind in ("artifact", "file") and not is_artifact_ref(value):
+            raise ValueError(
+                f"node '{node_id}' output '{port.name}' was declared as an "
+                f"artifact port but produced {type(value).__name__}."
+            )
+
+
+def _auto_promote_outputs(
+    outputs: dict[str, Any],
+    *,
+    max_inline_rows: int = 1000,
+    max_inline_bytes: int = 256 * 1024,
+) -> dict[str, Any]:
+    """Promote large/typed values from auto-mode nodes to Dataset/Artifact refs.
+
+    Only triggers when the value is clearly heavy (DataFrame, big row list,
+    big bytes/text). Refs that exist already, small inline values, and
+    control-shaped dicts are returned unchanged.
+    """
+    from noodle.artifacts import is_artifact_ref
+    from noodle.datasets import is_dataset_ref
+
+    try:
+        from noodle.dataset_promote import promote_value
+    except ImportError:
+        return outputs
+
+    promoted: dict[str, Any] = {}
+    for name, value in outputs.items():
+        if value is None or is_dataset_ref(value) or is_artifact_ref(value):
+            promoted[name] = value
+            continue
+        promoted[name] = promote_value(
+            value,
+            port_name=name,
+            max_inline_rows=max_inline_rows,
+            max_inline_bytes=max_inline_bytes,
+        )
+    return promoted
+
+
 def _node_timeout(
     node_type: str,
     timeout: float | None,
@@ -348,6 +442,18 @@ async def execute(
                 source, source_output = edges_in[port.name]
                 kwargs[port.name] = node_outputs[source][source_output]
 
+        try:
+            _validate_input_kinds(node_def, kwargs, nid)
+        except ValueError as exc:
+            run_status = RunStatus.error
+            await finish(
+                NodeRunResult(
+                    node_id=nid, status=NodeStatus.error, error=str(exc),
+                    started_at=started, finished_at=time.time(),
+                )
+            )
+            return
+
         missing: list[str] = []
         for spec in node_def.manifest.params:
             if spec.name in kwargs:
@@ -427,6 +533,18 @@ async def execute(
                                 _process_pool.shutdown(wait=False, cancel_futures=True)
                                 _process_pool = None
                             raise
+                        except concurrent.futures.process.BrokenProcessPool as exc:
+                            # Child died (segfault / OOM / unpicklable arg).
+                            # Recycle the pool so the next attempt gets a fresh
+                            # one and re-raise as a normal ValueError so the
+                            # node fails cleanly instead of poisoning the run.
+                            if _process_pool is not None:
+                                _process_pool.shutdown(wait=False, cancel_futures=True)
+                                _process_pool = None
+                            raise ValueError(
+                                "code node crashed: subprocess died (possible "
+                                "out-of-memory, segfault, or unpicklable value)"
+                            ) from exc
                     elif timeout is not None:
                         raw = await asyncio.wait_for(
                             asyncio.to_thread(node_def.func, **call_kwargs), timeout
@@ -434,6 +552,9 @@ async def execute(
                     else:
                         raw = node_def.func(**call_kwargs)
                     outputs = _normalize_outputs(raw, output_names, graph_node.type)
+                    if graph_node.type in AUTO_PROMOTE_NODE_TYPES:
+                        outputs = _auto_promote_outputs(outputs)
+                    _validate_output_kinds(node_def, outputs, nid)
                     if max_node_output_bytes is not None and max_node_output_bytes > 0:
                         try:
                             approx = len(json.dumps(outputs, default=str))

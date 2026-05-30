@@ -518,6 +518,78 @@ def _record_code_variables(namespace: dict[str, Any]) -> None:
     debug["variables"] = variables
 
 
+def _collect_code_outputs(namespace: dict[str, Any]) -> tuple[bool, Any]:
+    """Pick output ports from a Code namespace.
+
+    Convention: ``output = ...`` becomes the ``main`` port; any
+    ``output_<name> = ...`` becomes a port named ``<name>``. When only
+    ``output`` is set, the single value is returned (single-output node).
+    When any ``output_*`` is set, the engine receives a dict keyed by port
+    name so the multi-output normalizer can dispatch it correctly.
+    """
+    extras: dict[str, Any] = {}
+    for key, value in namespace.items():
+        if not key.startswith("output_") or len(key) <= len("output_"):
+            continue
+        suffix = key[len("output_") :]
+        if not suffix or not suffix.replace("_", "").isalnum():
+            continue
+        extras[suffix] = value
+    has_main = "output" in namespace
+    if not extras:
+        return False, namespace.get("output")
+    bundle: dict[str, Any] = {}
+    if has_main:
+        bundle["main"] = namespace.get("output")
+    bundle.update(extras)
+    return True, bundle
+
+
+def discover_code_output_ports(code: str) -> list[str]:
+    """Statically parse Code source and return the output ports it assigns.
+
+    The editor calls this on every code change to populate the node's
+    ``outputs_override`` so handles render before the workflow runs.
+    Returns ``["main"]`` when only ``output`` is assigned (or when parsing
+    fails / nothing is assigned — single-port is the safe default).
+    """
+    import ast as _ast
+
+    try:
+        tree = _ast.parse(code or "", mode="exec")
+    except SyntaxError:
+        return ["main"]
+
+    ports: list[str] = []
+    seen: set[str] = set()
+    has_main = False
+    for stmt in tree.body:
+        targets: list[_ast.AST] = []
+        if isinstance(stmt, _ast.Assign):
+            targets = list(stmt.targets)
+        elif isinstance(stmt, (_ast.AugAssign, _ast.AnnAssign)):
+            targets = [stmt.target]
+        for tgt in targets:
+            if not isinstance(tgt, _ast.Name):
+                continue
+            name = tgt.id
+            if name == "output":
+                has_main = True
+                continue
+            if not name.startswith("output_") or len(name) <= len("output_"):
+                continue
+            suffix = name[len("output_") :]
+            if not suffix or not suffix.replace("_", "").isalnum():
+                continue
+            if suffix in seen:
+                continue
+            seen.add(suffix)
+            ports.append(suffix)
+    if not ports:
+        return ["main"]
+    return (["main"] if has_main else []) + ports
+
+
 def _run_code_isolated(input: Any, code: str) -> Any:
     """Top-level picklable worker for ProcessPoolExecutor.
 
@@ -547,18 +619,21 @@ def _run_code_isolated(input: Any, code: str) -> Any:
     except Exception as exc:  # noqa: BLE001
         exc.add_note(_tb.format_exc())
         raise
-    return namespace.get("output")
+    _is_multi, value = _collect_code_outputs(namespace)
+    return value
 
 
 @node(name="Code", id="code", category="Transform", icon="code", params={
     "code": {
         "multiline": True,
         "description": (
-            "Python code executed against the upstream value. The variable "
-            "`input` holds the upstream output. "
-            "Assign your result to `output` — do NOT use `return` (code runs at "
-            "module scope). Example:\n\n"
-            "    output = [x for x in input if x.get('completed')]"
+            "Python executed against the upstream value (variable `input`).\n\n"
+            "Assign your result to `output` — do NOT use `return`. For "
+            "multiple output ports, also assign `output_<name>` variables:\n\n"
+            "    output = clean_rows\n"
+            "    output_rejected = bad_rows\n"
+            "    output_summary = {\"clean\": len(clean_rows)}\n\n"
+            "Each `output_<name>` becomes a separate handle on the node."
         ),
         "placeholder": "output = input",
     },

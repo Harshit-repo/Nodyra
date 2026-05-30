@@ -8,6 +8,7 @@ import {
   asArtifactRef,
   formatBytes,
 } from "./artifactValues";
+import { asDatasetRef } from "./datasetValues";
 import {
   asTypedEnvelope,
   formatTypedCell,
@@ -55,6 +56,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function isTableable(value: unknown): boolean {
   if (asArtifactRef(value)) return false;
+  const dataset = asDatasetRef(value);
+  if (dataset) return (dataset.preview ?? []).length > 0;
   const envelope = asTypedEnvelope(value);
   if (envelope?.type === "dataframe" && typedRecords(envelope)) return true;
   const display = typedDisplayValue(value);
@@ -556,6 +559,14 @@ function DataTable({
   data: unknown;
   dragPrefix?: string;
 }) {
+  const dataset = asDatasetRef(data);
+  if (dataset) {
+    const rows = (dataset.preview ?? []) as Record<string, unknown>[];
+    if (rows.length === 0) {
+      return <div className="muted">Dataset has no preview rows.</div>;
+    }
+    return <RecordTable data={rows} dragPrefix={dragPrefix} />;
+  }
   const artifact = asArtifactRef(data);
   if (artifact) {
     return (

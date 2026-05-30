@@ -10,6 +10,12 @@ import {
   formatBytes,
 } from "./artifactValues";
 import {
+  asDatasetRef,
+  datasetDownloadUrl,
+  datasetSummary,
+  type DatasetRef,
+} from "./datasetValues";
+import {
   asTypedEnvelope,
   formatTypedCell,
   typedDisplayValue,
@@ -97,6 +103,8 @@ function formatCell(value: unknown): string {
 }
 
 function valueSummary(value: unknown): string {
+  const dataset = asDatasetRef(value);
+  if (dataset) return `Dataset · ${datasetSummary(dataset)}`;
   const artifact = asArtifactRef(value);
   if (artifact) return `Artifact · ${artifactSummary(artifact)}`;
   const envelope = asTypedEnvelope(value);
@@ -121,7 +129,63 @@ function edgeLabel(edge: Edge | undefined, direction: "input" | "output"): strin
   return `${edge.target}.${edge.targetHandle ?? "input"}`;
 }
 
+function DatasetCard({ dataset }: { dataset: DatasetRef }) {
+  const columns = dataset.schema?.map((s) => s.name) ?? [];
+  const previewRows = dataset.preview ?? [];
+  const shownColumns = columns.slice(0, 6);
+  const hiddenColumns = columns.length - shownColumns.length;
+  const shownRows = previewRows.slice(0, 5);
+  return (
+    <div className="port-data-artifact-preview">
+      <div className="artifact-card-head">
+        <span className="artifact-badge">Dataset</span>
+        <strong>{dataset.artifact.name}</strong>
+      </div>
+      <div className="artifact-card-meta">
+        <span>{datasetSummary(dataset)}</span>
+        <span>{dataset.format}</span>
+      </div>
+      <a href={datasetDownloadUrl(dataset)}>Download {dataset.format}</a>
+      {shownRows.length > 0 && (
+        <div className="port-data-table-preview">
+          <div className="port-data-table-label">Preview</div>
+          <div className="port-data-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  {shownColumns.map((column) => (
+                    <th key={column}>{column}</th>
+                  ))}
+                  {hiddenColumns > 0 && <th>+{hiddenColumns}</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {shownRows.map((row, index) => (
+                  <tr key={index}>
+                    {shownColumns.map((column) => (
+                      <td key={column} title={formatCell(row[column])}>
+                        {formatCell(row[column])}
+                      </td>
+                    ))}
+                    {hiddenColumns > 0 && <td />}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      <div className="port-data-hint muted">
+        Use a <strong>Dataset To Records</strong> node to materialize rows
+        downstream.
+      </div>
+    </div>
+  );
+}
+
 function PortValuePreview({ value }: { value: unknown }) {
+  const dataset = asDatasetRef(value);
+  if (dataset) return <DatasetCard dataset={dataset} />;
   const artifact = asArtifactRef(value);
   if (artifact) {
     const previewTable = findRecordList(artifact.preview);

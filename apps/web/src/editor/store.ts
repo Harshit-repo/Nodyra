@@ -78,6 +78,33 @@ function deriveSwitchOutputs(rules: unknown): string[] {
   return ["fallback"];
 }
 
+// Mirrors `noodle_nodes.builtin.discover_code_output_ports`: scans the user's
+// Code-node source for `output` and `output_<name>` assignments so the editor
+// can render the right number of output handles before the workflow runs.
+function deriveCodeOutputs(code: unknown): string[] {
+  if (typeof code !== "string" || code.length === 0) return ["main"];
+  const ports: string[] = [];
+  const seen = new Set<string>();
+  let hasMain = false;
+  // Match `name =` at the start of a (possibly indented? no — top-level only)
+  // line, allowing `: type` and `+=` style assignments.
+  const re = /^[\t ]*(output(?:_[A-Za-z0-9_]+)?)[\t ]*(?::[^=]*)?=(?!=)/gm;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(code)) !== null) {
+    const name = match[1];
+    if (name === "output") {
+      hasMain = true;
+      continue;
+    }
+    const suffix = name.slice("output_".length);
+    if (!suffix || seen.has(suffix)) continue;
+    seen.add(suffix);
+    ports.push(suffix);
+  }
+  if (ports.length === 0) return ["main"];
+  return hasMain ? ["main", ...ports] : ports;
+}
+
 export type NoodleNode = Node<NoodleNodeData, "noodle">;
 
 interface EditorStore {
@@ -303,6 +330,9 @@ export const useEditor = create<EditorStore>((set, get) => ({
       let outputsOverride: string[] | null = n.outputs_override ?? null;
       if (!outputsOverride && manifest.id === "switch") {
         outputsOverride = deriveSwitchOutputs(params.rules);
+      }
+      if (!outputsOverride && manifest.id === "code") {
+        outputsOverride = deriveCodeOutputs(params.code);
       }
       nodes.push({
         id: n.id,
@@ -541,6 +571,13 @@ export const useEditor = create<EditorStore>((set, get) => ({
     let edges = state.edges;
     if (node && node.data.manifest.id === "switch") {
       outputsOverride = deriveSwitchOutputs(params.rules);
+      const valid = new Set(outputsOverride);
+      edges = state.edges.filter(
+        (e) => e.source !== id || valid.has(e.sourceHandle ?? "main"),
+      );
+    }
+    if (node && node.data.manifest.id === "code") {
+      outputsOverride = deriveCodeOutputs(params.code);
       const valid = new Set(outputsOverride);
       edges = state.edges.filter(
         (e) => e.source !== id || valid.has(e.sourceHandle ?? "main"),
