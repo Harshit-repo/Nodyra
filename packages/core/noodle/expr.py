@@ -12,6 +12,7 @@ Dotted access mirrors subscript access (``$json.status`` == ``$json["status"]``)
 Missing keys return ``None`` rather than raising so expressions stay forgiving.
 """
 
+import ast
 import re
 from datetime import UTC, datetime
 from typing import Any
@@ -31,20 +32,77 @@ _SAFE_BUILTINS: dict[str, Any] = {
     "False": False,
     "None": None,
     "abs": abs,
+    "all": all,
+    "any": any,
     "bool": bool,
     "dict": dict,
+    "enumerate": enumerate,
+    "filter": filter,
     "float": float,
     "int": int,
     "isinstance": isinstance,
     "len": len,
     "list": list,
+    "map": map,
     "max": max,
     "min": min,
     "range": range,
     "round": round,
+    "set": set,
+    "sorted": sorted,
     "str": str,
     "sum": sum,
+    "tuple": tuple,
+    "type": type,
+    "zip": zip,
 }
+
+# AST node types that are safe in expressions.
+_ALLOWED_EXPR_NODES = frozenset({
+    ast.Expression, ast.BoolOp, ast.BinOp, ast.UnaryOp,
+    ast.IfExp, ast.Compare, ast.Call, ast.Constant,
+    ast.Attribute, ast.Subscript, ast.Index, ast.Slice,
+    ast.List, ast.Tuple, ast.Dict, ast.Set,
+    ast.Name, ast.Load, ast.Store, ast.Del,
+    ast.And, ast.Or, ast.Not,
+    ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Mod,
+    ast.FloorDiv, ast.Pow, ast.LShift, ast.RShift,
+    ast.BitAnd, ast.BitOr, ast.BitXor, ast.Invert,
+    ast.UAdd, ast.USub,
+    ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE,
+    ast.Is, ast.IsNot, ast.In, ast.NotIn,
+    ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp,
+    ast.comprehension, ast.Starred,
+    ast.JoinedStr, ast.FormattedValue,  # f-strings
+})
+
+_BLOCKED_NAMES = frozenset({
+    "__class__", "__bases__", "__subclasses__", "__mro__",
+    "__globals__", "__builtins__", "__import__", "__loader__",
+    "exec", "eval", "compile", "open", "__code__",
+    "__reduce__", "__reduce_ex__", "__init_subclass__",
+})
+
+
+class _ExprValidator(ast.NodeVisitor):
+    """Walk AST and reject any disallowed node type or dangerous name."""
+
+    def visit(self, node: ast.AST) -> None:
+        if type(node) not in _ALLOWED_EXPR_NODES:
+            raise ValueError(
+                f"Expression contains disallowed construct: {type(node).__name__}"
+            )
+        self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if node.id in _BLOCKED_NAMES:
+            raise ValueError(f"Expression references blocked name: {node.id}")
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if node.attr in _BLOCKED_NAMES:
+            raise ValueError(f"Expression accesses blocked attribute: {node.attr}")
+        self.generic_visit(node)
 
 
 class _Attrible:
@@ -126,7 +184,19 @@ def _eval_one(expression: str, context: dict[str, Any]) -> Any:
     for alias, target in _ALIASES:
         code = code.replace(alias, target)
     try:
-        return eval(code, {"__builtins__": _SAFE_BUILTINS}, context)
+        tree = ast.parse(code, mode="eval")
+    except SyntaxError as exc:
+        return f"[expr error: SyntaxError: {exc}]"
+    try:
+        _ExprValidator().visit(tree)
+    except ValueError as exc:
+        return f"[expr error: {exc}]"
+    try:
+        return eval(  # noqa: S307 - AST-validated above
+            compile(tree, "<expression>", "eval"),
+            {"__builtins__": _SAFE_BUILTINS},
+            context,
+        )
     except Exception as exc:  # noqa: BLE001 - any failure becomes a friendly error
         return f"[expr error: {type(exc).__name__}: {exc}]"
 

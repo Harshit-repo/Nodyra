@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.models import SystemSetting
+from app.models import SystemSetting, User
 from app.schemas import SystemSettingsInfo, SystemSettingsUpdate
-from app.security import require_permission
+from app.security import optional_current_user, require_permission
 from app.services.audit import log_audit
 from app.services.live_settings import (
     _SINGLETON_ID,
@@ -48,6 +48,7 @@ async def get_system_settings(session: AsyncSession = Depends(get_session)):
 async def update_system_settings(
     body: SystemSettingsUpdate,
     session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     row = await _load(session)
     apply_updates(row, body.model_dump(exclude_unset=True))
@@ -57,6 +58,8 @@ async def update_system_settings(
         "system_settings",
         row.id,
         "workspace settings updated",
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
     )
     await session.commit()
     await session.refresh(row)

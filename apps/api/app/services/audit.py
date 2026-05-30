@@ -15,6 +15,8 @@ async def log_audit(
     target_type: str,
     target_id: str = "",
     detail: str = "",
+    actor_id: str | None = None,
+    actor_email: str | None = None,
 ) -> None:
     session.add(
         AuditEvent(
@@ -22,5 +24,7 @@ async def log_audit(
             target_type=target_type,
             target_id=target_id,
             detail=detail,
+            actor_id=actor_id,
+            actor_email=actor_email,
         )
     )

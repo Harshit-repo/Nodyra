@@ -1,8 +1,9 @@
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, WebSocket, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -15,6 +16,7 @@ from app.schemas import (
     RunDebugSnapshot,
     RunInfo,
     RunListItem,
+    PageResponse,
     RunReplayRequest,
     RunReplayResponse,
     RunRequest,
@@ -108,18 +110,25 @@ async def run_workflow(
     return RunCreated(run_id=run_id)
 
 
-@router.get("/workflows/{workflow_id}/runs", response_model=list[RunInfo])
+@router.get("/workflows/{workflow_id}/runs", response_model=PageResponse[RunInfo])
 async def list_runs(
-    workflow_id: str, session: AsyncSession = Depends(get_session)
+    workflow_id: str,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
 ):
+    total = await session.scalar(
+        select(func.count()).select_from(Run).where(Run.workflow_id == workflow_id)
+    )
     result = await session.scalars(
         select(Run)
         .where(Run.workflow_id == workflow_id)
         .options(selectinload(Run.node_runs))
         .order_by(Run.started_at.desc())
-        .limit(50)
+        .offset(offset)
+        .limit(limit)
     )
-    return list(result.all())
+    return PageResponse(items=list(result.all()), total=total or 0, limit=limit, offset=offset)
 
 
 @router.get("/runs", response_model=list[RunListItem])
@@ -567,7 +576,19 @@ async def run_events(websocket: WebSocket, run_id: str) -> None:
             return
     await websocket.accept()
     try:
-        async for event in broker.subscribe(run_id):
-            await websocket.send_json(event)
+        async def _heartbeat() -> None:
+            while True:
+                await asyncio.sleep(30)
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception:
+                    break
+
+        hb_task = asyncio.create_task(_heartbeat())
+        try:
+            async for event in broker.subscribe(run_id):
+                await websocket.send_json(event)
+        finally:
+            hb_task.cancel()
     finally:
         await websocket.close()

@@ -1,14 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 import noodle_nodes  # noqa: F401 - registers built-in nodes
 from app.db import get_session
-from app.models import Environment, Run, Workflow, WorkflowVersion
+from app.models import Environment, Run, User, Workflow, WorkflowVersion
 from app.schemas import (
     AiWorkflowDraftRequest,
     AiWorkflowDraftResponse,
+    PageResponse,
     WorkflowCreate,
     WorkflowDetail,
     WorkflowPublishRequest,
@@ -17,7 +18,7 @@ from app.schemas import (
     WorkflowUpdate,
     WorkflowVersionInfo,
 )
-from app.security import require_permission
+from app.security import optional_current_user, require_permission
 from app.services.ai_builder import build_workflow_draft
 from app.services.audit import log_audit
 from noodle.models import WorkflowGraph
@@ -131,10 +132,22 @@ def _detail(workflow: Workflow) -> WorkflowDetail:
     )
 
 
-@router.get("", response_model=list[WorkflowSummary])
-async def list_workflows(session: AsyncSession = Depends(get_session)):
-    result = await session.scalars(select(Workflow).options(selectinload(Workflow.versions)))
-    return [await _summary(session, w) for w in result.all()]
+@router.get("", response_model=PageResponse[WorkflowSummary])
+async def list_workflows(
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
+):
+    count = await session.scalar(select(func.count()).select_from(Workflow))
+    result = await session.scalars(
+        select(Workflow)
+        .options(selectinload(Workflow.versions))
+        .order_by(Workflow.updated_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    items = [await _summary(session, w) for w in result.all()]
+    return PageResponse(items=items, total=count or 0, limit=limit, offset=offset)
 
 
 @router.post(
@@ -143,7 +156,11 @@ async def list_workflows(session: AsyncSession = Depends(get_session)):
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_permission("workflow:write"))],
 )
-async def create_workflow(body: WorkflowCreate, session: AsyncSession = Depends(get_session)):
+async def create_workflow(
+    body: WorkflowCreate,
+    session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
+):
     workflow = Workflow(
         name=body.name,
         environment_id=await _global_env_id(session),
@@ -152,7 +169,9 @@ async def create_workflow(body: WorkflowCreate, session: AsyncSession = Depends(
     )
     workflow.versions.append(WorkflowVersion(version=1, graph=dict(EMPTY_GRAPH)))
     session.add(workflow)
-    await log_audit(session, "create", "workflow", detail=body.name)
+    await log_audit(session, "create", "workflow", detail=body.name,
+                    actor_id=actor.id if actor else None,
+                    actor_email=actor.email if actor else None)
     await session.commit()
     return _detail(await _load(session, workflow.id))
 
@@ -185,6 +204,7 @@ async def update_workflow(
     workflow_id: str,
     body: WorkflowUpdate,
     session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     workflow = await _load(session, workflow_id)
     if body.name is not None:
@@ -256,6 +276,7 @@ async def publish_workflow(
     workflow_id: str,
     body: WorkflowPublishRequest,
     session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     workflow = await _load(session, workflow_id)
     latest = _latest(workflow)
@@ -296,6 +317,8 @@ async def publish_workflow(
         "workflow",
         workflow.id,
         f"v{next_version}: {workflow.name}",
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
     )
     await session.commit()
     return WorkflowPublishResponse(
@@ -336,8 +359,14 @@ async def create_ai_workflow_draft(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_permission("workflow:write"))],
 )
-async def delete_workflow(workflow_id: str, session: AsyncSession = Depends(get_session)):
+async def delete_workflow(
+    workflow_id: str,
+    session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
+):
     workflow = await _load(session, workflow_id)
-    await log_audit(session, "delete", "workflow", workflow_id, workflow.name)
+    await log_audit(session, "delete", "workflow", workflow_id, workflow.name,
+                    actor_id=actor.id if actor else None,
+                    actor_email=actor.email if actor else None)
     await session.delete(workflow)
     await session.commit()

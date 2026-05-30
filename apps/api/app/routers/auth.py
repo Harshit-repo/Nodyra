@@ -261,7 +261,9 @@ async def create_user(
         role=role,
     )
     session.add(user)
-    await log_audit(session, "create", "user", detail=f"{email} ({role})")
+    await log_audit(session, "create", "user", detail=f"{email} ({role})",
+                    actor_id=actor.id if actor else None,
+                    actor_email=actor.email if actor else None)
     await session.commit()
     await session.refresh(user)
     return user
@@ -280,7 +282,9 @@ async def update_user(
     role = normalize_role(body.role)
     await _assert_role_change_allowed(session, actor, user, role)
     user.role = role
-    await log_audit(session, "update_role", "user", user.id, f"{user.email} -> {role}")
+    await log_audit(session, "update_role", "user", user.id, f"{user.email} -> {role}",
+                    actor_id=actor.id if actor else None,
+                    actor_email=actor.email if actor else None)
     await session.commit()
     await session.refresh(user)
     return user
@@ -311,6 +315,8 @@ async def delete_user(
                 status.HTTP_400_BAD_REQUEST,
                 "Cannot delete the last owner account.",
             )
-    await log_audit(session, "delete", "user", user.id, user.email)
+    await log_audit(session, "delete", "user", user.id, user.email,
+                    actor_id=actor.id if actor else None,
+                    actor_email=actor.email if actor else None)
     await session.delete(user)
     await session.commit()

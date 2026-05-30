@@ -12,7 +12,9 @@ The same engine runs inside env runners and inside exported scripts.
 """
 
 import asyncio
+import concurrent.futures
 import contextvars
+import functools
 import json
 import random
 import sys
@@ -33,6 +35,18 @@ from noodle.models import (
 from noodle.sdk import NodeRegistry
 
 EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
+
+PROCESS_ISOLATED_NODE_TYPES: frozenset[str] = frozenset({"code"})
+
+_process_pool: concurrent.futures.ProcessPoolExecutor | None = None
+
+
+def _get_process_pool(max_workers: int = 4) -> concurrent.futures.ProcessPoolExecutor:
+    global _process_pool
+    if _process_pool is None:
+        _process_pool = concurrent.futures.ProcessPoolExecutor(max_workers=max_workers)
+    return _process_pool
+
 
 DEFAULT_NODE_TIMEOUTS: dict[str, float] = {
     "code": 60.0,
@@ -132,6 +146,39 @@ def _topo_order(graph: WorkflowGraph) -> list[str]:
     return order
 
 
+def _topo_levels(graph: WorkflowGraph) -> list[list[str]]:
+    """Return nodes grouped by depth level.
+
+    All nodes in one level have all their predecessors in earlier levels, so
+    they can safely execute in parallel via ``asyncio.gather``. Ties within a
+    level are broken by insertion order (same rule as ``_topo_order``).
+    """
+    node_index = {n.id: i for i, n in enumerate(graph.nodes)}
+    preds = _predecessors(graph)
+    successors: dict[str, set[str]] = defaultdict(set)
+    for target, sources in preds.items():
+        for source in sources:
+            successors[source].add(target)
+
+    indegree = {nid: len(sources) for nid, sources in preds.items()}
+    remaining = set(indegree.keys())
+    levels: list[list[str]] = []
+
+    while remaining:
+        level = sorted(
+            [nid for nid in remaining if indegree[nid] == 0],
+            key=lambda nid: node_index[nid],
+        )
+        if not level:
+            raise GraphError("Cycle detected")
+        levels.append(level)
+        for nid in level:
+            remaining.remove(nid)
+            for succ in successors[nid]:
+                indegree[succ] -= 1
+    return levels
+
+
 def _needed_nodes(
     graph: WorkflowGraph,
     targets: set[str] | None,
@@ -190,7 +237,7 @@ async def execute(
     cache = cache or {}
     target_set = set(targets) if targets is not None else None
     needed = _needed_nodes(graph, target_set, cache)
-    order = _topo_order(graph)
+    levels = _topo_levels(graph)
     nodes_by_id = {n.id: n for n in graph.nodes}
 
     incoming: dict[str, dict[str, tuple[str, str]]] = defaultdict(dict)
@@ -225,9 +272,10 @@ async def execute(
             }
         )
 
-    for nid in order:
+    async def _run_node(nid: str) -> None:
+        nonlocal run_status
         if nid not in needed:
-            continue
+            return
         graph_node = nodes_by_id[nid]
 
         if nid in cache:
@@ -237,7 +285,7 @@ async def execute(
                     node_id=nid, status=NodeStatus.success, outputs=node_outputs[nid]
                 )
             )
-            continue
+            return
 
         edges_in = incoming.get(nid, {})
 
@@ -253,7 +301,7 @@ async def execute(
             await finish(
                 NodeRunResult(node_id=nid, status=NodeStatus.skipped, error=skip_reason)
             )
-            continue
+            return
 
         await emit({"type": "node_started", "node_id": nid})
         started = time.time()
@@ -268,7 +316,7 @@ async def execute(
                     started_at=started, finished_at=time.time(),
                 )
             )
-            continue
+            return
 
         output_names = (
             graph_node.outputs_override
@@ -291,7 +339,7 @@ async def execute(
                     started_at=started, finished_at=time.time(),
                 )
             )
-            continue
+            return
 
         kwargs: dict[str, Any] = {}
         for port in node_def.manifest.inputs:
@@ -301,9 +349,6 @@ async def execute(
 
         missing: list[str] = []
         for spec in node_def.manifest.params:
-            # A param may also be exposed as a wired input port (the user-
-            # function rule). If an upstream edge already supplied a value,
-            # the edge wins — don't let an inspector default overwrite it.
             if spec.name in kwargs:
                 continue
             if spec.name in graph_node.params:
@@ -320,9 +365,8 @@ async def execute(
                     started_at=started, finished_at=time.time(),
                 )
             )
-            continue
+            return
 
-        # Evaluate {{ ... }} expressions in config parameters before the call.
         first_input_name = (
             node_def.manifest.inputs[0].name
             if node_def.manifest.inputs
@@ -354,11 +398,6 @@ async def execute(
         log_token = _log_capture.set(log_buf)
         debug_token = node_debug.set(debug)
         node_token = current_node_id.set(nid)
-        # Filter kwargs to what the function actually accepts. Lets the
-        # manifest expose a virtual ``input`` port (the upstream envelope,
-        # used to build $json) even when the user's function doesn't take
-        # an ``input`` parameter. Built-ins with simple signatures are a
-        # no-op here. ``**kwargs``-accepting functions get the full dict.
         if node_def.accepts_var_keyword or not node_def.param_names:
             call_kwargs = kwargs
         else:
@@ -368,8 +407,6 @@ async def execute(
         try:
             for attempt in range(attempts):
                 try:
-                    # Only offload sync nodes to a thread when a timeout is set,
-                    # so ordinary sync nodes keep their direct-call semantics.
                     if node_def.is_async:
                         if timeout is not None:
                             raw = await asyncio.wait_for(
@@ -377,6 +414,18 @@ async def execute(
                             )
                         else:
                             raw = await node_def.func(**call_kwargs)
+                    elif graph_node.type in PROCESS_ISOLATED_NODE_TYPES:
+                        loop = asyncio.get_event_loop()
+                        fn_with_kwargs = functools.partial(node_def.func, **call_kwargs)
+                        fut = loop.run_in_executor(_get_process_pool(), fn_with_kwargs)
+                        try:
+                            raw = await asyncio.wait_for(fut, timeout)
+                        except (asyncio.TimeoutError, TimeoutError):
+                            global _process_pool
+                            if _process_pool is not None:
+                                _process_pool.shutdown(wait=False, cancel_futures=True)
+                                _process_pool = None
+                            raise
                     elif timeout is not None:
                         raw = await asyncio.wait_for(
                             asyncio.to_thread(node_def.func, **call_kwargs), timeout
@@ -385,9 +434,6 @@ async def execute(
                         raw = node_def.func(**call_kwargs)
                     outputs = _normalize_outputs(raw, output_names, graph_node.type)
                     if max_node_output_bytes is not None and max_node_output_bytes > 0:
-                        # Guard against unbounded outputs (e.g. a code node that
-                        # returns a giant DataFrame). Approximation is fine; the
-                        # real cost is downstream serialization + storage.
                         try:
                             approx = len(json.dumps(outputs, default=str))
                         except (TypeError, ValueError):
@@ -399,12 +445,12 @@ async def execute(
                             )
                     caught = None
                     break
-                except Exception as exc:  # noqa: BLE001 - user code; surface anything
+                except Exception as exc:  # noqa: BLE001
                     caught = exc
                     if attempt + 1 < attempts and graph_node.retry_wait_seconds > 0:
                         wait = graph_node.retry_wait_seconds
                         delay = wait * (2**attempt if graph_node.retry_backoff else 1)
-                        delay += random.uniform(0, wait * 0.1)  # small jitter
+                        delay += random.uniform(0, wait * 0.1)
                         await asyncio.sleep(delay)
         finally:
             current_node_id.reset(node_token)
@@ -421,16 +467,12 @@ async def execute(
                     started_at=started, finished_at=time.time(),
                 )
             )
-            continue
+            return
 
         if isinstance(caught, (TimeoutError, asyncio.TimeoutError)):
             error_msg = f"node timed out after {timeout}s"
         else:
             error_msg = f"{type(caught).__name__}: {caught}"
-            # Surface exception notes (PEP 678) attached by user-code wrappers
-            # like the code node's traceback annotator — without this the
-            # operator only sees ``NameError: name 'foo' is not defined`` and
-            # has no way to locate the failing line.
             notes = getattr(caught, "__notes__", None) or ()
             if notes:
                 error_msg = "\n\n".join((error_msg, *notes))
@@ -456,6 +498,11 @@ async def execute(
                     started_at=started, finished_at=time.time(),
                 )
             )
+
+    # Execute level by level; nodes within a level have no interdependencies
+    # and can run in parallel via asyncio.gather.
+    for level in levels:
+        await asyncio.gather(*[_run_node(nid) for nid in level])
 
     return RunResult(status=run_status, nodes=results)
 

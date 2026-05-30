@@ -244,6 +244,8 @@ class AuditEvent(Base):
     target_type: Mapped[str] = mapped_column(String(40), nullable=False)
     target_id: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    actor_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None)
+    actor_email: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -297,6 +299,7 @@ class Run(Base):
     runner_pool_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     runner_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     batch_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    deduplication_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     queue_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mode: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")

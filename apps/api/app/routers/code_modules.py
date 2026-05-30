@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.models import CodeModule, Environment, Workflow
+from app.models import CodeModule, Environment, User, Workflow
 from app.schemas import (
     CodeModuleCreate,
     CodeModuleFunctionPreview,
@@ -22,7 +22,7 @@ from app.schemas import (
     CodeModuleInfo,
     CodeModuleUpdate,
 )
-from app.security import require_permission
+from app.security import optional_current_user, require_permission
 from app.services.audit import log_audit
 from app.services.starter_graph import build_starter_graph
 from noodle.models import NodeManifest
@@ -153,7 +153,9 @@ async def list_code_modules(
     dependencies=[Depends(require_permission("code_module:write"))],
 )
 async def create_code_module(
-    body: CodeModuleCreate, session: AsyncSession = Depends(get_session)
+    body: CodeModuleCreate,
+    session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     if body.scope == "workflow" and not body.workflow_id:
         raise HTTPException(400, "workflow_id is required for scope=workflow")
@@ -168,7 +170,9 @@ async def create_code_module(
         contents=body.contents or "",
     )
     session.add(module)
-    await log_audit(session, "create", "code_module", detail=body.name)
+    await log_audit(session, "create", "code_module", detail=body.name,
+                    actor_id=actor.id if actor else None,
+                    actor_email=actor.email if actor else None)
     await session.commit()
     await session.refresh(module)
     return module
@@ -207,10 +211,14 @@ async def update_code_module(
     dependencies=[Depends(require_permission("code_module:write"))],
 )
 async def delete_code_module(
-    module_id: str, session: AsyncSession = Depends(get_session)
+    module_id: str,
+    session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     module = await _load(session, module_id)
-    await log_audit(session, "delete", "code_module", module.id, module.name)
+    await log_audit(session, "delete", "code_module", module.id, module.name,
+                    actor_id=actor.id if actor else None,
+                    actor_email=actor.email if actor else None)
     await session.delete(module)
     await session.commit()
 

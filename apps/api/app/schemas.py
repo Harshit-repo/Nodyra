@@ -1,9 +1,18 @@
 """Pydantic request/response schemas for the API."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+T = TypeVar("T")
+
+
+class PageResponse(BaseModel, Generic[T]):
+    items: list[T]
+    total: int
+    limit: int
+    offset: int
 
 from noodle.models import WorkflowGraph
 
@@ -299,6 +308,8 @@ class AuditEventInfo(BaseModel):
     target_type: str
     target_id: str
     detail: str
+    actor_id: str | None = None
+    actor_email: str | None = None
     created_at: datetime
 
 

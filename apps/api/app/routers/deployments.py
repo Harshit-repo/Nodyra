@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db import get_session
-from app.models import Deployment, Run, Workflow, WorkflowVersion
+from app.models import Deployment, Run, User, Workflow, WorkflowVersion
 from app.schemas import (
     DeploymentCreate,
     DeploymentInfo,
@@ -20,7 +20,7 @@ from app.schemas import (
     RunCreated,
     RunListItem,
 )
-from app.security import require_permission
+from app.security import optional_current_user, require_permission
 from app.services.audit import log_audit
 from app.services.graph_utils import first_trigger_node
 from app.services.runner import start_run
@@ -134,7 +134,9 @@ async def list_deployments(
     dependencies=[Depends(require_permission("deployment:write"))],
 )
 async def create_deployment(
-    body: DeploymentCreate, session: AsyncSession = Depends(get_session)
+    body: DeploymentCreate,
+    session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     workflow = await session.scalar(
         select(Workflow)
@@ -167,7 +169,9 @@ async def create_deployment(
         error_alerts=body.error_alerts,
     )
     session.add(deployment)
-    await log_audit(session, "create", "deployment", detail=body.name)
+    await log_audit(session, "create", "deployment", detail=body.name,
+                    actor_id=actor.id if actor else None,
+                    actor_email=actor.email if actor else None)
     await session.commit()
     await session.refresh(deployment)
     return await _info(session, deployment)
@@ -253,11 +257,15 @@ async def update_deployment(
     dependencies=[Depends(require_permission("deployment:write"))],
 )
 async def delete_deployment(
-    deployment_id: str, session: AsyncSession = Depends(get_session)
+    deployment_id: str,
+    session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     deployment = await _load(session, deployment_id)
     await log_audit(
-        session, "delete", "deployment", deployment.id, deployment.name
+        session, "delete", "deployment", deployment.id, deployment.name,
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
     )
     await session.delete(deployment)
     await session.commit()

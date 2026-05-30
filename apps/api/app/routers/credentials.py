@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.models import Credential, Environment, Workflow
+from app.models import Credential, Environment, User, Workflow
 from app.schemas import (
     CredentialCreate,
     CredentialInfo,
@@ -13,7 +13,7 @@ from app.schemas import (
     CredentialTestResponse,
     CredentialUpdate,
 )
-from app.security import require_permission
+from app.security import current_user, optional_current_user, require_permission
 from app.services.audit import log_audit
 from app.services.credential_tests import (
     available_test_services,
@@ -190,7 +190,9 @@ async def resolve_credential(
     dependencies=[Depends(require_permission("credential:write"))],
 )
 async def create_credential(
-    body: CredentialCreate, session: AsyncSession = Depends(get_session)
+    body: CredentialCreate,
+    session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     await _validate_scope(
         session,
@@ -210,7 +212,9 @@ async def create_credential(
         encrypted_data=encrypt_data(body.data),
     )
     session.add(cred)
-    await log_audit(session, "create", "credential", detail=body.name)
+    await log_audit(session, "create", "credential", detail=body.name,
+                    actor_id=actor.id if actor else None,
+                    actor_email=actor.email if actor else None)
     await session.commit()
     await session.refresh(cred)
     invalidate_secret_cache()
@@ -226,6 +230,7 @@ async def update_credential(
     cred_id: str,
     body: CredentialUpdate,
     session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     cred = await _load(session, cred_id)
     if body.name is not None:
@@ -257,7 +262,9 @@ async def update_credential(
         cred.description = body.description
     if body.data is not None:
         cred.encrypted_data = encrypt_data(body.data)
-    await log_audit(session, "update", "credential", cred.id, cred.name)
+    await log_audit(session, "update", "credential", cred.id, cred.name,
+                    actor_id=actor.id if actor else None,
+                    actor_email=actor.email if actor else None)
     await session.commit()
     await session.refresh(cred)
     if body.data is not None:
@@ -304,9 +311,12 @@ async def test_credential(
 async def delete_credential(
     cred_id: str,
     session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     cred = await _load(session, cred_id)
-    await log_audit(session, "delete", "credential", cred.id, cred.name)
+    await log_audit(session, "delete", "credential", cred.id, cred.name,
+                    actor_id=actor.id if actor else None,
+                    actor_email=actor.email if actor else None)
     await session.delete(cred)
     await session.commit()
     invalidate_secret_cache()

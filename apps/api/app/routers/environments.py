@@ -3,14 +3,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.models import Environment
+from app.models import Environment, User
 from app.schemas import (
     EnvironmentCreate,
     EnvironmentInfo,
     EnvironmentUpdate,
     PackageRequest,
 )
-from app.security import require_permission
+from app.security import optional_current_user, require_permission
 from app.services.audit import log_audit
 from app.services.venv import build_environment
 
@@ -87,6 +87,7 @@ async def create_environment(
     body: EnvironmentCreate,
     background: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     _validate_pool(body.runner_pool_size, body.runner_pool_max)
     env = Environment(
@@ -99,7 +100,9 @@ async def create_environment(
         status="pending",
     )
     session.add(env)
-    await log_audit(session, "create", "environment", detail=body.name)
+    await log_audit(session, "create", "environment", detail=body.name,
+                    actor_id=actor.id if actor else None,
+                    actor_email=actor.email if actor else None)
     await session.commit()
     await session.refresh(env)
     background.add_task(build_environment, env.id)
@@ -115,6 +118,7 @@ async def update_environment(
     env_id: str,
     body: EnvironmentUpdate,
     session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     env = await _load(session, env_id)
     sent = body.model_fields_set
@@ -133,7 +137,9 @@ async def update_environment(
         env.runner_pool_size = body.runner_pool_size
     if "runner_pool_max" in sent:
         env.runner_pool_max = body.runner_pool_max
-    await log_audit(session, "update", "environment", env.id, env.name)
+    await log_audit(session, "update", "environment", env.id, env.name,
+                    actor_id=actor.id if actor else None,
+                    actor_email=actor.email if actor else None)
     await session.commit()
     await session.refresh(env)
     return _to_info(env)
