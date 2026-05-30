@@ -16,6 +16,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text as sa_text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -169,6 +170,9 @@ class Workflow(Base):
         ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True, index=True
     )
     error_alerts: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    allow_concurrent: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default=sa_text("1")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

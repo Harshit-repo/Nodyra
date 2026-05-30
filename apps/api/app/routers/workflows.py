@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+import noodle_nodes  # noqa: F401 - registers built-in nodes
 from app.db import get_session
 from app.models import Environment, Run, Workflow, WorkflowVersion
 from app.schemas import (
@@ -20,10 +21,34 @@ from app.security import require_permission
 from app.services.ai_builder import build_workflow_draft
 from app.services.audit import log_audit
 from noodle.models import WorkflowGraph
+from noodle.sdk import registry as node_registry
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
 EMPTY_GRAPH: dict = {"nodes": [], "edges": []}
+
+
+def _validate_node_types(graph: dict | WorkflowGraph) -> None:
+    """422 with a list of unknown node types — guards against typos that
+    only surface at run-time with a confusing 'unknown node' engine error.
+
+    Skips user-defined code-module types (``user:{id}:{fn}``) since those
+    are registered dynamically when the workflow runs, not in the global
+    registry visible here.
+    """
+    nodes = graph.nodes if isinstance(graph, WorkflowGraph) else graph.get("nodes", [])
+    known = {m.id for m in node_registry.manifests()}
+    unknown: set[str] = set()
+    for n in nodes:
+        t = n.type if hasattr(n, "type") else n.get("type")
+        if not t or t in known or t.startswith("user:"):
+            continue
+        unknown.add(t)
+    if unknown:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": "Unknown node types", "unknown": sorted(unknown)},
+        )
 
 
 async def _load(session: AsyncSession, workflow_id: str) -> Workflow:
@@ -99,6 +124,7 @@ def _detail(workflow: Workflow) -> WorkflowDetail:
         environment_id=workflow.environment_id,
         error_workflow_id=workflow.error_workflow_id,
         error_alerts=workflow.error_alerts or {},
+        allow_concurrent=workflow.allow_concurrent,
         graph=WorkflowGraph.model_validate(_draft_graph(workflow)),
         created_at=workflow.created_at,
         updated_at=workflow.updated_at,
@@ -178,10 +204,47 @@ async def update_workflow(
         workflow.error_workflow_id = body.error_workflow_id
     if body.error_alerts is not None:
         workflow.error_alerts = body.error_alerts
+    if body.allow_concurrent is not None:
+        workflow.allow_concurrent = body.allow_concurrent
     if body.graph is not None:
+        _validate_node_types(body.graph)
         workflow.draft_graph = body.graph.model_dump()
     await session.commit()
     return _detail(await _load(session, workflow_id))
+
+
+@router.patch(
+    "/{workflow_id}",
+    response_model=WorkflowDetail,
+    dependencies=[Depends(require_permission("workflow:write"))],
+)
+async def patch_workflow(
+    workflow_id: str,
+    body: WorkflowUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    """Partial-update alias for PUT — accepts the same body shape but only
+    applies fields present in the request. Use this from the editor's
+    autosave path so settings tweaks don't have to re-send the full graph."""
+    return await update_workflow(workflow_id, body, session)
+
+
+@router.get(
+    "/{workflow_id}/versions/{version_id}",
+    response_model=WorkflowVersionInfo,
+)
+async def get_version(
+    workflow_id: str,
+    version_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    workflow = await _load(session, workflow_id)
+    for v in workflow.versions:
+        if v.id == version_id:
+            return WorkflowVersionInfo(
+                id=v.id, version=v.version, notes=v.notes, created_at=v.created_at,
+            )
+    raise HTTPException(status.HTTP_404_NOT_FOUND, "Version not found")
 
 
 @router.post(

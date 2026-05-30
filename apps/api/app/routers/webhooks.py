@@ -68,6 +68,33 @@ async def _payload(request: Request) -> dict:
     }
 
 
+# Headers that carry credentials — never store them in the capture buffer.
+# Matching is case-insensitive; values are replaced with the literal string
+# below so the editor preview still shows that *something* was sent.
+_REDACTED_HEADER_NAMES = frozenset({
+    "authorization",
+    "cookie",
+    "set-cookie",
+    "proxy-authorization",
+    "x-api-key",
+    "x-auth-token",
+    "x-csrf-token",
+})
+_REDACTED_VALUE = "[redacted]"
+
+
+def _redacted_payload(payload: dict) -> dict:
+    """Strip credential-bearing headers before persisting to the capture
+    buffer. Dispatch still uses the original payload so auth checks pass."""
+    safe = dict(payload)
+    headers = payload.get("headers") or {}
+    safe["headers"] = {
+        name: (_REDACTED_VALUE if name.lower() in _REDACTED_HEADER_NAMES else value)
+        for name, value in headers.items()
+    }
+    return safe
+
+
 @router.api_route("/webhook-test/{path}", methods=_METHODS)
 async def capture_webhook(path: str, request: Request) -> dict:
     """Editor test URL — capture the request and dispatch matching workflows
@@ -75,7 +102,7 @@ async def capture_webhook(path: str, request: Request) -> dict:
     apply). Workflow ``active`` is ignored on this path; auth IS still
     checked, so the user can validate their Basic/Header/Query setup."""
     payload = await _payload(request)
-    _record_capture(path, payload)
+    _record_capture(path, _redacted_payload(payload))
     run_ids, any_path_matched = await dispatch_webhook(
         path, payload, prefer_draft=True
     )
@@ -113,7 +140,7 @@ async def clear_webhook(path: str) -> None:
 async def trigger_webhook(path: str, request: Request) -> dict:
     """Production webhook — dispatch a run of matching active workflows."""
     payload = await _payload(request)
-    _record_capture(path, payload)
+    _record_capture(path, _redacted_payload(payload))
     run_ids, any_path_matched = await dispatch_webhook(path, payload)
     logger.info(
         "webhook prod path=%s matched=%s runs=%d",

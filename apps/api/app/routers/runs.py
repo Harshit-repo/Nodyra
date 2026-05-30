@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, WebSocket, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -62,7 +62,8 @@ async def _graph_for_run(
 )
 async def run_workflow(
     workflow_id: str,
-    body: RunRequest,
+    body: RunRequest | None = Body(default=None),
+    use_draft: bool = Query(default=True),
     session: AsyncSession = Depends(get_session),
 ):
     workflow = await session.get(
@@ -71,8 +72,17 @@ async def run_workflow(
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
 
+    if body is None:
+        body = RunRequest()
     latest = workflow.versions[-1]
-    graph = _draft_graph(workflow)
+    if use_draft:
+        graph = _draft_graph(workflow)
+        version_id: str | None = None
+        version_number = latest.version
+    else:
+        graph = latest.graph or EMPTY_GRAPH
+        version_id = latest.id
+        version_number = latest.version
     pinned_rows = await session.scalars(
         select(PinnedData).where(PinnedData.workflow_id == workflow_id)
     )
@@ -83,16 +93,18 @@ async def run_workflow(
         run_id = await start_run(
             workflow_id,
             graph,
-            latest.version,
-            workflow_version_id=None,
+            version_number,
+            workflow_version_id=version_id,
             mode=body.mode,
             targets=body.targets,
             cache=run_cache or None,
-            parameters=body.parameters,
+            parameters=body.parameters or body.data,
             trigger_node_id=body.trigger_node_id,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     return RunCreated(run_id=run_id)
 
 

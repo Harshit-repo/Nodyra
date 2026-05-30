@@ -448,10 +448,26 @@ async def start_run(
             dep = await session.get(Deployment, deployment_id)
             if dep:
                 runner_pool_id = dep.runner_pool_id
+        wf_obj: Workflow | None = None
         if not runner_pool_id:
-            wf = await session.get(Workflow, workflow_id)
-            if wf:
-                runner_pool_id = wf.default_runner_pool_id
+            wf_obj = await session.get(Workflow, workflow_id)
+            if wf_obj:
+                runner_pool_id = wf_obj.default_runner_pool_id
+        if wf_obj is None:
+            wf_obj = await session.get(Workflow, workflow_id)
+        if wf_obj is not None and wf_obj.allow_concurrent is False:
+            # Single-flight gate — return 409 (via RuntimeError surfaced by
+            # the router) when another run is already running or queued.
+            existing = await session.scalar(
+                select(Run.id)
+                .where(Run.workflow_id == workflow_id)
+                .where(Run.status.in_(("running", "queued")))
+                .limit(1)
+            )
+            if existing is not None:
+                raise RuntimeError(
+                    "Workflow is configured single-flight and another run is in progress."
+                )
 
         run = Run(
             workflow_id=workflow_id,

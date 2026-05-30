@@ -78,6 +78,7 @@ class GraphNode(BaseModel):
 
     id: str
     type: str
+    label: str | None = None
     params: dict[str, Any] = Field(default_factory=dict)
     position: Position = Field(default_factory=Position)
     disabled: bool = False

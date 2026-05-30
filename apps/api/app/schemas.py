@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from noodle.models import WorkflowGraph
 
@@ -20,6 +20,7 @@ class WorkflowUpdate(BaseModel):
     graph: WorkflowGraph | None = None
     error_workflow_id: str | None = None
     error_alerts: dict[str, Any] | None = None
+    allow_concurrent: bool | None = None
 
 
 class WorkflowSummary(BaseModel):
@@ -49,6 +50,7 @@ class WorkflowDetail(BaseModel):
     environment_id: str | None
     error_workflow_id: str | None = None
     error_alerts: dict[str, Any] = Field(default_factory=dict)
+    allow_concurrent: bool = True
     graph: WorkflowGraph
     created_at: datetime
     updated_at: datetime
@@ -146,10 +148,20 @@ class RunRequest(BaseModel):
     cache: dict[str, dict[str, Any]] | None = None
     parameters: dict[str, Any] | None = None
     trigger_node_id: str | None = None
+    # Convenience alias for manual triggers — when the caller posts
+    # ``{"data": {...}}`` we treat it as ``parameters`` so the manual_trigger
+    # node's output mirrors the request body without forcing clients to
+    # learn the engine's internal naming.
+    data: dict[str, Any] | None = None
 
 
 class RunCreated(BaseModel):
     run_id: str
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def id(self) -> str:
+        return self.run_id
 
 
 class RunCancelResponse(BaseModel):

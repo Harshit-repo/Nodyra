@@ -13,6 +13,7 @@ The same engine runs inside env runners and inside exported scripts.
 
 import asyncio
 import contextvars
+import json
 import random
 import sys
 import time
@@ -181,6 +182,7 @@ async def execute(
     targets: Iterable[str] | None = None,
     on_event: EventCallback | None = None,
     default_timeouts: dict[str, float] | None = None,
+    max_node_output_bytes: int | None = None,
 ) -> RunResult:
     """Run a workflow graph and return per-node results."""
     _install_capture()
@@ -382,6 +384,19 @@ async def execute(
                     else:
                         raw = node_def.func(**call_kwargs)
                     outputs = _normalize_outputs(raw, output_names, graph_node.type)
+                    if max_node_output_bytes is not None and max_node_output_bytes > 0:
+                        # Guard against unbounded outputs (e.g. a code node that
+                        # returns a giant DataFrame). Approximation is fine; the
+                        # real cost is downstream serialization + storage.
+                        try:
+                            approx = len(json.dumps(outputs, default=str))
+                        except (TypeError, ValueError):
+                            approx = 0
+                        if approx > max_node_output_bytes:
+                            raise ValueError(
+                                f"node output of {approx} bytes exceeds limit of "
+                                f"{max_node_output_bytes} bytes"
+                            )
                     caught = None
                     break
                 except Exception as exc:  # noqa: BLE001 - user code; surface anything
