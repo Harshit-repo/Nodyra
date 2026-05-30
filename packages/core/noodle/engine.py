@@ -28,7 +28,6 @@ from noodle.expr import build_context, evaluate
 from noodle.models import (
     NodeRunResult,
     NodeStatus,
-    NoodleItem,
     RunResult,
     RunStatus,
     WorkflowGraph,
@@ -203,26 +202,13 @@ def _needed_nodes(
 
 
 def _normalize_outputs(raw: Any, output_names: list[str], node_id: str) -> dict[str, Any]:
-    """Normalise a node's return value into a port-name→NoodleItem dict."""
     if len(output_names) == 1:
-        port = output_names[0]
-        return {port: NoodleItem.wrap(raw, source_node=node_id, source_output=port)}
+        return {output_names[0]: raw}
     if not isinstance(raw, dict):
         raise ValueError(
             f"node '{node_id}' declares multiple outputs and must return a dict"
         )
-    return {
-        name: NoodleItem.wrap(raw[name], source_node=node_id, source_output=name)
-        for name in output_names
-        if name in raw
-    }
-
-
-def _unwrap_input(value: Any) -> Any:
-    """Unwrap a NoodleItem to its raw json payload for backward-compat consumption."""
-    if isinstance(value, NoodleItem):
-        return value.unwrap()
-    return value
+    return {name: raw[name] for name in output_names if name in raw}
 
 
 def _node_timeout(
@@ -360,7 +346,7 @@ async def execute(
         for port in node_def.manifest.inputs:
             if port.name in edges_in:
                 source, source_output = edges_in[port.name]
-                kwargs[port.name] = _unwrap_input(node_outputs[source][source_output])
+                kwargs[port.name] = node_outputs[source][source_output]
 
         missing: list[str] = []
         for spec in node_def.manifest.params:

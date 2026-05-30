@@ -109,16 +109,44 @@ class _ExprValidator(ast.NodeVisitor):
 # Everything not blocked is allowed — this is more permissive than the
 # expression validator but still prevents the worst escapes.
 _BLOCKED_STMT_NODES = frozenset({
-    ast.Import,
-    ast.ImportFrom,
     ast.Global,
     ast.Nonlocal,
     ast.ClassDef,
 })
 
+# Modules that may be imported from inside a Code node. Anything else
+# (os, sys, subprocess, socket, importlib, pathlib, ctypes, etc.) is rejected.
+CODE_NODE_ALLOWED_IMPORTS = frozenset({
+    "pandas",
+    "numpy",
+    "json",
+    "math",
+    "re",
+    "datetime",
+    "statistics",
+    "collections",
+    "itertools",
+    "functools",
+    "decimal",
+    "fractions",
+    "random",
+    "uuid",
+    "base64",
+    "hashlib",
+    "string",
+    "textwrap",
+    "csv",
+    "io",
+})
+
+
+def _root_module(name: str) -> str:
+    return name.split(".", 1)[0] if name else ""
+
 
 class _CodeValidator(ast.NodeVisitor):
-    """Validate exec()-mode code: block imports, class defs, and blocked names.
+    """Validate exec()-mode code: block class defs, blocked names, and
+    imports outside the safe allowlist.
 
     Unlike _ExprValidator which allowlists node types, this validator
     blocklists the dangerous constructs so normal control flow (if/for/while/
@@ -132,6 +160,25 @@ class _CodeValidator(ast.NodeVisitor):
                 "use built-in functions or pass data via the input variable"
             )
         super().generic_visit(node)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            root = _root_module(alias.name)
+            if root not in CODE_NODE_ALLOWED_IMPORTS:
+                raise ValueError(
+                    f"Code node disallows import of '{alias.name}' — "
+                    f"allowed modules: {', '.join(sorted(CODE_NODE_ALLOWED_IMPORTS))}"
+                )
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        root = _root_module(node.module or "")
+        if not root or root not in CODE_NODE_ALLOWED_IMPORTS:
+            raise ValueError(
+                f"Code node disallows import from '{node.module}' — "
+                f"allowed modules: {', '.join(sorted(CODE_NODE_ALLOWED_IMPORTS))}"
+            )
+        self.generic_visit(node)
 
     def visit_Name(self, node: ast.Name) -> None:
         if node.id in _BLOCKED_NAMES:
