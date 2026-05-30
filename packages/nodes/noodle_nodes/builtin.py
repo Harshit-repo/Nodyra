@@ -518,12 +518,44 @@ def _record_code_variables(namespace: dict[str, Any]) -> None:
     debug["variables"] = variables
 
 
+def _run_code_isolated(input: Any, code: str) -> Any:
+    """Top-level picklable worker for ProcessPoolExecutor.
+
+    Runs user code in the AST sandbox.  Deliberately omits artifacts_api —
+    artifact writes are not supported from inside an isolated code node; the
+    return value is the only channel back to the engine.
+    """
+    import ast
+    import traceback as _tb
+
+    from noodle.expr import _CodeValidator
+
+    try:
+        tree = ast.parse(code, mode="exec")
+    except SyntaxError as exc:
+        raise ValueError(f"SyntaxError in code node: {exc}") from exc
+
+    visitor = _CodeValidator()
+    try:
+        visitor.visit(tree)
+    except ValueError as exc:
+        raise ValueError(f"Unsafe code: {exc}") from exc
+
+    namespace: dict[str, Any] = {"input": input}
+    try:
+        exec(compile(tree, "<code_node>", "exec"), namespace)  # noqa: S102
+    except Exception as exc:  # noqa: BLE001
+        exc.add_note(_tb.format_exc())
+        raise
+    return namespace.get("output")
+
+
 @node(name="Code", id="code", category="Transform", icon="code", params={
     "code": {
         "multiline": True,
         "description": (
             "Python code executed against the upstream value. The variable "
-            "`input` holds the upstream output, `artifacts` is the artifact API. "
+            "`input` holds the upstream output. "
             "Assign your result to `output` — do NOT use `return` (code runs at "
             "module scope). Example:\n\n"
             "    output = [x for x in input if x.get('completed')]"
@@ -532,21 +564,22 @@ def _record_code_variables(namespace: dict[str, Any]) -> None:
     },
 })
 def code_node(input: Any = None, code: str = "output = input") -> Any:
-    """Run arbitrary Python against the input."""
-    namespace: dict[str, Any] = {"input": input, "artifacts": artifacts_api}
+    """Run arbitrary Python against the input (process-isolated + AST sandboxed).
+
+    The engine routes this node type through ProcessPoolExecutor automatically
+    (PROCESS_ISOLATED_NODE_TYPES contains "code").  _run_code_isolated is the
+    real worker — this wrapper exists so the @node decorator and debug capture
+    still apply when called directly in tests.
+    """
+    namespace: dict[str, Any] = {"input": input}
     try:
-        try:
-            exec(code, namespace)  # noqa: S102 - running user Python is the node's purpose
-        except Exception as exc:  # noqa: BLE001 - surface user-code errors with full trace
-            # Attach the formatted traceback as a note so the engine's error
-            # path (which only stringifies type+msg) still exposes the failing
-            # line / source frame to the operator instead of just
-            # ``NameError: name 'foo' is not defined``.
-            exc.add_note(traceback.format_exc())
-            raise
+        result = _run_code_isolated(input, code)
+        namespace["output"] = result
+        return result
+    except Exception:
+        raise
     finally:
         _record_code_variables(namespace)
-    return namespace.get("output")
 
 
 @node(name="HTTP Request", id="http_request", category="Transform", icon="globe", params={

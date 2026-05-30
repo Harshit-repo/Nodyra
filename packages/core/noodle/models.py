@@ -130,8 +130,111 @@ class NodeRunResult(BaseModel):
     debug: dict[str, Any] = Field(default_factory=dict)
     started_at: float | None = None
     finished_at: float | None = None
+    # Version of the node type that executed this result (from NodeManifest.version).
+    node_type_version: str = "1.0.0"
 
 
 class RunResult(BaseModel):
     status: RunStatus
     nodes: dict[str, NodeRunResult] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# NoodleItem — typed data envelope (n8n-style)
+#
+# Every value flowing between nodes is a list[NoodleItem].  Nodes themselves
+# still return plain Python values for simplicity; the engine wraps and
+# unwraps transparently so existing nodes require no changes.
+#
+# Fields:
+#   json        — the primary structured payload (any JSON-serialisable value)
+#   meta        — provenance / routing metadata set by the engine
+#   binary_data — references to binary blobs (keyed by field name → BinaryRef)
+# ---------------------------------------------------------------------------
+
+class BinaryRef(BaseModel):
+    """Reference to a binary blob stored outside the item envelope."""
+
+    mime_type: str = "application/octet-stream"
+    file_name: str = ""
+    # Storage key — an artifact ID, S3 key, or minio object path.
+    storage_key: str = ""
+    # Inline data as base64 when the blob is small (< 256 KB).
+    inline_b64: str | None = None
+    byte_size: int = 0
+
+
+class ItemMeta(BaseModel):
+    """Engine-managed provenance attached to every NoodleItem."""
+
+    # Index of this item in its originating batch.
+    item_index: int = 0
+    # ID of the node that produced this item.
+    source_node: str = ""
+    # Output port it was emitted on.
+    source_output: str = "main"
+    # Monotonic timestamp (seconds) when item was created.
+    created_at: float = Field(default_factory=lambda: __import__("time").monotonic())
+    # Arbitrary pass-through annotations set by nodes via node_debug.
+    annotations: dict[str, Any] = Field(default_factory=dict)
+
+
+class NoodleItem(BaseModel):
+    """The standard inter-node data envelope."""
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    json: Any = None  # noqa: A003 — mirrors n8n naming convention; shadows BaseModel.model_json_schema intentionally
+    meta: ItemMeta = Field(default_factory=ItemMeta)
+    binary_data: dict[str, BinaryRef] = Field(default_factory=dict)
+
+    # ------------------------------------------------------------------
+    # Convenience helpers
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def wrap(
+        cls,
+        value: Any,
+        *,
+        source_node: str = "",
+        source_output: str = "main",
+        item_index: int = 0,
+    ) -> "NoodleItem":
+        """Wrap a plain Python value in a NoodleItem."""
+        if isinstance(value, cls):
+            return value
+        return cls(
+            json=value,
+            meta=ItemMeta(
+                item_index=item_index,
+                source_node=source_node,
+                source_output=source_output,
+            ),
+        )
+
+    @classmethod
+    def wrap_list(
+        cls,
+        value: Any,
+        *,
+        source_node: str = "",
+        source_output: str = "main",
+    ) -> "list[NoodleItem]":
+        """Normalise any node output into list[NoodleItem].
+
+        Rules:
+        - Already list[NoodleItem]  → returned as-is.
+        - list of plain values      → each element wrapped individually.
+        - Any other single value    → wrapped as a single-item list.
+        """
+        if isinstance(value, list):
+            return [
+                cls.wrap(v, source_node=source_node, source_output=source_output, item_index=i)
+                for i, v in enumerate(value)
+            ]
+        return [cls.wrap(value, source_node=source_node, source_output=source_output)]
+
+    def unwrap(self) -> Any:
+        """Return the raw json payload for backward-compat node consumption."""
+        return self.json

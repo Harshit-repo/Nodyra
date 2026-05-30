@@ -19,7 +19,7 @@ from app.services.credential_tests import (
     available_test_services,
     test_credential_connection,
 )
-from app.services.crypto import decrypt_data, encrypt_data
+from app.services.crypto import decrypt_credential, encrypt_credential
 from app.services.redaction import invalidate_secret_cache
 
 router = APIRouter(prefix="/credentials", tags=["credentials"])
@@ -28,7 +28,7 @@ SCOPES = {"global", "environment", "workflow", "runner_pool"}
 
 
 def _info(cred: Credential) -> CredentialInfo:
-    data = decrypt_data(cred.encrypted_data)
+    data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek)
     return CredentialInfo(
         id=cred.id,
         name=cred.name,
@@ -201,6 +201,7 @@ async def create_credential(
         body.environment_id,
         body.runner_pool_id,
     )
+    _enc_data, _enc_dek = encrypt_credential(body.data)
     cred = Credential(
         name=body.name,
         type=body.type,
@@ -209,7 +210,8 @@ async def create_credential(
         environment_id=body.environment_id if body.scope == "environment" else None,
         runner_pool_id=body.runner_pool_id if body.scope == "runner_pool" else None,
         description=body.description,
-        encrypted_data=encrypt_data(body.data),
+        encrypted_data=_enc_data,
+        encrypted_dek=_enc_dek,
     )
     session.add(cred)
     await log_audit(session, "create", "credential", detail=body.name,
@@ -261,7 +263,7 @@ async def update_credential(
     if body.description is not None:
         cred.description = body.description
     if body.data is not None:
-        cred.encrypted_data = encrypt_data(body.data)
+        cred.encrypted_data, cred.encrypted_dek = encrypt_credential(body.data)
     await log_audit(session, "update", "credential", cred.id, cred.name,
                     actor_id=actor.id if actor else None,
                     actor_email=actor.email if actor else None)
@@ -296,7 +298,7 @@ async def test_credential(
             status.HTTP_403_FORBIDDEN,
             "Credential is not visible for the supplied workflow/environment scope.",
         )
-    data = decrypt_data(cred.encrypted_data)
+    data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek)
     result = await test_credential_connection(cred.type, data, body.context)
     cred.last_used_at = datetime.now(UTC)
     await session.commit()

@@ -2,11 +2,14 @@
 
 from noodle.engine import GraphError, execute, run
 from noodle.models import (
+    BinaryRef,
     Edge,
     GraphNode,
+    ItemMeta,
     NodeManifest,
     NodeRunResult,
     NodeStatus,
+    NoodleItem,
     ParamSpec,
     PortSpec,
     Position,
@@ -20,14 +23,17 @@ from noodle.serialization import deserialize_value, serialize_value
 __version__ = "0.0.1"
 
 __all__ = [
+    "BinaryRef",
     "Edge",
     "GraphError",
     "GraphNode",
+    "ItemMeta",
     "NodeDef",
     "NodeManifest",
     "NodeRegistry",
     "NodeRunResult",
     "NodeStatus",
+    "NoodleItem",
     "ParamSpec",
     "PortSpec",
     "Position",

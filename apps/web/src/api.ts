@@ -115,9 +115,18 @@ export interface WorkflowPatch {
   error_alerts?: Record<string, unknown>;
 }
 
+type Page<T> = { items: T[]; total: number; limit: number; offset: number };
+
+async function requestList<T>(path: string, init?: RequestInit): Promise<T[]> {
+  const data = await request<T[] | Page<T>>(path, init);
+  if (Array.isArray(data)) return data;
+  if (data && Array.isArray((data as Page<T>).items)) return (data as Page<T>).items;
+  return [];
+}
+
 export const api = {
   nodes: () => request<NodeManifest[]>("/nodes"),
-  listWorkflows: () => request<WorkflowSummary[]>("/workflows"),
+  listWorkflows: () => requestList<WorkflowSummary>("/workflows"),
   createWorkflow: (name: string) =>
     request<WorkflowDetail>("/workflows", {
       method: "POST",
@@ -239,7 +248,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  listRuns: (id: string) => request<RunInfo[]>(`/workflows/${id}/runs`),
+  listRuns: (id: string) => requestList<RunInfo>(`/workflows/${id}/runs`),
   listAllRuns: (filters: {
     workflow_id?: string;
     status?: string;
@@ -363,7 +372,7 @@ export const api = {
   deleteCredential: (id: string) =>
     request<void>(`/credentials/${id}`, { method: "DELETE" }),
 
-  listAudit: () => request<AuditEvent[]>("/audit"),
+  listAudit: () => requestList<AuditEvent>("/audit"),
 
   lastWebhook: (path: string) =>
     request<unknown>(`/webhook-test/${encodeURIComponent(path)}/last`),

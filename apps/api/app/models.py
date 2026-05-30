@@ -223,6 +223,9 @@ class Credential(Base):
     )
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     encrypted_data: Mapped[str] = mapped_column(Text, nullable=False)
+    # Per-credential DEK (data-encryption key) wrapped by the master KEK.
+    # NULL on legacy rows — crypto.decrypt_data falls back to KEK-direct decryption.
+    encrypted_dek: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

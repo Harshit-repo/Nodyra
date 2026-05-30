@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Credential, Workflow
-from app.services.crypto import decrypt_data
+from app.services.crypto import decrypt_credential
 
 CREDENTIAL_REF_MARKER = "__noodle_credential__"
 
@@ -71,7 +71,7 @@ async def _resolve_ref(
     ):
         raise RuntimeError(f"credential '{cred.name}' is not visible to this run")
 
-    data = decrypt_data(cred.encrypted_data)
+    data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek)
     cred.last_used_at = datetime.now(UTC)
     # ``*`` means "the whole credential dict" — used by multi-field params
     # so a node receives e.g. ``{"username": ..., "password": ...}`` in a

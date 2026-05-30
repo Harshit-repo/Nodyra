@@ -36,6 +36,72 @@ def decrypt_data(token: str) -> dict:
         return {}
 
 
+# ---------------------------------------------------------------------------
+# Per-credential DEK (Data Encryption Key) helpers
+#
+# Each credential gets a freshly generated 32-byte Fernet key (the DEK).
+# The DEK is encrypted ("wrapped") by the master KEK derived from SECRET_KEY.
+# The wrapped DEK is stored alongside the ciphertext so that:
+#   - rotating the master key only requires re-wrapping DEKs, not re-encrypting data
+#   - a compromised single credential never leaks keys for other credentials
+# ---------------------------------------------------------------------------
+
+def generate_dek() -> bytes:
+    """Return a fresh random 32-byte key suitable for Fernet."""
+    return Fernet.generate_key()
+
+
+def wrap_dek(dek: bytes) -> str:
+    """Encrypt a DEK with the master KEK; return base64url ciphertext string."""
+    return _fernet().encrypt(dek).decode()
+
+
+def unwrap_dek(wrapped_dek: str) -> bytes:
+    """Decrypt a wrapped DEK using the master KEK."""
+    return _fernet().decrypt(wrapped_dek.encode())
+
+
+def encrypt_with_dek(data: dict, dek: bytes) -> str:
+    """Encrypt credential data using the per-credential DEK."""
+    f = Fernet(dek)
+    return f.encrypt(json.dumps(data).encode()).decode()
+
+
+def decrypt_with_dek(token: str, dek: bytes) -> dict:
+    """Decrypt credential data using the per-credential DEK."""
+    try:
+        f = Fernet(dek)
+        return json.loads(f.decrypt(token.encode()).decode())
+    except (InvalidToken, ValueError):
+        return {}
+
+
+def encrypt_credential(data: dict) -> tuple[str, str]:
+    """Encrypt credential data with a fresh DEK.
+
+    Returns (encrypted_data, wrapped_dek) — both should be stored on the
+    Credential row.
+    """
+    dek = generate_dek()
+    return encrypt_with_dek(data, dek), wrap_dek(dek)
+
+
+def decrypt_credential(encrypted_data: str, encrypted_dek: str | None) -> dict:
+    """Decrypt credential data.
+
+    Falls back to legacy KEK-direct decryption when ``encrypted_dek`` is None
+    (rows created before the DEK migration).
+    """
+    if encrypted_dek is None:
+        # Legacy path: data was encrypted directly with the master KEK.
+        return decrypt_data(encrypted_data)
+    try:
+        dek = unwrap_dek(encrypted_dek)
+        return decrypt_with_dek(encrypted_data, dek)
+    except (InvalidToken, ValueError):
+        return {}
+
+
 def hash_password(password: str) -> str:
     salt = os.urandom(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, _PBKDF2_ROUNDS)

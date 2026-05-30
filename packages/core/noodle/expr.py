@@ -105,6 +105,45 @@ class _ExprValidator(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+# AST node types that are explicitly blocked in code node exec() mode.
+# Everything not blocked is allowed — this is more permissive than the
+# expression validator but still prevents the worst escapes.
+_BLOCKED_STMT_NODES = frozenset({
+    ast.Import,
+    ast.ImportFrom,
+    ast.Global,
+    ast.Nonlocal,
+    ast.ClassDef,
+})
+
+
+class _CodeValidator(ast.NodeVisitor):
+    """Validate exec()-mode code: block imports, class defs, and blocked names.
+
+    Unlike _ExprValidator which allowlists node types, this validator
+    blocklists the dangerous constructs so normal control flow (if/for/while/
+    try/with/def) all work fine.
+    """
+
+    def generic_visit(self, node: ast.AST) -> None:
+        if type(node) in _BLOCKED_STMT_NODES:
+            raise ValueError(
+                f"Code node disallows: {type(node).__name__} — "
+                "use built-in functions or pass data via the input variable"
+            )
+        super().generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if node.id in _BLOCKED_NAMES:
+            raise ValueError(f"Code references blocked name: {node.id}")
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if node.attr in _BLOCKED_NAMES:
+            raise ValueError(f"Code accesses blocked attribute: {node.attr}")
+        self.generic_visit(node)
+
+
 class _Attrible:
     """Wrap a JSON-ish value so attribute access mirrors subscript access."""
 
