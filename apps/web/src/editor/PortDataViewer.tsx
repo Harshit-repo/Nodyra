@@ -282,6 +282,12 @@ export function PortDataViewer() {
   const [height, setHeight] = useState(DEFAULT_HEIGHT);
   const [collapsed, setCollapsed] = useState(false);
   const dragStart = useRef<{ y: number; height: number } | null>(null);
+
+  // Keep the global CSS var in sync so canvas-fab can track our height
+  useEffect(() => {
+    const h = collapsed ? COLLAPSED_HEIGHT : height;
+    document.documentElement.style.setProperty('--port-data-height-global', `${h}px`);
+  }, [height, collapsed]);
   const selectedId = useEditor((s) => s.selectedId);
   const node = useEditor((s) => s.nodes.find((n) => n.id === selectedId));
   const edges = useEditor((s) => s.edges);
