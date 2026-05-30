@@ -405,6 +405,18 @@
   line-height: 1.55;
   resize: vertical;
 }
+/* When .field-code is applied to a HighlightedTextarea wrapper, cascade the
+   sizing to the actual textarea so the whole visible box is editable
+   (otherwise the wrap is 180px but the textarea floats at 120px and the
+   bottom 60px is dead space). */
+.hl-ta-wrap.field-code {
+  min-height: 180px;
+  display: flex;
+}
+.hl-ta-wrap.field-code .hl-ta-input {
+  flex: 1;
+  min-height: 180px;
+}
 .functions-editor .field-code {
   flex: 1;
   min-height: 220px;
@@ -3035,6 +3047,17 @@ body.is-resizing {
 .expr-modal-editor.hl-ta-wrap {
   flex: 1;
   background: var(--canvas);
+  min-height: 0;
+}
+.expr-modal-editor-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  min-height: 0;
+}
+.expr-modal-editor-wrap > .hl-ta-wrap {
+  flex: 1;
   min-height: 0;
 }
 .expr-modal-editor .hl-ta-input,

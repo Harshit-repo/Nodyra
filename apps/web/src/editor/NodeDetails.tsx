@@ -1175,7 +1175,7 @@ function ExpressionEditorModal({
                 Anything inside <code>{"{{ }}"}</code> is evaluated
               </span>
             </div>
-            <div style={{ position: "relative" }}>
+            <div className="expr-modal-editor-wrap">
               <HighlightedTextarea
                 className="expr-modal-editor"
                 value={value}
