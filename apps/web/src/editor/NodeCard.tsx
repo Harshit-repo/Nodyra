@@ -234,13 +234,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
           </div>
         )}
 
-        {runMeta?.durationMs != null && runStatus !== "running" && (
-          <div className="node-duration nodrag nopan">
-            {runMeta.durationMs < 1000
-              ? `${Math.round(runMeta.durationMs)}ms`
-              : `${(runMeta.durationMs / 1000).toFixed(1)}s`}
-          </div>
-        )}
+
 
         {inputs.map((port, i) => (
           <Handle
@@ -274,6 +268,13 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
           ))}
       </div>
       <div className="node-label">{manifest.name}</div>
+      {runMeta?.durationMs != null && runStatus !== "running" && (
+        <div className="node-duration nodrag nopan">
+          {runMeta.durationMs < 1000
+            ? `${Math.round(runMeta.durationMs)}ms`
+            : `${(runMeta.durationMs / 1000).toFixed(1)}s`}
+        </div>
+      )}
     </div>
   );
 }

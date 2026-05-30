@@ -1307,19 +1307,18 @@ body.is-resizing-vertical {
   z-index: 5;
 }
 
-/* duration badge — top-right corner of tile */
+/* duration badge — below the node label */
 .node-duration {
-  position: absolute;
-  top: -8px;
-  right: -8px;
+  margin-top: 4px;
+  align-self: center;
   font-size: 9px;
   line-height: 1;
-  background: rgba(0, 0, 0, 0.65);
-  color: rgba(255, 255, 255, 0.8);
+  background: rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.75);
   border-radius: 4px;
-  padding: 2px 4px;
+  padding: 2px 5px;
   pointer-events: none;
-  z-index: 5;
+  white-space: nowrap;
 }
 
 .node-badges {
