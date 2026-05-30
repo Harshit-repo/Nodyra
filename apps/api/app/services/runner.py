@@ -553,6 +553,23 @@ async def cancel_run(run_id: str) -> str | None:
         return run.status
 
 
+async def drain_active_runs(timeout: float) -> int:
+    """Wait for in-flight runs to finish naturally up to ``timeout`` seconds.
+
+    Used by the lifespan shutdown to honor graceful drain: callers should
+    flip ``settings.queue_drain`` first so the dispatch loop stops issuing
+    new leases, then call this. Returns the number of runs still active
+    when the timeout expired (0 means everything drained cleanly).
+    """
+    if timeout <= 0:
+        return sum(1 for task in _active_runs.values() if not task.done())
+    tasks = [task for task in _active_runs.values() if not task.done()]
+    if not tasks:
+        return 0
+    done, pending = await asyncio.wait(tasks, timeout=timeout)
+    return len(pending)
+
+
 async def shutdown_active_runs(timeout: float = 5.0) -> None:
     tasks = [task for task in _active_runs.values() if not task.done()]
     for task in tasks:

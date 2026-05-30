@@ -43,7 +43,7 @@ from app.services.remote_dispatch import (
     runner_heartbeat_loop,
 )
 from app.services.retention import retention_loop
-from app.services.runner import shutdown_active_runs
+from app.services.runner import drain_active_runs, shutdown_active_runs
 from app.services.runtime_pool import idle_reaper_loop
 from app.services.runtime_pool import pool as runtime_pool
 from app.services.triggers import scheduler_loop
@@ -179,17 +179,34 @@ async def lifespan(app: FastAPI):
     cloud_idle = asyncio.create_task(cloud_idle_terminate_loop())
     heartbeat = asyncio.create_task(runner_heartbeat_loop())
     yield
+    # Graceful drain on shutdown: stop the dispatch loop from leasing new
+    # entries, give in-flight runs a bounded window to finish, then
+    # cancel any laggards. ``queue_drain`` may already be true if an
+    # operator pre-drained via /ops/drain; restore the prior value after
+    # teardown so the setting isn't sticky for the next lifespan
+    # (matters for tests that reuse the process).
+    _prior_drain = settings.queue_drain
+    settings.queue_drain = True
     for task in (scheduler, retention, reaper, broker_reaper, queue_loop, cloud_idle, heartbeat):
         if task is None:
             continue
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+    drain_timeout = max(settings.queue_dispatch_shutdown_timeout_seconds, 0.0)
+    if drain_timeout > 0:
+        leftover = await drain_active_runs(drain_timeout)
+        if leftover:
+            logging.getLogger("noodle").warning(
+                "shutdown drain expired with %d active run(s); forcing cancel",
+                leftover,
+            )
     await _bounded(shutdown_active_runs())
     await _bounded(dispatcher.shutdown())
     await _bounded(runtime_pool.shutdown())
     await _bounded(engine.dispose())
     await _bounded(redis_client.aclose())
+    settings.queue_drain = _prior_drain
 
 
 app = FastAPI(title="Noodle API", version="0.0.1", lifespan=lifespan)
