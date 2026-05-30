@@ -105,6 +105,22 @@ async def test_trigger_into_code() -> None:
     assert result.nodes["c"].outputs["main"] == 20
 
 
+async def test_code_node_error_surfaces_traceback() -> None:
+    """User-code exceptions must include a traceback so operators can locate
+    the failing line, not just ``NameError: name 'undefined_thing' is not defined``."""
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="c", type="code", params={"code": "output = undefined_thing"}),
+        ],
+    )
+    result = await execute(graph, registry)
+    err = result.nodes["c"].error or ""
+    assert "NameError" in err
+    assert "undefined_thing" in err
+    # Traceback marker; format_exc always includes this header for the active exc.
+    assert "Traceback" in err
+
+
 async def test_code_node_captures_variable_debug_metadata() -> None:
     graph = WorkflowGraph(
         nodes=[

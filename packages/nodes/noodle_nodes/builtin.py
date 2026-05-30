@@ -9,6 +9,7 @@ import base64
 import hashlib
 import hmac
 import json
+import traceback
 from types import ModuleType
 from typing import Any
 
@@ -518,14 +519,31 @@ def _record_code_variables(namespace: dict[str, Any]) -> None:
 
 
 @node(name="Code", id="code", category="Transform", icon="code", params={
-    "code": {"multiline": True,
-             "description": "Python code. `input` is in scope; assign the result to `output`."},
+    "code": {
+        "multiline": True,
+        "description": (
+            "Python code executed against the upstream value. The variable "
+            "`input` holds the upstream output, `artifacts` is the artifact API. "
+            "Assign your result to `output` — do NOT use `return` (code runs at "
+            "module scope). Example:\n\n"
+            "    output = [x for x in input if x.get('completed')]"
+        ),
+        "placeholder": "output = input",
+    },
 })
 def code_node(input: Any = None, code: str = "output = input") -> Any:
     """Run arbitrary Python against the input."""
     namespace: dict[str, Any] = {"input": input, "artifacts": artifacts_api}
     try:
-        exec(code, namespace)  # noqa: S102 - running user Python is the node's purpose
+        try:
+            exec(code, namespace)  # noqa: S102 - running user Python is the node's purpose
+        except Exception as exc:  # noqa: BLE001 - surface user-code errors with full trace
+            # Attach the formatted traceback as a note so the engine's error
+            # path (which only stringifies type+msg) still exposes the failing
+            # line / source frame to the operator instead of just
+            # ``NameError: name 'foo' is not defined``.
+            exc.add_note(traceback.format_exc())
+            raise
     finally:
         _record_code_variables(namespace)
     return namespace.get("output")

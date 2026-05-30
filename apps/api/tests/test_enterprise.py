@@ -45,6 +45,49 @@ async def test_me_requires_a_token(client: AsyncClient) -> None:
     assert (await client.get("/auth/me")).status_code == 401
 
 
+async def test_users_me_alias(client: AsyncClient) -> None:
+    """``/users/me`` is a REST-conventional alias for ``/auth/me`` (QA fix)."""
+    registered = (
+        await client.post(
+            "/auth/register",
+            json={"email": "alias@noodle.test", "password": "supersecret"},
+        )
+    ).json()
+    token = registered["token"]
+    resp = await client.get(
+        "/users/me", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["email"] == "alias@noodle.test"
+
+
+async def test_login_rate_limited(client: AsyncClient) -> None:
+    """The login endpoint blocks brute-force after auth_rate_limit_per_minute
+    failures from the same client IP (QA fix)."""
+    from app.config import settings as app_settings
+    from app.routers import auth as auth_router
+
+    auth_router._AUTH_RATE_BUCKETS.clear()
+    app_settings.auth_rate_limit_enabled = True
+    app_settings.auth_rate_limit_per_minute = 3
+    try:
+        for _ in range(3):
+            resp = await client.post(
+                "/auth/login",
+                json={"email": "nope@noodle.test", "password": "wrong"},
+            )
+            assert resp.status_code == 401
+        resp = await client.post(
+            "/auth/login",
+            json={"email": "nope@noodle.test", "password": "wrong"},
+        )
+        assert resp.status_code == 429
+        assert "Too many" in resp.json()["detail"]
+    finally:
+        app_settings.auth_rate_limit_per_minute = 10
+        auth_router._AUTH_RATE_BUCKETS.clear()
+
+
 async def test_credentials_never_expose_secret_values(client: AsyncClient) -> None:
     created = (
         await client.post(

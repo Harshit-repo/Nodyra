@@ -412,6 +412,13 @@ async def execute(
             error_msg = f"node timed out after {timeout}s"
         else:
             error_msg = f"{type(caught).__name__}: {caught}"
+            # Surface exception notes (PEP 678) attached by user-code wrappers
+            # like the code node's traceback annotator — without this the
+            # operator only sees ``NameError: name 'foo' is not defined`` and
+            # has no way to locate the failing line.
+            notes = getattr(caught, "__notes__", None) or ()
+            if notes:
+                error_msg = "\n\n".join((error_msg, *notes))
         continue_on_error = (
             graph_node.on_error == "continue" or graph_node.always_output_data
         )

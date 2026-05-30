@@ -101,6 +101,11 @@ class Settings(BaseSettings):
     auth_allow_registration: bool = False
     auth_registration_role: str = "viewer"
     auth_token_ttl_seconds: int = 86_400
+    # Per-IP sliding-window cap on /auth/login + /auth/register attempts.
+    # Tunes brute-force friction; set ``auth_rate_limit_enabled=False`` to
+    # disable entirely (e.g. when fronted by a WAF that already throttles).
+    auth_rate_limit_enabled: bool = True
+    auth_rate_limit_per_minute: int = 10
     secret_key: str = "noodle-dev-secret-change-me-in-production"
     # Shared secret the worker presents to call /internal/* endpoints.
     # Blank = no check (fine for local dev where only your machine reaches

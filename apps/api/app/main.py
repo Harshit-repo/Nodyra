@@ -227,7 +227,19 @@ _AUTH_EXEMPT_PREFIXES = (
     "/internal",
     "/runner-pools/ws",  # agent runner WS — uses its own token query param
 )
-_AUTH_EXEMPT_PATHS = {"/", "/metrics", "/system/status"}
+# Public surface: landing page + OpenAPI schema/docs (so unauthenticated users
+# can discover the API), and a favicon for browsers. /metrics and
+# /system/status used to be public but were tightened in the 2026-05-30 QA
+# sweep so deployment topology isn't leaked to anonymous callers; operators
+# scraping Prometheus should configure a bearer token in their scrape config.
+_AUTH_EXEMPT_PATHS = {
+    "/",
+    "/openapi.json",
+    "/docs",
+    "/docs/oauth2-redirect",
+    "/redoc",
+    "/favicon.ico",
+}
 
 
 @app.middleware("http")
@@ -276,6 +288,7 @@ app.include_router(export.router)
 app.include_router(auth.router)
 app.include_router(credentials.router)
 app.include_router(audit.router)
+app.include_router(auth.users_router)
 app.include_router(artifacts.router)
 app.include_router(ops.router)
 app.include_router(pinned.router)

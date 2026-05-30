@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from collections import defaultdict, deque
+from time import monotonic
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,7 +32,40 @@ from app.services.crypto import (
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+# REST-conventional alias surface: /users/me mirrors /auth/me so clients that
+# treat the user object as the canonical "me" resource don't 404.
+users_router = APIRouter(prefix="/users", tags=["users"])
 require_user_manage = require_permission("user:manage")
+
+
+# Per-(bucket, IP) sliding-window rate limiter for unauthenticated endpoints.
+# Kept in-process to avoid adding a Redis hop on every login attempt; a
+# multi-replica deployment behind a load balancer effectively gets N*limit
+# attempts, which is still enough to block naive brute-force from a single IP.
+# Operators wanting strict cross-replica limits should add a WAF in front.
+_AUTH_RATE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
+
+
+def _enforce_auth_rate_limit(request: Request, bucket: str) -> None:
+    if not settings.auth_rate_limit_enabled:
+        return
+    limit = settings.auth_rate_limit_per_minute
+    if limit <= 0:
+        return
+    ip = request.client.host if request.client else "anon"
+    key = f"{bucket}:{ip}"
+    history = _AUTH_RATE_BUCKETS[key]
+    now = monotonic()
+    cutoff = now - 60.0
+    while history and history[0] < cutoff:
+        history.popleft()
+    if len(history) >= limit:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"Too many {bucket} attempts; try again in a minute.",
+        )
+    history.append(now)
+
 
 
 async def _user_count(session: AsyncSession) -> int:
@@ -105,8 +141,11 @@ async def _assert_role_change_allowed(
     "/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED
 )
 async def register(
-    body: RegisterRequest, session: AsyncSession = Depends(get_session)
+    body: RegisterRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
 ):
+    _enforce_auth_rate_limit(request, "register")
     email = _email(body.email)
     existing = await session.scalar(select(User).where(User.email == email))
     if existing is not None:
@@ -134,7 +173,12 @@ async def register(
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)):
+async def login(
+    body: LoginRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    _enforce_auth_rate_limit(request, "login")
     user = await session.scalar(select(User).where(User.email == _email(body.email)))
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(
@@ -145,6 +189,12 @@ async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)
 
 @router.get("/me", response_model=UserInfo)
 async def me(user: User = Depends(current_user)):
+    return user
+
+
+@users_router.get("/me", response_model=UserInfo)
+async def users_me(user: User = Depends(current_user)):
+    """REST-conventional alias for ``GET /auth/me``."""
     return user
 
 
