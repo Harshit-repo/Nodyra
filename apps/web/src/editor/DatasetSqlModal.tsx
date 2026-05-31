@@ -18,6 +18,7 @@ export function DatasetSqlModal({
   onClose: () => void;
 }) {
   const [sql, setSql] = useState("SELECT * FROM dataset LIMIT 100");
+  const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<DatasetQueryResult | null>(null);
@@ -46,6 +47,22 @@ export function DatasetSqlModal({
   }
 
   const columns = result?.columns.map((c) => c.name) ?? [];
+  const schema = dataset.schema ?? [];
+
+  function useExample(nextSql: string): void {
+    setSql(nextSql);
+    setError(null);
+  }
+
+  async function copySql(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(sql);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  }
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -63,8 +80,41 @@ export function DatasetSqlModal({
           <p className="field-desc">
             Read-only DuckDB query over <strong>{datasetSummary(dataset)}</strong>.
             The dataset is available as <code>dataset</code> or <code>input</code>.
-            Press <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to run.
+            Press <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to run. Queries can only read this dataset;
+            file access functions are blocked on the server.
           </p>
+          <div className="dataset-sql-helper-grid">
+            <section className="dataset-sql-schema" aria-label="Dataset schema">
+              <strong>Columns</strong>
+              {schema.length === 0 ? (
+                <span className="muted">No schema captured yet.</span>
+              ) : (
+                <ul>
+                  {schema.slice(0, 10).map((column) => (
+                    <li key={column.name}>
+                      <code>{column.name}</code>
+                      <span>{column.type}</span>
+                    </li>
+                  ))}
+                  {schema.length > 10 && <li className="muted">+{schema.length - 10} more</li>}
+                </ul>
+              )}
+            </section>
+            <section className="dataset-sql-examples" aria-label="SQL examples">
+              <strong>Examples</strong>
+              <button type="button" onClick={() => useExample("SELECT * FROM dataset LIMIT 100")}>
+                Preview rows
+              </button>
+              {schema[0] && (
+                <button type="button" onClick={() => useExample(`SELECT ${schema[0].name}, COUNT(*) AS n FROM dataset GROUP BY ${schema[0].name} ORDER BY n DESC LIMIT 20`)}>
+                  Count by {schema[0].name}
+                </button>
+              )}
+              <button type="button" onClick={() => useExample("SELECT COUNT(*) AS row_count FROM dataset")}>
+                Count rows
+              </button>
+            </section>
+          </div>
           <textarea
             className="dataset-sql-input"
             value={sql}
@@ -77,6 +127,9 @@ export function DatasetSqlModal({
           <div className="dataset-sql-actions">
             <button className="btn btn-primary btn-sm" onClick={run} disabled={busy}>
               {busy ? "Running…" : "Run query"}
+            </button>
+            <button className="btn btn-sm btn-ghost" onClick={() => void copySql()} type="button">
+              {copied ? "Copied" : "Copy SQL"}
             </button>
             {result && (
               <span className="muted">

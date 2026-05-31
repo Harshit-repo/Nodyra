@@ -8,6 +8,7 @@ import type {
   CredentialTestResponse,
   Environment,
   NodeManifest,
+  NodeSource,
   PinnedItem,
   CodeModule,
   CodeModuleFunctionPreview,
@@ -127,6 +128,8 @@ async function requestList<T>(path: string, init?: RequestInit): Promise<T[]> {
 
 export const api = {
   nodes: () => request<NodeManifest[]>("/nodes"),
+  nodeSource: (nodeType: string) =>
+    request<NodeSource>(`/nodes/${encodeURIComponent(nodeType)}/source`),
   listWorkflows: () => requestList<WorkflowSummary>("/workflows"),
   createWorkflow: (name: string) =>
     request<WorkflowDetail>("/workflows", {

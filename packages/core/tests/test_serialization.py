@@ -137,3 +137,75 @@ def test_truncation_preserves_typed_envelope_shape() -> None:
     assert capped["truncated"] is True
     assert "base64" not in capped["value"]
     assert capped["value"]["byte_length"] == 5000
+
+
+def test_dataset_ref_serialization_passes_through_unchanged() -> None:
+    dataset_ref = {
+        "__noodle_dataset__": True,
+        "version": 1,
+        "dataset_id": "ds_123",
+        "format": "parquet",
+        "row_count": 2,
+        "column_count": 1,
+        "schema": [{"name": "city", "type": "VARCHAR"}],
+        "preview": [{"city": "NYC"}, {"city": "LA"}],
+        "preview_truncated": False,
+        "artifact": {
+            "__noodle_artifact__": True,
+            "version": 1,
+            "artifact_id": "art_123",
+            "run_id": "run_123",
+            "node_id": "node_123",
+            "name": "cities.parquet",
+            "kind": "dataset",
+            "content_type": "application/vnd.apache.parquet",
+            "size_bytes": 1234,
+            "storage_backend": "local",
+            "storage_key": "runs/run_123/node_123/art_123-cities.parquet",
+        },
+    }
+
+    assert serialize_value(dataset_ref) is dataset_ref
+
+
+def test_dataset_ref_truncation_preserves_ref_identity() -> None:
+    dataset_ref = {
+        "__noodle_dataset__": True,
+        "version": 1,
+        "dataset_id": "ds_large",
+        "format": "parquet",
+        "row_count": 10_000,
+        "column_count": 2,
+        "schema": [
+            {"name": "city", "type": "VARCHAR"},
+            {"name": "description", "type": "VARCHAR"},
+        ],
+        "preview": [
+            {"city": f"city-{i}", "description": "x" * 200}
+            for i in range(50)
+        ],
+        "preview_truncated": True,
+        "artifact": {
+            "__noodle_artifact__": True,
+            "version": 1,
+            "artifact_id": "art_large",
+            "run_id": "run_large",
+            "node_id": "node_large",
+            "name": "large.parquet",
+            "kind": "dataset",
+            "content_type": "application/vnd.apache.parquet",
+            "size_bytes": 987654,
+            "storage_backend": "local",
+            "storage_key": "runs/run_large/node_large/art_large-large.parquet",
+        },
+    }
+
+    capped = truncate_serialized_value(dataset_ref, 256)
+
+    assert capped["__noodle_dataset__"] is True
+    assert capped["dataset_id"] == "ds_large"
+    assert capped["artifact"]["__noodle_artifact__"] is True
+    assert capped["artifact"]["artifact_id"] == "art_large"
+    assert capped["row_count"] == 10_000
+    assert capped["preview_truncated"] is True
+    assert capped.get("_truncated") is not True

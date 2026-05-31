@@ -1,0 +1,8 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Noodle — monoline n">
+  <!-- lowercase n drawn as one continuous noodle strand -->
+  <path d="M14 37 L14 23 C14 16, 34 16, 34 23 L34 37"
+        stroke="#1C1A17" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- endpoints capped as connection ports -->
+  <circle cx="14" cy="37" r="3.5" fill="#E29A2C"/>
+  <circle cx="34" cy="37" r="3.5" fill="#E29A2C"/>
+</svg>

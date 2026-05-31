@@ -1,0 +1,8 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Noodle — knotted strand through nodes">
+  <!-- a wavy strand threading through a row of step-nodes -->
+  <path d="M7 24 C 13 11, 19 11, 24 24 C 29 37, 35 37, 41 24"
+        stroke="#E29A2C" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="7" cy="24" r="4.5" fill="#1C1A17"/>
+  <circle cx="24" cy="24" r="4.5" fill="#E0573E"/>
+  <circle cx="41" cy="24" r="4.5" fill="#1C1A17"/>
+</svg>

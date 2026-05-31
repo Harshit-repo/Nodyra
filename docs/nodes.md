@@ -183,6 +183,39 @@ Refs flow through edges, pinned data, and retry caches like any other JSON
 value. The UI renders them as artifact cards with size/type metadata and a
 download link. Retention prune drops files for expired runs automatically.
 
+## DatasetRef tables
+
+DatasetRef is the preferred shape for tabular data that may be too large to
+copy through every node as inline JSON. A DatasetRef is a small JSON-friendly
+reference to a Parquet-backed table plus schema, row-count, and preview
+metadata. See the [DatasetRef guide](datasetref.md) for user-facing patterns.
+
+Typical graph:
+
+```text
+records / CSV / DataFrame
+  -> Records To Dataset or CSV Parse
+  -> Dataset Filter / Dataset Select Columns / DuckDB SQL / Dataset Limit
+  -> Dataset Preview or CSV Write
+  -> optional Dataset To Records for inline-only consumers
+```
+
+Declare DatasetRef ports with `input_kinds` / `output_kinds`:
+
+```python
+@node(
+    name="My Dataset Transform",
+    id="my_dataset_transform",
+    input_kinds={"input": "dataset"},
+    output_kinds={"main": "dataset"},
+)
+def my_dataset_transform(input=None):
+    ...
+```
+
+The editor uses those port kinds to block confusing wires and offer quick
+fixes such as **Records To Dataset** or **Dataset To Records**.
+
 ## Typed values across the wire
 
 The engine serializes non-JSON Python types into typed envelopes only when

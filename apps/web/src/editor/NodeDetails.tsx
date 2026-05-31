@@ -4,7 +4,8 @@ import { api } from "../api";
 import { categoryColor } from "../categories";
 import { NodeIcon } from "../NodeIcon";
 import { useToast } from "../ToastProvider";
-import type { Credential, ParamSpec } from "../types";
+import type { Credential, NodeManifest, NodeSource, ParamSpec } from "../types";
+import { DataPanel } from "./DataPanel";
 import { TimezoneSelect } from "./fields/TimezoneSelect";
 import { useEditor } from "./store";
 
@@ -1684,6 +1685,522 @@ export function WebhookPanel({
   );
 }
 
+function pickModuleManifest(
+  manifests: NodeManifest[],
+  moduleId: string,
+  funcName: string,
+): NodeManifest | null {
+  const prefix = `user:${moduleId}:`;
+  const candidates = manifests.filter((m) => m.id.startsWith(prefix));
+  return (
+    candidates.find((m) => m.id === `${prefix}${funcName}`) ??
+    candidates[0] ??
+    null
+  );
+}
+
+/** Drop any leading decorator lines (e.g. ``@node(...)``) so the function can
+ *  be registered as a plain code-module node. ``inspect.getsource`` returns
+ *  only the function, so everything before the first top-level ``def`` /
+ *  ``async def`` is decorator/blank lines and is safe to remove. */
+function stripLeadingDecorators(src: string): string {
+  const lines = src.split("\n");
+  const idx = lines.findIndex((l) => /^(async\s+)?def\s/.test(l));
+  return idx > 0 ? lines.slice(idx).join("\n") : src;
+}
+
+/** Full-screen code editor for a node's Python source. The left pane shows the
+ *  last upstream input (when available) so columns/fields can be dragged into
+ *  the code as ``{{ $json.field }}`` expressions; the middle pane is the editor;
+ *  the right pane shows the code with every ``{{ }}`` expression resolved
+ *  against the input (Text / HTML / JSON), mirroring the code node editor. */
+function CodeEditorModal({
+  label,
+  editable,
+  draft,
+  onChange,
+  inputData,
+  saving,
+  onSaveReplace,
+  onSaveCreate,
+  defaultName,
+  onClose,
+}: {
+  label: string;
+  editable: boolean;
+  draft: string;
+  onChange: (v: string) => void;
+  inputData?: Record<string, unknown>;
+  saving: boolean;
+  onSaveReplace: () => void;
+  onSaveCreate: (name: string) => void;
+  defaultName: string;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(defaultName);
+  const [view, setView] = useState<"text" | "html" | "json">("text");
+  const drop = exprDropHandlers(draft, onChange);
+  const hasInput = inputData !== undefined && Object.keys(inputData).length > 0;
+
+  // The first upstream input becomes ``$json``; the whole map is ``$input``.
+  const firstInput = inputData ? Object.values(inputData)[0] : undefined;
+  const ctx: ExprContext = { json: firstInput, inputs: inputData };
+
+  const [state, setState] = useState<{
+    result?: unknown;
+    error?: string | null;
+    parts?: PreviewPart[];
+    loading: boolean;
+  }>({ loading: false });
+
+  const hasExpr = EXPR_RE.test(draft);
+
+  useEffect(() => {
+    if (!hasExpr) {
+      // No expressions → the "resolved" code is just the code itself.
+      setState({
+        result: draft,
+        error: null,
+        parts: draft ? [{ kind: "text", value: draft }] : [],
+        loading: false,
+      });
+      return;
+    }
+    if (!hasInput) {
+      setState({ result: undefined, error: null, parts: [], loading: false });
+      return;
+    }
+    let cancelled = false;
+    setState((s) => ({ ...s, loading: true }));
+    const handle = setTimeout(() => {
+      api
+        .previewExpression({
+          value: draft,
+          json: ctx.json,
+          inputs: ctx.inputs,
+        })
+        .then((res) => {
+          if (!cancelled)
+            setState({
+              ...res,
+              parts: res.parts as PreviewPart[],
+              loading: false,
+            });
+        })
+        .catch((err) => {
+          if (!cancelled)
+            setState({
+              error: String(err),
+              result: undefined,
+              parts: [],
+              loading: false,
+            });
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, hasExpr, hasInput, JSON.stringify(inputData)]);
+
+  const resultText = formatResultText(state.result);
+  const parts = state.parts ?? [];
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div
+        className="modal modal-wide code-modal"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="modal-head">
+          <h2>
+            Editing code <span className="expr-modal-label">{label}</span>
+          </h2>
+          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+            ✕
+          </button>
+        </header>
+        <div className="code-modal-body">
+          <section className="code-modal-input">
+            <div className="expr-modal-pane-head">
+              <span>Input</span>
+              <span className="muted expr-modal-hint">drag fields into the code</span>
+            </div>
+            <div className="code-modal-input-data">
+              {hasInput ? (
+                <DataPanel
+                  title="Input"
+                  data={inputData}
+                  emptyMessage="No upstream data yet."
+                  dragPrefix="$json"
+                />
+              ) : (
+                <p className="muted" style={{ padding: 12 }}>
+                  Run the workflow once to see the last node input here for
+                  drag-and-drop.
+                </p>
+              )}
+            </div>
+          </section>
+          <section className="code-modal-editor-pane">
+            <div className="expr-modal-pane-head">
+              <span>Python</span>
+              <span className="muted expr-modal-hint">
+                the <code>@node(...)</code> decorator is stripped on save
+              </span>
+            </div>
+            <textarea
+              className="field-input field-code code-modal-editor"
+              value={draft}
+              spellCheck={false}
+              onChange={(e) => onChange(e.target.value)}
+              onDrop={drop.onDrop}
+              onDragOver={drop.onDragOver}
+            />
+            <div className="code-modal-actions">
+              <input
+                className="field-input"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Node name"
+              />
+              {editable && (
+                <button
+                  className="btn btn-sm btn-primary"
+                  disabled={saving}
+                  onClick={onSaveReplace}
+                >
+                  Replace this node
+                </button>
+              )}
+              <button
+                className="btn btn-sm"
+                disabled={saving}
+                onClick={() => onSaveCreate(name)}
+              >
+                Create new node
+              </button>
+            </div>
+          </section>
+          <section className="code-modal-result-pane">
+            <div className="expr-modal-pane-head">
+              <span>Result</span>
+              <div className="expr-modal-tabs">
+                <button
+                  type="button"
+                  className={view === "text" ? "active" : ""}
+                  onClick={() => setView("text")}
+                >
+                  Text
+                </button>
+                <button
+                  type="button"
+                  className={view === "html" ? "active" : ""}
+                  onClick={() => setView("html")}
+                >
+                  HTML
+                </button>
+                <button
+                  type="button"
+                  className={view === "json" ? "active" : ""}
+                  onClick={() => setView("json")}
+                >
+                  JSON
+                </button>
+              </div>
+            </div>
+            <div className="code-modal-result">
+              {state.loading && <p className="muted">Evaluating…</p>}
+              {!state.loading && hasExpr && !hasInput && (
+                <p className="muted">
+                  Run the workflow once to feed this preview with real input
+                  data — drag a column in and the resolved value shows here.
+                </p>
+              )}
+              {!state.loading && state.error && (
+                <p className="expr-preview-error">⚠ {state.error}</p>
+              )}
+              {!state.loading &&
+                !state.error &&
+                state.result !== undefined &&
+                (view === "html" ? (
+                  <iframe
+                    title="HTML preview"
+                    sandbox=""
+                    srcDoc={resultText}
+                    className="expr-modal-iframe"
+                  />
+                ) : view === "json" ? (
+                  <pre className="expr-modal-text">
+                    {(() => {
+                      try {
+                        return JSON.stringify(
+                          typeof state.result === "string"
+                            ? JSON.parse(state.result)
+                            : state.result,
+                          null,
+                          2,
+                        );
+                      } catch {
+                        return resultText;
+                      }
+                    })()}
+                  </pre>
+                ) : (
+                  <pre className="expr-modal-text code-modal-result-text">
+                    {parts.length === 0
+                      ? resultText
+                      : parts.map((part, i) => {
+                          if (part.kind === "text") {
+                            return <span key={i}>{part.value}</span>;
+                          }
+                          if (part.kind === "error") {
+                            return (
+                              <span
+                                key={i}
+                                className="expr-part-error"
+                                title={part.error}
+                              >
+                                {part.raw}
+                              </span>
+                            );
+                          }
+                          return (
+                            <span key={i} className="expr-part-resolved">
+                              {formatResultText(part.value)}
+                            </span>
+                          );
+                        })}
+                  </pre>
+                ))}
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function NodeCodePanel({
+  nodeId,
+  manifest,
+  inputData,
+  onClose,
+}: {
+  nodeId: string;
+  manifest: NodeManifest;
+  inputData?: Record<string, unknown>;
+  onClose: () => void;
+}) {
+  const toast = useToast();
+  const workflowId = useEditor((s) => s.workflowId);
+  const setManifests = useEditor((s) => s.setManifests);
+  const replaceNodeManifest = useEditor((s) => s.replaceNodeManifest);
+
+  const [info, setInfo] = useState<NodeSource | null>(null);
+  const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [askSave, setAskSave] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [newName, setNewName] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    api
+      .nodeSource(manifest.id)
+      .then((res) => {
+        if (cancelled) return;
+        setInfo(res);
+        // Show the real node source (decorators included) for transparency.
+        // Decorators are stripped automatically at save time.
+        setDraft(res.source);
+        setNewName(`${manifest.name} (custom)`);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [manifest.id, manifest.name]);
+
+  async function refreshManifests(): Promise<NodeManifest[]> {
+    const [builtins, custom] = await Promise.all([
+      api.nodes(),
+      workflowId
+        ? api.workflowCustomNodeManifests(workflowId)
+        : Promise.resolve([] as NodeManifest[]),
+    ]);
+    const merged = [...builtins, ...custom];
+    setManifests(merged);
+    return merged;
+  }
+
+  async function saveAs(mode: "replace" | "create", nameOverride?: string): Promise<void> {
+    if (!info || !workflowId) {
+      toast.notify("Open a saved workflow first.", "error");
+      return;
+    }
+    setSaving(true);
+    try {
+      const name = (nameOverride ?? newName).trim() || `${manifest.name} (custom)`;
+      // Code modules must be plain functions — strip any @node decorator the
+      // user is viewing/editing before persisting.
+      const contents = stripLeadingDecorators(draft);
+      let moduleId: string;
+      if (mode === "replace" && info.editable && info.module_id) {
+        // Editable custom node → update its module in place.
+        await api.updateCodeModule(info.module_id, { contents });
+        moduleId = info.module_id;
+      } else {
+        // Built-in (or "create") → a brand-new workflow-scoped custom node.
+        const created = await api.createCodeModule({
+          scope: "workflow",
+          workflow_id: workflowId,
+          name,
+          contents,
+        });
+        moduleId = created.id;
+      }
+      const merged = await refreshManifests();
+      if (mode === "replace") {
+        const next = pickModuleManifest(merged, moduleId, info.func_name);
+        if (next) {
+          replaceNodeManifest(nodeId, next);
+          toast.notify("This node now runs your code.", "success");
+        } else {
+          toast.notify(
+            "Saved, but no node was registered — check for syntax errors.",
+            "error",
+          );
+        }
+      } else {
+        toast.notify("New node created — find it in the palette.", "success");
+      }
+      setAskSave(false);
+      onClose();
+    } catch (err) {
+      toast.notify(`Save failed: ${err}`, "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="inspector-section node-code-section">
+      <div className="inspector-section-head">
+        Node code
+        <button className="btn btn-sm btn-ghost" onClick={onClose}>
+          Hide
+        </button>
+      </div>
+      {loading && <p className="muted">Loading source…</p>}
+      {error && <p className="expr-preview-error">⚠ {error}</p>}
+      {info && (
+        <>
+          <p className="field-desc">
+            {info.editable
+              ? "This is a custom node. Edit the Python and save to update it."
+              : "Built-in node source. Edit it to create your own customizable copy."}
+          </p>
+          <div className="node-code-editor-wrap">
+            <textarea
+              className="field-input field-code node-code-editor"
+              value={draft}
+              spellCheck={false}
+              rows={18}
+              onChange={(e) => setDraft(e.target.value)}
+              {...exprDropHandlers(draft, setDraft)}
+            />
+            <button
+              type="button"
+              className="node-code-expand"
+              title="Open full editor with input data"
+              onClick={() => setExpanded(true)}
+            >
+              ✎
+            </button>
+          </div>
+          {!info.editable && (
+            <p className="field-desc muted">
+              Note: the <code>@node(...)</code> decorator is stripped
+              automatically on save, and private helpers used by built-ins
+              aren't included — you may need to add them for the node to run.
+            </p>
+          )}
+          {!askSave ? (
+            <button
+              className="btn btn-sm"
+              style={{ marginTop: 8 }}
+              disabled={saving}
+              onClick={() => setAskSave(true)}
+            >
+              Save…
+            </button>
+          ) : (
+            <div className="node-code-save">
+              <div className="field-label">
+                <span className="field-name">Node name</span>
+              </div>
+              <input
+                className="field-input"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+              />
+              <p className="field-desc">How would you like to save?</p>
+              <div className="node-code-save-actions">
+                <button
+                  className="btn btn-sm btn-primary"
+                  disabled={saving}
+                  onClick={() => void saveAs("replace")}
+                >
+                  Replace this node
+                </button>
+                <button
+                  className="btn btn-sm"
+                  disabled={saving}
+                  onClick={() => void saveAs("create")}
+                >
+                  Create new node
+                </button>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  disabled={saving}
+                  onClick={() => setAskSave(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+      {expanded && info && (
+        <CodeEditorModal
+          label={manifest.name}
+          editable={info.editable}
+          draft={draft}
+          onChange={setDraft}
+          inputData={inputData}
+          saving={saving}
+          defaultName={newName || `${manifest.name} (custom)`}
+          onSaveReplace={() => void saveAs("replace")}
+          onSaveCreate={(name) => void saveAs("create", name)}
+          onClose={() => setExpanded(false)}
+        />
+      )}
+    </div>
+  );
+}
+
 export function NodeDetails({
   nodeId,
   showHeader = true,
@@ -1701,6 +2218,8 @@ export function NodeDetails({
   const workflowId = useEditor((s) => s.workflowId);
   const pinned = useEditor((s) => s.pinned[nodeId]);
   const setPinnedFor = useEditor((s) => s.setPinnedFor);
+
+  const [showCode, setShowCode] = useState(false);
 
   async function pin(): Promise<void> {
     if (!workflowId || runOutput === undefined) return;
@@ -1771,7 +2290,22 @@ export function NodeDetails({
           {manifest.description && (
             <p className="inspector-desc">{manifest.description}</p>
           )}
+          <button
+            className="btn btn-sm btn-ghost node-code-toggle"
+            onClick={() => setShowCode((v) => !v)}
+          >
+            {showCode ? "Hide code" : "</> Show code"}
+          </button>
         </div>
+      )}
+
+      {showCode && (
+        <NodeCodePanel
+          nodeId={node.id}
+          manifest={manifest}
+          inputData={hasIncomingInputs ? incomingInputs : undefined}
+          onClose={() => setShowCode(false)}
+        />
       )}
 
       <div className="inspector-section">

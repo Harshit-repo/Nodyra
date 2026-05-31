@@ -1,6 +1,7 @@
 import type { Edge } from "@xyflow/react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { useEffect, useRef, useState } from "react";
+import { DatasetSqlModal } from "./DatasetSqlModal";
 
 import { useEditor, type NoodleNode } from "./store";
 import {
@@ -23,6 +24,9 @@ import {
   typedRecords,
   typedSummary,
 } from "./typedValues";
+import { asChartRef, asReportRef } from "./chartValues";
+import { ChartView } from "./ChartView";
+import { ReportView } from "./ReportView";
 
 const MIN_HEIGHT = 160;
 const DEFAULT_HEIGHT = 248;
@@ -130,6 +134,7 @@ function edgeLabel(edge: Edge | undefined, direction: "input" | "output"): strin
 }
 
 function DatasetCard({ dataset }: { dataset: DatasetRef }) {
+  const [sqlOpen, setSqlOpen] = useState(false);
   const columns = dataset.schema?.map((s) => s.name) ?? [];
   const previewRows = dataset.preview ?? [];
   const shownColumns = columns.slice(0, 6);
@@ -145,7 +150,12 @@ function DatasetCard({ dataset }: { dataset: DatasetRef }) {
         <span>{datasetSummary(dataset)}</span>
         <span>{dataset.format}</span>
       </div>
-      <a href={datasetDownloadUrl(dataset)}>Download {dataset.format}</a>
+      <div className="dataset-card-actions">
+        <a href={datasetDownloadUrl(dataset)}>Download {dataset.format}</a>
+        <button type="button" className="btn btn-sm dataset-sql-btn" onClick={() => setSqlOpen(true)}>
+          Open SQL explorer
+        </button>
+      </div>
       {shownRows.length > 0 && (
         <div className="port-data-table-preview">
           <div className="port-data-table-label">Preview</div>
@@ -176,14 +186,18 @@ function DatasetCard({ dataset }: { dataset: DatasetRef }) {
         </div>
       )}
       <div className="port-data-hint muted">
-        Use a <strong>Dataset To Records</strong> node to materialize rows
-        downstream.
+        Keep DatasetRef wires purple for big tables. Use <strong>Dataset To Records</strong> only when a later node needs inline rows.
       </div>
+      {sqlOpen && <DatasetSqlModal dataset={dataset} onClose={() => setSqlOpen(false)} />}
     </div>
   );
 }
 
 function PortValuePreview({ value }: { value: unknown }) {
+  const chart = asChartRef(value);
+  if (chart) return <ChartView chart={chart} />;
+  const report = asReportRef(value);
+  if (report) return <ReportView report={report} />;
   const dataset = asDatasetRef(value);
   if (dataset) return <DatasetCard dataset={dataset} />;
   const artifact = asArtifactRef(value);

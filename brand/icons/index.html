@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Noodle — Icon System</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=Schibsted+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#F6F1E7; --ink:#1C1A17; --amber:#E29A2C; --coral:#E0573E;
+    --muted:#6F6857; --line:#E2D9C7;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--paper);color:var(--ink);
+    font-family:"Schibsted Grotesk",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;padding:64px 32px 96px}
+  .wrap{max-width:1040px;margin:0 auto}
+  .kicker{font-family:"IBM Plex Mono",monospace;font-size:12px;letter-spacing:.18em;
+    text-transform:uppercase;color:var(--amber);margin-bottom:14px}
+  h1{font-family:"Fraunces",serif;font-weight:900;font-size:clamp(40px,7vw,76px);
+    line-height:.96;letter-spacing:-.02em;margin-bottom:18px}
+  h1 em{font-style:italic;color:var(--coral)}
+  .lede{font-size:18px;color:var(--muted);max-width:60ch;margin-bottom:56px}
+  h2{font-family:"Fraunces",serif;font-weight:600;font-size:24px;margin:56px 0 24px;
+    padding-bottom:12px;border-bottom:1px solid var(--line)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:20px}
+  .card{border:1px solid var(--line);border-radius:18px;background:#fff;overflow:hidden;
+    transition:transform .25s ease, box-shadow .25s ease}
+  .card:hover{transform:translateY(-4px);box-shadow:0 18px 40px -22px rgba(28,26,23,.5)}
+  .stage{display:flex;align-items:center;justify-content:center;height:150px;
+    background:radial-gradient(120% 120% at 30% 20%, #FBF7EF, #EFE7D6)}
+  .stage img{width:84px;height:84px}
+  .card.dark .stage{background:radial-gradient(120% 120% at 30% 20%, #2A2620, #141210)}
+  .meta{padding:14px 16px;border-top:1px solid var(--line)}
+  .meta .name{font-weight:700;font-size:14px}
+  .meta .desc{font-size:12.5px;color:var(--muted);margin-top:3px;line-height:1.4}
+  .sizes{display:flex;align-items:flex-end;gap:24px;flex-wrap:wrap;
+    border:1px solid var(--line);border-radius:18px;background:#fff;padding:28px 32px}
+  .sizes figure{display:flex;flex-direction:column;align-items:center;gap:10px}
+  .sizes figcaption{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--muted)}
+  .s16{width:16px;height:16px}.s24{width:24px;height:24px}.s32{width:32px;height:32px}
+  .s48{width:48px;height:48px}.s64{width:64px;height:64px}
+  .pal{display:flex;gap:14px;flex-wrap:wrap}
+  .sw{display:flex;flex-direction:column;gap:8px}
+  .chip{width:130px;height:64px;border-radius:12px;border:1px solid rgba(0,0,0,.08)}
+  .sw code{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--muted)}
+  footer{margin-top:72px;font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">Brand / Icon System</div>
+  <h1>The noodle <em>is</em> the edge.</h1>
+  <p class="lede">Every mark fuses a strand of noodle with the connection between two nodes — the literal metaphor of a workflow canvas. Monoline, rounded caps, one warm accent. Built to read from a 16px favicon up to a billboard.</p>
+
+  <h2>Marks</h2>
+  <div class="grid">
+    <div class="card"><div class="stage"><img src="connector-curl.svg" alt="Connector Curl"></div>
+      <div class="meta"><div class="name">Connector Curl <span style="color:var(--amber)">★ primary</span></div>
+      <div class="desc">Two ports joined by a curling strand. The signature mark.</div></div></div>
+    <div class="card"><div class="stage"><img src="noodle-n.svg" alt="Monoline n"></div>
+      <div class="meta"><div class="name">Monoline “n”</div>
+      <div class="desc">A lowercase n as one looping strand, ends capped as ports.</div></div></div>
+    <div class="card"><div class="stage"><img src="knotted-strand.svg" alt="Knotted Strand"></div>
+      <div class="meta"><div class="name">Knotted Strand</div>
+      <div class="desc">A strand threading through three step-nodes.</div></div></div>
+    <div class="card"><div class="stage"><img src="squiggle-node.svg" alt="Squiggle Node"></div>
+      <div class="meta"><div class="name">Squiggle Node</div>
+      <div class="desc">A node with a wavy noodle tail. Ultra-minimal.</div></div></div>
+    <div class="card"><div class="stage"><img src="bowl-flow.svg" alt="Bowl to Flow"></div>
+      <div class="meta"><div class="name">Bowl-to-Flow</div>
+      <div class="desc">Ramen bowl whose steam branches into a flow. Playful avatar.</div></div></div>
+    <div class="card"><div class="stage"><img src="favicon.svg" alt="Favicon"></div>
+      <div class="meta"><div class="name">App Tile / Favicon</div>
+      <div class="desc">Bolded strand on an ink tile for tiny sizes.</div></div></div>
+  </div>
+
+  <h2>On dark</h2>
+  <div class="grid">
+    <div class="card dark"><div class="stage"><img src="connector-curl.svg" alt=""></div>
+      <div class="meta"><div class="name">Connector Curl</div><div class="desc">Strand holds up on dark surfaces.</div></div></div>
+    <div class="card dark"><div class="stage"><img src="knotted-strand.svg" alt=""></div>
+      <div class="meta"><div class="name">Knotted Strand</div><div class="desc">Coral mid-node adds the pop.</div></div></div>
+    <div class="card dark"><div class="stage"><img src="bowl-flow.svg" alt=""></div>
+      <div class="meta"><div class="name">Bowl-to-Flow</div><div class="desc">Bowl reads as silhouette.</div></div></div>
+  </div>
+
+  <h2>Scale test — Connector Curl</h2>
+  <div class="sizes">
+    <figure><img class="s16" src="favicon.svg" alt=""><figcaption>16px</figcaption></figure>
+    <figure><img class="s24" src="favicon.svg" alt=""><figcaption>24px</figcaption></figure>
+    <figure><img class="s32" src="favicon.svg" alt=""><figcaption>32px</figcaption></figure>
+    <figure><img class="s48" src="connector-curl.svg" alt=""><figcaption>48px</figcaption></figure>
+    <figure><img class="s64" src="connector-curl.svg" alt=""><figcaption>64px</figcaption></figure>
+  </div>
+
+  <h2>Palette</h2>
+  <div class="pal">
+    <div class="sw"><div class="chip" style="background:#1C1A17"></div><code>--ink #1C1A17</code></div>
+    <div class="sw"><div class="chip" style="background:#E29A2C"></div><code>--amber #E29A2C</code></div>
+    <div class="sw"><div class="chip" style="background:#E0573E"></div><code>--coral #E0573E</code></div>
+    <div class="sw"><div class="chip" style="background:#F6F1E7"></div><code>--paper #F6F1E7</code></div>
+  </div>
+
+  <footer>Noodle brand assets · SVG · recolor with currentColor or edit the inline hex.</footer>
+</div>
+</body>
+</html>

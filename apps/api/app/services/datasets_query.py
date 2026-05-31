@@ -24,7 +24,8 @@ from app.services.artifact_backends import get_backend
 _FORBIDDEN = re.compile(
     r"\b("
     r"insert|update|delete|drop|create|alter|attach|detach|copy|export|import|"
-    r"install|load|pragma|call|set|reset|vacuum|checkpoint|truncate|replace"
+    r"install|load|pragma|call|set|reset|vacuum|checkpoint|truncate|replace|"
+    r"read_csv|read_json|read_parquet|read_text|read_blob|glob"
     r")\b",
     re.IGNORECASE,
 )

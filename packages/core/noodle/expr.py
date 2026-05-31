@@ -196,7 +196,79 @@ class _Attrible:
         return hash(repr(self._data))
 
 
+def _is_dataset_envelope(value: Any) -> bool:
+    """Detect a DatasetRef envelope without importing ``noodle.datasets``.
+
+    Kept local to avoid an import cycle (``datasets`` imports from core
+    modules). Mirrors the marker contract in :mod:`noodle.datasets`.
+    """
+    return (
+        isinstance(value, dict)
+        and value.get("__noodle_dataset__") is True
+        and isinstance(value.get("schema"), list)
+    )
+
+
+class _DatasetColumns:
+    """Expose a DatasetRef envelope to expressions in a column-friendly way.
+
+    Dataset-input node fields reference columns *by name* (a ``target_column``,
+    a chart axis, a feature list, …), so ``{{ $json.species }}`` resolves to the
+    column name ``"species"`` when that column exists. This makes drag-and-drop
+    of column chips — which insert ``{{ $json.<col> }}`` — work on dataset-backed
+    nodes. Unknown keys fall back to the raw envelope metadata (``row_count``,
+    ``schema``, …); ``rows``/``records`` return the preview records.
+    """
+
+    __slots__ = ("_env", "_columns")
+
+    def __init__(self, env: dict) -> None:
+        self._env = env
+        self._columns = [
+            c.get("name")
+            for c in env.get("schema", [])
+            if isinstance(c, dict) and c.get("name")
+        ]
+
+    def _get(self, key: Any) -> Any:
+        if key in self._columns:
+            return key
+        if key in ("rows", "records"):
+            return _wrap(self._env.get("preview") or [])
+        if isinstance(key, str) and key in self._env:
+            return _wrap(self._env.get(key))
+        return None
+
+    def __getattr__(self, key: str) -> Any:
+        if key.startswith("_"):
+            raise AttributeError(key)
+        return self._get(key)
+
+    def __getitem__(self, key: Any) -> Any:
+        return self._get(key)
+
+    def __iter__(self):
+        return iter(self._columns)
+
+    def __contains__(self, key: Any) -> bool:
+        return key in self._columns
+
+    def __len__(self) -> int:
+        return len(self._columns)
+
+    def __bool__(self) -> bool:
+        return True
+
+    def __repr__(self) -> str:
+        return f"<dataset columns={self._columns!r}>"
+
+    def __str__(self) -> str:
+        return ", ".join(str(c) for c in self._columns)
+
+
 def _wrap(value: Any) -> Any:
+    if _is_dataset_envelope(value):
+        return _DatasetColumns(value)
     if isinstance(value, (dict, list)):
         return _Attrible(value)
     return value

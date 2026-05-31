@@ -5,17 +5,89 @@ import {
   ReactFlow,
   useReactFlow,
 } from "@xyflow/react";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DragEvent } from "react";
+import type { Connection, Edge } from "@xyflow/react";
 
 import { categoryColor } from "../categories";
 import { CANVAS_STARTERS } from "../workflowTemplates";
+import { useToast } from "../ToastProvider";
 import { NodeCard } from "./NodeCard";
 import { NodeGroup } from "./NodeGroup";
 import { StickyNote } from "./StickyNote";
+import { datasetConnectionIssues, validateConnection, type ConnectionCheck } from "./connectionValidation";
 import { pickEditorRunTrigger, type NoodleNode, useEditor } from "./store";
 
 const nodeTypes = { noodle: NodeCard, sticky: StickyNote, group: NodeGroup };
+
+function quickFixLabel(quickFixId: ConnectionCheck["quickFixId"]): string {
+  switch (quickFixId) {
+    case "records_to_dataset":
+      return "Add Records To Dataset";
+    case "dataset_to_records":
+      return "Add Dataset To Records";
+    case "duckdb_sql":
+      return "Add DuckDB SQL";
+    default:
+      return "Add helper node";
+  }
+}
+
+function DatasetConnectionBanner({
+  connection,
+  check,
+  onDismiss,
+}: {
+  connection: Connection;
+  check: ConnectionCheck;
+  onDismiss: () => void;
+}) {
+  const insertQuickFixNode = useEditor((s) => s.insertQuickFixNode);
+  const { notify } = useToast();
+  return (
+    <div className={`connection-banner connection-banner-${check.severity}`}>
+      <div>
+        <strong>Wire not added</strong>
+        <span>{check.message}</span>
+      </div>
+      <div className="connection-banner-actions">
+        {check.quickFixId && (
+          <button
+            type="button"
+            className="btn btn-sm btn-primary"
+            onClick={() => {
+              const result = insertQuickFixNode(check.quickFixId!, connection);
+              if (result.ok) {
+                notify(`${quickFixLabel(check.quickFixId)} inserted between those nodes.`, "success");
+                onDismiss();
+              } else {
+                notify("Could not insert the helper node for this wire.", "error");
+              }
+            }}
+          >
+            {quickFixLabel(check.quickFixId)}
+          </button>
+        )}
+        <button type="button" className="btn btn-sm btn-ghost" onClick={onDismiss}>
+          Dismiss
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DatasetConnectionHealth() {
+  const nodes = useEditor((s) => s.nodes);
+  const edges = useEditor((s) => s.edges);
+  const issues = useMemo(() => datasetConnectionIssues(nodes, edges), [nodes, edges]);
+  if (issues.length === 0) return null;
+  return (
+    <div className="connection-health" role="status">
+      <strong>{issues.length} incompatible wire{issues.length === 1 ? "" : "s"}</strong>
+      <span>{issues[0].check.message}</span>
+    </div>
+  );
+}
 
 function CanvasControls() {
   const { fitView, zoomIn, zoomOut } = useReactFlow();
@@ -115,6 +187,11 @@ export function Canvas() {
   const openNdv = useEditor((s) => s.openNdv);
   const autoLayout = useEditor((s) => s.autoLayout);
   const { fitView, screenToFlowPosition } = useReactFlow();
+  const { notify } = useToast();
+  const [blockedConnection, setBlockedConnection] = useState<{
+    connection: Connection;
+    check: ConnectionCheck;
+  } | null>(null);
 
   const onDrop = useCallback(
     (event: DragEvent) => {
@@ -173,6 +250,26 @@ export function Canvas() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const handleConnect = useCallback((connection: Connection) => {
+    const check = onConnect(connection);
+    if (check.ok) {
+      setBlockedConnection(null);
+      if (check.message.includes("DatasetRef")) notify(check.message, "info");
+      return;
+    }
+    setBlockedConnection({ connection, check });
+    notify(check.message, "error");
+  }, [notify, onConnect]);
+
+  const isValidConnection = useCallback((connection: Connection | Edge) => {
+    return validateConnection(useEditor.getState().nodes, {
+      source: connection.source,
+      sourceHandle: connection.sourceHandle ?? null,
+      target: connection.target,
+      targetHandle: connection.targetHandle ?? null,
+    }).ok;
+  }, []);
+
   function applyStarter(templateId: string): void {
     const template = CANVAS_STARTERS.find((item) => item.id === templateId);
     if (!template?.graph) return;
@@ -194,7 +291,8 @@ export function Canvas() {
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
+        onConnect={handleConnect}
+        isValidConnection={isValidConnection}
         onNodeClick={(_, node) => setSelected(node.id)}
         onNodeDoubleClick={(_, node) => openNdv(node.id)}
         onPaneClick={() => setSelected(null)}
@@ -214,6 +312,14 @@ export function Canvas() {
           maskColor="rgba(8,11,16,0.74)"
         />
         <CanvasControls />
+        <DatasetConnectionHealth />
+        {blockedConnection && (
+          <DatasetConnectionBanner
+            connection={blockedConnection.connection}
+            check={blockedConnection.check}
+            onDismiss={() => setBlockedConnection(null)}
+          />
+        )}
         {nodes.length === 0 && (
           <div className="canvas-empty-onboarding">
             <div>

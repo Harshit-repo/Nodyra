@@ -1,0 +1,11 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Noodle — bowl to flow">
+  <!-- ramen bowl -->
+  <path d="M9 28 C 9 36, 39 36, 39 28 Z" fill="#1C1A17"/>
+  <path d="M6 27 H42" stroke="#1C1A17" stroke-width="4" stroke-linecap="round"/>
+  <!-- steam rising and resolving into a branching flow -->
+  <path d="M24 24 C 24 18, 16 18, 16 12" stroke="#E29A2C" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M24 24 C 24 18, 32 18, 32 12" stroke="#E29A2C" stroke-width="3.5" stroke-linecap="round"/>
+  <circle cx="24" cy="24" r="3" fill="#E0573E"/>
+  <circle cx="16" cy="11" r="3" fill="#E29A2C"/>
+  <circle cx="32" cy="11" r="3" fill="#E29A2C"/>
+</svg>

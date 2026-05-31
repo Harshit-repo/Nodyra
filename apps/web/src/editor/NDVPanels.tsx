@@ -11,6 +11,7 @@ import {
   webhookCredentialSpec,
   webhookHiddenParam,
   webhookParamLabel,
+  NodeCodePanel,
 } from "./NodeDetails";
 import { useEditor } from "./store";
 import { asArtifactRef, artifactDownloadUrl, artifactSummary, formatBytes } from "./artifactValues";
@@ -25,12 +26,29 @@ import { asArtifactRef, artifactDownloadUrl, artifactSummary, formatBytes } from
 function ParametersTab({ nodeId }: { nodeId: string }) {
   const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
   const updateParams = useEditor((s) => s.updateParams);
+  const runOutputs = useEditor((s) => s.runOutputs);
+  const edges = useEditor((s) => s.edges);
+  const [showCode, setShowCode] = useState(false);
   if (!node) return null;
   const { manifest, params } = node.data;
 
   const setParam = (name: string, value: unknown) => {
     updateParams(node.id, { ...params, [name]: value });
   };
+
+  // Data flowing into this node from upstream outputs (for code drag-drop).
+  const incomingInputs: Record<string, unknown> = {};
+  for (const edge of edges) {
+    if (edge.target !== node.id) continue;
+    const upstream = runOutputs[edge.source];
+    if (!upstream || typeof upstream !== "object") continue;
+    const sourceHandle = edge.sourceHandle ?? "main";
+    const value = (upstream as Record<string, unknown>)[sourceHandle];
+    if (value !== undefined) {
+      incomingInputs[edge.targetHandle ?? "input"] = value;
+    }
+  }
+  const hasIncomingInputs = Object.keys(incomingInputs).length > 0;
 
   return (
     <>
@@ -39,6 +57,20 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
         <code>{'{{ $node["nodeId"].main.field }}'}</code> in string fields to
         reference upstream data.
       </p>
+      <button
+        className="btn btn-sm btn-ghost node-code-toggle"
+        onClick={() => setShowCode((v) => !v)}
+      >
+        {showCode ? "Hide code" : "</> Show code"}
+      </button>
+      {showCode && (
+        <NodeCodePanel
+          nodeId={node.id}
+          manifest={manifest}
+          inputData={hasIncomingInputs ? incomingInputs : undefined}
+          onClose={() => setShowCode(false)}
+        />
+      )}
       {manifest.params.length === 0 && (
         <p className="muted">This node has no parameters.</p>
       )}

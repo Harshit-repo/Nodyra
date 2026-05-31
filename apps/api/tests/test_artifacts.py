@@ -540,8 +540,12 @@ async def test_persist_artifact_refs_keeps_local_when_upload_fails(
 # --- Dataset SQL explorer ----------------------------------------------------
 
 
-async def _make_dataset_run(client: AsyncClient) -> str:
-    """Run a workflow that produces a Parquet-backed dataset; return artifact id."""
+async def _make_dataset_run(client: AsyncClient) -> tuple[str, str]:
+    """Run a workflow that produces a Parquet-backed dataset.
+
+    Returns ``(workflow_id, artifact_id)`` so callers can rerun the same graph
+    under alternate output-cap settings.
+    """
     workflow_id = (await client.post("/workflows", json={"name": "SQL"})).json()["id"]
     graph = {
         "nodes": [
@@ -597,11 +601,11 @@ async def _make_dataset_run(client: AsyncClient) -> str:
     results = {node["node_id"]: node for node in run["node_runs"]}
     dataset_ref = results["ds"]["output"]["main"]
     assert dataset_ref["__noodle_dataset__"] is True
-    return dataset_ref["artifact"]["artifact_id"]
+    return workflow_id, dataset_ref["artifact"]["artifact_id"]
 
 
 async def test_dataset_sql_query_returns_rows(client: AsyncClient) -> None:
-    artifact_id = await _make_dataset_run(client)
+    _workflow_id, artifact_id = await _make_dataset_run(client)
     resp = await client.post(
         f"/artifacts/{artifact_id}/query",
         json={"sql": "SELECT city, SUM(pop) AS total FROM dataset GROUP BY city ORDER BY city"},
@@ -615,7 +619,7 @@ async def test_dataset_sql_query_returns_rows(client: AsyncClient) -> None:
 
 
 async def test_dataset_sql_query_rejects_writes(client: AsyncClient) -> None:
-    artifact_id = await _make_dataset_run(client)
+    _workflow_id, artifact_id = await _make_dataset_run(client)
     resp = await client.post(
         f"/artifacts/{artifact_id}/query",
         json={"sql": "DROP TABLE dataset"},
@@ -624,8 +628,72 @@ async def test_dataset_sql_query_rejects_writes(client: AsyncClient) -> None:
     assert "SELECT" in resp.json()["detail"] or "disallowed" in resp.json()["detail"]
 
 
+async def test_dataset_sql_query_rejects_non_dataset_artifact(client: AsyncClient) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "Not Dataset"})).json()["id"]
+    graph = {
+        "nodes": [
+            {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 0, "y": 0},
+            }
+        ],
+        "edges": [],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
+
+    async with retention.SessionLocal() as session:
+        artifact = Artifact(
+            id="artifact_text_query",
+            run_id=run_id,
+            node_id="writer",
+            name="hello.txt",
+            kind="text",
+            content_type="text/plain",
+            size_bytes=5,
+            storage_backend="local",
+            storage_key="runs/run_non_dataset_query/writer/artifact_text_query-hello.txt",
+            artifact_metadata={},
+            preview="hello",
+        )
+        session.add(artifact)
+        await session.commit()
+
+    resp = await client.post(
+        "/artifacts/artifact_text_query/query",
+        json={"sql": "SELECT * FROM dataset", "limit": 10},
+    )
+
+    assert resp.status_code == 400
+    assert "Parquet-backed datasets" in resp.json()["detail"]
+
+
+async def test_dataset_sql_query_missing_artifact_is_404(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/artifacts/missing-artifact/query",
+        json={"sql": "SELECT * FROM dataset", "limit": 10},
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Artifact not found"
+
+
+async def test_dataset_sql_query_rejects_file_access_functions(client: AsyncClient) -> None:
+    _workflow_id, artifact_id = await _make_dataset_run(client)
+
+    resp = await client.post(
+        f"/artifacts/{artifact_id}/query",
+        json={"sql": "SELECT * FROM read_csv('/etc/passwd')", "limit": 10},
+    )
+
+    assert resp.status_code == 400
+    assert "disallowed" in resp.json()["detail"].lower()
+
+
 async def test_dataset_sql_query_caps_rows(client: AsyncClient) -> None:
-    artifact_id = await _make_dataset_run(client)
+    _workflow_id, artifact_id = await _make_dataset_run(client)
     resp = await client.post(
         f"/artifacts/{artifact_id}/query",
         json={"sql": "SELECT * FROM dataset", "limit": 2},
@@ -634,4 +702,30 @@ async def test_dataset_sql_query_caps_rows(client: AsyncClient) -> None:
     body = resp.json()
     assert body["row_count"] == 2
     assert body["truncated"] is True
+
+
+async def test_dataset_ref_survives_small_output_cap(client: AsyncClient) -> None:
+    workflow_id, _artifact_id = await _make_dataset_run(client)
+
+    previous = settings.max_output_bytes
+    settings.max_output_bytes = 512
+    try:
+        run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
+        run = (await client.get(f"/runs/{run_id}")).json()
+    finally:
+        settings.max_output_bytes = previous
+
+    output = next(nr for nr in run["node_runs"] if nr["node_id"] == "ds")["output"]["main"]
+    assert output["__noodle_dataset__"] is True
+    assert output["artifact"]["__noodle_artifact__"] is True
+    assert output["artifact"]["artifact_id"]
+    assert output["row_count"] == 3
+    assert output.get("_truncated") is not True
+
+    resp = await client.post(
+        f"/artifacts/{output['artifact']['artifact_id']}/query",
+        json={"sql": "SELECT count(*) AS n FROM dataset", "limit": 10},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["rows"] == [{"n": 3}]
 

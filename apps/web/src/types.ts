@@ -274,6 +274,17 @@ export interface CodeModuleFunctionShape {
   params: string[];
 }
 
+export interface NodeSource {
+  node_type: string;
+  name: string;
+  kind: "builtin" | "user";
+  editable: boolean;
+  module_id: string | null;
+  func_name: string;
+  source: string;
+  fork_source: string;
+}
+
 export interface CodeModuleFunctionPreview {
   registered: string[];
   functions: CodeModuleFunctionShape[];

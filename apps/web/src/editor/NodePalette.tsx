@@ -28,12 +28,26 @@ function readStoredList(key: string): string[] {
  * even when multiple manifests share that match level — within a tier we fall
  * back to alphabetical name order at the call site.
  */
+function searchAliases(node: NodeManifest): string {
+  const kinds = [
+    ...node.inputs.map((port) => port.data_kind),
+    ...node.outputs.map((port) => port.data_kind),
+  ];
+  const aliases: string[] = [];
+  if (kinds.includes("dataset")) aliases.push("dataset datasetref parquet table duckdb sql big data");
+  if (node.id === "records_to_dataset") aliases.push("convert rows records list to datasetref");
+  if (node.id === "dataset_to_records") aliases.push("materialize datasetref rows records list");
+  if (node.id === "duckdb_sql") aliases.push("query datasetref sql transform table");
+  return aliases.join(" ");
+}
+
 function rankMatch(node: NodeManifest, q: string): number {
   if (!q) return 1000;
   const id = node.id.toLowerCase();
   const name = node.name.toLowerCase();
   const cat = node.category.toLowerCase();
   const desc = (node.description ?? "").toLowerCase();
+  const aliases = searchAliases(node).toLowerCase();
   if (id === q) return 0;
   if (name === q) return 1;
   if (id.startsWith(q)) return 10;
@@ -43,6 +57,7 @@ function rankMatch(node: NodeManifest, q: string): number {
   if (id.includes(q)) return 31;
   if (cat.includes(q)) return 40;
   if (desc.includes(q)) return 50;
+  if (aliases.includes(q)) return 55;
   return 1000;
 }
 
@@ -70,10 +85,13 @@ function recommendedIdsFor(manifest: NodeManifest | null): string[] {
     return ["http_request", "code", "filter", "switch", "slack_send_message"];
   }
   if (manifest.id === "http_request") {
-    return ["code", "filter", "limit", "google_sheets_append", "slack_send_message"];
+    return ["records_to_dataset", "code", "filter", "limit", "google_sheets_append", "slack_send_message"];
   }
   if (manifest.id === "code") {
-    return ["filter", "switch", "google_sheets_append", "notion_create_page"];
+    return ["records_to_dataset", "filter", "switch", "google_sheets_append", "notion_create_page"];
+  }
+  if (manifest.outputs.some((port) => port.data_kind === "dataset")) {
+    return ["dataset_preview", "duckdb_sql", "dataset_filter", "dataset_to_records", "csv_write"];
   }
   if (manifest.id.includes("stripe")) {
     return ["code", "slack_send_message", "google_sheets_append"];
@@ -90,6 +108,9 @@ function nodeBadges(node: NodeManifest): string[] {
   else badges.push("Action");
   if (node.params.some((param) => param.type === "credential")) badges.push("Auth");
   if (["code", "execute_command", "ssh_execute"].includes(node.id)) badges.push("Unsafe");
+  const hasDatasetInput = node.inputs.some((port) => port.data_kind === "dataset");
+  const hasDatasetOutput = node.outputs.some((port) => port.data_kind === "dataset");
+  if (hasDatasetInput || hasDatasetOutput) badges.push(hasDatasetInput && hasDatasetOutput ? "DatasetRef" : hasDatasetOutput ? "Makes DatasetRef" : "Needs DatasetRef");
   if (node.outputs.length > 1) badges.push(`${node.outputs.length} outputs`);
   return badges;
 }

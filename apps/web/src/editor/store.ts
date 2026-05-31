@@ -10,6 +10,7 @@ import {
 } from "@xyflow/react";
 import { create } from "zustand";
 
+import { validateConnection, type ConnectionCheck } from "./connectionValidation";
 import type {
   NodeManifest,
   NodeRunDebug,
@@ -127,13 +128,15 @@ interface EditorStore {
   toGraph: () => WorkflowGraph;
   onNodesChange: (changes: NodeChange<NoodleNode>[]) => void;
   onEdgesChange: (changes: EdgeChange[]) => void;
-  onConnect: (connection: Connection) => void;
+  onConnect: (connection: Connection) => ConnectionCheck;
   addNode: (manifestId: string, position: { x: number; y: number }) => void;
+  insertQuickFixNode: (quickFixId: NonNullable<ConnectionCheck["quickFixId"]>, connection: Connection) => { ok: boolean; check: ConnectionCheck; nodeId?: string };
   addStickyNote: (position: { x: number; y: number }) => void;
   addGroupNode: (position: { x: number; y: number }) => void;
   autoLayout: () => void;
   duplicateNode: (id: string) => void;
   updateParams: (id: string, params: Record<string, unknown>) => void;
+  replaceNodeManifest: (id: string, manifest: NodeManifest) => void;
   setSelected: (id: string | null) => void;
   markClean: () => void;
 
@@ -440,6 +443,8 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
   onConnect: (connection) => {
     const state = get();
+    const check = validateConnection(state.nodes, connection);
+    if (!check.ok) return check;
     const kept = state.edges.filter(
       (e) =>
         !(
@@ -453,6 +458,78 @@ export const useEditor = create<EditorStore>((set, get) => ({
       _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
       _future: [],
     });
+    return check;
+  },
+
+  insertQuickFixNode: (quickFixId, connection) => {
+    const state = get();
+    const check = validateConnection(state.nodes, connection);
+    if (check.ok) return { ok: false, check };
+    const manifest = state.manifestsById[quickFixId];
+    const source = state.nodes.find((node) => node.id === connection.source);
+    const target = state.nodes.find((node) => node.id === connection.target);
+    if (!manifest || !source || !target) return { ok: false, check };
+
+    const helperId = newNodeId();
+    const helper: NoodleNode = {
+      id: helperId,
+      type: "noodle",
+      position: {
+        x: (source.position.x + target.position.x) / 2,
+        y: (source.position.y + target.position.y) / 2 + 72,
+      },
+      data: {
+        manifest,
+        params: defaultParams(manifest),
+        disabled: false,
+        outputsOverride: manifest.id === "switch" ? ["fallback"] : null,
+        onError: "stop",
+        retryOnFail: false,
+        retries: 1,
+        retryWaitSeconds: 0,
+        retryBackoff: false,
+        alwaysOutputData: false,
+        timeoutSeconds: null,
+      },
+    };
+
+    const kept = state.edges.filter(
+      (e) =>
+        !(
+          e.target === connection.target &&
+          e.targetHandle === connection.targetHandle
+        ),
+    );
+    const sourceOut = connection.sourceHandle ?? source.data.manifest.outputs[0]?.name ?? "main";
+    const helperIn = manifest.inputs[0]?.name ?? "input";
+    const helperOut = manifest.outputs[0]?.name ?? "main";
+    const targetIn = connection.targetHandle ?? target.data.manifest.inputs[0]?.name ?? "input";
+
+    set({
+      nodes: [...state.nodes, helper],
+      edges: [
+        ...kept,
+        {
+          id: `e_${connection.source}_${helperId}_${sourceOut}_${helperIn}`,
+          source: connection.source!,
+          sourceHandle: sourceOut,
+          target: helperId,
+          targetHandle: helperIn,
+        },
+        {
+          id: `e_${helperId}_${connection.target}_${helperOut}_${targetIn}`,
+          source: helperId,
+          sourceHandle: helperOut,
+          target: connection.target!,
+          targetHandle: targetIn,
+        },
+      ],
+      selectedId: helperId,
+      dirty: true,
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
+    });
+    return { ok: true, check, nodeId: helperId };
   },
 
   addNode: (manifestId, position) => {
@@ -590,6 +667,32 @@ export const useEditor = create<EditorStore>((set, get) => ({
           : n,
       ),
       edges,
+      dirty: true,
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
+    });
+  },
+
+  replaceNodeManifest: (id, manifest) => {
+    const state = get();
+    const node = state.nodes.find((n) => n.id === id);
+    if (!node) return;
+    // Carry over any param whose name still exists on the new manifest;
+    // fall back to the new manifest's defaults for everything else.
+    const merged = defaultParams(manifest);
+    const valid = new Set(manifest.params.map((p) => p.name));
+    for (const [k, v] of Object.entries(node.data.params)) {
+      if (valid.has(k)) merged[k] = v;
+    }
+    set({
+      nodes: state.nodes.map((n) =>
+        n.id === id
+          ? {
+              ...n,
+              data: { ...n.data, manifest, params: merged, outputsOverride: null },
+            }
+          : n,
+      ),
       dirty: true,
       _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
       _future: [],

@@ -372,6 +372,19 @@ def _cap_typed_envelope(value: dict[str, Any], cap: int) -> dict[str, Any]:
     return capped
 
 
+def _cap_dataset_ref(value: dict[str, Any], cap: int) -> dict[str, Any]:
+    """Trim bulky DatasetRef preview rows without destroying ref identity."""
+    capped = dict(value)
+    preview = capped.get("preview")
+    if isinstance(preview, list):
+        capped["preview"] = preview[: min(len(preview), 10)]
+        capped["preview_truncated"] = True
+        while capped["preview"] and _encoded_size(capped) > max(cap, 512):
+            capped["preview"] = capped["preview"][:-1]
+    capped["_preview_truncated_by_output_cap"] = True
+    return capped
+
+
 def truncate_serialized_value(value: Any, cap: int) -> Any:
     """Bound a JSON-compatible value while keeping typed envelopes readable."""
     if cap <= 0 or value is None:
@@ -386,6 +399,11 @@ def truncate_serialized_value(value: Any, cap: int) -> Any:
     if is_typed_envelope(value):
         capped = _cap_typed_envelope(value, cap)
         if _encoded_size(capped) <= max(cap, 512):
+            return capped
+
+    if _is_dataset_ref_dict(value):
+        capped = _cap_dataset_ref(value, cap)
+        if _encoded_size(capped) <= max(cap, 1024):
             return capped
 
     return {

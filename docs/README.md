@@ -4,6 +4,8 @@
 - [Deployment](deployment.md) — local/compose/Helm, config flags, security checklist.
 - [Writing a node](nodes.md) — built-in `@node` decorator, code modules
   (upload-to-nodes), artifacts API, typed values, testing.
+- [DatasetRef guide](datasetref.md) — table handles, records↔dataset conversion,
+  DuckDB SQL, quick fixes, and common workflow patterns.
 - [n8n vs Noodle comparison](n8n-vs-noodle-comparison.md) — architecture,
   performance, UI/UX polish plan, and node roadmap.
 - [Architecture improvement plan](architecture-improvement-plan.md) — production

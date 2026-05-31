@@ -80,6 +80,11 @@ admin restart control.
 
 - Typed output serialization for DataFrame, datetime, date, time, Decimal,
   tuple, set, frozenset, bytes, and bytearray.
+- DatasetRef table handles keep large tabular data artifact-backed as Parquet
+  while passing schema, row count, and preview metadata through the workflow.
+- DatasetRef-native nodes include Records To Dataset, Dataset Preview,
+  Dataset Filter, Dataset Select Columns, Dataset Limit, DuckDB SQL,
+  Dataset To Records, and CSV Write.
 - No pickle-based restoration.
 - Unknown Python objects are preview-only and not automatically rehydrated.
 - Durable per-run artifact metadata in the database.
@@ -163,6 +168,7 @@ deploy/
 
 docs/
   architecture.md
+  datasetref.md
 
 plan.md       milestone and slice history
 HANDOFF.md    compact engineering handoff context

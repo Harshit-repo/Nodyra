@@ -26,6 +26,14 @@ function portColor(kind: string | undefined, fallback: string): string {
   return PORT_KIND_COLOR[kind] ?? fallback;
 }
 
+function portKindLabel(kind: string | undefined): string {
+  if (kind === "dataset") return "DatasetRef";
+  if (kind === "artifact") return "Artifact";
+  if (kind === "file") return "File";
+  if (kind === "control") return "Control";
+  return "Any data";
+}
+
 const STATUS_GLYPH: Record<string, string> = {
   success: "✓",
   error: "!",
@@ -254,6 +262,8 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
             type="target"
             position={Position.Left}
             id={port.name}
+            title={`${port.name}: ${portKindLabel(port.data_kind)}`}
+            className={port.data_kind === "dataset" ? "handle-dataset" : undefined}
             style={{ top: portTop(i, inputs.length), background: portColor(port.data_kind, color) }}
           />
         ))}
@@ -266,21 +276,27 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
               type="source"
               position={Position.Right}
               id={name}
+              title={`${name}: ${portKindLabel(spec?.data_kind)}`}
+              className={spec?.data_kind === "dataset" ? "handle-dataset" : undefined}
               style={{ top: portTop(i, outputNames.length), background: portColor(spec?.data_kind, color) }}
             />
           );
         })}
 
-        {outputNames.length > 1 &&
-          outputNames.map((name, i) => (
+        {outputNames.map((name, i) => {
+          const spec = manifest.outputs.find((o) => o.name === name);
+          const shouldShow = outputNames.length > 1 || spec?.data_kind === "dataset";
+          if (!shouldShow) return null;
+          return (
             <span
               key={`tag-${name}`}
-              className="port-tag"
+              className={`port-tag${spec?.data_kind === "dataset" ? " port-tag-dataset" : ""}`}
               style={{ top: portTop(i, outputNames.length) }}
             >
-              {name}
+              {spec?.data_kind === "dataset" ? `${name} · DatasetRef` : name}
             </span>
-          ))}
+          );
+        })}
       </div>
       <div className="node-label">{manifest.name}</div>
       {runMeta?.durationMs != null && runStatus !== "running" && (

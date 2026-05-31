@@ -1,0 +1,119 @@
+import type { Connection, Edge } from "@xyflow/react";
+
+import type { NodeManifest, PortSpec } from "../types";
+import type { NoodleNode } from "./store";
+
+export type PortDataKind = NonNullable<PortSpec["data_kind"]>;
+
+export interface ConnectionCheck {
+  ok: boolean;
+  severity: "ok" | "warning" | "error";
+  message: string;
+  quickFixId?: "records_to_dataset" | "dataset_to_records" | "duckdb_sql";
+}
+
+function portKind(port: PortSpec | undefined): PortDataKind {
+  return port?.data_kind ?? "any";
+}
+
+export function findInputPort(manifest: NodeManifest, name: string | null | undefined): PortSpec | undefined {
+  const wanted = name ?? "input";
+  return manifest.inputs.find((port) => port.name === wanted) ?? manifest.inputs[0];
+}
+
+export function findOutputPort(manifest: NodeManifest, name: string | null | undefined): PortSpec | undefined {
+  const wanted = name ?? "main";
+  return manifest.outputs.find((port) => port.name === wanted) ?? manifest.outputs[0];
+}
+
+function kindLabel(kind: PortDataKind): string {
+  if (kind === "dataset") return "DatasetRef";
+  if (kind === "artifact") return "artifact";
+  if (kind === "file") return "file";
+  if (kind === "control") return "control";
+  return "any data";
+}
+
+export function checkConnectionKinds(
+  source: NodeManifest,
+  sourceHandle: string | null | undefined,
+  target: NodeManifest,
+  targetHandle: string | null | undefined,
+): ConnectionCheck {
+  const sourceKind = portKind(findOutputPort(source, sourceHandle));
+  const targetKind = portKind(findInputPort(target, targetHandle));
+
+  if (sourceKind === "dataset" && targetKind === "dataset") {
+    return {
+      ok: true,
+      severity: "ok",
+      message: "DatasetRef connection: schema + preview stay artifact-backed downstream.",
+    };
+  }
+
+  // DatasetRef ports are intentionally strict even when the other side is
+  // declared as "any". In practice, "any" usually means inline JSON/records,
+  // while DatasetRefs are artifact-backed table handles. Letting those wires
+  // through creates runtime surprises, so require an explicit converter.
+  if (targetKind === "dataset") {
+    return {
+      ok: false,
+      severity: "error",
+      message: `This input expects a DatasetRef, but the source provides ${kindLabel(sourceKind)}. Add a Records To Dataset node upstream.`,
+      quickFixId: "records_to_dataset",
+    };
+  }
+
+  if (sourceKind === "dataset") {
+    return {
+      ok: false,
+      severity: "error",
+      message: `This output is a DatasetRef, but the target expects ${kindLabel(targetKind)}. Add Dataset To Records or DuckDB SQL first.`,
+      quickFixId: targetKind === "artifact" || targetKind === "file" ? "duckdb_sql" : "dataset_to_records",
+    };
+  }
+
+  if (sourceKind === "any" || targetKind === "any" || sourceKind === targetKind) {
+    return { ok: true, severity: "ok", message: "Compatible port kinds." };
+  }
+
+  return {
+    ok: false,
+    severity: "error",
+    message: `Port kind mismatch: ${kindLabel(sourceKind)} cannot connect to ${kindLabel(targetKind)}.`,
+  };
+}
+
+export function validateConnection(
+  nodes: NoodleNode[],
+  connection: Connection,
+): ConnectionCheck {
+  const sourceNode = nodes.find((node) => node.id === connection.source);
+  const targetNode = nodes.find((node) => node.id === connection.target);
+  if (!sourceNode || !targetNode) {
+    return { ok: false, severity: "error", message: "Connection endpoint is missing." };
+  }
+  return checkConnectionKinds(
+    sourceNode.data.manifest,
+    connection.sourceHandle,
+    targetNode.data.manifest,
+    connection.targetHandle,
+  );
+}
+
+export function datasetConnectionIssues(nodes: NoodleNode[], edges: Edge[]): Array<{
+  edge: Edge;
+  check: ConnectionCheck;
+}> {
+  return edges
+    .map((edge) => ({
+      edge,
+      check: validateConnection(nodes, {
+        source: edge.source,
+        sourceHandle: edge.sourceHandle ?? null,
+        target: edge.target,
+        targetHandle: edge.targetHandle ?? null,
+      }),
+    }))
+    .filter((item) => !item.check.ok);
+}
