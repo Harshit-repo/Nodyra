@@ -21,6 +21,7 @@ from noodle.datasets import (
     finalize_artifact_ref,
     is_dataset_ref,
     make_dataset_ref,
+    register_materializer,
     remember_dataset,
     reserve_artifact_path,
 )
@@ -204,6 +205,52 @@ def read_dataset(ref: dict[str, Any]):
     path = dataset_path_for_ref(ref)
     conn = duckdb.connect(":memory:")
     return conn, conn.from_parquet(str(path))
+
+
+def materialize_dataset(
+    ref: Any,
+    *,
+    cap: int = 10000,
+    allow_truncate: bool = False,
+) -> list[dict[str, Any]]:
+    """Read rows from a DatasetRef into a list of dicts (bounded by ``cap``).
+
+    Raises if the dataset has more than ``cap`` rows unless ``allow_truncate``
+    is set, mirroring the ``Dataset To Records`` node's safety contract. Used
+    by the engine to auto-expand a DatasetRef passed into a generic per-item
+    node (Loop Over Items, Filter, Edit Fields, …).
+    """
+    dataset = _ensure_dataset(ref, label="input")
+    limit = max(1, int(cap or 1))
+    duckdb = _duckdb()
+    path = str(dataset_path_for_ref(dataset)).replace("'", "''")
+    conn = duckdb.connect(":memory:")
+    try:
+        total = int(
+            conn.execute(
+                f"SELECT COUNT(*) FROM read_parquet('{path}')"
+            ).fetchone()[0]
+        )
+        if total > limit and not allow_truncate:
+            raise ValueError(
+                f"dataset has {total} rows but only {limit} can be expanded "
+                f"inline; reduce rows upstream with Dataset Filter/Limit, or "
+                f"use Dataset To Records with allow_truncate to opt in."
+            )
+        rel = conn.execute(f"SELECT * FROM read_parquet('{path}') LIMIT {limit}")
+        cols = [d[0] for d in rel.description]
+        rows = rel.fetchall()
+    finally:
+        conn.close()
+    return [
+        {col: _jsonify(val) for col, val in zip(cols, row, strict=True)}
+        for row in rows
+    ]
+
+
+# Register the DuckDB-backed materializer so the engine (core) can expand
+# DatasetRefs into rows without importing DuckDB directly.
+register_materializer(materialize_dataset)
 
 
 # ---------------------------------------------------------------------------
@@ -420,27 +467,8 @@ def dataset_to_records(
     allow_truncate: bool = False,
 ) -> list[dict[str, Any]]:
     """Materialize rows from a DatasetRef as a Python list of dicts."""
-    ref = _ensure_dataset(input, label="input")
     cap = max(1, min(10000, int(max_rows or 1000)))
-    duckdb = _duckdb()
-    path = str(dataset_path_for_ref(ref)).replace("'", "''")
-    conn = duckdb.connect(":memory:")
-    try:
-        total = int(conn.execute(f"SELECT COUNT(*) FROM read_parquet('{path}')").fetchone()[0])
-        if total > cap and not allow_truncate:
-            raise ValueError(
-                f"dataset has {total} rows but max_rows is {cap}; "
-                f"set allow_truncate=true to silently truncate."
-            )
-        rel = conn.execute(f"SELECT * FROM read_parquet('{path}') LIMIT {cap}")
-        cols = [d[0] for d in rel.description]
-        rows = rel.fetchall()
-    finally:
-        conn.close()
-    return [
-        {col: _jsonify(val) for col, val in zip(cols, row, strict=True)}
-        for row in rows
-    ]
+    return materialize_dataset(input, cap=cap, allow_truncate=allow_truncate)
 
 
 @node(

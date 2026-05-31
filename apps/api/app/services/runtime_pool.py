@@ -22,6 +22,7 @@ in different subprocesses and can therefore run in parallel.
 
 import asyncio
 import json
+import os
 import sys
 import time
 import uuid
@@ -103,6 +104,13 @@ class _RuntimeProcess:
     @classmethod
     async def spawn(cls, env_id: str | None) -> "_RuntimeProcess":
         python = await _python_for_env(env_id)
+        env = dict(os.environ)
+        # Propagate the configurable per-node code timeout so the runtime
+        # subprocess applies the same default as the in-process engine. 0
+        # (default) leaves code uncapped.
+        env["NOODLE_CODE_NODE_TIMEOUT_SECONDS"] = str(
+            settings.code_node_timeout_seconds
+        )
         process = await asyncio.create_subprocess_exec(
             python,
             "-u",
@@ -111,6 +119,7 @@ class _RuntimeProcess:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
         if process.stdout is None or process.stdin is None:
             raise RuntimeError("runtime subprocess pipes were not opened")
@@ -424,10 +433,17 @@ class RuntimePool:
         on_event: EventCallback,
         sub_workflow_caller: SubWorkflowCaller | None = None,
         workflow_modules: list[dict] | None = None,
+        run_timeout: float | None = None,
     ) -> str:
         envpool = await self._env_pool(env_id)
         async with self._global_sem:
             proc = await envpool.acquire()
+            # Per-workflow override wins; None falls back to the global setting.
+            timeout = (
+                run_timeout
+                if run_timeout is not None
+                else settings.workflow_run_timeout_seconds
+            )
             try:
                 run = proc.run(
                     run_id,
@@ -438,15 +454,13 @@ class RuntimePool:
                     sub_workflow_caller,
                     workflow_modules=workflow_modules,
                 )
-                timeout = settings.workflow_run_timeout_seconds
                 if timeout and timeout > 0:
                     return await asyncio.wait_for(run, timeout=timeout)
                 return await run
             except TimeoutError as exc:
                 await proc.close()
                 raise RuntimeError(
-                    f"workflow run timed out after "
-                    f"{settings.workflow_run_timeout_seconds}s"
+                    f"workflow run timed out after {timeout}s"
                 ) from exc
             finally:
                 envpool.release(proc)

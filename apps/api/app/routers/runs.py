@@ -131,7 +131,7 @@ async def list_runs(
     return PageResponse(items=list(result.all()), total=total or 0, limit=limit, offset=offset)
 
 
-@router.get("/runs", response_model=list[RunListItem])
+@router.get("/runs", response_model=PageResponse[RunListItem])
 async def list_all_runs(
     workflow_id: str | None = None,
     status: str | None = None,
@@ -141,14 +141,33 @@ async def list_all_runs(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
-) -> list[RunListItem]:
+) -> PageResponse[RunListItem]:
     """Cross-workflow run listing for the Executions page.
-
     Pages and filters by workflow, status, trigger, and time window. Returns the
     compact ``RunListItem`` (no node_runs) — clients fetch ``GET /runs/{id}``
     for the per-node breakdown + logs.
     """
-    stmt = select(Run, Workflow.name).join(Workflow, Run.workflow_id == Workflow.id)
+    # Build the base filter without ORDER/LIMIT/OFFSET for the count.
+    base_stmt = select(Run).join(Workflow, Run.workflow_id == Workflow.id)
+    if workflow_id is not None:
+        base_stmt = base_stmt.where(Run.workflow_id == workflow_id)
+    if status is not None:
+        base_stmt = base_stmt.where(Run.status == status)
+    if trigger_type is not None:
+        base_stmt = base_stmt.where(Run.trigger_type == trigger_type)
+    if since is not None:
+        base_stmt = base_stmt.where(Run.started_at >= since)
+    if until is not None:
+        base_stmt = base_stmt.where(Run.started_at <= until)
+
+    total = await session.scalar(
+        select(func.count()).select_from(base_stmt.subquery())
+    )
+
+    stmt = (
+        select(Run, Workflow.name)
+        .join(Workflow, Run.workflow_id == Workflow.id)
+    )
     if workflow_id is not None:
         stmt = stmt.where(Run.workflow_id == workflow_id)
     if status is not None:
@@ -162,7 +181,7 @@ async def list_all_runs(
     stmt = stmt.order_by(Run.started_at.desc()).limit(limit).offset(offset)
 
     rows = (await session.execute(stmt)).all()
-    return [
+    items = [
         RunListItem(
             id=run.id,
             workflow_id=run.workflow_id,
@@ -179,6 +198,7 @@ async def list_all_runs(
         )
         for run, workflow_name in rows
     ]
+    return PageResponse(items=items, total=total or 0, limit=limit, offset=offset)
 
 
 @router.get("/runs/{run_id}", response_model=RunInfo)
@@ -186,7 +206,32 @@ async def get_run(run_id: str, session: AsyncSession = Depends(get_session)):
     run = await session.get(Run, run_id, options=[selectinload(Run.node_runs)])
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
-    return run
+    workflow_name: str | None = None
+    if run.workflow_id:
+        wf = await session.get(Workflow, run.workflow_id)
+        if wf is not None:
+            workflow_name = wf.name
+    # RunInfo is from_attributes but workflow_name is not on the ORM model;
+    # build the response manually.
+    from app.schemas import RunInfo as _RunInfo
+    return _RunInfo(
+        id=run.id,
+        workflow_id=run.workflow_id,
+        workflow_name=workflow_name,
+        workflow_version=run.workflow_version,
+        workflow_version_id=run.workflow_version_id,
+        deployment_id=run.deployment_id,
+        triggered_by_error_run_id=run.triggered_by_error_run_id,
+        runner_pool_id=getattr(run, 'runner_pool_id', None),
+        runner_id=getattr(run, 'runner_id', None),
+        batch_id=getattr(run, 'batch_id', None),
+        mode=run.mode,
+        status=run.status,
+        trigger_type=run.trigger_type,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        node_runs=run.node_runs,
+    )
 
 
 async def _load_run_and_workflow(
@@ -570,7 +615,13 @@ async def run_debug_snapshot(
 @router.websocket("/ws/runs/{run_id}")
 async def run_events(websocket: WebSocket, run_id: str) -> None:
     if settings.auth_required:
+        # WebSocket upgrades cannot send custom headers in many browsers/clients,
+        # so we accept the token via query param OR Authorization header.
         token = websocket.query_params.get("token", "")
+        if not token:
+            auth_header = websocket.headers.get("authorization", "")
+            if auth_header.lower().startswith("bearer "):
+                token = auth_header[7:].strip()
         if verify_token(token) is None:
             await websocket.close(code=1008)
             return

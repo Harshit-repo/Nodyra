@@ -44,6 +44,19 @@ PROCESS_ISOLATED_NODE_TYPES: frozenset[str] = frozenset({"code"})
 # the user might intentionally produce table-shaped data.
 AUTO_PROMOTE_NODE_TYPES: frozenset[str] = frozenset({"code"})
 
+# Node types that handle DatasetRefs natively and therefore should *not* have
+# their generic inputs auto-expanded into rows. The Code node can call dataset
+# SDK helpers on the ref directly, and dataset_* nodes declare their ports as
+# ``dataset`` (which are skipped anyway). Every other node receiving a
+# DatasetRef on an ``any`` port gets the rows materialized so per-item logic
+# (Loop Over Items, Filter, Edit Fields, …) works as authored.
+DATASET_PASSTHROUGH_NODE_TYPES: frozenset[str] = frozenset({"code"})
+
+# Hard cap on rows the engine will expand inline from a DatasetRef before a
+# generic node runs. Beyond this the node errors with guidance to reduce rows
+# upstream — datasets are meant to stay artifact-backed, not materialized whole.
+DATASET_AUTO_EXPAND_CAP: int = 50_000
+
 _process_pool: concurrent.futures.ProcessPoolExecutor | None = None
 
 
@@ -54,8 +67,12 @@ def _get_process_pool(max_workers: int = 4) -> concurrent.futures.ProcessPoolExe
     return _process_pool
 
 
+# Per-node-type default timeouts (seconds). ``code`` is intentionally
+# *absent* so heavy/long-running Python isn't capped by an arbitrary default;
+# it's bounded only by the overall workflow timeout. Callers (the API runner /
+# runtime server) can inject a code default via the ``default_timeouts`` arg,
+# and any node may still set its own ``timeout_seconds``.
 DEFAULT_NODE_TIMEOUTS: dict[str, float] = {
-    "code": 60.0,
     "http_request": 45.0,
 }
 
@@ -215,6 +232,35 @@ def _normalize_outputs(raw: Any, output_names: list[str], node_id: str) -> dict[
             f"node '{node_id}' declares multiple outputs and must return a dict"
         )
     return {name: raw[name] for name in output_names if name in raw}
+
+
+def _auto_expand_dataset_inputs(
+    node_def: Any,
+    kwargs: dict[str, Any],
+    node_type: str,
+) -> None:
+    """Expand DatasetRef inputs into rows for generic per-item nodes.
+
+    A DatasetRef is a single envelope dict. Without this, item-processing
+    nodes (Loop Over Items, Filter, …) would treat the whole dataset as one
+    item and run once. Here we materialize the rows so those nodes operate on
+    the records. Dataset-native node types (``DATASET_PASSTHROUGH_NODE_TYPES``)
+    and ports explicitly declared as ``dataset``/``artifact`` are left as the
+    raw ref.
+    """
+    if node_type in DATASET_PASSTHROUGH_NODE_TYPES:
+        return
+    from noodle.datasets import is_dataset_ref, materialize_dataset_rows
+
+    for port in node_def.manifest.inputs:
+        kind = getattr(port, "data_kind", "any")
+        if kind != "any" or port.name not in kwargs:
+            continue
+        value = kwargs[port.name]
+        if is_dataset_ref(value):
+            kwargs[port.name] = materialize_dataset_rows(
+                value, cap=DATASET_AUTO_EXPAND_CAP
+            )
 
 
 def _validate_input_kinds(
@@ -443,8 +489,9 @@ async def execute(
                 kwargs[port.name] = node_outputs[source][source_output]
 
         try:
+            _auto_expand_dataset_inputs(node_def, kwargs, graph_node.type)
             _validate_input_kinds(node_def, kwargs, nid)
-        except ValueError as exc:
+        except (ValueError, RuntimeError) as exc:
             run_status = RunStatus.error
             await finish(
                 NodeRunResult(

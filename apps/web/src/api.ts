@@ -14,8 +14,8 @@ import type {
   Deployment,
   DeploymentCreate,
   DeploymentUpdate,
-  RunBatchInfo,
-  RunInfo,
+  DatasetQueryResult,
+  RunBatchInfo,  RunInfo,
   RunListItem,
   RunnerInfo,
   RunnerPoolInfo,
@@ -113,6 +113,7 @@ export interface WorkflowPatch {
   graph?: WorkflowGraph;
   error_workflow_id?: string | null;
   error_alerts?: Record<string, unknown>;
+  run_timeout_seconds?: number | null;
 }
 
 type Page<T> = { items: T[]; total: number; limit: number; offset: number };
@@ -229,6 +230,11 @@ export const api = {
     request<ArtifactInfo>(`/artifacts/${artifactId}`),
   deleteArtifact: (artifactId: string) =>
     request<void>(`/artifacts/${artifactId}`, { method: "DELETE" }),
+  queryDataset: (artifactId: string, sql: string, limit = 200) =>
+    request<DatasetQueryResult>(`/artifacts/${artifactId}/query`, {
+      method: "POST",
+      body: JSON.stringify({ sql, limit }),
+    }),
 
   previewExpression: (body: {
     value: string;

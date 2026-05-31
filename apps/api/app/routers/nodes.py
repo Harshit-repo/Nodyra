@@ -20,8 +20,14 @@ async def list_nodes(
 
 @router.get("/{node_type}", response_model=NodeManifest)
 async def get_node(node_type: str) -> NodeManifest:
-    for manifest in registry.manifests():
-        if manifest.type == node_type:
-            return manifest
+    try:
+        for manifest in registry.manifests():
+            if manifest.id == node_type:
+                return manifest
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Registry error: {exc}",
+        ) from exc
     raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown node type '{node_type}'")
 

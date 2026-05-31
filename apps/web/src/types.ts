@@ -101,6 +101,7 @@ export interface WorkflowDetail {
   environment_id: string | null;
   error_workflow_id?: string | null;
   error_alerts?: Record<string, unknown>;
+  run_timeout_seconds?: number | null;
   graph: WorkflowGraph;
   created_at: string;
   updated_at: string;
@@ -195,6 +196,14 @@ export interface ArtifactInfo {
   metadata: Record<string, unknown>;
   preview: unknown;
   created_at: string;
+}
+
+export interface DatasetQueryResult {
+  columns: { name: string; type: string }[];
+  rows: Record<string, unknown>[];
+  row_count: number;
+  truncated: boolean;
+  elapsed_ms: number;
 }
 
 export interface Deployment {

@@ -124,3 +124,79 @@ def test_dataset_filter_input_kind_validation_via_engine(store_ctx) -> None:
     node_def = registry.get("dataset_filter")
     with pytest.raises(ValueError, match="DatasetRef"):
         _validate_input_kinds(node_def, {"input": [{"a": 1}]}, "n")
+
+
+def test_materialize_dataset_expands_rows(store_ctx) -> None:
+    from noodle_nodes.datasets import materialize_dataset
+
+    ref = csv_parse(text="x\n1\n2\n3\n", has_header=True)
+    rows = materialize_dataset(ref, cap=10)
+    assert rows == [{"x": 1}, {"x": 2}, {"x": 3}]
+
+
+def test_materialize_dataset_caps(store_ctx) -> None:
+    from noodle_nodes.datasets import materialize_dataset
+
+    ref = csv_parse(text="x\n1\n2\n3\n", has_header=True)
+    with pytest.raises(ValueError):
+        materialize_dataset(ref, cap=2)
+    assert materialize_dataset(ref, cap=2, allow_truncate=True) == [{"x": 1}, {"x": 2}]
+
+
+async def test_engine_expands_dataset_ref_into_loop_items(store_ctx) -> None:
+    """A DatasetRef wired into a per-item node is expanded into its rows."""
+    from noodle.engine import execute
+    from noodle.models import Edge, GraphNode, WorkflowGraph
+    from noodle.sdk import registry
+
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(
+                id="t",
+                type="manual_trigger",
+                params={"data": [{"id": 1}, {"id": 2}, {"id": 3}]},
+            ),
+            GraphNode(id="ds", type="records_to_dataset"),
+            GraphNode(id="loop", type="loop_over_items"),
+            GraphNode(id="each", type="no_op"),
+        ],
+        edges=[
+            Edge(source="t", target="ds"),
+            Edge(source="ds", target="loop"),
+            Edge(source="loop", source_output="item", target="each"),
+        ],
+    )
+    result = await execute(graph, registry)
+    # The loop ran over the dataset's rows, not the single envelope dict.
+    assert result.nodes["each"].outputs["main"] == [
+        {"id": 1},
+        {"id": 2},
+        {"id": 3},
+    ]
+
+
+def test_auto_expand_skips_code_and_dataset_ports(store_ctx) -> None:
+    """Code nodes and dataset ports keep the raw DatasetRef; others expand."""
+    from noodle.engine import _auto_expand_dataset_inputs
+    from noodle.sdk import registry
+
+    ref = csv_parse(text="x\n1\n2\n", has_header=True)
+
+    # Generic per-item node: input is expanded into rows.
+    loop_def = registry.get("loop_over_items")
+    loop_kwargs = {"input": ref}
+    _auto_expand_dataset_inputs(loop_def, loop_kwargs, "loop_over_items")
+    assert loop_kwargs["input"] == [{"x": 1}, {"x": 2}]
+
+    # Code node (dataset-passthrough): keeps the raw ref.
+    code_def = registry.get("code")
+    code_kwargs = {"input": ref}
+    _auto_expand_dataset_inputs(code_def, code_kwargs, "code")
+    assert is_dataset_ref(code_kwargs["input"])
+
+    # Dataset-native node port: keeps the raw ref (kind != "any").
+    filter_def = registry.get("dataset_filter")
+    filter_kwargs = {"input": ref}
+    _auto_expand_dataset_inputs(filter_def, filter_kwargs, "dataset_filter")
+    assert is_dataset_ref(filter_kwargs["input"])
+

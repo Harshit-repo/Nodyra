@@ -44,7 +44,7 @@ from app.services.remote_dispatch import (
 from app.services import queue as run_queue
 from app.services.runtime_pool import pool as runtime_pool
 from noodle.context import artifact_store, call_chain, workflow_caller
-from noodle.engine import execute
+from noodle.engine import DEFAULT_NODE_TIMEOUTS, execute
 from noodle.models import WorkflowGraph
 from noodle.sdk import (
     register_module_functions,
@@ -62,6 +62,20 @@ from noodle.serialization import (
 logger = logging.getLogger(__name__)
 
 _active_runs: dict[str, asyncio.Task[None]] = {}
+
+
+def _engine_default_timeouts() -> dict[str, float]:
+    """Per-node default timeouts for the in-process engine.
+
+    Starts from the engine's built-ins and layers on a configurable ``code``
+    cap. ``code_node_timeout_seconds <= 0`` leaves code uncapped so a
+    long-running Python node isn't cancelled mid-flight.
+    """
+    timeouts = dict(DEFAULT_NODE_TIMEOUTS)
+    code_timeout = settings.code_node_timeout_seconds
+    if code_timeout and code_timeout > 0:
+        timeouts["code"] = code_timeout
+    return timeouts
 
 # Set by ``_execute_run`` before invoking the engine. ``_call_sub_workflow``
 # reads this to decide whether sub-workflows should run their editable draft
@@ -342,7 +356,11 @@ async def _call_sub_workflow(
 
         # In-process fallback for tests / dev. Same leaf rule as above.
         result = await execute(
-            graph, node_registry, cache=cache or None, targets=sub_targets
+            graph,
+            node_registry,
+            cache=cache or None,
+            targets=sub_targets,
+            default_timeouts=_engine_default_timeouts(),
         )
         node_status = {nid: str(r.status) for nid, r in result.nodes.items()}
         node_outputs = {nid: dict(r.outputs) for nid, r in result.nodes.items()}
@@ -701,10 +719,12 @@ async def _execute_run(
 
         if settings.use_subprocess_runner:
             env_id: str | None = None
+            run_timeout: float | None = None
             async with SessionLocal() as session:
                 workflow = await session.get(Workflow, workflow_id)
                 if workflow is not None:
                     env_id = workflow.environment_id
+                    run_timeout = workflow.run_timeout_seconds
             chain_token = call_chain.set(frozenset({workflow_id}))
             caller_token = workflow_caller.set(_call_sub_workflow)
             try:
@@ -757,6 +777,7 @@ async def _execute_run(
                         on_event,
                         sub_workflow_caller=_call_sub_workflow,
                         workflow_modules=workflow_modules,
+                        run_timeout=run_timeout,
                     )
             finally:
                 workflow_caller.reset(caller_token)
@@ -803,6 +824,7 @@ async def _execute_run(
                     cache=deserialize_value(cache),
                     targets=targets,
                     on_event=on_event,
+                    default_timeouts=_engine_default_timeouts(),
                 )
                 status = str(result.status)
             finally:

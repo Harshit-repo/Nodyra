@@ -9,6 +9,9 @@ import {
   formatBytes,
 } from "./artifactValues";
 import { asDatasetRef } from "./datasetValues";
+import type { DatasetRef } from "./datasetValues";
+import { datasetDownloadUrl } from "./datasetValues";
+import { DatasetSqlModal } from "./DatasetSqlModal";
 import {
   asTypedEnvelope,
   formatTypedCell,
@@ -379,6 +382,119 @@ function colStats(
   return { min, max, mean };
 }
 
+interface ColumnProfile {
+  count: number;
+  nulls: number;
+  distinct: number;
+  numeric: { min: number; max: number; mean: number } | null;
+  top: { value: string; count: number }[];
+}
+
+function columnProfile(
+  data: Record<string, unknown>[],
+  col: string,
+): ColumnProfile {
+  let nulls = 0;
+  const counts = new Map<string, number>();
+  const nums: number[] = [];
+  for (const row of data) {
+    const v = row[col];
+    if (v === null || v === undefined || v === "") {
+      nulls += 1;
+      continue;
+    }
+    const key = typeof v === "object" ? JSON.stringify(v) : String(v);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+    const n = Number(v);
+    if (!isNaN(n) && typeof v !== "boolean") nums.push(n);
+  }
+  const top = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([value, count]) => ({ value, count }));
+  const numeric =
+    nums.length > 0 && nums.length >= data.length - nulls
+      ? {
+          min: Math.min(...nums),
+          max: Math.max(...nums),
+          mean: nums.reduce((a, b) => a + b, 0) / nums.length,
+        }
+      : null;
+  return {
+    count: data.length,
+    nulls,
+    distinct: counts.size,
+    numeric,
+    top,
+  };
+}
+
+function ColumnProfileCard({
+  data,
+  col,
+  onClose,
+}: {
+  data: Record<string, unknown>[];
+  col: string;
+  onClose: () => void;
+}) {
+  const p = columnProfile(data, col);
+  const pct = (n: number) =>
+    p.count > 0 ? `${Math.round((n / p.count) * 100)}%` : "0%";
+  return (
+    <div className="col-profile-pop" onClick={(e) => e.stopPropagation()}>
+      <div className="col-profile-head">
+        <strong>{col}</strong>
+        <button className="btn btn-xs btn-ghost" onClick={onClose}>
+          ✕
+        </button>
+      </div>
+      <div className="col-profile-grid">
+        <span>rows</span>
+        <span>{p.count.toLocaleString()}</span>
+        <span>nulls</span>
+        <span>
+          {p.nulls.toLocaleString()} ({pct(p.nulls)})
+        </span>
+        <span>distinct</span>
+        <span>{p.distinct.toLocaleString()}</span>
+        {p.numeric && (
+          <>
+            <span>min</span>
+            <span>{p.numeric.min.toPrecision(5)}</span>
+            <span>max</span>
+            <span>{p.numeric.max.toPrecision(5)}</span>
+            <span>mean</span>
+            <span>{p.numeric.mean.toPrecision(5)}</span>
+          </>
+        )}
+      </div>
+      {p.top.length > 0 && (
+        <div className="col-profile-top">
+          <div className="col-profile-top-head">Top values</div>
+          {p.top.map((t) => (
+            <div key={t.value} className="col-profile-top-row">
+              <span className="col-profile-top-val" title={t.value}>
+                {t.value || "∅"}
+              </span>
+              <span className="col-profile-top-bar">
+                <span
+                  style={{
+                    width: `${Math.round((t.count / p.count) * 100)}%`,
+                  }}
+                />
+              </span>
+              <span className="col-profile-top-count">{t.count}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="col-profile-foot muted">from preview sample</div>
+    </div>
+  );
+}
+
+
 function RecordTable({
   data,
   dragPrefix,
@@ -392,6 +508,7 @@ function RecordTable({
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
+  const [profileCol, setProfileCol] = useState<string | null>(null);
 
   const columns = Array.from(new Set(data.flatMap((row) => Object.keys(row))));
 
@@ -496,6 +613,24 @@ function RecordTable({
                   {dtype && (
                     <span className="col-dtype">{dtype}</span>
                   )}
+                  <button
+                    type="button"
+                    className="col-profile-btn"
+                    title="Column stats"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setProfileCol((c) => (c === col ? null : col));
+                    }}
+                  >
+                    ▾
+                  </button>
+                  {profileCol === col && (
+                    <ColumnProfileCard
+                      data={data}
+                      col={col}
+                      onClose={() => setProfileCol(null)}
+                    />
+                  )}
                 </th>
               );
             })}
@@ -552,6 +687,68 @@ function RecordTable({
   );
 }
 
+function DatasetTableView({
+  dataset,
+  dragPrefix,
+}: {
+  dataset: DatasetRef;
+  dragPrefix?: string;
+}) {
+  const [sqlOpen, setSqlOpen] = useState(false);
+  const rows = (dataset.preview ?? []) as Record<string, unknown>[];
+  const dtypes = Object.fromEntries(
+    (dataset.schema ?? []).map((c) => [c.name, c.type]),
+  );
+  const cols = dataset.column_count ?? dataset.schema?.length ?? 0;
+  const totalRows = dataset.row_count;
+  return (
+    <div className="dataset-view">
+      <div className="dataset-view-strip">
+        <span className="dataset-badge">Dataset</span>
+        <span className="dataset-stat">
+          <strong>{totalRows == null ? "?" : totalRows.toLocaleString()}</strong> rows
+        </span>
+        <span className="dataset-stat">
+          <strong>{cols}</strong> cols
+        </span>
+        <span className="dataset-stat">
+          {formatBytes(dataset.artifact.size_bytes)}
+        </span>
+        <span className="dataset-stat dataset-format">{dataset.format}</span>
+        <button
+          type="button"
+          className="btn btn-xs dataset-sql-btn"
+          onClick={() => setSqlOpen(true)}
+        >
+          Open in SQL
+        </button>
+        <a
+          className="dataset-dl"
+          href={datasetDownloadUrl(dataset)}
+          title="Download Parquet"
+        >
+          Download
+        </a>
+      </div>
+      {rows.length === 0 ? (
+        <div className="muted">Dataset has no preview rows.</div>
+      ) : (
+        <>
+          <RecordTable data={rows} dragPrefix={dragPrefix} dtypes={dtypes} />
+          {dataset.preview_truncated && (
+            <div className="dataset-preview-note muted">
+              Preview is a sample of the first {rows.length} rows.
+            </div>
+          )}
+        </>
+      )}
+      {sqlOpen && (
+        <DatasetSqlModal dataset={dataset} onClose={() => setSqlOpen(false)} />
+      )}
+    </div>
+  );
+}
+
 function DataTable({
   data,
   dragPrefix,
@@ -561,11 +758,7 @@ function DataTable({
 }) {
   const dataset = asDatasetRef(data);
   if (dataset) {
-    const rows = (dataset.preview ?? []) as Record<string, unknown>[];
-    if (rows.length === 0) {
-      return <div className="muted">Dataset has no preview rows.</div>;
-    }
-    return <RecordTable data={rows} dragPrefix={dragPrefix} />;
+    return <DatasetTableView dataset={dataset} dragPrefix={dragPrefix} />;
   }
   const artifact = asArtifactRef(data);
   if (artifact) {

@@ -16,6 +16,7 @@ dependency out of core.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -169,3 +170,44 @@ def finalize_artifact_ref(
 
 def remember_dataset(ref: dict[str, Any]) -> None:
     _remember(ref)
+
+
+# ---------------------------------------------------------------------------
+# Materialization hook
+#
+# Reading rows out of a DatasetRef requires DuckDB, which lives in the
+# ``noodle_nodes`` package to keep the heavy dependency out of core. The nodes
+# package registers its implementation on import; the engine calls
+# :func:`materialize_dataset_rows` to expand a DatasetRef into plain rows when
+# a generic (non-dataset) node receives one as input.
+# ---------------------------------------------------------------------------
+
+_Materializer = Callable[..., list[dict[str, Any]]]
+_materializer: _Materializer | None = None
+
+
+def register_materializer(fn: _Materializer) -> None:
+    """Register the DuckDB-backed row materializer (called by noodle_nodes)."""
+    global _materializer
+    _materializer = fn
+
+
+def materialize_dataset_rows(
+    ref: dict[str, Any],
+    *,
+    cap: int,
+    allow_truncate: bool = False,
+) -> list[dict[str, Any]]:
+    """Expand a DatasetRef into a list of row dicts (bounded by ``cap``).
+
+    Raises if no materializer has been registered (i.e. the nodes package was
+    never imported) or if the dataset exceeds ``cap`` and ``allow_truncate``
+    is false.
+    """
+    if not is_dataset_ref(ref):
+        raise ValueError("materialize_dataset_rows requires a DatasetRef")
+    if _materializer is None:
+        raise RuntimeError(
+            "no dataset materializer registered; import noodle_nodes.datasets"
+        )
+    return _materializer(ref, cap=cap, allow_truncate=allow_truncate)

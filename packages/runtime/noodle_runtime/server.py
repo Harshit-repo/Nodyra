@@ -40,6 +40,7 @@ must wait for it before dispatching requests.
 
 import asyncio
 import json
+import os
 import sys
 import uuid
 from typing import Any
@@ -62,7 +63,29 @@ from noodle.serialization import deserialize_value, serialize_value
 _PROTOCOL_OUT = sys.stdout
 
 _pending_callbacks: dict[str, asyncio.Future] = {}
-_RUNTIME_DEFAULT_TIMEOUTS = {"http_request": 45.0}
+
+
+def _runtime_default_timeouts() -> dict[str, float]:
+    """Per-node default timeouts for the runtime engine.
+
+    The host sets ``NOODLE_CODE_NODE_TIMEOUT_SECONDS`` when an operator wants a
+    default cap on ``code`` nodes. Unset / ``<= 0`` means code is uncapped so
+    long-running Python isn't cancelled mid-flight (bounded only by the
+    overall workflow timeout enforced host-side).
+    """
+    timeouts: dict[str, float] = {"http_request": 45.0}
+    raw = os.environ.get("NOODLE_CODE_NODE_TIMEOUT_SECONDS")
+    if raw:
+        try:
+            code_timeout = float(raw)
+        except ValueError:
+            code_timeout = 0.0
+        if code_timeout > 0:
+            timeouts["code"] = code_timeout
+    return timeouts
+
+
+_RUNTIME_DEFAULT_TIMEOUTS = _runtime_default_timeouts()
 
 
 def _emit(event: dict) -> None:

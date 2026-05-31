@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -126,6 +126,7 @@ def _detail(workflow: Workflow) -> WorkflowDetail:
         error_workflow_id=workflow.error_workflow_id,
         error_alerts=workflow.error_alerts or {},
         allow_concurrent=workflow.allow_concurrent,
+        run_timeout_seconds=workflow.run_timeout_seconds,
         graph=WorkflowGraph.model_validate(_draft_graph(workflow)),
         created_at=workflow.created_at,
         updated_at=workflow.updated_at,
@@ -226,6 +227,8 @@ async def update_workflow(
         workflow.error_alerts = body.error_alerts
     if body.allow_concurrent is not None:
         workflow.allow_concurrent = body.allow_concurrent
+    if body.run_timeout_seconds is not None:
+        workflow.run_timeout_seconds = body.run_timeout_seconds
     if body.graph is not None:
         _validate_node_types(body.graph)
         workflow.draft_graph = body.graph.model_dump()
@@ -274,10 +277,12 @@ async def get_version(
 )
 async def publish_workflow(
     workflow_id: str,
-    body: WorkflowPublishRequest,
+    body: WorkflowPublishRequest | None = Body(default=None),
     session: AsyncSession = Depends(get_session),
     actor: User | None = Depends(optional_current_user),
 ):
+    if body is None:
+        body = WorkflowPublishRequest()
     workflow = await _load(session, workflow_id)
     latest = _latest(workflow)
     graph = _draft_graph(workflow)

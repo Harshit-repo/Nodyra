@@ -118,6 +118,7 @@ export function EditorPage() {
   const [name, setName] = useState("");
   const [active, setActive] = useState(false);
   const [environmentId, setEnvironmentId] = useState<string | null>(null);
+  const [runTimeout, setRunTimeout] = useState<string>("");
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [message, setMessage] = useState("");
@@ -203,6 +204,11 @@ export function EditorPage() {
         setName(detail.name);
         setActive(detail.active);
         setEnvironmentId(detail.environment_id);
+        setRunTimeout(
+          detail.run_timeout_seconds != null
+            ? String(detail.run_timeout_seconds)
+            : "",
+        );
         setEnvironments(envs);
         setWorkflowId(id);
         const pinnedMap: Record<string, unknown> = {};
@@ -282,6 +288,7 @@ export function EditorPage() {
         name: name.trim() || "Untitled workflow",
         active,
         environment_id: environmentId ?? undefined,
+        run_timeout_seconds: runTimeout === "" ? null : Math.max(0, parseFloat(runTimeout) || 0),
         graph: toGraph(),
       });
       setWorkflow(updated);
@@ -418,6 +425,7 @@ export function EditorPage() {
         name: name.trim() || "Untitled workflow",
         active: next,
         environment_id: environmentId ?? undefined,
+        run_timeout_seconds: runTimeout === "" ? null : Math.max(0, parseFloat(runTimeout) || 0),
         graph: toGraph(),
       });
       setWorkflow(updated);
@@ -846,6 +854,16 @@ export function EditorPage() {
               </option>
             ))}
           </select>
+          <input
+            className="toolbar-timeout"
+            type="number"
+            min={0}
+            step={1}
+            value={runTimeout}
+            placeholder="No timeout"
+            title="Run timeout (seconds). Blank or 0 means the run is never capped."
+            onChange={(e) => setRunTimeout(e.target.value)}
+          />
           <label className="active-toggle">
             <input
               type="checkbox"

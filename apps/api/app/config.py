@@ -96,7 +96,17 @@ class Settings(BaseSettings):
     artifact_s3_endpoint: str = ""
     max_artifact_bytes: int = 50 * 1024 * 1024
     max_artifacts_per_run: int = 100
-    workflow_run_timeout_seconds: float = 120.0
+    # Overall wall-clock cap for a single workflow run. 0 (default) means *no*
+    # cap — long-running data workflows run until they finish or the run is
+    # cancelled. Set a positive value (or a per-workflow ``run_timeout_seconds``
+    # override) to fail runaway runs fast.
+    workflow_run_timeout_seconds: float = 0.0
+    # Default per-node timeout (seconds) for ``code`` nodes when the node
+    # doesn't set its own ``timeout_seconds``. 0 means *no* per-node cap so a
+    # long-running Python node isn't cancelled mid-flight — it's then bounded
+    # only by ``workflow_run_timeout_seconds``. Set a positive value to guard
+    # against runaway user code.
+    code_node_timeout_seconds: float = 0.0
     auth_required: bool = False
     auth_allow_registration: bool = False
     auth_registration_role: str = "viewer"

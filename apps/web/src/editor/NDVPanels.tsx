@@ -116,12 +116,7 @@ function SettingsTab({ nodeId }: { nodeId: string }) {
   const updateNodeSettings = useEditor((s) => s.updateNodeSettings);
   if (!node) return null;
   const data = node.data;
-  const defaultTimeout =
-    data.manifest.id === "code"
-      ? 60
-      : data.manifest.id === "http_request"
-        ? 45
-        : null;
+  const defaultTimeout = data.manifest.id === "http_request" ? 45 : null;
 
   return (
     <>

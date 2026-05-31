@@ -173,6 +173,11 @@ class Workflow(Base):
     allow_concurrent: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False, server_default=sa_text("1")
     )
+    # Per-workflow wall-clock cap (seconds) for a single run. NULL falls back
+    # to ``settings.workflow_run_timeout_seconds``; 0 means no cap.
+    run_timeout_seconds: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

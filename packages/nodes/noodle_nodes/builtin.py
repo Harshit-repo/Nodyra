@@ -227,9 +227,19 @@ def switch_node(
     "value": {"placeholder": "expected value"},
 })
 def filter_node(input: Any = None, field: str = "", operator: str = "is not empty",
-                value: str = "") -> list:
-    """Keep only the input items that satisfy a condition."""
-    return [it for it in _as_list(input) if _matches(_field(it, field), operator, value)]
+                value: str = "") -> Any:
+    """Keep only the input items that satisfy a condition.
+
+    When the upstream input is a single object (not a list), a passing filter
+    returns that object directly so the next node receives the same shape it
+    would have received without the filter.  When the input is already a list,
+    the output is always a list (possibly empty).
+    """
+    input_was_list = isinstance(input, list)
+    results = [it for it in _as_list(input) if _matches(_field(it, field), operator, value)]
+    if not input_was_list and len(results) == 1:
+        return results[0]
+    return results
 
 
 @node(name="Merge", id="merge", category="Logic", icon="merge",

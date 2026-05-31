@@ -5,10 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.models import Artifact, Run
-from app.schemas import ArtifactInfo
+from app.schemas import ArtifactInfo, DatasetQueryRequest, DatasetQueryResult
 from app.security import require_permission
 from app.services.artifact_backends import get_backend
 from app.services.artifacts import delete_artifact_files
+from app.services.datasets_query import DatasetQueryError, run_dataset_query
 
 router = APIRouter(tags=["artifacts"])
 
@@ -97,6 +98,41 @@ async def download_artifact(
         status.HTTP_500_INTERNAL_SERVER_ERROR,
         "Backend produced no download payload",
     )
+
+
+@router.post(
+    "/artifacts/{artifact_id}/query",
+    response_model=DatasetQueryResult,
+)
+async def query_artifact(
+    artifact_id: str,
+    payload: DatasetQueryRequest,
+    session: AsyncSession = Depends(get_session),
+) -> DatasetQueryResult:
+    """Run a read-only DuckDB query against a Parquet-backed dataset artifact.
+
+    The Parquet file is exposed as the ``dataset`` and ``input`` views.
+    """
+    import asyncio
+
+    row = await _get_artifact(session, artifact_id)
+    is_parquet = (
+        row.kind == "dataset"
+        or "parquet" in (row.content_type or "").lower()
+        or row.name.lower().endswith(".parquet")
+    )
+    if not is_parquet:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "SQL query is only supported for Parquet-backed datasets",
+        )
+    try:
+        result = await asyncio.to_thread(
+            run_dataset_query, row, payload.sql, payload.limit
+        )
+    except DatasetQueryError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return DatasetQueryResult(**result)
 
 
 @router.get("/artifacts/{artifact_id}/url")

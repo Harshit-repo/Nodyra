@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any, Generic, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 T = TypeVar("T")
 
@@ -30,6 +30,9 @@ class WorkflowUpdate(BaseModel):
     error_workflow_id: str | None = None
     error_alerts: dict[str, Any] | None = None
     allow_concurrent: bool | None = None
+    # Per-workflow wall-clock cap (seconds) for a run. None leaves it unset
+    # (falls back to the server default); 0 disables the cap for this workflow.
+    run_timeout_seconds: float | None = Field(default=None, ge=0)
 
 
 class WorkflowSummary(BaseModel):
@@ -60,6 +63,7 @@ class WorkflowDetail(BaseModel):
     error_workflow_id: str | None = None
     error_alerts: dict[str, Any] = Field(default_factory=dict)
     allow_concurrent: bool = True
+    run_timeout_seconds: float | None = None
     graph: WorkflowGraph
     created_at: datetime
     updated_at: datetime
@@ -178,6 +182,22 @@ class RunCancelResponse(BaseModel):
     status: str
 
 
+_INTERNAL_ARTIFACT_FIELDS = {"storage_key", "storage_backend"}
+
+
+def _strip_storage_fields(value: Any) -> Any:
+    """Recursively remove internal artifact storage fields from a value tree."""
+    if isinstance(value, dict):
+        return {
+            k: _strip_storage_fields(v)
+            for k, v in value.items()
+            if k not in _INTERNAL_ARTIFACT_FIELDS
+        }
+    if isinstance(value, list):
+        return [_strip_storage_fields(v) for v in value]
+    return value
+
+
 class NodeRunInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -190,6 +210,14 @@ class NodeRunInfo(BaseModel):
     started_at: float | None = None
     finished_at: float | None = None
     duration_ms: int | None = None
+
+    @model_validator(mode="after")
+    def _redact_storage_internals(self) -> "NodeRunInfo":
+        """Strip internal artifact storage fields from node output before
+        serving them to API clients — storage_key and storage_backend are
+        implementation details that must not leak through the public API."""
+        self.output = _strip_storage_fields(self.output)
+        return self
 
 
 class RunListItem(BaseModel):
@@ -219,6 +247,7 @@ class RunInfo(BaseModel):
 
     id: str
     workflow_id: str
+    workflow_name: str | None = None
     workflow_version: int
     workflow_version_id: str | None = None
     deployment_id: str | None = None
@@ -245,6 +274,19 @@ class ArtifactInfo(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     preview: Any = None
     created_at: datetime
+
+
+class DatasetQueryRequest(BaseModel):
+    sql: str = Field(min_length=1, max_length=20000)
+    limit: int = Field(default=200, ge=1, le=1000)
+
+
+class DatasetQueryResult(BaseModel):
+    columns: list[dict[str, Any]]
+    rows: list[dict[str, Any]]
+    row_count: int
+    truncated: bool
+    elapsed_ms: float
 
 
 class CredentialCreate(BaseModel):

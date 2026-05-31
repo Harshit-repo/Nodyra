@@ -535,3 +535,103 @@ async def test_persist_artifact_refs_keeps_local_when_upload_fails(
         assert row.storage_backend == 'local'
 
     reset_backends_for_tests()
+
+
+# --- Dataset SQL explorer ----------------------------------------------------
+
+
+async def _make_dataset_run(client: AsyncClient) -> str:
+    """Run a workflow that produces a Parquet-backed dataset; return artifact id."""
+    workflow_id = (await client.post("/workflows", json={"name": "SQL"})).json()["id"]
+    graph = {
+        "nodes": [
+            {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 0, "y": 0},
+            },
+            {
+                "id": "rows",
+                "type": "code",
+                "params": {
+                    "code": (
+                        "output = [\n"
+                        "  {'city': 'NYC', 'pop': 8},\n"
+                        "  {'city': 'LA', 'pop': 4},\n"
+                        "  {'city': 'NYC', 'pop': 9},\n"
+                        "]"
+                    )
+                },
+                "position": {"x": 200, "y": 0},
+            },
+            {
+                "id": "ds",
+                "type": "records_to_dataset",
+                "params": {},
+                "position": {"x": 400, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e0",
+                "source": "t",
+                "source_output": "main",
+                "target": "rows",
+                "target_input": "input",
+            },
+            {
+                "id": "e1",
+                "source": "rows",
+                "source_output": "main",
+                "target": "ds",
+                "target_input": "input",
+            },
+        ],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
+    run_id = (
+        await client.post(f"/workflows/{workflow_id}/run", json={})
+    ).json()["run_id"]
+    run = (await client.get(f"/runs/{run_id}")).json()
+    results = {node["node_id"]: node for node in run["node_runs"]}
+    dataset_ref = results["ds"]["output"]["main"]
+    assert dataset_ref["__noodle_dataset__"] is True
+    return dataset_ref["artifact"]["artifact_id"]
+
+
+async def test_dataset_sql_query_returns_rows(client: AsyncClient) -> None:
+    artifact_id = await _make_dataset_run(client)
+    resp = await client.post(
+        f"/artifacts/{artifact_id}/query",
+        json={"sql": "SELECT city, SUM(pop) AS total FROM dataset GROUP BY city ORDER BY city"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["row_count"] == 2
+    rows = {r["city"]: r["total"] for r in body["rows"]}
+    assert rows == {"LA": 4, "NYC": 17}
+    assert any(c["name"] == "total" for c in body["columns"])
+
+
+async def test_dataset_sql_query_rejects_writes(client: AsyncClient) -> None:
+    artifact_id = await _make_dataset_run(client)
+    resp = await client.post(
+        f"/artifacts/{artifact_id}/query",
+        json={"sql": "DROP TABLE dataset"},
+    )
+    assert resp.status_code == 400
+    assert "SELECT" in resp.json()["detail"] or "disallowed" in resp.json()["detail"]
+
+
+async def test_dataset_sql_query_caps_rows(client: AsyncClient) -> None:
+    artifact_id = await _make_dataset_run(client)
+    resp = await client.post(
+        f"/artifacts/{artifact_id}/query",
+        json={"sql": "SELECT * FROM dataset", "limit": 2},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["row_count"] == 2
+    assert body["truncated"] is True
+
