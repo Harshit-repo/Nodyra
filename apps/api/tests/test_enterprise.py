@@ -289,7 +289,7 @@ async def test_audit_log_records_actions(client: AsyncClient) -> None:
     await client.post("/workflows", json={"name": "Audited Flow"})
     await client.post("/credentials", json={"name": "Audited Cred", "data": {}})
 
-    events = (await client.get("/audit")).json()
+    events = (await client.get("/audit")).json()["items"]
     actions = {(e["action"], e["target_type"]) for e in events}
     assert ("create", "workflow") in actions
     assert ("create", "credential") in actions

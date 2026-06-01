@@ -52,10 +52,6 @@ async def test_run_executes_the_graph(client: AsyncClient) -> None:
     results = {n["node_id"]: n for n in run["node_runs"]}
     assert results["c"]["output"]["main"] == 6
     assert results["t"]["status"] == "success"
-    variables = {
-        variable["name"]: variable for variable in results["c"]["debug"]["variables"]
-    }
-    assert variables["output"]["preview"] == 6
 
 
 async def test_run_records_node_errors(client: AsyncClient) -> None:
@@ -222,7 +218,7 @@ async def test_runs_are_listed_for_a_workflow(client: AsyncClient) -> None:
     await client.post(f"/workflows/{workflow_id}/run", json={})
     await client.post(f"/workflows/{workflow_id}/run", json={})
 
-    runs = (await client.get(f"/workflows/{workflow_id}/runs")).json()
+    runs = (await client.get(f"/workflows/{workflow_id}/runs")).json()["items"]
     assert len(runs) == 2
     assert all(r["status"] == "success" for r in runs)
 
@@ -456,17 +452,17 @@ async def test_all_runs_endpoint_lists_across_workflows(client: AsyncClient) -> 
     await client.post(f"/workflows/{wf_b}/run", json={})
     await client.post(f"/workflows/{wf_a}/run", json={})
 
-    all_runs = (await client.get("/runs")).json()
+    all_runs = (await client.get("/runs")).json()["items"]
     assert len(all_runs) == 3
     assert {r["workflow_id"] for r in all_runs} == {wf_a, wf_b}
     # Joined workflow_name is populated.
     assert all(r["workflow_name"] for r in all_runs)
 
-    only_a = (await client.get(f"/runs?workflow_id={wf_a}")).json()
+    only_a = (await client.get(f"/runs?workflow_id={wf_a}")).json()["items"]
     assert len(only_a) == 2
     assert all(r["workflow_id"] == wf_a for r in only_a)
 
-    paged = (await client.get("/runs?limit=1")).json()
+    paged = (await client.get("/runs?limit=1")).json()["items"]
     assert len(paged) == 1
 
 

@@ -117,7 +117,7 @@ async def test_secret_cache_expires_after_ttl(client: AsyncClient) -> None:
     from sqlalchemy import select
 
     from app.models import Credential
-    from app.services.crypto import encrypt_data
+    from app.services.crypto import encrypt_credential
     from app.services.runner import SessionLocal  # patched in conftest
 
     redaction.invalidate_secret_cache()
@@ -144,7 +144,9 @@ async def test_secret_cache_expires_after_ttl(client: AsyncClient) -> None:
         cred = (
             await session.scalars(select(Credential).where(Credential.id == cred_id))
         ).one()
-        cred.encrypted_data = encrypt_data({"token": "rotated-secret-value-5678"})
+        cred.encrypted_data, cred.encrypted_dek = encrypt_credential(
+            {"token": "rotated-secret-value-5678"}
+        )
         await session.commit()
 
     # Without TTL the cache would still return the old value. Force it stale.

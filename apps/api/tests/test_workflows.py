@@ -6,7 +6,7 @@ async def test_create_lists_and_fetches_workflow(client: AsyncClient) -> None:
     assert created["version"] == 1
     assert created["graph"] == {"nodes": [], "edges": []}
 
-    listed = (await client.get("/workflows")).json()
+    listed = (await client.get("/workflows")).json()["items"]
     assert any(w["id"] == created["id"] for w in listed)
 
     fetched = (await client.get(f"/workflows/{created['id']}")).json()
@@ -101,7 +101,7 @@ async def test_workflow_summary_includes_latest_run(client: AsyncClient) -> None
         "run_id"
     ]
 
-    listed = (await client.get("/workflows")).json()
+    listed = (await client.get("/workflows")).json()["items"]
     summary = next(item for item in listed if item["id"] == workflow_id)
 
     assert summary["last_run_id"] == run_id

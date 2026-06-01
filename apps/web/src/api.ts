@@ -326,6 +326,7 @@ export const api = {
     environment_id?: string | null;
     name: string;
     contents?: string;
+    include_undecorated?: boolean;
   }) =>
     request<CodeModule>("/code-modules", {
       method: "POST",
@@ -333,7 +334,7 @@ export const api = {
     }),
   updateCodeModule: (
     id: string,
-    body: { name?: string; contents?: string },
+    body: { name?: string; contents?: string; include_undecorated?: boolean },
   ) =>
     request<CodeModule>(`/code-modules/${id}`, {
       method: "PUT",

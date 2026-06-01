@@ -141,7 +141,12 @@ async def _handle_run(request: dict[str, Any]) -> None:
         if not module_id or not source.strip():
             continue
         try:
-            register_module_functions(module_id, source, registry)
+            register_module_functions(
+                module_id,
+                source,
+                registry,
+                include_undecorated=bool(module.get("include_undecorated")),
+            )
             loaded_module_ids.append(module_id)
         except Exception as exc:  # noqa: BLE001 - bad user code shouldn't crash the runner
             _emit(

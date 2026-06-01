@@ -1,3 +1,4 @@
+import { Key, Lock, Warning } from "@phosphor-icons/react";
 import { Handle, type NodeProps, Position } from "@xyflow/react";
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
@@ -235,11 +236,21 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
         )}
 
         {disabled && <span className="node-disabled-pip">○</span>}
-        <div className="node-badges" aria-hidden>
-          {hasMissingCredential && <span title="Missing stored credential">key</span>}
-          {hasInlineSecret && <span title="Inline secret should be moved">!</span>}
+        <div className="node-badges">
+          {hasMissingCredential && (
+            <span title="Missing stored credential">
+              <Key size={11} weight="bold" aria-hidden />
+            </span>
+          )}
+          {hasInlineSecret && (
+            <span title="Inline secret should be moved to a stored credential">
+              <Warning size={11} weight="bold" aria-hidden />
+            </span>
+          )}
           {credentialSpecs.some((param) => isCredentialRef(data.params[param.name])) && (
-            <span title="Uses stored credential">lock</span>
+            <span title="Uses stored credential">
+              <Lock size={11} weight="bold" aria-hidden />
+            </span>
           )}
         </div>
 

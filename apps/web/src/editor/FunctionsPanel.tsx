@@ -35,6 +35,7 @@ export function FunctionsPanel({
   const [newScopeEnvId, setNewScopeEnvId] = useState<string>("");
   const [preview, setPreview] = useState<CodeModuleFunctionPreview | null>(null);
   const [saving, setSaving] = useState(false);
+  const [includeUndecorated, setIncludeUndecorated] = useState(false);
   const [error, setError] = useState("");
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [installTargetEnv, setInstallTargetEnv] = useState<string>("");
@@ -95,6 +96,7 @@ export function FunctionsPanel({
     setSelected(m);
     setName(m.name);
     setContents(m.contents);
+    setIncludeUndecorated(m.include_undecorated);
     setPreview(null);
     setError("");
   }
@@ -103,6 +105,7 @@ export function FunctionsPanel({
     setSelected(null);
     setName("functions.py");
     setContents("def my_node(x: int = 0) -> int:\n    return x + 1\n");
+    setIncludeUndecorated(false);
     setPreview(null);
     setError("");
     setNewScope("workflow");
@@ -115,7 +118,11 @@ export function FunctionsPanel({
     try {
       let saved: CodeModule;
       if (selected) {
-        saved = await api.updateCodeModule(selected.id, { name, contents });
+        saved = await api.updateCodeModule(selected.id, {
+          name,
+          contents,
+          include_undecorated: includeUndecorated,
+        });
       } else {
         if (newScope === "environment" && !newScopeEnvId) {
           throw new Error("Pick an environment for environment-scoped modules.");
@@ -126,6 +133,7 @@ export function FunctionsPanel({
           environment_id: newScope === "environment" ? newScopeEnvId : null,
           name,
           contents,
+          include_undecorated: includeUndecorated,
         });
       }
       const p = await api.previewCodeModule(saved.id);
@@ -137,6 +145,22 @@ export function FunctionsPanel({
       setError(String(e));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function toggleIncludeUndecorated(next: boolean): Promise<void> {
+    setIncludeUndecorated(next);
+    if (!selected) return;
+    try {
+      const saved = await api.updateCodeModule(selected.id, {
+        include_undecorated: next,
+      });
+      setSelected(saved);
+      const p = await api.previewCodeModule(saved.id);
+      setPreview(p);
+      onChanged();
+    } catch (e) {
+      setError(String(e));
     }
   }
 
@@ -302,19 +326,59 @@ export function FunctionsPanel({
                       <p className="muted">
                         Registered nodes: {preview.registered.length}
                       </p>
-                      <p className="muted functions-rule-hint">
-                        Each function becomes a node with one input port
-                        (the upstream data envelope, available as{" "}
-                        <code>{"{{ $json }}"}</code>) and every parameter
-                        in the inspector. Set literals or expressions like{" "}
-                        <code>{"{{ $json.field }}"}</code> to pull values
-                        from upstream.
-                      </p>
+                      {preview.explicit_mode ? (
+                        <p className="muted functions-rule-hint">
+                          This file uses <code>@node</code> decorators, so only
+                          decorated functions become nodes (undecorated ones
+                          stay callable helpers). Edges come from each node's
+                          declared <code>wires</code>.
+                        </p>
+                      ) : (
+                        <p className="muted functions-rule-hint">
+                          Each function becomes a node with one input port
+                          (the upstream data envelope, available as{" "}
+                          <code>{"{{ $json }}"}</code>) and every parameter
+                          in the inspector. Set literals or expressions like{" "}
+                          <code>{"{{ $json.field }}"}</code> to pull values
+                          from upstream.
+                        </p>
+                      )}
+                      {preview.explicit_mode && (
+                        <label className="functions-undecorated-toggle">
+                          <input
+                            type="checkbox"
+                            checked={includeUndecorated}
+                            disabled={!selected}
+                            onChange={(e) =>
+                              void toggleIncludeUndecorated(e.target.checked)
+                            }
+                          />{" "}
+                          Also include undecorated functions as nodes
+                        </label>
+                      )}
                       {preview.functions.length > 0 && (
                         <ul className="functions-list-funcs">
                           {preview.functions.map((fn) => (
                             <li key={fn.name}>
                               <code>{fn.name}</code>
+                              {fn.decorated && (
+                                <span
+                                  className="fn-shape fn-decorated"
+                                  title="Declared with @node"
+                                >
+                                  @node
+                                </span>
+                              )}
+                              {fn.inputs.length > 0 && (
+                                <span className="fn-shape fn-inputs">
+                                  in: {fn.inputs.join(", ")}
+                                </span>
+                              )}
+                              {fn.outputs.length > 0 && (
+                                <span className="fn-shape fn-outputs">
+                                  out: {fn.outputs.join(", ")}
+                                </span>
+                              )}
                               {fn.params.length > 0 ? (
                                 <span className="fn-shape fn-params">
                                   params: {fn.params.join(", ")}
@@ -322,6 +386,14 @@ export function FunctionsPanel({
                               ) : (
                                 <span className="fn-shape muted">
                                   (no parameters)
+                                </span>
+                              )}
+                              {Object.keys(fn.wires).length > 0 && (
+                                <span className="fn-shape fn-wires">
+                                  wires:{" "}
+                                  {Object.entries(fn.wires)
+                                    .map(([port, src]) => `${port} ← ${src}`)
+                                    .join(", ")}
                                 </span>
                               )}
                             </li>

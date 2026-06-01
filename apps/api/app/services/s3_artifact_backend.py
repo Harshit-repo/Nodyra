@@ -73,12 +73,12 @@ class S3Backend:
             self._client_cache = _client()
         return self._client_cache
 
-    def _key(self, artifact: "Artifact") -> str:
+    def _key(self, artifact: Artifact) -> str:
         # ``storage_key`` is already namespaced under ``runs/{run_id}/...``
         # by the artifact store; we use it verbatim as the object key.
         return artifact.storage_key
 
-    def delete(self, artifacts: Iterable["Artifact"]) -> None:
+    def delete(self, artifacts: Iterable[Artifact]) -> None:
         # S3 supports batched DELETE up to 1000 objects per request.
         keys: list[dict[str, str]] = []
         for row in artifacts:
@@ -96,7 +96,7 @@ class S3Backend:
         except Exception:  # noqa: BLE001
             log.exception("S3 artifact delete failed (%d keys)", len(keys))
 
-    def open_download(self, artifact: "Artifact") -> ArtifactDownload:
+    def open_download(self, artifact: Artifact) -> ArtifactDownload:
         key = self._key(artifact)
         try:
             obj = self.client.get_object(Bucket=self.bucket, Key=key)
@@ -121,7 +121,7 @@ class S3Backend:
             stream=chunks(),
         )
 
-    def signed_url(self, artifact: "Artifact", *, expires_in: int = 300) -> str | None:
+    def signed_url(self, artifact: Artifact, *, expires_in: int = 300) -> str | None:
         try:
             return self.client.generate_presigned_url(
                 "get_object",
@@ -162,7 +162,7 @@ class S3Backend:
         except Exception:  # noqa: BLE001
             log.exception("S3 delete_run failed for %s", run_id)
 
-    def upload_from_local(self, artifact: "Artifact", local_path: Path) -> None:
+    def upload_from_local(self, artifact: Artifact, local_path: Path) -> None:
         """Upload bytes written by the worker (local FS) to the S3 bucket.
 
         Workers cannot write directly to S3 (no per-worker credentials, warm

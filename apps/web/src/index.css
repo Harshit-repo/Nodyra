@@ -488,7 +488,7 @@ textarea:focus-visible {
   transition: opacity 160ms ease;
 }
 .wf-card:hover {
-  border-color: #463a28;
+  border-color: var(--accent-deep);
   background: var(--surface-2);
   transform: translateY(-2px);
 }
@@ -1487,7 +1487,7 @@ kbd {
 }
 .credential-type-option:hover,
 .credential-type-option.is-selected {
-  border-color: rgba(255, 181, 92, 0.55);
+  border-color: var(--accent);
   background: var(--accent-glow);
 }
 .credential-type-option strong,
@@ -2238,7 +2238,7 @@ kbd {
   display: inline-block;
   font-family: var(--font-mono);
   font-size: 11px;
-  background: var(--surface-1);
+  background: var(--surface-2);
   border: 1px solid var(--line-2);
   border-radius: 4px;
   padding: 1px 5px;

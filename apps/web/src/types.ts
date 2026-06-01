@@ -264,6 +264,7 @@ export interface CodeModule {
   environment_id: string | null;
   name: string;
   contents: string;
+  include_undecorated: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -272,6 +273,9 @@ export interface CodeModuleFunctionShape {
   name: string;
   inputs: string[];
   params: string[];
+  outputs: string[];
+  decorated: boolean;
+  wires: Record<string, string>;
 }
 
 export interface NodeSource {
@@ -290,6 +294,7 @@ export interface CodeModuleFunctionPreview {
   functions: CodeModuleFunctionShape[];
   skipped: { name: string; reason: string }[];
   syntax_error: string | null;
+  explicit_mode: boolean;
   imports: string[];
   missing_in_env: string[];
   environment_id: string | null;

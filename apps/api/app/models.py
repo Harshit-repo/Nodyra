@@ -15,7 +15,10 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
+)
+from sqlalchemy import (
     text as sa_text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -417,6 +420,12 @@ class CodeModule(Base):
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     contents: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # When the file uses ``@node`` decorators (explicit mode), undecorated
+    # top-level functions are treated as helpers. Set this to also surface
+    # them as auto-generated single-port nodes.
+    include_undecorated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

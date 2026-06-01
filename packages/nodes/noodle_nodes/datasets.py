@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from noodle.artifacts import is_artifact_ref, write_bytes as artifact_write_bytes
+from noodle.artifacts import is_artifact_ref
 from noodle.datasets import (
     dataset_path_for_ref,
     finalize_artifact_ref,
@@ -26,7 +26,6 @@ from noodle.datasets import (
     reserve_artifact_path,
 )
 from noodle.sdk import node
-
 
 _DUCKDB_ERROR = (
     "DuckDB is required for dataset nodes. Install with `uv pip install duckdb`."

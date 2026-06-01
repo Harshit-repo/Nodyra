@@ -15,6 +15,7 @@ credential selectors) is supplied via the decorator's ``params`` argument.
 """
 
 import ast
+import contextvars
 import inspect
 import types
 import typing
@@ -61,6 +62,16 @@ class NodeDef:
     # True when the function declares **kwargs — the engine then passes
     # whatever kwargs it has without filtering.
     accepts_var_keyword: bool = False
+    # Downstream-declared wiring: maps this node's input-port name to the
+    # source it should be fed from, ``"<source_id>"`` or
+    # ``"<source_id>.<output_port>"``. Used at graph-build time, not by the
+    # engine. Only populated for ``@node``-decorated functions that pass
+    # ``wires=...``.
+    wires: dict[str, str] = field(default_factory=dict)
+    # The id declared on the decorator (or the function name). For user
+    # modules the registry id is namespaced ``user:<module_id>:<declared_id>``
+    # while ``wires`` references use this bare declared id.
+    declared_id: str = ""
 
 
 class NodeRegistry:
@@ -89,6 +100,16 @@ class NodeRegistry:
 
 # The default registry that built-in nodes register into.
 registry = NodeRegistry()
+
+# When truthy, the ``@node`` decorator only attaches metadata to the function
+# and does NOT register into a global registry. ``register_module_functions``
+# sets this while exec'ing user modules so a bare ``@node`` in user code can't
+# pollute the process-wide registry or crash on a duplicate / non-namespaced
+# id; the function's ``__noodle_node__`` metadata is read back afterwards and
+# registered under a namespaced id instead.
+_suppress_registration: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "noodle_suppress_node_registration", default=False
+)
 
 
 def _signature_info(func: Callable[..., Any]) -> tuple[frozenset[str], bool]:
@@ -278,11 +299,204 @@ def _function_param_specs(
     return specs
 
 
+@dataclass
+class DiscoveredNode:
+    """A node found by static discovery, plus its declared wiring.
+
+    ``manifest`` carries the namespaced id (``user:<module_id>:<declared_id>``).
+    ``declared_id`` is the bare id ``wires`` entries reference. ``wires`` maps an
+    input-port name to ``\"<source_id>\"`` / ``\"<source_id>.<output>\"``.
+    """
+
+    manifest: NodeManifest
+    declared_id: str
+    wires: dict[str, str] = field(default_factory=dict)
+    decorated: bool = False
+
+
+def _find_node_decorator(
+    stmt: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> ast.expr | None:
+    """Return the ``@node`` decorator node (call or bare name), else ``None``."""
+    for dec in stmt.decorator_list:
+        target = dec.func if isinstance(dec, ast.Call) else dec
+        if _annotation_name(target) == "node":
+            return dec
+    return None
+
+
+def _decorator_kwargs(dec: ast.expr) -> dict[str, Any]:
+    """Statically evaluate the literal keyword args of an ``@node(...)`` call.
+
+    Non-literal arguments (references, f-strings, calls) are skipped rather than
+    failing the whole discovery — they just won't contribute UI metadata.
+    """
+    if not isinstance(dec, ast.Call):
+        return {}
+    out: dict[str, Any] = {}
+    for kw in dec.keywords:
+        if kw.arg is None:
+            continue
+        try:
+            out[kw.arg] = ast.literal_eval(kw.value)
+        except (ValueError, TypeError, SyntaxError):
+            continue
+    return out
+
+
+def _decorated_node_from_ast(
+    module_id: str,
+    stmt: ast.FunctionDef | ast.AsyncFunctionDef,
+    kwargs: dict[str, Any],
+    default_category: str,
+) -> DiscoveredNode:
+    """Build a :class:`DiscoveredNode` from a function's ``@node`` metadata."""
+    declared_id = str(kwargs.get("id") or stmt.name)
+    name = str(kwargs.get("name") or stmt.name)
+    category = str(kwargs.get("category") or default_category)
+    version = str(kwargs.get("version") or "1.0.0")
+    description = str(kwargs.get("description") or ast.get_docstring(stmt) or "")
+    icon = kwargs.get("icon")
+    inputs = kwargs.get("inputs")
+    inputs = ["input"] if inputs is None else list(inputs)
+    outputs = list(kwargs.get("outputs") or ["main"])
+    input_kinds = kwargs.get("input_kinds") or {}
+    output_kinds = kwargs.get("output_kinds") or {}
+    param_meta = kwargs.get("params") or {}
+    if not isinstance(param_meta, dict):
+        param_meta = {}
+
+    input_set = set(inputs)
+    params: list[ParamSpec] = []
+    for pname, type_label, has_default, default in _function_param_specs(stmt):
+        if pname in input_set:
+            continue  # wired input port, not a config parameter
+        meta = param_meta.get(pname, {})
+        if not isinstance(meta, dict):
+            meta = {}
+        credential_meta = meta.get("credential")
+        credential = (
+            CredentialSpec.model_validate(credential_meta)
+            if isinstance(credential_meta, dict)
+            else None
+        )
+        params.append(
+            ParamSpec(
+                name=pname,
+                type="credential" if credential else type_label,
+                required=not has_default,
+                default=default,
+                description=str(meta.get("description", "")),
+                placeholder=str(meta.get("placeholder", "")),
+                choices=meta.get("choices"),
+                multiline=bool(meta.get("multiline", False)),
+                key_value=bool(meta.get("key_value", False)),
+                credential=credential,
+            )
+        )
+
+    manifest = NodeManifest(
+        id=f"user:{module_id}:{declared_id}",
+        name=name,
+        category=category,
+        version=version,
+        description=description,
+        icon=icon,
+        inputs=[
+            PortSpec(name=n, data_kind=input_kinds.get(n, "any")) for n in inputs
+        ],
+        params=params,
+        outputs=[
+            PortSpec(name=o, data_kind=output_kinds.get(o, "any")) for o in outputs
+        ],
+    )
+    raw_wires = kwargs.get("wires") or {}
+    wires = (
+        {str(k): str(v) for k, v in raw_wires.items()}
+        if isinstance(raw_wires, dict)
+        else {}
+    )
+    return DiscoveredNode(
+        manifest=manifest, declared_id=declared_id, wires=wires, decorated=True
+    )
+
+
+def _auto_node_from_ast(
+    module_id: str,
+    stmt: ast.FunctionDef | ast.AsyncFunctionDef,
+    category: str,
+) -> DiscoveredNode:
+    """Build a single-port auto node for an undecorated function."""
+    params = [
+        ParamSpec(name=name, type=type_label, required=not has_default, default=default)
+        for name, type_label, has_default, default in _function_param_specs(stmt)
+    ]
+    manifest = NodeManifest(
+        id=f"user:{module_id}:{stmt.name}",
+        name=stmt.name,
+        category=category,
+        version="1.0.0",
+        description=ast.get_docstring(stmt) or "",
+        icon=None,
+        inputs=[PortSpec(name="input")],
+        params=params,
+        outputs=[PortSpec(name="main")],
+    )
+    return DiscoveredNode(manifest=manifest, declared_id=stmt.name, wires={})
+
+
+def discover_module_nodes(
+    module_id: str,
+    source: str,
+    *,
+    category: str = "Custom",
+    include_undecorated: bool = False,
+) -> tuple[list[DiscoveredNode], list[tuple[str, str]]]:
+    """Statically discover the nodes a module exposes without executing code.
+
+    If any top-level function carries an ``@node`` decorator the module is in
+    *explicit mode*: only decorated functions become nodes, and undecorated
+    functions are treated as helpers (callable at runtime but not shown) unless
+    ``include_undecorated`` is set, in which case they are also auto-converted.
+    A module with no decorators keeps the original behaviour: every top-level
+    function becomes a single-port node.
+    """
+    tree = ast.parse(source)
+    functions = [
+        s for s in tree.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    decorators = {s.name: _find_node_decorator(s) for s in functions}
+    explicit_mode = any(d is not None for d in decorators.values())
+
+    discovered: list[DiscoveredNode] = []
+    skipped: list[tuple[str, str]] = []
+
+    for stmt in functions:
+        dec = decorators[stmt.name]
+        if dec is not None:
+            discovered.append(
+                _decorated_node_from_ast(
+                    module_id, stmt, _decorator_kwargs(dec), category
+                )
+            )
+            continue
+        # Undecorated function.
+        if explicit_mode and not include_undecorated:
+            continue  # helper — callable at runtime, not surfaced as a node
+        if stmt.args.vararg is not None or stmt.args.kwarg is not None:
+            skipped.append((stmt.name, "*args / **kwargs are not supported"))
+            continue
+        discovered.append(_auto_node_from_ast(module_id, stmt, category))
+
+    return discovered, skipped
+
+
 def discover_module_function_manifests(
     module_id: str,
     source: str,
     *,
     category: str = "Custom",
+    include_undecorated: bool = False,
 ) -> tuple[list[NodeManifest], list[tuple[str, str]]]:
     """Statically discover top-level uploaded functions without executing code.
 
@@ -291,48 +505,10 @@ def discover_module_function_manifests(
     cannot run inside the API process. Runtime registration still uses
     ``register_module_functions`` because workflow execution needs callables.
     """
-    tree = ast.parse(source)
-    manifests: list[NodeManifest] = []
-    skipped: list[tuple[str, str]] = []
-
-    for stmt in tree.body:
-        if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if stmt.args.vararg is not None or stmt.args.kwarg is not None:
-            skipped.append((stmt.name, "*args / **kwargs are not supported"))
-            continue
-
-        param_specs = _function_param_specs(stmt)
-        # Single-port model: the node has one "input" port (the upstream data
-        # envelope, available as $json in expressions) and every function
-        # parameter shows up in the inspector. Users wire upstream into the
-        # one port and reference its fields via {{ $json.field }} in each
-        # param — or set literals/expressions directly.
-        input_names = ["input"]
-        params = [
-            ParamSpec(
-                name=name,
-                type=type_label,
-                required=not has_default,
-                default=default,
-            )
-            for name, type_label, has_default, default in param_specs
-        ]
-        manifests.append(
-            NodeManifest(
-                id=f"user:{module_id}:{stmt.name}",
-                name=stmt.name,
-                category=category,
-                version="1.0.0",
-                description=ast.get_docstring(stmt) or "",
-                icon=None,
-                inputs=[PortSpec(name=name) for name in input_names],
-                params=params,
-                outputs=[PortSpec(name="main")],
-            )
-        )
-
-    return manifests, skipped
+    discovered, skipped = discover_module_nodes(
+        module_id, source, category=category, include_undecorated=include_undecorated
+    )
+    return [d.manifest for d in discovered], skipped
 
 
 def register_module_functions(
@@ -341,6 +517,7 @@ def register_module_functions(
     registry: NodeRegistry,
     *,
     category: str = "Custom",
+    include_undecorated: bool = False,
 ) -> tuple[list[str], list[tuple[str, str]]]:
     """Exec ``source`` and register each top-level function as a runtime node.
 
@@ -348,6 +525,12 @@ def register_module_functions(
     same manifest treatment as ``@node``-decorated built-ins (type hints →
     input ports / param specs, return → output, async detection). Each
     function ``foo`` is registered under id ``user:<module_id>:<foo>``.
+
+    If any top-level function uses the ``@node`` decorator the module is in
+    *explicit mode*: only decorated functions are registered as nodes (their
+    decorator metadata — ports, params, wiring — is honoured), and undecorated
+    functions stay callable helpers unless ``include_undecorated`` is set. A
+    module with no decorators registers every top-level function as before.
 
     ``module_id`` should be the DB row id of the uploaded file so the same
     node id is stable across re-registers, and graphs that reference a
@@ -366,8 +549,25 @@ def register_module_functions(
         "__builtins__": __builtins__,
     }
     pre_keys = set(module_globals.keys())
-    exec(source, module_globals)  # noqa: S102 - running user Python is the point
+    # Suppress global registration so a bare ``@node`` in user code only
+    # attaches ``__noodle_node__`` metadata; we register it ourselves below
+    # under a namespaced id.
+    token = _suppress_registration.set(True)
+    try:
+        exec(source, module_globals)  # noqa: S102 - running user Python is the point
+    finally:
+        _suppress_registration.reset(token)
     new_keys = [k for k in module_globals if k not in pre_keys]
+
+    user_functions = [
+        module_globals[k]
+        for k in new_keys
+        if inspect.isfunction(module_globals[k])
+        and module_globals[k].__module__ == module_globals["__name__"]
+    ]
+    explicit_mode = any(
+        getattr(fn, "__noodle_node__", None) is not None for fn in user_functions
+    )
 
     registered: list[str] = []
     skipped: list[tuple[str, str]] = []
@@ -378,6 +578,31 @@ def register_module_functions(
             continue
         if value.__module__ != module_globals["__name__"]:
             continue  # imported from elsewhere, not a user function
+
+        decorator_def: NodeDef | None = getattr(value, "__noodle_node__", None)
+        if decorator_def is not None:
+            # Explicit ``@node`` — honour the decorator's manifest, re-id'd
+            # into the module namespace, and carry its declared wiring.
+            namespaced_id = f"user:{module_id}:{decorator_def.declared_id}"
+            manifest = decorator_def.manifest.model_copy(
+                update={"id": namespaced_id}
+            )
+            registry._nodes[namespaced_id] = NodeDef(  # noqa: SLF001
+                func=decorator_def.func,
+                manifest=manifest,
+                is_async=decorator_def.is_async,
+                param_names=decorator_def.param_names,
+                accepts_var_keyword=decorator_def.accepts_var_keyword,
+                wires=decorator_def.wires,
+                declared_id=decorator_def.declared_id,
+            )
+            registered.append(key)
+            continue
+
+        # Undecorated function.
+        if explicit_mode and not include_undecorated:
+            continue  # helper — callable from nodes at runtime, not a node
+
         try:
             params = inspect.signature(value).parameters
         except (TypeError, ValueError):
@@ -430,6 +655,7 @@ def register_module_functions(
             is_async=inspect.iscoroutinefunction(value),
             param_names=sig_param_names,
             accepts_var_keyword=accepts_var_kw,
+            declared_id=key,
         )
         # Re-register on top: drop any prior entry under the same id so an
         # edited file replaces its previous registration cleanly.
@@ -459,6 +685,7 @@ def node(
     input_kinds: dict[str, str] | None = None,
     output_kinds: dict[str, str] | None = None,
     icon: str | None = None,
+    wires: dict[str, str] | None = None,
     registry: NodeRegistry = registry,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Register a function as a Noodle node.
@@ -468,6 +695,12 @@ def node(
     ``{"method": {"choices": ["GET", "POST"]}}``. ``outputs`` declares named
     output ports; a node with more than one output must return a dict keyed by
     those names (omit a key to leave that branch untaken).
+
+    ``wires`` declares incoming edges for user-module graphs: it maps one of
+    this node's input-port names to the upstream it should be fed from,
+    ``"<source_id>"`` (the source's first/``main`` output) or
+    ``"<source_id>.<output_port>"``. It is read when generating a starter
+    graph and ignored for built-in nodes.
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -493,9 +726,12 @@ def node(
             is_async=inspect.iscoroutinefunction(func),
             param_names=param_names,
             accepts_var_keyword=has_var_kw,
+            wires=dict(wires or {}),
+            declared_id=node_id,
         )
-        registry.register(node_def)
         func.__noodle_node__ = node_def  # type: ignore[attr-defined]
+        if not _suppress_registration.get():
+            registry.register(node_def)
         return func
 
     return decorator

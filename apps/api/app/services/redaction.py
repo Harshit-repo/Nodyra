@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Credential
-from app.services.crypto import decrypt_data
+from app.services.crypto import decrypt_credential
 
 REDACTED = "***REDACTED***"
 
@@ -90,7 +90,9 @@ async def load_secret_values(session: AsyncSession) -> list[str]:
         result = await session.scalars(select(Credential))
         values: list[str] = []
         for credential in result.all():
-            data = decrypt_data(credential.encrypted_data)
+            data = decrypt_credential(
+                credential.encrypted_data, credential.encrypted_dek
+            )
             for value in data.values():
                 secret = _usable_secret(value)
                 if secret is not None:

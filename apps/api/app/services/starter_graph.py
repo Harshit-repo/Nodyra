@@ -20,6 +20,8 @@ import ast
 import json
 from typing import Any
 
+from noodle.sdk import discover_module_nodes
+
 
 def _literal_value(node: ast.AST) -> Any:
     """Extract a Python literal from common literal AST nodes; else ``None``."""
@@ -38,9 +40,81 @@ def _literal_value(node: ast.AST) -> Any:
     return None
 
 
-def build_starter_graph(module_id: str, source: str) -> dict:
-    """Return a ``{"nodes": [...], "edges": [...]}`` graph payload."""
+def _wired_starter_graph(module_id: str, source: str, include_undecorated: bool) -> dict:
+    """Build a graph from ``@node`` decorators and their declared ``wires``.
+
+    Each decorated function becomes a node; ``wires`` entries become edges.
+    Node graph ids are ``n_<declared_id>`` so a wire's ``"<source_id>"`` /
+    ``"<source_id>.<output>"`` resolves to the matching node.
+    """
+    discovered, _ = discover_module_nodes(
+        module_id, source, include_undecorated=include_undecorated
+    )
+
+    nodes: list[dict] = []
+    node_id_by_declared: dict[str, str] = {}
+    for i, dn in enumerate(discovered):
+        nid = f"n_{dn.declared_id}"
+        node_id_by_declared[dn.declared_id] = nid
+        nodes.append(
+            {
+                "id": nid,
+                "type": dn.manifest.id,
+                "params": {},
+                "position": {"x": 60.0 + i * 240.0, "y": 120.0},
+                "disabled": False,
+            }
+        )
+
+    edges: list[dict] = []
+    edge_seq = 0
+    for dn in discovered:
+        target_nid = node_id_by_declared[dn.declared_id]
+        for input_port, spec in dn.wires.items():
+            source_declared, _, output_port = spec.partition(".")
+            source_nid = node_id_by_declared.get(source_declared)
+            if source_nid is None:
+                continue  # wire references an unknown / excluded function
+            edges.append(
+                {
+                    "id": f"e{edge_seq}",
+                    "source": source_nid,
+                    "source_output": output_port or "main",
+                    "target": target_nid,
+                    "target_input": input_port,
+                }
+            )
+            edge_seq += 1
+
+    return {"nodes": nodes, "edges": edges}
+
+
+def build_starter_graph(
+    module_id: str, source: str, *, include_undecorated: bool = False
+) -> dict:
+    """Return a ``{"nodes": [...], "edges": [...]}`` graph payload.
+
+    When the module uses ``@node`` decorators, edges come from each node's
+    declared ``wires``. Otherwise edges are inferred from module-level
+    ``<var> = <call>`` data flow.
+    """
     tree = ast.parse(source)
+
+    # Explicit mode: any top-level function carries an ``@node`` decorator.
+    for stmt in tree.body:
+        if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for dec in stmt.decorator_list:
+            target = dec.func if isinstance(dec, ast.Call) else dec
+            name = (
+                target.id
+                if isinstance(target, ast.Name)
+                else target.attr
+                if isinstance(target, ast.Attribute)
+                else None
+            )
+            if name == "node":
+                return _wired_starter_graph(module_id, source, include_undecorated)
 
     # Discover top-level functions (skip *args/**kwargs).
     function_params: dict[str, list[str]] = {}

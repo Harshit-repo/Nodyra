@@ -129,7 +129,7 @@ async def test_error_workflow_runs_with_failure_payload(client: AsyncClient) -> 
     run = (await client.get(f"/runs/{run_id}")).json()
     assert run["status"] == "error"
 
-    runs = (await client.get("/runs")).json()
+    runs = (await client.get("/runs")).json()["items"]
     error_runs = [r for r in runs if r["trigger_type"] == "error"]
     assert len(error_runs) == 1
     handler_run = (await client.get(f"/runs/{error_runs[0]['id']}")).json()

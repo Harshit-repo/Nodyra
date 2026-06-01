@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.db import get_session
 from app.models import Deployment, Run, User, Workflow, WorkflowVersion
 from app.schemas import (
@@ -25,7 +26,6 @@ from app.services.audit import log_audit
 from app.services.graph_utils import first_trigger_node
 from app.services.runner import start_run
 from app.services.unsafe_nodes import classify as classify_unsafe_nodes
-from app.config import settings
 
 router = APIRouter(prefix="/deployments", tags=["deployments"])
 

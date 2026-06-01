@@ -52,21 +52,21 @@ class ArtifactBackend(Protocol):
 
     name: str
 
-    def delete(self, artifacts: Iterable["Artifact"]) -> None:
+    def delete(self, artifacts: Iterable[Artifact]) -> None:
         """Remove the underlying bytes for each artifact. Must be idempotent.
 
         Failures must be logged but never raised — bulk retention sweeps
         rely on this not aborting halfway through.
         """
 
-    def open_download(self, artifact: "Artifact") -> ArtifactDownload:
+    def open_download(self, artifact: Artifact) -> ArtifactDownload:
         """Return how to deliver the artifact's bytes.
 
         Raises ``FileNotFoundError`` when the row's storage_key has no
         backing bytes (orphan row from a failed write).
         """
 
-    def signed_url(self, artifact: "Artifact", *, expires_in: int = 300) -> str | None:
+    def signed_url(self, artifact: Artifact, *, expires_in: int = 300) -> str | None:
         """Optional time-limited URL bypassing the API process.
 
         Local backends should return ``None``; clients then fall back to
@@ -83,7 +83,7 @@ class ArtifactBackend(Protocol):
         of an empty 'directory' to reclaim.
         """
 
-    def upload_from_local(self, artifact: "Artifact", local_path: Path) -> None:
+    def upload_from_local(self, artifact: Artifact, local_path: Path) -> None:
         """Persist bytes for ``artifact`` from a local file.
 
         The worker always writes to the host filesystem via
@@ -122,18 +122,18 @@ def _resolve_local_path(storage_key: str) -> Path:
 class LocalBackend:
     name = "local"
 
-    def _path(self, artifact: "Artifact") -> Path:
+    def _path(self, artifact: Artifact) -> Path:
         if artifact.storage_backend != self.name:
             raise ValueError(
                 f"local backend cannot handle storage_backend={artifact.storage_backend!r}"
             )
         return _resolve_local_path(artifact.storage_key)
 
-    def path_for_artifact(self, artifact: "Artifact") -> Path:
+    def path_for_artifact(self, artifact: Artifact) -> Path:
         """Public path accessor used by writers that still need a Path."""
         return self._path(artifact)
 
-    def delete(self, artifacts: Iterable["Artifact"]) -> None:
+    def delete(self, artifacts: Iterable[Artifact]) -> None:
         base = _artifact_base_dir()
         for row in artifacts:
             if row.storage_backend != self.name:
@@ -159,7 +159,7 @@ class LocalBackend:
             except OSError:
                 pass
 
-    def open_download(self, artifact: "Artifact") -> ArtifactDownload:
+    def open_download(self, artifact: Artifact) -> ArtifactDownload:
         path = self._path(artifact)
         if not path.exists():
             raise FileNotFoundError(path)
@@ -170,7 +170,7 @@ class LocalBackend:
             path=path,
         )
 
-    def signed_url(self, artifact: "Artifact", *, expires_in: int = 300) -> str | None:
+    def signed_url(self, artifact: Artifact, *, expires_in: int = 300) -> str | None:
         return None
 
     def stats(self) -> dict[str, Any]:
@@ -202,7 +202,7 @@ class LocalBackend:
         except OSError:
             pass
 
-    def upload_from_local(self, artifact: "Artifact", local_path: Path) -> None:
+    def upload_from_local(self, artifact: Artifact, local_path: Path) -> None:
         # Bytes are already on the local FS; nothing to do.
         return None
 

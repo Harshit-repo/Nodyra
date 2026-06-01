@@ -23,7 +23,6 @@ from typing import Any
 from noodle.artifacts import read_bytes as artifact_read_bytes
 from noodle.artifacts import write_bytes as artifact_write_bytes
 from noodle.sdk import node
-
 from noodle_nodes.datasets import dataframe_to_dataset, read_dataset
 
 MODEL_MARKER = "__noodle_model__"

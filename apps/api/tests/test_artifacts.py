@@ -9,216 +9,19 @@ from app.models import Artifact, Run
 from app.services import retention
 
 
-async def test_code_node_creates_downloadable_artifact_and_downstream_reads_it(
-    client: AsyncClient,
-) -> None:
-    workflow_id = (await client.post("/workflows", json={"name": "Artifacts"})).json()[
-        "id"
-    ]
-    graph = {
-        "nodes": [
-            {
-                "id": "t",
-                "type": "manual_trigger",
-                "params": {},
-                "position": {"x": -200, "y": 0},
-            },
-            {
-                "id": "writer",
-                "type": "code",
-                "params": {
-                    "code": "output = artifacts.write_text('hello world', name='hello.txt')"
-                },
-                "position": {"x": 0, "y": 0},
-            },
-            {
-                "id": "reader",
-                "type": "code",
-                "params": {"code": "output = artifacts.read_text(input).upper()"},
-                "position": {"x": 200, "y": 0},
-            },
-        ],
-        "edges": [
-            {
-                "id": "e0",
-                "source": "t",
-                "source_output": "main",
-                "target": "writer",
-                "target_input": "input",
-            },
-            {
-                "id": "e1",
-                "source": "writer",
-                "source_output": "main",
-                "target": "reader",
-                "target_input": "input",
-            },
-        ],
-    }
-    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
-
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
-    run = (await client.get(f"/runs/{run_id}")).json()
-    results = {node["node_id"]: node for node in run["node_runs"]}
-    ref = results["writer"]["output"]["main"]
-
-    assert ref["__noodle_artifact__"] is True
-    assert ref["name"] == "hello.txt"
-    assert ref["size_bytes"] == len("hello world")
-    assert results["reader"]["output"]["main"] == "HELLO WORLD"
-
-    artifacts = (await client.get(f"/runs/{run_id}/artifacts")).json()
-    assert len(artifacts) == 1
-    assert artifacts[0]["id"] == ref["artifact_id"]
-    assert artifacts[0]["node_id"] == "writer"
-
-    download = await client.get(f"/artifacts/{ref['artifact_id']}/download")
-    assert download.status_code == 200
-    assert download.text == "hello world"
-
-
-async def test_binary_artifact_keeps_bytes_out_of_node_output(
-    client: AsyncClient,
-) -> None:
-    workflow_id = (await client.post("/workflows", json={"name": "Binary"})).json()[
-        "id"
-    ]
-    graph = {
-        "nodes": [
-            {
-                "id": "t",
-                "type": "manual_trigger",
-                "params": {},
-                "position": {"x": 0, "y": 0},
-            },
-            {
-                "id": "blob",
-                "type": "code",
-                "params": {
-                    "code": "output = artifacts.write_bytes(b'x' * 2048, name='blob.bin')"
-                },
-                "position": {"x": 250, "y": 0},
-            },
-        ],
-        "edges": [
-            {
-                "id": "e",
-                "source": "t",
-                "source_output": "main",
-                "target": "blob",
-                "target_input": "input",
-            }
-        ],
-    }
-    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
-
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
-    run = (await client.get(f"/runs/{run_id}")).json()
-    blob_run = next(nr for nr in run["node_runs"] if nr["node_id"] == "blob")
-    ref = blob_run["output"]["main"]
-
-    assert ref["size_bytes"] == 2048
-    assert "base64" not in ref
-    assert "preview" not in ref
-    download = await client.get(f"/artifacts/{ref['artifact_id']}/download")
-    assert download.content == b"x" * 2048
-
-
-async def test_artifact_size_limit_fails_cleanly(client: AsyncClient) -> None:
-    workflow_id = (await client.post("/workflows", json={"name": "Too Big"})).json()[
-        "id"
-    ]
-    graph = {
-        "nodes": [
-            {
-                "id": "t",
-                "type": "manual_trigger",
-                "params": {},
-                "position": {"x": 0, "y": 0},
-            },
-            {
-                "id": "blob",
-                "type": "code",
-                "params": {
-                    "code": "output = artifacts.write_bytes(b'x' * 16, name='blob.bin')"
-                },
-                "position": {"x": 250, "y": 0},
-            },
-        ],
-        "edges": [
-            {
-                "id": "e",
-                "source": "t",
-                "source_output": "main",
-                "target": "blob",
-                "target_input": "input",
-            }
-        ],
-    }
-    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
-
-    previous = settings.max_artifact_bytes
-    settings.max_artifact_bytes = 8
-    try:
-        run_id = (
-            await client.post(f"/workflows/{workflow_id}/run", json={})
-        ).json()["run_id"]
-        run = (await client.get(f"/runs/{run_id}")).json()
-    finally:
-        settings.max_artifact_bytes = previous
-
-    assert run["status"] == "error"
-    blob_run = next(nr for nr in run["node_runs"] if nr["node_id"] == "blob")
-    assert "limit is 8 bytes" in blob_run["error"]
-
-
 async def test_retention_prune_deletes_artifact_metadata_and_file(
     client: AsyncClient,
 ) -> None:
-    workflow_id = (await client.post("/workflows", json={"name": "Prune"})).json()[
-        "id"
-    ]
-    graph = {
-        "nodes": [
-            {
-                "id": "t",
-                "type": "manual_trigger",
-                "params": {},
-                "position": {"x": 0, "y": 0},
-            },
-            {
-                "id": "writer",
-                "type": "code",
-                "params": {
-                    "code": "output = artifacts.write_text('old', name='old.txt')"
-                },
-                "position": {"x": 250, "y": 0},
-            },
-        ],
-        "edges": [
-            {
-                "id": "e",
-                "source": "t",
-                "source_output": "main",
-                "target": "writer",
-                "target_input": "input",
-            }
-        ],
-    }
-    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    # Produce a real artifact through the supported dataset path (code nodes no
+    # longer write artifacts directly; artifacts flow as refs from dedicated
+    # nodes such as records_to_dataset).
+    await _make_dataset_run(client)
 
     async with retention.SessionLocal() as session:
         artifact = (await session.scalars(select(Artifact))).one()
         artifact_path = Path(settings.artifacts_dir) / artifact.storage_key
         assert artifact_path.exists()
-        run = (await session.scalars(select(Run).where(Run.id == run_id))).one()
+        run = (await session.scalars(select(Run))).one()
         run.started_at = datetime.now(UTC) - timedelta(days=10)
         await session.commit()
 
@@ -327,35 +130,10 @@ async def test_router_redirects_when_backend_returns_signed_url(
     client: AsyncClient, monkeypatch
 ) -> None:
     """Backends with ``signed_url`` short-circuit the bytes path with a 307."""
-    workflow_id = (await client.post("/workflows", json={"name": "S3-like"})).json()["id"]
-    graph = {
-        "nodes": [
-            {"id": "t", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
-            {
-                "id": "w",
-                "type": "code",
-                "params": {
-                    "code": "output = artifacts.write_text('x', name='x.txt')"
-                },
-                "position": {"x": 250, "y": 0},
-            },
-        ],
-        "edges": [
-            {"id": "e", "source": "t", "source_output": "main", "target": "w", "target_input": "input"}
-        ],
-    }
-    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
-    await client.post(f"/workflows/{workflow_id}/run", json={})
+    _workflow_id, artifact_id = await _make_dataset_run(client)
 
-    # Look up the artifact via the test-bound dependency.
     from app.db import get_session as _get_session
     override = client._transport.app.dependency_overrides[_get_session]
-    artifact_id: str | None = None
-    async for session in override():
-        artifact = (await session.scalars(select(Artifact))).first()
-        assert artifact is not None
-        artifact_id = artifact.id
-        break
 
     # Repoint that row's backend to our recorder and register the recorder.
     fake = _RecordingBackend()
@@ -381,31 +159,7 @@ async def test_signed_url_endpoint_returns_null_for_local_backend(
     client: AsyncClient,
 ) -> None:
     """Local backend has no concept of pre-signed URLs; UI falls back to /download."""
-    workflow_id = (await client.post("/workflows", json={"name": "LocalURL"})).json()["id"]
-    graph = {
-        "nodes": [
-            {"id": "t", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
-            {
-                "id": "w",
-                "type": "code",
-                "params": {"code": "output = artifacts.write_text('y', name='y.txt')"},
-                "position": {"x": 250, "y": 0},
-            },
-        ],
-        "edges": [
-            {"id": "e", "source": "t", "source_output": "main", "target": "w", "target_input": "input"}
-        ],
-    }
-    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
-    await client.post(f"/workflows/{workflow_id}/run", json={})
-
-    from app.db import get_session as _get_session
-    override = client._transport.app.dependency_overrides[_get_session]
-    artifact_id: str | None = None
-    async for session in override():
-        artifact = (await session.scalars(select(Artifact))).first()
-        artifact_id = artifact.id
-        break
+    _workflow_id, artifact_id = await _make_dataset_run(client)
     resp = await client.get(f"/artifacts/{artifact_id}/url")
     assert resp.status_code == 200
     assert resp.json() == {"url": None, "expires_in": None}

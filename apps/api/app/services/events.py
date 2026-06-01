@@ -78,8 +78,19 @@ class RunBroker:
     # ------------------------------------------------------------------
 
     def publish(self, run_id: str, event: Event) -> None:
-        """Publish an event synchronously (called from async engine context)."""
-        asyncio.get_running_loop().create_task(self._async_publish(run_id, event))
+        """Publish an event (usually from an async engine context).
+
+        Redis fan-out needs a running event loop. When called without one
+        (synchronous callers and tests), fall back to synchronous in-process
+        buffering so subscribers and the reaper still observe the event
+        instead of raising ``RuntimeError: no running event loop``.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._publish_inprocess(run_id, event)
+            return
+        loop.create_task(self._async_publish(run_id, event))
 
     async def _async_publish(self, run_id: str, event: Event) -> None:
         payload = json.dumps(event)
@@ -96,6 +107,9 @@ class RunBroker:
                 logger.exception("Redis publish failed for run %s — using in-process", run_id)
 
         # Fallback: in-process
+        self._publish_inprocess(run_id, event)
+
+    def _publish_inprocess(self, run_id: str, event: Event) -> None:
         self._events.setdefault(run_id, []).append(event)
         for queue in self._subscribers.get(run_id, set()):
             queue.put_nowait(event)

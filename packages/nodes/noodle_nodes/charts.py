@@ -614,7 +614,6 @@ def _svg_to_png(svg: str) -> bytes:
     else:
         return cairosvg.svg2png(bytestring=svg.encode("utf-8"))
     try:
-        import io
 
         import matplotlib  # type: ignore
 

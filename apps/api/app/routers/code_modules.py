@@ -26,7 +26,7 @@ from app.security import optional_current_user, require_permission
 from app.services.audit import log_audit
 from app.services.starter_graph import build_starter_graph
 from noodle.models import NodeManifest
-from noodle.sdk import discover_module_function_manifests
+from noodle.sdk import discover_module_function_manifests, discover_module_nodes
 
 # A small import-name → pip-name map for common quirks. Anything not in here
 # falls back to assuming the pip name matches the import name (true for
@@ -168,6 +168,7 @@ async def create_code_module(
         environment_id=body.environment_id if body.scope == "environment" else None,
         name=body.name,
         contents=body.contents or "",
+        include_undecorated=body.include_undecorated,
     )
     session.add(module)
     await log_audit(session, "create", "code_module", detail=body.name,
@@ -200,6 +201,8 @@ async def update_code_module(
         module.name = body.name
     if body.contents is not None:
         module.contents = body.contents
+    if body.include_undecorated is not None:
+        module.include_undecorated = body.include_undecorated
     await session.commit()
     await session.refresh(module)
     return module
@@ -235,7 +238,7 @@ async def _workflow_environment(
 
 
 def _preview_payload(
-    module_id: str, source: str, env: Environment | None
+    module_id: str, source: str, env: Environment | None, *, include_undecorated: bool
 ) -> CodeModuleFunctionPreview:
     """Parse the module statically to surface which functions become nodes.
 
@@ -261,18 +264,25 @@ def _preview_payload(
     imports = _extract_top_level_imports(source)
     missing = _missing_in_env(imports, env)
 
-    manifests, skipped = discover_module_function_manifests(module_id, source)
+    discovered, skipped = discover_module_nodes(
+        module_id, source, include_undecorated=include_undecorated
+    )
+    explicit_mode = any(node.decorated for node in discovered)
     return CodeModuleFunctionPreview(
-        registered=[manifest.name for manifest in manifests],
+        registered=[node.manifest.name for node in discovered],
         functions=[
             CodeModuleFunctionShape(
-                name=manifest.name,
-                inputs=[p.name for p in manifest.inputs],
-                params=[p.name for p in manifest.params],
+                name=node.manifest.name,
+                inputs=[p.name for p in node.manifest.inputs],
+                params=[p.name for p in node.manifest.params],
+                outputs=[p.name for p in node.manifest.outputs],
+                decorated=node.decorated,
+                wires=node.wires,
             )
-            for manifest in manifests
+            for node in discovered
         ],
         skipped=[{"name": name, "reason": reason} for name, reason in skipped],
+        explicit_mode=explicit_mode,
         imports=imports,
         missing_in_env=missing,
         **env_info,
@@ -285,7 +295,12 @@ async def preview_code_module(
 ):
     module = await _load(session, module_id)
     env = await _workflow_environment(session, module.workflow_id)
-    return _preview_payload(module.id, module.contents, env)
+    return _preview_payload(
+        module.id,
+        module.contents,
+        env,
+        include_undecorated=module.include_undecorated,
+    )
 
 
 @router.post(
@@ -305,7 +320,11 @@ async def starter_graph(
     if not module.contents.strip():
         raise HTTPException(400, "Module has no contents.")
     try:
-        return build_starter_graph(module.id, module.contents)
+        return build_starter_graph(
+            module.id,
+            module.contents,
+            include_undecorated=module.include_undecorated,
+        )
     except SyntaxError as exc:
         raise HTTPException(400, f"Syntax error: {exc}") from exc
 
@@ -342,6 +361,7 @@ async def workflow_custom_node_manifests(
             discovered, _ = discover_module_function_manifests(
                 module.id,
                 module.contents,
+                include_undecorated=module.include_undecorated,
             )
         except SyntaxError:
             continue

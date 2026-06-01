@@ -95,7 +95,7 @@ async def test_schedule_tick_fires_when_due(client: AsyncClient) -> None:
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     await triggers._tick()  # first sighting starts the clock, no run
-    assert (await client.get(f"/workflows/{workflow_id}/runs")).json() == []
+    assert (await client.get(f"/workflows/{workflow_id}/runs")).json()["items"] == []
 
     # Rewind the persisted last_fired so the schedule is overdue.
     async with triggers.SessionLocal() as session:
@@ -111,7 +111,7 @@ async def test_schedule_tick_fires_when_due(client: AsyncClient) -> None:
 
     await triggers._tick()  # now overdue — should fire
 
-    runs = (await client.get(f"/workflows/{workflow_id}/runs")).json()
+    runs = (await client.get(f"/workflows/{workflow_id}/runs")).json()["items"]
     assert len(runs) == 1
     assert runs[0]["trigger_type"] == "schedule"
 
@@ -137,7 +137,7 @@ async def test_schedule_tick_honours_cron(client: AsyncClient) -> None:
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     await triggers._tick()  # start the clock
-    assert (await client.get(f"/workflows/{workflow_id}/runs")).json() == []
+    assert (await client.get(f"/workflows/{workflow_id}/runs")).json()["items"] == []
 
     async with triggers.SessionLocal() as session:
         state = (
@@ -151,7 +151,7 @@ async def test_schedule_tick_honours_cron(client: AsyncClient) -> None:
         await session.commit()
 
     await triggers._tick()  # a cron minute has elapsed — should fire
-    runs = (await client.get(f"/workflows/{workflow_id}/runs")).json()
+    runs = (await client.get(f"/workflows/{workflow_id}/runs")).json()["items"]
     assert len(runs) == 1
     assert runs[0]["trigger_type"] == "schedule"
 

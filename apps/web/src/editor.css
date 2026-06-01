@@ -470,6 +470,33 @@
 .fn-shape.fn-inputs {
   color: var(--accent, #66b2ff);
 }
+.fn-shape.fn-outputs {
+  color: var(--ok, #4caf82);
+}
+.fn-shape.fn-wires {
+  color: var(--warn, #d6a14d);
+}
+.fn-shape.fn-decorated {
+  color: var(--accent, #66b2ff);
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.functions-undecorated-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 8px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.functions-undecorated-toggle input {
+  cursor: pointer;
+}
 .functions-rule-hint {
   margin: 4px 0 8px;
   font-size: 11px;
@@ -1417,9 +1444,6 @@ body.is-resizing-vertical {
   white-space: nowrap;
 }
 
-.node-badges {
-}
-
 .port-tag {
   position: absolute;
   left: calc(100% + 9px);
@@ -1794,17 +1818,15 @@ body.is-resizing-vertical {
   pointer-events: none;
 }
 .node-badges span {
-  min-width: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
   height: 16px;
-  padding: 0 4px;
   border-radius: 4px;
   background: var(--bg);
   color: var(--ink-2);
   border: 1px solid var(--line);
-  font-size: 8px;
-  line-height: 14px;
-  text-align: center;
-  text-transform: uppercase;
 }
 .node-tile.missing-credential .node-badges span:first-child {
   color: #ffd479;

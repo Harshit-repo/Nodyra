@@ -216,7 +216,7 @@ async def test_scheduler_only_fires_due_trigger_in_two_schedule_graph(
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
     await triggers._tick()  # first sighting establishes ScheduleState
-    assert (await client.get(f"/workflows/{workflow_id}/runs")).json() == []
+    assert (await client.get(f"/workflows/{workflow_id}/runs")).json()["items"] == []
 
     async with triggers.SessionLocal() as session:
         state = (
@@ -230,7 +230,7 @@ async def test_scheduler_only_fires_due_trigger_in_two_schedule_graph(
         await session.commit()
 
     await triggers._tick()
-    runs = (await client.get(f"/workflows/{workflow_id}/runs")).json()
+    runs = (await client.get(f"/workflows/{workflow_id}/runs")).json()["items"]
     assert len(runs) == 1
     run = (await client.get(f"/runs/{runs[0]['id']}")).json()
     node_ids = {n["node_id"] for n in run["node_runs"]}

@@ -22,7 +22,17 @@ from sqlalchemy.orm import selectinload
 import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
 from app.config import settings
 from app.db import SessionLocal
-from app.models import CodeModule, Deployment, NodeRun, PinnedData, Run, RunQueueEntry, Workflow, WorkflowVersion
+from app.models import (
+    CodeModule,
+    Deployment,
+    NodeRun,
+    PinnedData,
+    Run,
+    RunQueueEntry,
+    Workflow,
+    WorkflowVersion,
+)
+from app.services import queue as run_queue
 from app.services.artifacts import (
     collect_artifact_refs,
     make_artifact_store,
@@ -41,7 +51,6 @@ from app.services.remote_dispatch import (
     build_env_payload,
     dispatcher,
 )
-from app.services import queue as run_queue
 from app.services.runtime_pool import pool as runtime_pool
 from noodle.context import artifact_store, call_chain, workflow_caller
 from noodle.engine import DEFAULT_NODE_TIMEOUTS, execute
@@ -711,7 +720,12 @@ async def _execute_run(
                 )
                 rows = (await session.scalars(stmt)).all()
                 workflow_modules = [
-                    {"id": m.id, "name": m.name, "contents": m.contents}
+                    {
+                        "id": m.id,
+                        "name": m.name,
+                        "contents": m.contents,
+                        "include_undecorated": m.include_undecorated,
+                    }
                     for m in rows
                 ]
         except Exception:  # noqa: BLE001 - missing table on legacy DB is fine
@@ -792,7 +806,10 @@ async def _execute_run(
                     continue
                 try:
                     register_module_functions(
-                        module["id"], module["contents"], node_registry
+                        module["id"],
+                        module["contents"],
+                        node_registry,
+                        include_undecorated=bool(module.get("include_undecorated")),
                     )
                     loaded_module_ids.append(module["id"])
                 except Exception as exc:  # noqa: BLE001 - bad code surfaces in the run

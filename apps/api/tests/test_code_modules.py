@@ -401,6 +401,94 @@ async def test_starter_graph_wires_variable_chain(client: AsyncClient) -> None:
     assert ("n_to_frame", "n_summarise", "input") in edges
 
 
+async def test_starter_graph_from_declared_wires(client: AsyncClient) -> None:
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Wired"})
+    ).json()["id"]
+    source = (
+        "from noodle import node\n"
+        "\n"
+        "@node(name='Ingest', id='ingest', outputs=['rows'])\n"
+        "def ingest(source: str = 'db'):\n"
+        "    return {'rows': source}\n"
+        "\n"
+        "@node(name='Transform', inputs=['rows'], wires={'rows': 'ingest.rows'})\n"
+        "def transform(rows=None, factor: int = 2):\n"
+        "    return rows\n"
+    )
+    module = (
+        await client.post(
+            "/code-modules",
+            json={
+                "scope": "workflow",
+                "workflow_id": workflow_id,
+                "name": "wired.py",
+                "contents": source,
+            },
+        )
+    ).json()
+    graph = (
+        await client.post(f"/code-modules/{module['id']}/starter-graph")
+    ).json()
+    by_id = {n["id"]: n for n in graph["nodes"]}
+    assert set(by_id) == {"n_ingest", "n_transform"}
+    assert by_id["n_ingest"]["type"] == "user:" + module["id"] + ":ingest"
+
+    # The edge comes from the declared wire ingest.rows → transform.rows.
+    edges = {
+        (e["source"], e["source_output"], e["target"], e["target_input"])
+        for e in graph["edges"]
+    }
+    assert ("n_ingest", "rows", "n_transform", "rows") in edges
+
+
+async def test_preview_explicit_mode_and_undecorated_toggle(
+    client: AsyncClient,
+) -> None:
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Explicit"})
+    ).json()["id"]
+    source = (
+        "from noodle import node\n"
+        "\n"
+        "def helper(x):\n"
+        "    return x\n"
+        "\n"
+        "@node(name='Main', id='main')\n"
+        "def main(value: int = 1):\n"
+        "    return helper(value)\n"
+    )
+    module = (
+        await client.post(
+            "/code-modules",
+            json={
+                "scope": "workflow",
+                "workflow_id": workflow_id,
+                "name": "explicit.py",
+                "contents": source,
+            },
+        )
+    ).json()
+
+    preview = (
+        await client.get(f"/code-modules/{module['id']}/preview")
+    ).json()
+    assert preview["explicit_mode"] is True
+    assert preview["registered"] == ["Main"]
+    main_fn = next(f for f in preview["functions"] if f["name"] == "Main")
+    assert main_fn["decorated"] is True
+
+    # Flip the toggle: undecorated helper now also surfaces as a node.
+    await client.put(
+        f"/code-modules/{module['id']}",
+        json={"include_undecorated": True},
+    )
+    preview2 = (
+        await client.get(f"/code-modules/{module['id']}/preview")
+    ).json()
+    assert set(preview2["registered"]) == {"helper", "Main"}
+
+
 async def test_preview_skips_kwargs_and_classes(client: AsyncClient) -> None:
     workflow_id = (await client.post("/workflows", json={"name": "Mix"})).json()["id"]
     source = (

@@ -469,11 +469,13 @@ class CodeModuleCreate(BaseModel):
     environment_id: str | None = None
     name: str = Field(min_length=1, max_length=200)
     contents: str = ""
+    include_undecorated: bool = False
 
 
 class CodeModuleUpdate(BaseModel):
     name: str | None = None
     contents: str | None = None
+    include_undecorated: bool | None = None
 
 
 class CodeModuleInfo(BaseModel):
@@ -485,6 +487,7 @@ class CodeModuleInfo(BaseModel):
     environment_id: str | None
     name: str
     contents: str
+    include_undecorated: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -495,6 +498,12 @@ class CodeModuleFunctionShape(BaseModel):
     name: str
     inputs: list[str] = Field(default_factory=list)
     params: list[str] = Field(default_factory=list)
+    outputs: list[str] = Field(default_factory=list)
+    # True when this function carries an ``@node`` decorator.
+    decorated: bool = False
+    # Declared incoming wiring (input-port name → "<source_id>" /
+    # "<source_id>.<output>"), only present for decorated functions.
+    wires: dict[str, str] = Field(default_factory=dict)
 
 
 class CodeModuleFunctionPreview(BaseModel):
@@ -507,6 +516,9 @@ class CodeModuleFunctionPreview(BaseModel):
     functions: list[CodeModuleFunctionShape] = Field(default_factory=list)
     skipped: list[dict[str, str]] = Field(default_factory=list)
     syntax_error: str | None = None
+    # True when the file uses ``@node`` decorators (explicit mode), so the UI
+    # can offer the "also include undecorated functions" toggle.
+    explicit_mode: bool = False
     # Top-level imports the file declares (stdlib filtered out).
     imports: list[str] = Field(default_factory=list)
     # Subset of ``imports`` that aren't in the workflow's env packages list.

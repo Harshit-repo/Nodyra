@@ -20,8 +20,11 @@ from app.db import SessionLocal
 from app.models import Artifact
 from app.services.artifact_backends import (
     LocalBackend,
-    _resolve_local_path as _artifact_path,
     get_backend,
+)
+# Re-exported for app.routers.runner_pools, which imports _artifact_path from here.
+from app.services.artifact_backends import (
+    _resolve_local_path as _artifact_path,  # noqa: F401
 )
 from app.services.redaction import load_secret_values, redact_value
 from noodle.artifacts import ARTIFACT_MARKER, LocalArtifactStore, is_artifact_ref

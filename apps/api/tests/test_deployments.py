@@ -152,7 +152,7 @@ async def test_active_deployment_overrides_in_graph_schedule(
     ).json()
 
     await triggers._tick()  # start the clock for the deployment only
-    assert (await client.get(f"/workflows/{workflow_id}/runs")).json() == []
+    assert (await client.get(f"/workflows/{workflow_id}/runs")).json()["items"] == []
 
     # Rewind the deployment's last_fired by an hour so it's overdue.
     async with triggers.SessionLocal() as session:
@@ -165,7 +165,7 @@ async def test_active_deployment_overrides_in_graph_schedule(
         await session.commit()
 
     await triggers._tick()
-    runs = (await client.get(f"/workflows/{workflow_id}/runs")).json()
+    runs = (await client.get(f"/workflows/{workflow_id}/runs")).json()["items"]
     # Exactly one run, fired with trigger_type=deployment, not "schedule".
     assert len(runs) == 1
     assert runs[0]["trigger_type"] == "deployment"
