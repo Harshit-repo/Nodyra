@@ -1,9 +1,15 @@
 // Dependency-free SVG chart renderer with hover tooltips.
 // Renders ChartRef envelopes (bar/line/area/scatter/pie) from the chart nodes.
 
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import type { ChartRef, ChartType } from "./chartValues";
 import { formatNumber, seriesColor } from "./chartValues";
+
+// Plotly is heavy, so the interactive renderer is code-split and only fetched
+// when the user switches to the "Interactive" view.
+const PlotlyChartView = lazy(() =>
+  import("./PlotlyChartView").then((m) => ({ default: m.PlotlyChartView })),
+);
 
 const W = 520;
 const H = 280;
@@ -25,6 +31,7 @@ function niceLabel(value: unknown): string {
 
 export function ChartView({ chart }: { chart: ChartRef }) {
   const [hover, setHover] = useState<Hover | null>(null);
+  const [mode, setMode] = useState<"simple" | "interactive">("interactive");
 
   const flatY = useMemo(
     () =>
@@ -67,8 +74,39 @@ export function ChartView({ chart }: { chart: ChartRef }) {
 
   return (
     <div className="chart-view">
-      {chart.title && <div className="chart-title">{chart.title}</div>}
-      <div className="chart-svg-wrap">
+      <div className="chart-header">
+        {chart.title ? (
+          <div className="chart-title">{chart.title}</div>
+        ) : (
+          <span />
+        )}
+        <div className="chart-mode-toggle" role="group" aria-label="Chart renderer">
+          <button
+            type="button"
+            className={mode === "simple" ? "active" : ""}
+            onClick={() => setMode("simple")}
+          >
+            Simple
+          </button>
+          <button
+            type="button"
+            className={mode === "interactive" ? "active" : ""}
+            onClick={() => setMode("interactive")}
+            title="Zoom, pan, hover and export PNG (Plotly)"
+          >
+            Interactive
+          </button>
+        </div>
+      </div>
+      {mode === "interactive" ? (
+        <Suspense
+          fallback={<div className="chart-loading">Loading interactive chart…</div>}
+        >
+          <PlotlyChartView chart={chart} />
+        </Suspense>
+      ) : (
+        <>
+          <div className="chart-svg-wrap">
         <svg viewBox={`0 0 ${W} ${H}`} className="chart-svg" preserveAspectRatio="xMidYMid meet">
           {chart.chart_type === "pie" ? (
             <PieChart chart={chart} onHover={setHover} />
@@ -116,6 +154,8 @@ export function ChartView({ chart }: { chart: ChartRef }) {
             </span>
           ))}
         </div>
+      )}
+        </>
       )}
     </div>
   );

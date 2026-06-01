@@ -2630,6 +2630,49 @@ body.is-resizing {
   flex-direction: column;
   gap: 8px;
 }
+.artifact-media {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+}
+.artifact-media-image {
+  max-width: 100%;
+  max-height: 420px;
+  width: auto;
+  object-fit: contain;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.artifact-media-pdf {
+  width: 100%;
+  height: 480px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.artifact-media-audio {
+  width: 100%;
+}
+.artifact-media-video {
+  max-width: 100%;
+  max-height: 420px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: #000;
+}
+.artifact-media-text {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .port-data-artifact-preview {
   margin-top: 8px;
   display: flex;
@@ -3601,6 +3644,44 @@ body.is-resizing {
 /* ----- Chart + report visualization ------------------------------------ */
 .chart-view { width: 100%; }
 .chart-title { font-size: 12px; font-weight: 600; color: var(--text-2, #cfcfcf); margin-bottom: 4px; }
+.chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.chart-mode-toggle {
+  display: inline-flex;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.chart-mode-toggle button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-2, #cfcfcf);
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.chart-mode-toggle button + button {
+  border-left: 1px solid var(--line-2);
+}
+.chart-mode-toggle button.active {
+  background: var(--accent, #6366f1);
+  color: #fff;
+}
+.chart-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 320px;
+  color: var(--text-2, #94a3b8);
+  font-size: 12px;
+}
+.plotly-chart { width: 100%; min-height: 320px; }
 .chart-svg-wrap { position: relative; width: 100%; }
 .chart-svg { width: 100%; height: auto; display: block; overflow: visible; }
 .chart-grid { stroke: var(--line-2, #2a2a30); stroke-width: 1; }

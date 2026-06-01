@@ -45,3 +45,42 @@ export function artifactDownloadUrl(ref: ArtifactRef): string {
   const qs = token ? `?token=${encodeURIComponent(token)}` : "";
   return `/api/artifacts/${encodeURIComponent(ref.artifact_id)}/download${qs}`;
 }
+
+/** Download URL that asks the server for an ``inline`` Content-Disposition so
+ *  the browser renders images/PDFs/media in-page instead of downloading. */
+export function artifactInlineUrl(ref: ArtifactRef): string {
+  const token = localStorage.getItem("noodle_token");
+  const params = new URLSearchParams({ inline: "1" });
+  if (token) params.set("token", token);
+  return `/api/artifacts/${encodeURIComponent(ref.artifact_id)}/download?${params.toString()}`;
+}
+
+export type ArtifactMediaKind =
+  | "image"
+  | "pdf"
+  | "audio"
+  | "video"
+  | "text"
+  | "none";
+
+/** Classify an artifact by content type / filename into a previewable kind. */
+export function artifactMediaKind(ref: ArtifactRef): ArtifactMediaKind {
+  const ct = (ref.content_type || "").toLowerCase();
+  const name = (ref.name || "").toLowerCase();
+  if (ct.startsWith("image/") || /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/.test(name))
+    return "image";
+  if (ct === "application/pdf" || name.endsWith(".pdf")) return "pdf";
+  if (ct.startsWith("audio/") || /\.(mp3|wav|ogg|m4a|flac)$/.test(name))
+    return "audio";
+  if (ct.startsWith("video/") || /\.(mp4|webm|mov|mkv)$/.test(name))
+    return "video";
+  if (
+    ct.startsWith("text/") ||
+    ct.includes("json") ||
+    ct.includes("xml") ||
+    ct.includes("csv") ||
+    /\.(txt|md|json|xml|csv|log|ya?ml|html?)$/.test(name)
+  )
+    return "text";
+  return "none";
+}

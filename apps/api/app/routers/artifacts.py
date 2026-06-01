@@ -61,7 +61,9 @@ async def get_artifact(
 
 @router.get("/artifacts/{artifact_id}/download")
 async def download_artifact(
-    artifact_id: str, session: AsyncSession = Depends(get_session)
+    artifact_id: str,
+    inline: bool = False,
+    session: AsyncSession = Depends(get_session),
 ):
     row = await _get_artifact(session, artifact_id)
     try:
@@ -80,18 +82,22 @@ async def download_artifact(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Artifact file not found") from None
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    # ``inline`` lets the browser render images/PDFs/media in-page instead of
+    # forcing a download (used by the artifact preview in the editor).
+    disposition = "inline" if inline else "attachment"
     if download.path is not None:
         return FileResponse(
             download.path,
             media_type=download.content_type,
             filename=download.filename,
+            content_disposition_type=disposition,
         )
     if download.stream is not None:
         return StreamingResponse(
             download.stream,
             media_type=download.content_type,
             headers={
-                "Content-Disposition": f'attachment; filename="{download.filename}"',
+                "Content-Disposition": f'{disposition}; filename="{download.filename}"',
             },
         )
     raise HTTPException(

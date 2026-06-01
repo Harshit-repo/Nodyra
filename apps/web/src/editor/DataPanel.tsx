@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import type { NodeVariableInfo } from "../types";
 import {
   artifactDownloadUrl,
+  artifactInlineUrl,
+  artifactMediaKind,
   artifactSummary,
   asArtifactRef,
   formatBytes,
@@ -12,6 +14,9 @@ import { asDatasetRef } from "./datasetValues";
 import type { DatasetRef } from "./datasetValues";
 import { datasetDownloadUrl } from "./datasetValues";
 import { DatasetSqlModal } from "./DatasetSqlModal";
+import { asChartRef, asReportRef } from "./chartValues";
+import { ChartView } from "./ChartView";
+import { ReportView } from "./ReportView";
 import {
   asTypedEnvelope,
   formatTypedCell,
@@ -240,6 +245,67 @@ function JsonTreeValue({
     <span className={`json-tree-prim ${primitiveClass(value)}`}>
       {value === null ? "null" : JSON.stringify(value)}
     </span>
+  );
+}
+
+function ArtifactMediaPreview({
+  refValue,
+}: {
+  refValue: NonNullable<ReturnType<typeof asArtifactRef>>;
+}) {
+  const kind = artifactMediaKind(refValue);
+  const [textBody, setTextBody] = useState<string | null>(null);
+  const [textError, setTextError] = useState<string | null>(null);
+  const inlineUrl = artifactInlineUrl(refValue);
+
+  useEffect(() => {
+    if (kind !== "text") return;
+    let cancelled = false;
+    setTextBody(null);
+    setTextError(null);
+    fetch(inlineUrl)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.text();
+      })
+      .then((body) => {
+        if (!cancelled) setTextBody(body.slice(0, 20000));
+      })
+      .catch((err) => {
+        if (!cancelled) setTextError(String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [inlineUrl, kind]);
+
+  if (kind === "none") return null;
+  return (
+    <div className="artifact-media">
+      {kind === "image" && (
+        <img className="artifact-media-image" src={inlineUrl} alt={refValue.name} />
+      )}
+      {kind === "pdf" && (
+        <iframe
+          className="artifact-media-pdf"
+          src={inlineUrl}
+          title={refValue.name}
+        />
+      )}
+      {kind === "audio" && (
+        <audio className="artifact-media-audio" controls src={inlineUrl} />
+      )}
+      {kind === "video" && (
+        <video className="artifact-media-video" controls src={inlineUrl} />
+      )}
+      {kind === "text" && (
+        <pre className="artifact-media-text">
+          {textError
+            ? `Could not load preview: ${textError}`
+            : textBody ?? "Loading…"}
+        </pre>
+      )}
+    </div>
   );
 }
 
@@ -777,6 +843,7 @@ function DataTable({
         <a className="artifact-download" href={artifactDownloadUrl(artifact)}>
           Download
         </a>
+        <ArtifactMediaPreview refValue={artifact} />
         {artifact.preview !== undefined && (
           <div className="artifact-preview">
             {isTableable(artifact.preview) ? (
@@ -1032,6 +1099,9 @@ export function DataPanel({
   finishedAt?: number | null;
 }) {
   const display = unwrapSingleOutput(data);
+  const chart = asChartRef(display);
+  const report = asReportRef(display);
+  const canVisual = Boolean(chart || report);
   const canTable = isTableable(display);
   const htmlPreview = findHtmlPreview(display);
   const canHtml = Boolean(htmlPreview);
@@ -1049,12 +1119,13 @@ export function DataPanel({
       })
     : "";
   const [view, setView] = useState<
-    "json" | "table" | "html" | "logs" | "variables"
+    "json" | "table" | "html" | "logs" | "variables" | "visual"
   >(
-    canHtml ? "html" : canTable ? "table" : "json",
+    canVisual ? "visual" : canHtml ? "html" : canTable ? "table" : "json",
   );
   const empty = data === undefined || data === null;
-  let effectiveView: "json" | "table" | "html" | "logs" | "variables" = view;
+  let effectiveView: "json" | "table" | "html" | "logs" | "variables" | "visual" = view;
+  if (view === "visual" && !canVisual) effectiveView = canTable ? "table" : "json";
   if (view === "table" && !canTable) effectiveView = "json";
   if (view === "html" && !canHtml) effectiveView = canTable ? "table" : "json";
   if (view === "logs" && !hasLogStream) {
@@ -1068,9 +1139,19 @@ export function DataPanel({
     if (error && hasLogStream && empty) setView("logs");
   }, [empty, error, hasLogStream]);
   useEffect(() => {
+    // Auto-focus the visual view when a chart/report flows in.
+    if (canVisual) {
+      setView((current) =>
+        current === "logs" || current === "variables" ? current : "visual",
+      );
+    }
+  }, [canVisual]);
+  useEffect(() => {
     if (htmlPreview) {
       setView((current) =>
-        current === "logs" || current === "variables" ? current : "html",
+        current === "logs" || current === "variables" || current === "visual"
+          ? current
+          : "html",
       );
     } else {
       setView((current) =>
@@ -1100,6 +1181,16 @@ export function DataPanel({
           )}
         </h3>
         <div className="data-view-toggle">
+          {canVisual && (
+            <button
+              type="button"
+              className={effectiveView === "visual" ? "active" : ""}
+              onClick={() => setView("visual")}
+              title={report ? "Render report" : "Render chart"}
+            >
+              {report ? "Report" : "Chart"}
+            </button>
+          )}
           <button
             type="button"
             className={effectiveView === "json" ? "active" : ""}
@@ -1177,6 +1268,10 @@ export function DataPanel({
           <VariableExplorer variables={variables} />
         ) : effectiveView === "logs" ? (
           <pre className="data-json data-logs">{executionLog}</pre>
+        ) : effectiveView === "visual" && chart ? (
+          <ChartView chart={chart} />
+        ) : effectiveView === "visual" && report ? (
+          <ReportView report={report} />
         ) : effectiveView === "html" && htmlPreview ? (
           <HtmlPreview html={htmlPreview} />
         ) : empty ? (

@@ -6,6 +6,8 @@ import { DatasetSqlModal } from "./DatasetSqlModal";
 import { useEditor, type NoodleNode } from "./store";
 import {
   artifactDownloadUrl,
+  artifactInlineUrl,
+  artifactMediaKind,
   artifactSummary,
   asArtifactRef,
   formatBytes,
@@ -193,6 +195,28 @@ function DatasetCard({ dataset }: { dataset: DatasetRef }) {
   );
 }
 
+function PortArtifactMedia({
+  refValue,
+}: {
+  refValue: NonNullable<ReturnType<typeof asArtifactRef>>;
+}) {
+  const kind = artifactMediaKind(refValue);
+  const inlineUrl = artifactInlineUrl(refValue);
+  if (kind === "image")
+    return (
+      <img className="artifact-media-image" src={inlineUrl} alt={refValue.name} />
+    );
+  if (kind === "pdf")
+    return (
+      <iframe className="artifact-media-pdf" src={inlineUrl} title={refValue.name} />
+    );
+  if (kind === "audio")
+    return <audio className="artifact-media-audio" controls src={inlineUrl} />;
+  if (kind === "video")
+    return <video className="artifact-media-video" controls src={inlineUrl} />;
+  return null;
+}
+
 function PortValuePreview({ value }: { value: unknown }) {
   const chart = asChartRef(value);
   if (chart) return <ChartView chart={chart} />;
@@ -214,6 +238,7 @@ function PortValuePreview({ value }: { value: unknown }) {
           <span>{artifact.content_type}</span>
         </div>
         <a href={artifactDownloadUrl(artifact)}>Download</a>
+        <PortArtifactMedia refValue={artifact} />
         {previewTable && (
           <div className="port-data-table-preview">
             <div className="port-data-table-label">Preview</div>
