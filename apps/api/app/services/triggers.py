@@ -10,6 +10,7 @@ loop (``enable_inprocess_scheduler=false``) and drive runs from Celery Beat.
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -19,7 +20,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import Deployment, ScheduleState, Workflow, WorkflowVersion
+from app.models import Deployment, Run, ScheduleState, Workflow, WorkflowVersion
 from app.services.graph_utils import first_trigger_node
 from app.services.runner import start_run
 
@@ -296,13 +297,146 @@ def _webhook_hmac_passes(
     return hmac.compare_digest(provided.strip(), expected)
 
 
+def _webhook_ip_allowed(
+    node_params: dict, client_ip: str | None, headers: dict
+) -> bool:
+    """Return True if ``client_ip`` is permitted by the node's ip_allowlist.
+
+    An empty allowlist permits everyone. A non-empty allowlist with no parseable
+    CIDR/IP entries fails closed (the operator intended to restrict). When
+    ``trust_proxy`` is on, the left-most ``X-Forwarded-For`` entry is used as the
+    caller IP; otherwise the socket peer is authoritative (XFF is spoofable).
+    """
+    import ipaddress
+    import re
+
+    raw = str(node_params.get("ip_allowlist") or "").strip()
+    if not raw:
+        return True
+    nets: list = []
+    for token in re.split(r"[,\n]", raw):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(token, strict=False))
+        except ValueError:
+            continue
+    if not nets:
+        return False  # configured but unparseable → fail closed
+
+    candidate = client_ip
+    if str(node_params.get("trust_proxy") or "off").lower() == "on":
+        lower_headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+        xff = lower_headers.get("x-forwarded-for")
+        if xff:
+            candidate = xff.split(",")[0].strip()
+    if not candidate:
+        return False
+    try:
+        ip = ipaddress.ip_address(candidate)
+    except ValueError:
+        return False
+    return any(ip in net for net in nets)
+
+
+def _webhook_dedup_key(node_params: dict, request_payload: dict) -> str | None:
+    """Evaluate the node's ``dedup_key`` expression against the request payload.
+
+    Returns the stringified key, or ``None`` when dedup is off, no key is
+    configured, or the expression yields nothing — in which case the caller
+    runs the workflow normally (there's nothing to deduplicate on).
+    """
+    if str(node_params.get("dedup") or "off").lower() != "on":
+        return None
+    expr = node_params.get("dedup_key")
+    if not expr:
+        return None
+    from noodle.expr import build_context, evaluate
+
+    try:
+        value = evaluate(expr, build_context(first_input=request_payload))
+    except Exception:  # noqa: BLE001 - a bad expression must not 500 the webhook
+        return None
+    if value is None or isinstance(value, str) and value.startswith("[expr error"):
+        return None
+    key = str(value).strip()
+    return key or None
+
+
+def _webhook_on_received_response(
+    node_params: dict, request_payload: dict
+) -> dict | None:
+    """Shape the immediate ``On Received`` response for a webhook node.
+
+    Returns ``None`` to use the default JSON ack (``response_data`` unset or the
+    node isn't in On Received mode). Otherwise returns
+    ``{"status", "headers", "body", "no_body"}`` describing the response to send
+    back synchronously, before the dispatched run completes. ``First Entry`` /
+    ``All Entries`` operate on the received request body; ``Custom`` evaluates
+    ``response_body`` / ``response_headers`` against the request (``$json``).
+    """
+    mode = str(node_params.get("response_mode") or "On Received")
+    if mode != "On Received":
+        return None
+    data_mode = str(node_params.get("response_data") or "").strip()
+    if not data_mode:
+        return None
+    try:
+        code = int(node_params.get("response_code") or 200)
+    except (TypeError, ValueError):
+        code = 200
+    body_in = (request_payload or {}).get("body")
+    if data_mode == "No Body":
+        return {"status": code, "headers": {}, "body": None, "no_body": True}
+    if data_mode == "All Entries":
+        return {"status": code, "headers": {}, "body": body_in, "no_body": False}
+    if data_mode == "First Entry JSON":
+        first = body_in[0] if isinstance(body_in, list) and body_in else body_in
+        return {"status": code, "headers": {}, "body": first, "no_body": False}
+    if data_mode == "Custom":
+        from noodle.expr import build_context, evaluate
+
+        ctx = build_context(first_input=request_payload)
+        body = evaluate(node_params.get("response_body") or "", ctx)
+        headers_spec = node_params.get("response_headers") or {}
+        headers: dict[str, str] = {}
+        if isinstance(headers_spec, dict):
+            headers = {
+                str(k): str(evaluate(v, ctx)) for k, v in headers_spec.items()
+            }
+        return {"status": code, "headers": headers, "body": body, "no_body": False}
+    return None
+
+
+@dataclass
+class WebhookDispatch:
+    """Outcome of :func:`dispatch_webhook`.
+
+    ``reject_status`` is the HTTP status to return when nothing ran but the path
+    matched (403 IP / 401 auth); ``None`` otherwise. ``deduped`` is True when a
+    matching node idempotently dropped a repeat delivery — the caller acks 200
+    with no runs rather than treating the empty result as a rejection.
+    ``response`` is the shaped ``On Received`` response from the first dispatched
+    node (see :func:`_webhook_on_received_response`), or ``None`` for the default
+    JSON ack.
+    """
+
+    run_ids: list[str] = field(default_factory=list)
+    any_match: bool = False
+    reject_status: int | None = None
+    deduped: bool = False
+    response: dict | None = None
+
+
 async def dispatch_webhook(
     path: str,
     request_payload: dict,
     *,
     prefer_draft: bool = False,
     raw_body: bytes | None = None,
-) -> tuple[list[str], bool]:
+    client_ip: str | None = None,
+) -> WebhookDispatch:
     """Run every active workflow that starts with a matching webhook node.
 
     When ``prefer_draft`` is True the dispatcher uses each workflow's
@@ -311,12 +445,16 @@ async def dispatch_webhook(
     user can iterate on auth + flow without publishing first. Production
     URL (``/webhook/{path}``) always uses the published snapshot.
 
-    Returns ``(run_ids, any_path_matched)``. The caller uses
-    ``any_path_matched`` to distinguish "no workflow at this path" (404)
-    from "matched but auth rejected every candidate" (401).
+    Returns a :class:`WebhookDispatch`. The caller uses ``any_match`` to
+    distinguish "no workflow at this path" (404) from "matched but rejected
+    every candidate", ``reject_status`` for the 403/401 to return, and
+    ``deduped`` to ack 200 on an idempotent repeat.
     """
     run_ids: list[str] = []
     any_match = False
+    ip_rejected = False
+    deduped = False
+    shaped_response: dict | None = None
     headers = request_payload.get("headers") or {}
     query = request_payload.get("query") or {}
     workflows = (
@@ -350,6 +488,11 @@ async def dispatch_webhook(
             if node_path != path:
                 continue
             any_match = True
+            # Perimeter first: IP allowlist gates before any auth work so an
+            # unlisted caller never reaches credential comparison. Distinct 403.
+            if not _webhook_ip_allowed(node_params, client_ip, headers):
+                ip_rejected = True
+                continue
             resolved_auth = await _resolve_node_auth(
                 node_params, workflow.id, workflow.environment_id
             )
@@ -357,6 +500,21 @@ async def dispatch_webhook(
                 continue
             if not _webhook_hmac_passes(node_params, resolved_auth, headers, raw_body):
                 continue
+            # Idempotency: a repeat key for this workflow is acknowledged
+            # without starting a second run. Production only — the editor test
+            # URL should re-fire freely while iterating.
+            dedup_key = _webhook_dedup_key(node_params, request_payload)
+            if dedup_key is not None and not prefer_draft:
+                async with SessionLocal() as session:
+                    seen = await session.scalar(
+                        select(Run.id)
+                        .where(Run.workflow_id == workflow.id)
+                        .where(Run.deduplication_key == dedup_key)
+                        .limit(1)
+                    )
+                if seen is not None:
+                    deduped = True
+                    continue
             run_id = await start_run(
                 workflow.id,
                 graph,
@@ -366,9 +524,24 @@ async def dispatch_webhook(
                 trigger_type="webhook",
                 cache={node["id"]: {"main": request_payload}},
                 trigger_node_id=node["id"],
+                deduplication_key=dedup_key,
             )
             run_ids.append(run_id)
-    return run_ids, any_match
+            # First dispatched node owns the immediate response shape.
+            if shaped_response is None:
+                shaped_response = _webhook_on_received_response(
+                    node_params, request_payload
+                )
+    reject_status: int | None = None
+    if not run_ids and any_match and not deduped:
+        reject_status = 403 if ip_rejected else 401
+    return WebhookDispatch(
+        run_ids=run_ids,
+        any_match=any_match,
+        reject_status=reject_status,
+        deduped=deduped,
+        response=shaped_response,
+    )
 
 
 async def _all_workflows() -> list[Workflow]:

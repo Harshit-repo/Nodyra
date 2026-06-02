@@ -109,6 +109,23 @@ def schedule_trigger(
           "path": {"placeholder": "my-webhook", "description": "Last segment of the URL."},
           "response_mode": {"choices": ["On Received", "Last Node"]},
           "response_code": {"description": "HTTP status returned to the caller."},
+          # Immediate-ack shaping for On Received mode. Operates on the received
+          # request body; 'Custom' reveals response_body + response_headers.
+          "response_data": {
+              "choices": ["First Entry JSON", "All Entries", "No Body", "Custom"],
+              "description": (
+                  "Shape the immediate response (On Received mode). Blank = a "
+                  "default JSON ack with the run id."
+              ),
+          },
+          "response_body": {
+              "placeholder": "{{ $json.body }}",
+              "description": "Custom response body expression (response_data=Custom).",
+          },
+          "response_headers": {
+              "key_value": True,
+              "description": "Custom response headers (response_data=Custom).",
+          },
           "auth_type": {
               "choices": ["none", "basic", "header", "query", "bearer", "jwt"],
               "description": (
@@ -135,6 +152,33 @@ def schedule_trigger(
               "placeholder": "sha256=",
               "description": "Optional prefix stripped from the signature header (e.g. 'sha256=').",
           },
+          # IP allowlist (independent of auth_type). Non-empty → callers outside
+          # the listed CIDRs/IPs are rejected with 403 before any auth check.
+          "ip_allowlist": {
+              "placeholder": "203.0.113.0/24, 198.51.100.7",
+              "description": (
+                  "Comma/newline-separated CIDRs or IPs allowed to call this "
+                  "webhook. Blank = allow all."
+              ),
+          },
+          "trust_proxy": {
+              "choices": ["off", "on"],
+              "description": (
+                  "When 'on', honour the left-most X-Forwarded-For entry for the "
+                  "IP allowlist (set only behind a trusted proxy). Default 'off' "
+                  "uses the socket peer."
+              ),
+          },
+          # Idempotency. When 'on', a repeat dedup_key for this workflow is
+          # acknowledged (200) without starting a second run.
+          "dedup": {"choices": ["off", "on"]},
+          "dedup_key": {
+              "placeholder": "{{ $json.headers['x-delivery-id'] }}",
+              "description": (
+                  "Expression evaluated against the request to identify a unique "
+                  "delivery. A repeat value is acknowledged without re-running."
+              ),
+          },
           "auth_credentials": {
               # Default credential type for static manifest; the inspector
               # dynamically swaps this based on auth_type — Basic Auth uses
@@ -153,6 +197,9 @@ def webhook_trigger(
     path: str = "noodle",
     response_mode: str = "On Received",
     response_code: int = 200,
+    response_data: str = "",
+    response_body: str = "",
+    response_headers: dict | None = None,
     auth_type: str = "none",
     auth_credentials: dict | None = None,
     auth_jwt_header: str = "Authorization",
@@ -161,6 +208,10 @@ def webhook_trigger(
     hmac_algorithm: str = "sha256",
     hmac_prefix: str = "",
     hmac_secret: str | None = None,
+    ip_allowlist: str = "",
+    trust_proxy: str = "off",
+    dedup: str = "off",
+    dedup_key: str = "",
 ) -> dict:
     """Start the workflow from an inbound HTTP request to a unique URL.
 

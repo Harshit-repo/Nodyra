@@ -409,6 +409,226 @@ async def test_webhook_hmac_verification_checks_signature(
     assert len(ok.json()["runs"]) == 1
 
 
+async def test_webhook_ip_allowlist_rejects_outside_caller(
+    client: AsyncClient,
+) -> None:
+    """A non-empty ip_allowlist rejects callers outside it with 403.
+
+    The test transport's socket peer is 127.0.0.1, which is outside 10.0.0.0/8.
+    """
+    workflow_id = (
+        await client.post("/workflows", json={"name": "IPDeny"})
+    ).json()["id"]
+    graph = _webhook_graph_with_auth(
+        "ip-deny", {"ip_allowlist": "10.0.0.0/8"}
+    )
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    resp = await client.post("/webhook/ip-deny", json={})
+    assert resp.status_code == 403
+
+
+async def test_webhook_ip_allowlist_accepts_listed_caller(
+    client: AsyncClient,
+) -> None:
+    """A caller whose IP is inside the allowlist runs the workflow."""
+    workflow_id = (
+        await client.post("/workflows", json={"name": "IPAllow"})
+    ).json()["id"]
+    graph = _webhook_graph_with_auth(
+        "ip-allow", {"ip_allowlist": "127.0.0.0/8, 10.0.0.0/8"}
+    )
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    resp = await client.post("/webhook/ip-allow", json={"ok": 1})
+    assert resp.status_code == 200
+    assert len(resp.json()["runs"]) == 1
+
+
+async def test_webhook_ip_allowlist_honours_xff_only_when_trusted(
+    client: AsyncClient,
+) -> None:
+    """X-Forwarded-For is consulted only when trust_proxy is on.
+
+    With trust_proxy off (default) the spoofed XFF is ignored and the socket
+    peer (127.0.0.1) decides — outside 203.0.113.0/24 → 403. With trust_proxy
+    on, the forwarded client IP is honoured → 200.
+    """
+    untrusted_wf = (
+        await client.post("/workflows", json={"name": "XFFUntrusted"})
+    ).json()["id"]
+    await client.put(
+        f"/workflows/{untrusted_wf}",
+        json={
+            "graph": _webhook_graph_with_auth(
+                "xff-untrusted", {"ip_allowlist": "203.0.113.0/24"}
+            ),
+            "active": True,
+        },
+    )
+    await client.post(f"/workflows/{untrusted_wf}/publish", json={})
+    spoofed = await client.post(
+        "/webhook/xff-untrusted",
+        headers={"X-Forwarded-For": "203.0.113.9"},
+        json={},
+    )
+    assert spoofed.status_code == 403
+
+    trusted_wf = (
+        await client.post("/workflows", json={"name": "XFFTrusted"})
+    ).json()["id"]
+    await client.put(
+        f"/workflows/{trusted_wf}",
+        json={
+            "graph": _webhook_graph_with_auth(
+                "xff-trusted",
+                {"ip_allowlist": "203.0.113.0/24", "trust_proxy": "on"},
+            ),
+            "active": True,
+        },
+    )
+    await client.post(f"/workflows/{trusted_wf}/publish", json={})
+    forwarded = await client.post(
+        "/webhook/xff-trusted",
+        headers={"X-Forwarded-For": "203.0.113.9, 10.1.1.1"},
+        json={"ok": 1},
+    )
+    assert forwarded.status_code == 200
+    assert len(forwarded.json()["runs"]) == 1
+
+
+async def test_webhook_dedup_acks_repeat_without_second_run(
+    client: AsyncClient,
+) -> None:
+    """With dedup on, a repeated key acks 200 but starts no second run.
+
+    A distinct key runs normally; a repeat is idempotently dropped (200, no
+    run) rather than rejected (401).
+    """
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Dedup"})
+    ).json()["id"]
+    graph = _webhook_graph_with_auth(
+        "dedup-hook",
+        {"dedup": "on", "dedup_key": "{{ $json.body['id'] }}"},
+    )
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    first = await client.post("/webhook/dedup-hook", json={"id": "evt-1"})
+    assert first.status_code == 200
+    assert len(first.json()["runs"]) == 1
+
+    repeat = await client.post("/webhook/dedup-hook", json={"id": "evt-1"})
+    assert repeat.status_code == 200
+    assert repeat.json()["runs"] == []
+
+    other = await client.post("/webhook/dedup-hook", json={"id": "evt-2"})
+    assert other.status_code == 200
+    assert len(other.json()["runs"]) == 1
+
+
+async def test_webhook_response_data_no_body(client: AsyncClient) -> None:
+    """response_data='No Body' returns the configured code and an empty body."""
+    workflow_id = (
+        await client.post("/workflows", json={"name": "NoBody"})
+    ).json()["id"]
+    graph = _webhook_graph_with_auth(
+        "no-body",
+        {"response_mode": "On Received", "response_data": "No Body",
+         "response_code": 202},
+    )
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    resp = await client.post("/webhook/no-body", json={"x": 1})
+    assert resp.status_code == 202
+    assert resp.content == b""
+
+
+async def test_webhook_response_data_all_entries_echoes_body(
+    client: AsyncClient,
+) -> None:
+    """response_data='All Entries' echoes the received body verbatim."""
+    workflow_id = (
+        await client.post("/workflows", json={"name": "AllEntries"})
+    ).json()["id"]
+    graph = _webhook_graph_with_auth(
+        "all-entries",
+        {"response_mode": "On Received", "response_data": "All Entries"},
+    )
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    body = [{"id": "A1"}, {"id": "B7"}]
+    resp = await client.post("/webhook/all-entries", json=body)
+    assert resp.status_code == 200
+    assert resp.json() == body
+
+
+async def test_webhook_response_data_first_entry_json(
+    client: AsyncClient,
+) -> None:
+    """response_data='First Entry JSON' returns the first item of the body."""
+    workflow_id = (
+        await client.post("/workflows", json={"name": "FirstEntry"})
+    ).json()["id"]
+    graph = _webhook_graph_with_auth(
+        "first-entry",
+        {"response_mode": "On Received", "response_data": "First Entry JSON"},
+    )
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    resp = await client.post(
+        "/webhook/first-entry", json=[{"id": "A1"}, {"id": "B7"}]
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"id": "A1"}
+
+
+async def test_webhook_response_data_custom_body_and_headers(
+    client: AsyncClient,
+) -> None:
+    """response_data='Custom' evaluates response_body + response_headers."""
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Custom"})
+    ).json()["id"]
+    graph = _webhook_graph_with_auth(
+        "custom-resp",
+        {
+            "response_mode": "On Received",
+            "response_data": "Custom",
+            "response_body": "{{ $json.body['name'] }}",
+            "response_headers": {"X-Foo": "bar"},
+            "response_code": 201,
+        },
+    )
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    resp = await client.post("/webhook/custom-resp", json={"name": "alice"})
+    assert resp.status_code == 201
+    assert resp.json() == "alice"
+    assert resp.headers.get("X-Foo") == "bar"
+
+
 async def test_webhook_unknown_path_still_returns_200(client: AsyncClient) -> None:
     """Unknown paths return 200 with empty runs (existing behaviour).
 

@@ -17,7 +17,8 @@ import logging
 import time
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
 
 from app.services.triggers import dispatch_webhook
 
@@ -39,6 +40,28 @@ _METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 
 WEBHOOK_CAPTURE_TTL_SECONDS = 5 * 60  # 5 min — typical Listen-then-test loop
 WEBHOOK_CAPTURE_MAX_ENTRIES = 256
+
+# Caller-facing detail per rejection status from ``dispatch_webhook``.
+_REJECT_DETAIL = {
+    401: "Webhook authentication failed.",
+    403: "Caller IP is not allowed.",
+}
+
+
+def _shaped_response(shape: dict) -> Response:
+    """Build the immediate response from a webhook node's ``response_data``.
+
+    ``shape`` is ``{"status", "headers", "body", "no_body"}`` as produced by
+    ``triggers._webhook_on_received_response``. ``No Body`` returns an empty
+    body with the chosen status; everything else is JSON-encoded.
+    """
+    status_code = int(shape.get("status") or 200)
+    headers = {str(k): str(v) for k, v in (shape.get("headers") or {}).items()}
+    if shape.get("no_body"):
+        return Response(status_code=status_code, headers=headers)
+    return JSONResponse(
+        content=shape.get("body"), status_code=status_code, headers=headers
+    )
 
 
 def _evict_stale(now: float) -> None:
@@ -117,22 +140,22 @@ async def capture_webhook(path: str, request: Request) -> dict:
     checked, so the user can validate their Basic/Header/Query setup."""
     payload, raw_body = await _payload(request)
     _record_capture(path, _redacted_payload(payload))
-    run_ids, any_path_matched = await dispatch_webhook(
-        path, payload, prefer_draft=True, raw_body=raw_body
+    result = await dispatch_webhook(
+        path, payload, prefer_draft=True, raw_body=raw_body,
+        client_ip=request.client.host if request.client else None,
     )
     logger.info(
         "webhook test path=%s matched=%s runs=%d",
-        path, any_path_matched, len(run_ids),
+        path, result.any_match, len(result.run_ids),
     )
-    if not run_ids and any_path_matched:
+    if result.reject_status is not None:
         raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            "Webhook authentication failed.",
+            result.reject_status, _REJECT_DETAIL[result.reject_status]
         )
     return {
         "message": "Noodle test webhook received",
         "path": path,
-        "runs": run_ids,
+        "runs": result.run_ids,
     }
 
 
@@ -155,21 +178,31 @@ async def trigger_webhook(path: str, request: Request) -> dict:
     """Production webhook — dispatch a run of matching active workflows."""
     payload, raw_body = await _payload(request)
     _record_capture(path, _redacted_payload(payload))
-    run_ids, any_path_matched = await dispatch_webhook(path, payload, raw_body=raw_body)
+    result = await dispatch_webhook(
+        path, payload, raw_body=raw_body,
+        client_ip=request.client.host if request.client else None,
+    )
     logger.info(
         "webhook prod path=%s matched=%s runs=%d",
-        path, any_path_matched, len(run_ids),
+        path, result.any_match, len(result.run_ids),
     )
-    if not run_ids and any_path_matched:
-        # Path matched at least one workflow, but every candidate's auth check
-        # failed. Surface a clear 401 so the caller knows it wasn't an
-        # unknown-path 404.
+    if result.reject_status is not None:
+        # Path matched at least one workflow, but every candidate was rejected:
+        # 403 when an IP allowlist blocked the caller, else 401 (auth/HMAC).
+        # Distinct from an unknown-path 404.
         raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            "Webhook authentication failed.",
+            result.reject_status, _REJECT_DETAIL[result.reject_status]
         )
+    if result.response is not None:
+        return _shaped_response(result.response)
+    if result.run_ids:
+        message = "Workflow triggered"
+    elif result.deduped:
+        message = "Duplicate delivery acknowledged"
+    else:
+        message = "No active workflow for this path"
     return {
-        "message": "Workflow triggered" if run_ids else "No active workflow for this path",
+        "message": message,
         "path": path,
-        "runs": run_ids,
+        "runs": result.run_ids,
     }

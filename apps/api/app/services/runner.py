@@ -433,6 +433,7 @@ async def start_run(
     cache: dict[str, dict] | None = None,
     parameters: dict | None = None,
     trigger_node_id: str | None = None,
+    deduplication_key: str | None = None,
 ) -> str:
     """Create a run record and launch execution in the background.
 
@@ -524,6 +525,7 @@ async def start_run(
             trigger_type=trigger_type,
             status="running",
             runner_pool_id=runner_pool_id,
+            deduplication_key=deduplication_key,
         )
         # Local durable queue: a LOCAL run (no remote runner pool) that can't
         # grab an admission slot right now is parked as a durable ``queued``
