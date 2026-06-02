@@ -1,7 +1,9 @@
 # Production-grade webhooks + node hardening — design
 
 **Date:** 2026-06-02
-**Status:** In progress — Units 1, 2(core), 4(core) shipped; Units 2(rest), 3, 5 open.
+**Status:** All units shipped (2026-06-03). Units 1, 2 (core + rest), 3, 4, 5
+complete on `main`. Postgres-lane verification of Unit 3's `webhook_response`
+DB round-trip must run in CI (no local Postgres in the dev environment).
 
 ## Implementation status (2026-06-02)
 
@@ -15,21 +17,31 @@ vitest 7/7 green at last commit.
 | `8ec8efa` | **Unit 2 core ✅** — `auth_type` gains `bearer` + `jwt` (stdlib HS256: sig+alg+`exp`, see `triggers.py::_jwt_hs256_valid`); HMAC raw-body verification (`triggers.py::_webhook_hmac_passes`, raw bytes threaded via `webhooks.py::_payload` → `dispatch_webhook(raw_body=...)`); manifest options in `builtin.py`. |
 | `d7e0205` | **Unit 4 core ✅** — n8n radiating-waves animation in `NodeDetails.tsx` `WebhookPanel` + `.webhook-waves` CSS in `editor.css` (reduced-motion aware). |
 
-**Remaining work (pick up here):**
+**Completed in the 2026-06-03 session (on top of `51197e3`):**
 
-- **Unit 2 rest:** IP allowlist (thread client IP from `webhooks.py` handlers →
-  `dispatch_webhook`; CIDR match via stdlib `ipaddress`; reject → 403);
-  dedup/idempotency (reuse `runs` dedup key `0025`; ack 200, no run on repeat);
-  response-data shaping (`First/All/No Body/Custom` on `On Received`); raw/binary
-  body capture as artifacts; frontend conditional show/hide of the new fields
-  (extend `webhookHiddenParam`/`webhookParamLabel` in `NodeDetails.tsx`).
-- **Unit 3 (not started):** `respond_to_webhook` node + `Respond Node`/`Last Node`
-  modes; migration `runs.webhook_response` (nullable JSON, additive); hybrid wait
-  (broker `run_finished` + DB-poll, `webhook_response_timeout_seconds` default 30,
-  504 on timeout). Test on SQLite **and** the Postgres lane.
-- **Unit 4 rest:** move Listen + Test/Prod URLs into the NDV **input column**;
-  render the Unit-2 conditional fields.
-- **Unit 5 (not started):** audit built-in nodes; implement ≤6 low-risk wins.
+- **Unit 2 rest ✅** — IP allowlist (`ip_allowlist`/`trust_proxy`, perimeter-first
+  in `dispatch_webhook`, distinct 403); dedup/idempotency (`dedup`/`dedup_key`,
+  reuses `runs.deduplication_key`, 200-ack on repeat, `start_run` persists key);
+  response-data shaping (`First Entry JSON`/`All Entries`/`No Body`/`Custom`,
+  Option A = operates on the received body); raw/binary body capture as artifacts
+  (`raw_body=on` → `LocalArtifactStore` under a pre-generated run id +
+  `persist_artifact_refs`; `start_run` gains `run_id`; also fixed a binary-body
+  `UnicodeDecodeError` 500 in `_payload`). `dispatch_webhook` now returns a
+  `WebhookDispatch` dataclass. Frontend conditional show/hide done.
+- **Unit 3 ✅** — `response_mode` gains `Respond Node`; reuses the pre-existing
+  `respond_to_webhook` node (`{status_code, headers, body}`); migration
+  `0031_run_webhook_response`; runner records `runs.webhook_response`; hybrid wait
+  `triggers.wait_for_webhook_result`/`_await_run_terminal` (broker + 250ms DB
+  poll), `webhook_response_timeout_seconds=30`, 504/500 handling. SQLite lane
+  green; **Postgres lane still owed in CI**.
+- **Unit 4 rest ✅** — `WebhookPanel` moved into the NDV input column; the
+  Unit-2 fields render in the params column behind a collapsed **Advanced
+  options** disclosure (`webhookAdvancedParam`) so the default view stays clean.
+- **Unit 5 ✅** — audit found the integration modules already pass HTTP timeouts
+  consistently; implemented the generic-node wins: `http_request`
+  `timeout_seconds` + `max_retries` (exp. backoff on 429/5xx/network, default 0 =
+  unchanged) and `graphql_request` `timeout_seconds`. Tracked follow-ups: HTTP
+  pagination helper, per-node idempotency keys, structured SaaS-node retries.
 
 **Gotchas for the next session:**
 - PyJWT is NOT installed → JWT is HS256-only by design (RS256 = follow-up needing
