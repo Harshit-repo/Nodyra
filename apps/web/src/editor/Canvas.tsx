@@ -91,6 +91,7 @@ function DatasetConnectionHealth() {
 
 function CanvasControls() {
   const { fitView, zoomIn, zoomOut } = useReactFlow();
+  const { notify } = useToast();
   const autoLayout = useEditor((s) => s.autoLayout);
   const nodes = useEditor((s) => s.nodes);
   const running = useEditor((s) => s.running);
@@ -98,8 +99,23 @@ function CanvasControls() {
   const hasTrigger = useEditor((s) => pickEditorRunTrigger(s.nodes) !== null);
   const undo = useEditor((s) => s.undo);
   const redo = useEditor((s) => s.redo);
+  const copySelection = useEditor((s) => s.copySelection);
+  const pasteSelection = useEditor((s) => s.pasteSelection);
   const canUndo = useEditor((s) => s._past.length > 0);
   const canRedo = useEditor((s) => s._future.length > 0);
+  const clipboardNodeCount = useEditor((s) => s.clipboardNodeCount);
+  const selectedCount = useEditor((s) => {
+    const selected = s.nodes.filter((node) => node.selected).length;
+    return selected || (s.selectedId ? 1 : 0);
+  });
+
+  function copiedLabel(count: number): string {
+    return `${count} node${count === 1 ? "" : "s"} copied.`;
+  }
+
+  function pastedLabel(count: number): string {
+    return `${count} node${count === 1 ? "" : "s"} pasted.`;
+  }
 
   return (
     <div className="canvas-controls" aria-label="Canvas controls">
@@ -142,6 +158,32 @@ function CanvasControls() {
       >
         ⇥
       </button>
+      <span className="canvas-control-sep" />
+      <button
+        type="button"
+        title="Copy selected nodes (Ctrl+C)"
+        aria-label="Copy selected nodes"
+        disabled={selectedCount === 0}
+        onClick={() => {
+          const result = copySelection();
+          if (result.nodeCount > 0) notify(copiedLabel(result.nodeCount), "success");
+        }}
+      >
+        ⧉
+      </button>
+      <button
+        type="button"
+        title="Paste copied nodes (Ctrl+V)"
+        aria-label="Paste copied nodes"
+        disabled={clipboardNodeCount === 0}
+        onClick={() => {
+          const result = pasteSelection();
+          if (result.nodeCount > 0) notify(pastedLabel(result.nodeCount), "success");
+        }}
+      >
+        ⎘
+      </button>
+      <span className="canvas-control-sep" />
       <button
         type="button"
         title="Undo (Ctrl+Z)"
@@ -244,11 +286,23 @@ export function Canvas() {
       } else if ((key === "z" && e.shiftKey) || key === "y") {
         e.preventDefault();
         useEditor.getState().redo();
+      } else if (key === "c" && !e.shiftKey && !e.altKey) {
+        const result = useEditor.getState().copySelection();
+        if (result.nodeCount > 0) {
+          e.preventDefault();
+          notify(`${result.nodeCount} node${result.nodeCount === 1 ? "" : "s"} copied.`, "success");
+        }
+      } else if (key === "v" && !e.shiftKey && !e.altKey) {
+        const result = useEditor.getState().pasteSelection();
+        if (result.nodeCount > 0) {
+          e.preventDefault();
+          notify(`${result.nodeCount} node${result.nodeCount === 1 ? "" : "s"} pasted.`, "success");
+        }
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [notify]);
 
   const handleConnect = useCallback((connection: Connection) => {
     const check = onConnect(connection);

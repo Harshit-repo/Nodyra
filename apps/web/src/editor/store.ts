@@ -58,6 +58,11 @@ export interface RunOptions {
   triggerNodeId?: string;
 }
 
+export interface ClipboardResult {
+  nodeCount: number;
+  edgeCount: number;
+}
+
 export const TRIGGER_CATEGORY = "Triggers";
 
 export function pickEditorRunTrigger(nodes: NoodleNode[]): NoodleNode | null {
@@ -135,6 +140,9 @@ interface EditorStore {
   addGroupNode: (position: { x: number; y: number }) => void;
   autoLayout: () => void;
   duplicateNode: (id: string) => void;
+  copySelection: () => ClipboardResult;
+  pasteSelection: () => ClipboardResult;
+  clipboardNodeCount: number;
   updateParams: (id: string, params: Record<string, unknown>) => void;
   replaceNodeManifest: (id: string, manifest: NodeManifest) => void;
   setSelected: (id: string | null) => void;
@@ -190,6 +198,24 @@ function newNodeId(): string {
   return `n_${Date.now().toString(36)}_${seq}`;
 }
 
+function newEdgeId(
+  source: string,
+  target: string,
+  sourceHandle: string | null | undefined,
+  targetHandle: string | null | undefined,
+): string {
+  seq += 1;
+  return `e_${source}_${target}_${sourceHandle ?? "main"}_${targetHandle ?? "input"}_${seq}`;
+}
+
+interface EditorClipboard {
+  nodes: NoodleNode[];
+  edges: Edge[];
+  pasteCount: number;
+}
+
+let editorClipboard: EditorClipboard | null = null;
+
 function randomSlug(): string {
   return Math.random().toString(36).slice(2, 8);
 }
@@ -220,11 +246,29 @@ function shouldCommitChanges(changes: Array<{ type: string; dragging?: boolean }
 }
 
 function cloneParams(params: Record<string, unknown>): Record<string, unknown> {
+  return cloneValue(params) as Record<string, unknown>;
+}
+
+function cloneValue<T>(value: T): T {
   try {
-    return structuredClone(params) as Record<string, unknown>;
+    return structuredClone(value) as T;
   } catch {
-    return JSON.parse(JSON.stringify(params)) as Record<string, unknown>;
+    return JSON.parse(JSON.stringify(value)) as T;
   }
+}
+
+function cloneNode(node: NoodleNode): NoodleNode {
+  const cloned = cloneValue(node);
+  delete (cloned as { dragging?: boolean }).dragging;
+  delete (cloned as { resizing?: boolean }).resizing;
+  return cloned;
+}
+
+function selectedNodes(nodes: NoodleNode[], selectedId: string | null): NoodleNode[] {
+  const selected = nodes.filter((node) => node.selected);
+  if (selected.length > 0) return selected;
+  const fallback = selectedId ? nodes.find((node) => node.id === selectedId) : null;
+  return fallback ? [fallback] : [];
 }
 
 function layoutPositions(
@@ -316,6 +360,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
   pinned: {},
 
   devMode: false,
+  clipboardNodeCount: 0,
 
   setManifests: (manifests) =>
     set({
@@ -639,6 +684,89 @@ export const useEditor = create<EditorStore>((set, get) => ({
       _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
       _future: [],
     });
+  },
+
+  copySelection: () => {
+    const state = get();
+    const copiedNodes = selectedNodes(state.nodes, state.selectedId);
+    if (copiedNodes.length === 0) return { nodeCount: 0, edgeCount: 0 };
+    const copiedIds = new Set(copiedNodes.map((node) => node.id));
+    const copiedEdges = state.edges.filter(
+      (edge) => copiedIds.has(edge.source) && copiedIds.has(edge.target),
+    );
+    editorClipboard = {
+      nodes: copiedNodes.map((node) => ({
+        ...cloneNode(node),
+        selected: false,
+      })),
+      edges: copiedEdges.map((edge) => ({
+        ...cloneValue(edge),
+        selected: false,
+      })),
+      pasteCount: 0,
+    };
+    set({ clipboardNodeCount: copiedNodes.length });
+    return { nodeCount: copiedNodes.length, edgeCount: copiedEdges.length };
+  },
+
+  pasteSelection: () => {
+    const clipboard = editorClipboard;
+    if (!clipboard || clipboard.nodes.length === 0 || get().clipboardNodeCount === 0) {
+      return { nodeCount: 0, edgeCount: 0 };
+    }
+    const state = get();
+    clipboard.pasteCount += 1;
+    const offset = clipboard.pasteCount * 48;
+    const idMap = new Map<string, string>();
+    for (const node of clipboard.nodes) {
+      idMap.set(node.id, newNodeId());
+    }
+
+    const pastedNodes = clipboard.nodes.map((node) => {
+      const nextId = idMap.get(node.id)!;
+      const parentId =
+        typeof node.parentId === "string"
+          ? (idMap.get(node.parentId) ?? node.parentId)
+          : node.parentId;
+      return {
+        ...cloneNode(node),
+        id: nextId,
+        parentId,
+        selected: true,
+        position: {
+          x: node.position.x + offset,
+          y: node.position.y + offset,
+        },
+        data: cloneValue(node.data),
+        style: node.style ? cloneValue(node.style) : node.style,
+      };
+    });
+    const pastedEdges: Edge[] = [];
+    for (const edge of clipboard.edges) {
+      const source = idMap.get(edge.source);
+      const target = idMap.get(edge.target);
+      if (!source || !target) continue;
+      pastedEdges.push({
+        ...cloneValue(edge),
+        id: newEdgeId(source, target, edge.sourceHandle, edge.targetHandle),
+        source,
+        target,
+        selected: false,
+      });
+    }
+
+    set({
+      nodes: [
+        ...state.nodes.map((node) => ({ ...node, selected: false })),
+        ...pastedNodes,
+      ],
+      edges: [...state.edges.map((edge) => ({ ...edge, selected: false })), ...pastedEdges],
+      selectedId: pastedNodes.length === 1 ? pastedNodes[0].id : null,
+      dirty: true,
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
+    });
+    return { nodeCount: pastedNodes.length, edgeCount: pastedEdges.length };
   },
 
   updateParams: (id, params) => {

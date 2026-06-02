@@ -4,8 +4,11 @@ import { Link } from "react-router-dom";
 import { api, getUser } from "./api";
 import { HomeHeader } from "./HomeHeader";
 import {
+  getFontPreference,
   getThemePreference,
+  setFontPreference,
   setThemePreference,
+  type FontPreference,
   type ThemePreference,
 } from "./theme";
 import type { SystemSettings } from "./types";
@@ -201,10 +204,16 @@ export function SettingsPage() {
   const user = getUser();
   const canAdmin = user?.role === "admin" || user?.role === "owner";
   const [theme, setTheme] = useState<ThemePreference>(() => getThemePreference());
+  const [font, setFont] = useState<FontPreference>(() => getFontPreference());
 
   function updateTheme(value: ThemePreference): void {
     setTheme(value);
     setThemePreference(value);
+  }
+
+  function updateFont(value: FontPreference): void {
+    setFont(value);
+    setFontPreference(value);
   }
 
   return (
@@ -259,6 +268,21 @@ export function SettingsPage() {
                 <option value="system">System</option>
                 <option value="dark">Dark</option>
                 <option value="light">Light</option>
+              </select>
+            </label>
+            <label className="settings-field">
+              <span>Typeface</span>
+              <select
+                className="field-input"
+                value={font}
+                onChange={(event) =>
+                  updateFont(event.target.value as FontPreference)
+                }
+              >
+                <option value="brand">Brand Grotesk</option>
+                <option value="inter">Inter</option>
+                <option value="technical">Technical</option>
+                <option value="system">System UI</option>
               </select>
             </label>
             <p className="muted">

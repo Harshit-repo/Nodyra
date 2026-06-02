@@ -1118,6 +1118,12 @@ export function EditorPage() {
               <span>Run workflow</span>
               <kbd>Ctrl</kbd>
               <kbd>Enter</kbd>
+              <span>Copy selected nodes</span>
+              <kbd>Ctrl</kbd>
+              <kbd>C</kbd>
+              <span>Paste copied nodes</span>
+              <kbd>Ctrl</kbd>
+              <kbd>V</kbd>
               <span>Search nodes</span>
               <kbd>/</kbd>
               <span />

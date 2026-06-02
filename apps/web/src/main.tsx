@@ -7,9 +7,10 @@ import "@xyflow/react/dist/style.css";
 import App from "./App";
 import "./index.css";
 import "./editor.css";
-import { applyThemePreference, listenForSystemThemeChanges } from "./theme";
+import { applyFontPreference, applyThemePreference, listenForSystemThemeChanges } from "./theme";
 
 applyThemePreference();
+applyFontPreference();
 listenForSystemThemeChanges();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
