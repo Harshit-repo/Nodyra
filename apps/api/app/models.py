@@ -45,6 +45,14 @@ class Environment(Base):
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     runner_pool_size: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     runner_pool_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Optional binding to a *remote* runner pool. When set, runs of workflows
+    # using this environment are dispatched to that pool (unless a deployment
+    # or workflow override points elsewhere). When null, runs execute in the
+    # API's in-process runtime pool. ON DELETE SET NULL so removing a pool
+    # cleanly unbinds its environments instead of orphaning the FK.
+    runner_pool_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runner_pools.id", ondelete="SET NULL"), index=True, nullable=True
+    )
     worker_rss_estimate_bytes: Mapped[int | None] = mapped_column(
         BigInteger, nullable=True
     )
@@ -618,8 +626,21 @@ class RunQueueEntry(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    # Hot path: lease the oldest eligible entry in a status. Index supports the
-    # ``status + available_at`` selection the queue service runs.
+    # Hot path: lease the oldest eligible entry in a status. The composite
+    # ``(status, priority, available_at)`` index matches the lease query's
+    # ``WHERE status=? AND available_at<=?`` filter *and* its
+    # ``ORDER BY priority DESC, available_at ASC`` so Postgres can locate the
+    # next candidate via the index instead of scanning + sorting — important
+    # under ``FOR UPDATE SKIP LOCKED`` where a scan would lock extra rows and
+    # raise contention across replicas. The ``(status, lease_expires_at)``
+    # index backs the expired-lease sweep in ``requeue_expired_leases``.
     __table_args__ = (
         Index("ix_run_queue_status_available_at", "status", "available_at"),
+        Index(
+            "ix_run_queue_lease",
+            "status",
+            "priority",
+            "available_at",
+        ),
+        Index("ix_run_queue_status_lease_expires", "status", "lease_expires_at"),
     )

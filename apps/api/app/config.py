@@ -32,13 +32,27 @@ class Settings(BaseSettings):
     envs_dir: str = "./envs"
     enable_venv_builds: bool = True
     run_synchronously: bool = False
-    use_subprocess_runner: bool = False
+    # Subprocess execution is the safe default: each run is isolated in a warm
+    # worker process, and admission is bounded by ``max_concurrent_runs``
+    # (global) plus per-env pool caps, so a burst of runs can't melt the host.
+    # The in-process path (set False) is kept for tests/dev; it is now also
+    # bounded by the same global ceiling (see runner._execute_run).
+    use_subprocess_runner: bool = True
     # Parallel runs: warm runner processes kept per environment, and a global
     # ceiling on simultaneously executing top-level runs. Default pool size 1
     # because each warm process re-imports the env's (often heavy) packages —
     # raise it deliberately when you have RAM to spare.
     runner_pool_size: int = 1
     max_concurrent_runs: int = 8
+    # Bound on simultaneously-spawned sub-workflow subprocesses (fan-out
+    # throttle). 0 → fall back to ``max_concurrent_runs``. This is a SOFT cap:
+    # because sub-workflows nest (A→B→C) and each ancestor holds its slot while
+    # awaiting the child, we proceed without a slot after
+    # ``subworkflow_spawn_timeout_seconds`` rather than risk deadlocking deep
+    # chains. It smooths wide fan-out (a parent calling many subs at once)
+    # without hard-blocking legitimate nesting.
+    max_concurrent_subworkflows: int = 0
+    subworkflow_spawn_timeout_seconds: float = 30.0
     # Close warm runner processes that have been idle longer than this.
     # 0 disables reaping (warm forever). Sweep interval is separate so the
     # cost stays low even with a low idle threshold.
@@ -74,6 +88,23 @@ class Settings(BaseSettings):
     # When true, the dispatch loop stops leasing new entries; in-flight
     # leased runs continue. Set this before shutdown to drain gracefully.
     queue_drain: bool = False
+    # Local durable queue: when a LOCAL run (in-process / subprocess pool,
+    # no remote runner pool) can't get an admission slot immediately, leave
+    # it as a durable ``queued`` ``RunQueueEntry`` instead of blocking a
+    # coroutine on the pool semaphore. The dispatch loop then leases it as
+    # capacity frees. Gives visible queue depth + restart durability for
+    # local execution. Disable to fall back to the old block-on-semaphore
+    # behaviour.
+    local_queue_enabled: bool = True
+    # Soft RSS budget (bytes) across concurrently executing top-level runs.
+    # 0 disables RSS gating. Boot default; the live value is the
+    # ``system_settings.worker_rss_soft_budget_bytes`` row when present.
+    # Before a run acquires a worker, its env's measured
+    # ``worker_rss_estimate_bytes`` is reserved against this ceiling so a
+    # burst of heavy-env runs can't OOM the host (count caps alone can't tell
+    # an 80 MB env from a 1.2 GB one). Soft: a run is always admitted when no
+    # other run is reserved, even if it alone exceeds the budget.
+    worker_rss_soft_budget_bytes: int = 0
 
     # Run history retention. The retention loop ticks periodically and drops
     # old runs so the DB stays bounded. 0 disables the corresponding rule.

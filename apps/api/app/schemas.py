@@ -95,6 +95,7 @@ class EnvironmentCreate(BaseModel):
     description: str = Field(default="", max_length=2000)
     runner_pool_size: int = Field(default=1, ge=0, le=32)
     runner_pool_max: int | None = Field(default=None, ge=1, le=64)
+    runner_pool_id: str | None = None
 
 
 class EnvironmentUpdate(BaseModel):
@@ -102,6 +103,9 @@ class EnvironmentUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     runner_pool_size: int | None = Field(default=None, ge=0, le=32)
     runner_pool_max: int | None = Field(default=None, ge=1, le=64)
+    # Sentinel-free: send null to unbind, omit to leave unchanged.
+    runner_pool_id: str | None = Field(default=None)
+    runner_pool_set: bool = Field(default=False)
 
 
 class PackageRequest(BaseModel):
@@ -122,6 +126,8 @@ class EnvironmentInfo(BaseModel):
     runner_pool_size: int = 1
     runner_pool_max: int | None = None
     effective_pool_max: int = 1
+    runner_pool_id: str | None = None
+    runner_pool_name: str | None = None
     worker_rss_estimate_bytes: int | None = None
     created_at: datetime
     updated_at: datetime

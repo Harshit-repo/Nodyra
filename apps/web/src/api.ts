@@ -173,6 +173,7 @@ export const api = {
     description?: string;
     runner_pool_size?: number;
     runner_pool_max?: number | null;
+    runner_pool_id?: string | null;
   }) =>
     request<Environment>("/environments", {
       method: "POST",
@@ -185,6 +186,8 @@ export const api = {
       description?: string;
       runner_pool_size?: number;
       runner_pool_max?: number | null;
+      runner_pool_id?: string | null;
+      runner_pool_set?: boolean;
     },
   ) =>
     request<Environment>(`/environments/${id}`, {
@@ -274,7 +277,7 @@ export const api = {
       }
     }
     const query = params.toString();
-    return request<RunListItem[]>(`/runs${query ? `?${query}` : ""}`);
+    return requestList<RunListItem>(`/runs${query ? `?${query}` : ""}`);
   },
   cancelRun: (runId: string) =>
     request<{ run_id: string; status: string }>(`/runs/${runId}/cancel`, {

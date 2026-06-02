@@ -21,12 +21,14 @@ in different subprocesses and can therefore run in parallel.
 """
 
 import asyncio
+import contextlib
 import json
+import logging
 import os
 import sys
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 from app.config import settings
@@ -35,6 +37,8 @@ from app.models import Environment
 from app.services.artifacts import artifact_base_dir
 from app.services.venv import ensure_environment_ready
 from noodle.serialization import deserialize_value, serialize_value
+
+logger = logging.getLogger(__name__)
 
 EventCallback = Callable[[dict], Awaitable[None]]
 # Signature accepts an optional ``parent_env_id`` kwarg. The runner's
@@ -76,6 +80,40 @@ async def _resolve_pool_sizes(env_id: str | None) -> tuple[int, int]:
     except Exception:  # noqa: BLE001 - degrade gracefully if the DB is unavailable
         size = max(1, settings.runner_pool_size)
         return size, size
+
+
+async def _resolve_env_rss_estimate(env_id: str | None) -> int:
+    """Per-environment measured worker RSS estimate (bytes), or 0 if unknown.
+
+    Populated by ``venv._measure_worker_rss`` after a build. 0 (no estimate,
+    or no env) means the RSS gate treats the run as un-costed and never
+    blocks on it. Looked up once when the env's pool is first created.
+    """
+    if env_id is None:
+        return 0
+    try:
+        async with SessionLocal() as session:
+            env = await session.get(Environment, env_id)
+            if env is None or env.worker_rss_estimate_bytes is None:
+                return 0
+            return max(0, int(env.worker_rss_estimate_bytes))
+    except Exception:  # noqa: BLE001 - degrade gracefully if the DB is unavailable
+        return 0
+
+
+async def _rss_soft_budget_bytes() -> int:
+    """Current soft RSS budget (bytes). 0 disables RSS gating.
+
+    Reads the live workspace setting (cached, 5s TTL) so an operator can tune
+    it from the admin UI without a restart; falls back to the boot default.
+    """
+    try:
+        from app.services.live_settings import get_live_settings  # noqa: PLC0415
+
+        live = await get_live_settings()
+        return max(0, int(live.worker_rss_soft_budget_bytes))
+    except Exception:  # noqa: BLE001 - never let settings load block a dispatch
+        return max(0, int(settings.worker_rss_soft_budget_bytes))
 
 
 async def _python_for_env(env_id: str | None) -> str:
@@ -310,16 +348,19 @@ class _EnvPool:
     """
 
     def __init__(
-        self, env_id: str | None, min_size: int, max_size: int
+        self, env_id: str | None, min_size: int, max_size: int,
+        rss_estimate: int = 0,
     ) -> None:
         self.env_id = env_id
         self.min_size = max(0, min_size)
         self.max_size = max(1, max_size, self.min_size)
+        # Measured per-worker RSS for this env (bytes), used by the pool's
+        # soft RSS budget. 0 → un-costed (never blocks the budget gate).
+        self.rss_estimate = max(0, rss_estimate)
         self._sem = asyncio.Semaphore(self.max_size)
         self._idle: list[_RuntimeProcess] = []
         self._all: set[_RuntimeProcess] = set()
         self._lock = asyncio.Lock()
-
     @staticmethod
     def _alive(proc: _RuntimeProcess) -> bool:
         return not proc.dead and proc.process.returncode is None
@@ -403,6 +444,61 @@ class _EnvPool:
             await proc.close()
 
 
+class _RssBudget:
+    """Soft admission gate bounding the *sum* of estimated worker RSS across
+    concurrently executing top-level runs.
+
+    Complements the count-based ``_global_sem``: N concurrent runs of a
+    1.2 GB env and N of an 80 MB env have wildly different memory cost, and a
+    pure count cap can't tell them apart. Before a run acquires a worker it
+    reserves its env's measured ``worker_rss_estimate_bytes`` here; the
+    reservation is released when the run finishes, so the pool admits "as many
+    runs as fit the memory budget" rather than a flat count.
+
+    Soft by construction:
+
+    * ``budget <= 0`` (unset) or ``estimate <= 0`` (env never measured) → no
+      gating; the context manager is a no-op.
+    * A run is ALWAYS admitted when nothing else is reserved, even if its
+      estimate alone exceeds the budget — otherwise an env bigger than the
+      whole budget could never run. This also guarantees forward progress
+      (when all in-flight runs drain, ``_committed`` hits 0 and the next
+      waiter is admitted), so the gate can never deadlock.
+
+    Only ever consulted from top-level ``dispatch`` — never from
+    sub-workflows — so a parent holding a reservation while awaiting a child
+    can't deadlock (mirrors the ``_global_sem`` / ``dispatch_subworkflow``
+    split).
+    """
+
+    def __init__(self) -> None:
+        self._committed = 0
+        self._cond = asyncio.Condition()
+
+    @property
+    def committed_bytes(self) -> int:
+        return self._committed
+
+    @contextlib.asynccontextmanager
+    async def reserve(self, estimate: int, budget: int) -> AsyncIterator[None]:
+        amount = estimate if (budget > 0 and estimate > 0) else 0
+        if amount <= 0:
+            yield
+            return
+        async with self._cond:
+            # Admit immediately when nothing else is reserved (forward-progress
+            # guarantee), otherwise wait until the new total fits the budget.
+            while self._committed > 0 and self._committed + amount > budget:
+                await self._cond.wait()
+            self._committed += amount
+        try:
+            yield
+        finally:
+            async with self._cond:
+                self._committed = max(0, self._committed - amount)
+                self._cond.notify_all()
+
+
 class RuntimePool:
     def __init__(self) -> None:
         self._envs: dict[str, _EnvPool] = {}
@@ -412,6 +508,80 @@ class RuntimePool:
         # sub-workflows (which call the engine directly, not the pool) consume
         # no slot and cannot deadlock a parent that is waiting on them.
         self._global_sem = asyncio.Semaphore(max(1, settings.max_concurrent_runs))
+        # Soft fan-out throttle for sub-workflow subprocess spawns. Separate
+        # from ``_global_sem``/pool sems on purpose (the parent already holds
+        # those). See ``subworkflow_slot`` for why it's a soft cap.
+        sub_cap = settings.max_concurrent_subworkflows or settings.max_concurrent_runs
+        self._subworkflow_sem = asyncio.Semaphore(max(1, sub_cap))
+        # Soft memory ceiling across concurrent top-level runs. See _RssBudget.
+        self._rss_budget = _RssBudget()
+
+    def has_immediate_capacity(self) -> bool:
+        """Best-effort, non-blocking probe used by the local durable queue to
+        decide whether a fresh local run can be dispatched now or should wait
+        as a queued entry.
+
+        Only checks the global concurrency slot (a free slot ⇒ ``True``). The
+        RSS budget is intentionally NOT probed here: it's enforced inside
+        ``dispatch`` and a small over-admission just means a run briefly waits
+        on the budget instead of in the queue — harmless and self-correcting.
+        Subject to a benign TOCTOU race with the real acquire in ``dispatch``;
+        the semaphore remains the actual enforcement.
+        """
+        return not self._global_sem.locked()
+
+    def available_global_slots(self) -> int:
+        """Best-effort count of free global concurrency slots.
+
+        Used by the local durable-queue dispatch loop to bound how many local
+        runs it leases per tick (leasing more than there are slots would just
+        pile up blocked coroutines). Reads the semaphore's internal permit
+        counter — best-effort and may briefly over/under-count under races;
+        the semaphore itself remains the real enforcement.
+        """
+        return max(0, getattr(self._global_sem, "_value", 0))
+
+    def global_slot(self) -> asyncio.Semaphore:
+        """The global ``max_concurrent_runs`` ceiling as an async context
+        manager. Used by the in-process top-level path (runner) so it honours
+        the same admission cap as subprocess ``dispatch``. Never acquire this
+        around a sub-workflow call — the parent already holds a slot, so doing
+        so would deadlock (mirrors the ``dispatch_subworkflow`` bypass).
+        """
+        return self._global_sem
+
+    @contextlib.asynccontextmanager
+    async def subworkflow_slot(self) -> AsyncIterator[None]:
+        """Best-effort throttle on concurrently-spawned sub-workflow processes.
+
+        Bounds fan-out — e.g. a parent that calls 100 sub-workflows at once —
+        so the host can't be swamped by a burst of fresh subprocesses.
+
+        Deliberately a SOFT cap. Sub-workflows nest (A→B→C) and every ancestor
+        holds its slot while awaiting the child, so a hard cap would deadlock
+        any chain deeper than the cap. Instead we wait up to
+        ``subworkflow_spawn_timeout_seconds`` for a slot and then proceed
+        anyway: wide fan-out gets throttled (siblings queue briefly) while
+        legitimate nesting never blocks indefinitely.
+        """
+        acquired = False
+        try:
+            await asyncio.wait_for(
+                self._subworkflow_sem.acquire(),
+                timeout=settings.subworkflow_spawn_timeout_seconds,
+            )
+            acquired = True
+        except TimeoutError:
+            logger.warning(
+                "sub-workflow spawn throttle exhausted after %ss — proceeding "
+                "without a slot (soft cap)",
+                settings.subworkflow_spawn_timeout_seconds,
+            )
+        try:
+            yield
+        finally:
+            if acquired:
+                self._subworkflow_sem.release()
 
     async def _env_pool(self, env_id: str | None) -> _EnvPool:
         key = env_id or "_default"
@@ -419,7 +589,8 @@ class RuntimePool:
             envpool = self._envs.get(key)
             if envpool is None:
                 min_size, max_size = await _resolve_pool_sizes(env_id)
-                envpool = _EnvPool(env_id, min_size, max_size)
+                rss_estimate = await _resolve_env_rss_estimate(env_id)
+                envpool = _EnvPool(env_id, min_size, max_size, rss_estimate)
                 self._envs[key] = envpool
             return envpool
 
@@ -436,34 +607,40 @@ class RuntimePool:
         run_timeout: float | None = None,
     ) -> str:
         envpool = await self._env_pool(env_id)
-        async with self._global_sem:
-            proc = await envpool.acquire()
-            # Per-workflow override wins; None falls back to the global setting.
-            timeout = (
-                run_timeout
-                if run_timeout is not None
-                else settings.workflow_run_timeout_seconds
-            )
-            try:
-                run = proc.run(
-                    run_id,
-                    graph,
-                    cache,
-                    targets,
-                    on_event,
-                    sub_workflow_caller,
-                    workflow_modules=workflow_modules,
+        budget = await _rss_soft_budget_bytes()
+        # Reserve memory budget BEFORE taking a concurrency slot so a
+        # memory-blocked run doesn't sit on a precious ``_global_sem`` slot
+        # while it waits. Consistent acquire order (rss → sem → worker) across
+        # all callers keeps the two gates deadlock-free.
+        async with self._rss_budget.reserve(envpool.rss_estimate, budget):
+            async with self._global_sem:
+                proc = await envpool.acquire()
+                # Per-workflow override wins; None falls back to the global setting.
+                timeout = (
+                    run_timeout
+                    if run_timeout is not None
+                    else settings.workflow_run_timeout_seconds
                 )
-                if timeout and timeout > 0:
-                    return await asyncio.wait_for(run, timeout=timeout)
-                return await run
-            except TimeoutError as exc:
-                await proc.close()
-                raise RuntimeError(
-                    f"workflow run timed out after {timeout}s"
-                ) from exc
-            finally:
-                envpool.release(proc)
+                try:
+                    run = proc.run(
+                        run_id,
+                        graph,
+                        cache,
+                        targets,
+                        on_event,
+                        sub_workflow_caller,
+                        workflow_modules=workflow_modules,
+                    )
+                    if timeout and timeout > 0:
+                        return await asyncio.wait_for(run, timeout=timeout)
+                    return await run
+                except TimeoutError as exc:
+                    await proc.close()
+                    raise RuntimeError(
+                        f"workflow run timed out after {timeout}s"
+                    ) from exc
+                finally:
+                    envpool.release(proc)
 
     async def dispatch_subworkflow(
         self,
@@ -490,29 +667,35 @@ class RuntimePool:
         Memory cost: one extra subprocess per in-flight sub-workflow
         call, which goes away the moment the parent's
         ``execute_workflow`` node returns.
+
+        To stop unbounded fan-out (a parent calling many subs at once, or
+        deep nesting) from OOMing the host, the spawn is wrapped in the
+        SOFT ``subworkflow_slot`` throttle — see that method for why it
+        can't be a hard cap without re-introducing deadlock.
         """
-        proc = await _RuntimeProcess.spawn(env_id)
-        try:
-            run = proc.run(
-                run_id,
-                graph,
-                cache,
-                targets,
-                on_event,
-                sub_workflow_caller,
-                workflow_modules=workflow_modules,
-            )
-            timeout = settings.workflow_run_timeout_seconds
-            if timeout and timeout > 0:
-                return await asyncio.wait_for(run, timeout=timeout)
-            return await run
-        except TimeoutError as exc:
-            raise RuntimeError(
-                f"sub-workflow run timed out after "
-                f"{settings.workflow_run_timeout_seconds}s"
-            ) from exc
-        finally:
-            await proc.close()
+        async with self.subworkflow_slot():
+            proc = await _RuntimeProcess.spawn(env_id)
+            try:
+                run = proc.run(
+                    run_id,
+                    graph,
+                    cache,
+                    targets,
+                    on_event,
+                    sub_workflow_caller,
+                    workflow_modules=workflow_modules,
+                )
+                timeout = settings.workflow_run_timeout_seconds
+                if timeout and timeout > 0:
+                    return await asyncio.wait_for(run, timeout=timeout)
+                return await run
+            except TimeoutError as exc:
+                raise RuntimeError(
+                    f"sub-workflow run timed out after "
+                    f"{settings.workflow_run_timeout_seconds}s"
+                ) from exc
+            finally:
+                await proc.close()
 
     async def reap_idle(self, threshold_seconds: float) -> int:
         """Sweep every env pool, closing warm processes idle past the threshold."""

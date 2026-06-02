@@ -60,6 +60,30 @@ DATASET_AUTO_EXPAND_CAP: int = 50_000
 _process_pool: concurrent.futures.ProcessPoolExecutor | None = None
 
 
+class _LengthCountingSink:
+    """A minimal write-only sink that counts characters instead of buffering
+    them. Used to measure ``json.dump`` output size without materializing the
+    whole encoded string in memory — important for multi-MB node outputs that
+    are checked against ``max_node_output_bytes`` on every run."""
+
+    __slots__ = ("length",)
+
+    def __init__(self) -> None:
+        self.length = 0
+
+    def write(self, chunk: str) -> None:
+        self.length += len(chunk)
+
+
+def _approx_encoded_length(value: Any) -> int:
+    """Character length of ``value`` encoded as JSON, computed by streaming
+    into a counting sink. Equivalent to ``len(json.dumps(value, default=str))``
+    but without holding the full string."""
+    sink = _LengthCountingSink()
+    json.dump(value, sink, default=str)
+    return sink.length
+
+
 def _get_process_pool(max_workers: int = 4) -> concurrent.futures.ProcessPoolExecutor:
     global _process_pool
     if _process_pool is None:
@@ -604,7 +628,7 @@ async def execute(
                     _validate_output_kinds(node_def, outputs, nid)
                     if max_node_output_bytes is not None and max_node_output_bytes > 0:
                         try:
-                            approx = len(json.dumps(outputs, default=str))
+                            approx = _approx_encoded_length(outputs)
                         except (TypeError, ValueError):
                             approx = 0
                         if approx > max_node_output_bytes:

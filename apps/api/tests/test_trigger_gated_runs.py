@@ -356,3 +356,66 @@ async def test_trigger_node_id_referencing_non_trigger_returns_400(
         json={"trigger_node_id": "m_out"},  # a code node
     )
     assert response.status_code == 400
+
+
+# A node with no trigger anywhere upstream: a lone code node disconnected
+# from any trigger branch.
+NO_TRIGGER_UPSTREAM_GRAPH = {
+    "nodes": [
+        {
+            "id": "m",
+            "type": "manual_trigger",
+            "params": {"data": {"ok": True}},
+            "position": {"x": 0, "y": 0},
+        },
+        {
+            "id": "m_out",
+            "type": "code",
+            "params": {"code": "output = 'manual'"},
+            "position": {"x": 250, "y": 0},
+        },
+        {
+            "id": "stray",
+            "type": "code",
+            "params": {"code": "output = 'stray'"},
+            "position": {"x": 250, "y": 200},
+        },
+    ],
+    "edges": [
+        {
+            "id": "e_m",
+            "source": "m",
+            "source_output": "main",
+            "target": "m_out",
+            "target_input": "input",
+        },
+    ],
+}
+
+
+async def test_run_this_step_on_node_without_trigger_upstream_returns_400(
+    client: AsyncClient,
+) -> None:
+    """'Run this step' on a node with no trigger upstream is rejected."""
+    workflow_id = await _workflow_with(
+        client, "Stray", NO_TRIGGER_UPSTREAM_GRAPH
+    )
+    response = await client.post(
+        f"/workflows/{workflow_id}/run",
+        json={"targets": ["stray"]},
+    )
+    assert response.status_code == 400
+
+
+async def test_run_this_step_on_node_with_trigger_upstream_succeeds(
+    client: AsyncClient,
+) -> None:
+    """'Run this step' on a node wired to a trigger still works."""
+    workflow_id = await _workflow_with(
+        client, "Wired", NO_TRIGGER_UPSTREAM_GRAPH
+    )
+    response = await client.post(
+        f"/workflows/{workflow_id}/run",
+        json={"targets": ["m_out"]},
+    )
+    assert response.status_code == 202

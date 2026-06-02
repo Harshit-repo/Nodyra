@@ -2,8 +2,19 @@
 name = "noodle-runner"
 version = "0.0.1"
 description = "Noodle remote runner agent — registers a machine as a worker and executes workflows"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = ["httpx>=0.27", "websockets>=12"]
+keywords = ["noodle", "workflow", "automation", "runner", "agent"]
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Topic :: System :: Distributed Computing",
+]
+
+[project.urls]
+Homepage = "https://github.com/Harshit-repo/noodle"
+Repository = "https://github.com/Harshit-repo/noodle"
 
 [project.scripts]
 noodle-runner = "noodle_runner_agent.agent:main"

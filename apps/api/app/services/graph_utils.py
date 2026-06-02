@@ -68,6 +68,51 @@ def forward_descendants(
     return visited
 
 
+def backward_ancestors(
+    graph: dict | WorkflowGraph, seeds: set[str]
+) -> set[str]:
+    """Return ``seeds`` plus every node reachable by following incoming edges."""
+    by_target: dict[str, list[str]] = {}
+    for edge in _graph_edges(graph):
+        src, tgt = _edge_endpoints(edge)
+        if src and tgt:
+            by_target.setdefault(tgt, []).append(src)
+    visited: set[str] = set(seeds)
+    queue = list(seeds)
+    while queue:
+        nid = queue.pop()
+        for prev in by_target.get(nid, []):
+            if prev not in visited:
+                visited.add(prev)
+                queue.append(prev)
+    return visited
+
+
+def targets_have_trigger(
+    graph: dict | WorkflowGraph, targets: list[str]
+) -> bool:
+    """True if every target is a trigger or has a trigger somewhere upstream.
+
+    Used to gate "Run this step" requests: a single action node should only
+    run when it is wired (directly or transitively) to a trigger, so stray
+    nodes like Execute Command can't fire on their own.
+    """
+    type_by_id: dict[str, str | None] = {}
+    for node in _graph_nodes(graph):
+        nid = _node_id(node)
+        if nid is not None:
+            type_by_id[nid] = _node_type(node)
+    for target in targets:
+        if type_by_id.get(target) in TRIGGER_TYPES:
+            continue
+        ancestors = backward_ancestors(graph, {target})
+        if not any(
+            type_by_id.get(a) in TRIGGER_TYPES for a in ancestors
+        ):
+            return False
+    return True
+
+
 def first_trigger_node(
     graph: dict | WorkflowGraph, *, prefer_manual: bool = False
 ) -> Any | None:

@@ -86,6 +86,35 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const devMode = useEditor((s) => s.devMode);
   const [sdkModalOpen, setSdkModalOpen] = useState(false);
 
+  // A non-trigger node may only be run individually when it is wired
+  // (directly or transitively) to a trigger. Otherwise stray action nodes
+  // like Execute Command could fire on their own with no trigger context.
+  const hasTriggerUpstream = useEditor((s) => {
+    if (isTrigger) return true;
+    const bySource = new Map<string, string[]>();
+    for (const e of s.edges) {
+      const arr = bySource.get(e.target);
+      if (arr) arr.push(e.source);
+      else bySource.set(e.target, [e.source]);
+    }
+    const catById = new Map(
+      s.nodes.map((n) => [n.id, n.data.manifest.category]),
+    );
+    const visited = new Set<string>([id]);
+    const queue = [id];
+    while (queue.length) {
+      const cur = queue.pop() as string;
+      for (const prev of bySource.get(cur) ?? []) {
+        if (visited.has(prev)) continue;
+        visited.add(prev);
+        if (catById.get(prev) === "Triggers") return true;
+        queue.push(prev);
+      }
+    }
+    return false;
+  });
+  const canRunStep = isTrigger || hasTriggerUpstream;
+
   const tileClass = ["node-tile"];
   if (selected) tileClass.push("selected");
   if (disabled) tileClass.push("is-disabled");
@@ -136,34 +165,38 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
         <button
           type="button"
           title={
-            isWebhook
-              ? "Listen for test event"
-              : isTrigger
-                ? "Run this trigger and its downstream nodes"
-                : "Run step using current upstream data"
+            !canRunStep
+              ? "Connect a trigger upstream to run this node"
+              : isWebhook
+                ? "Listen for test event"
+                : isTrigger
+                  ? "Run this trigger and its downstream nodes"
+                  : "Run step using current upstream data"
           }
           onClick={(e) => {
             stop(e);
             if (isTrigger) runFromTrigger(id);
             else runFromNode(id);
           }}
-          disabled={running}
+          disabled={running || !canRunStep}
         >
           ▶
         </button>
         <button
           type="button"
           title={
-            isTrigger
-              ? "Run this trigger and its downstream nodes"
-              : "Run step fresh, recomputing upstream nodes"
+            !canRunStep
+              ? "Connect a trigger upstream to run this node"
+              : isTrigger
+                ? "Run this trigger and its downstream nodes"
+                : "Run step fresh, recomputing upstream nodes"
           }
           onClick={(e) => {
             stop(e);
             if (isTrigger) runFromTrigger(id);
             else runFromNode(id, { reuseUpstream: false });
           }}
-          disabled={running}
+          disabled={running || !canRunStep}
         >
           ↻
         </button>

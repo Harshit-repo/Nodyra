@@ -780,6 +780,79 @@ async def test_queued_entry_consumes_replay_seed(client: AsyncClient) -> None:
     assert by_node["c"]["output"]["main"] == 10
 
 
+async def test_local_run_parks_in_queue_when_at_capacity(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """A local run with no immediate admission slot is parked as a durable
+    ``queued`` entry (reason ``local_capacity``) instead of executing."""
+    from app.db import get_session
+    from app.main import app as fastapi_app
+    from app.models import Run, RunQueueEntry
+    from app.services.runtime_pool import pool as runtime_pool
+
+    workflow_id = await _workflow_with_graph(client)
+
+    # Async dispatch + local queue on, but pretend the pool is saturated so
+    # neither start_run nor the dispatch loop will execute the run.
+    monkeypatch.setattr(settings, "run_synchronously", False)
+    monkeypatch.setattr(settings, "local_queue_enabled", True)
+    monkeypatch.setattr(runtime_pool, "has_immediate_capacity", lambda: False)
+    monkeypatch.setattr(runtime_pool, "available_global_slots", lambda: 0)
+
+    run_id = (
+        await client.post(f"/workflows/{workflow_id}/run", json={})
+    ).json()["run_id"]
+
+    override = fastapi_app.dependency_overrides[get_session]
+    async for session in override():
+        run = await session.get(Run, run_id)
+        assert run.status == "queued"
+        entry = await session.scalar(
+            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
+        )
+        assert entry is not None
+        assert entry.status == "queued"
+        assert entry.queue_reason == "local_capacity"
+        break
+
+
+async def test_local_run_executes_when_capacity_available(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """With capacity, a local async run dispatches immediately (not parked)."""
+    from app.db import get_session
+    from app.main import app as fastapi_app
+    from app.models import RunQueueEntry
+
+    workflow_id = await _workflow_with_graph(client)
+
+    monkeypatch.setattr(settings, "run_synchronously", False)
+    monkeypatch.setattr(settings, "local_queue_enabled", True)
+    # Default pool reports capacity, so the run should NOT be parked.
+
+    run_id = (
+        await client.post(f"/workflows/{workflow_id}/run", json={})
+    ).json()["run_id"]
+
+    # Let the background execution task settle.
+    for _ in range(50):
+        run = (await client.get(f"/runs/{run_id}")).json()
+        if run["status"] in ("success", "error"):
+            break
+        await asyncio.sleep(0.05)
+    assert run["status"] == "success"
+
+    override = fastapi_app.dependency_overrides[get_session]
+    async for session in override():
+        entry = await session.scalar(
+            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
+        )
+        # Was dispatched immediately, never parked with the local_capacity reason.
+        assert entry.queue_reason != "local_capacity"
+        break
+
+
+
 # --- Task 20: Debug in editor ------------------------------------------------
 
 async def test_debug_snapshot_returns_graph_failed_node_and_upstream_outputs(

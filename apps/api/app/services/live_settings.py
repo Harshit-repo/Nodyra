@@ -36,6 +36,7 @@ class LiveSettings:
     max_artifact_bytes: int
     max_artifacts_per_run: int
     app_timezone: str
+    worker_rss_soft_budget_bytes: int
 
 
 def _from_boot() -> LiveSettings:
@@ -48,6 +49,7 @@ def _from_boot() -> LiveSettings:
         max_artifact_bytes=boot_settings.max_artifact_bytes,
         max_artifacts_per_run=boot_settings.max_artifacts_per_run,
         app_timezone=boot_settings.app_timezone,
+        worker_rss_soft_budget_bytes=boot_settings.worker_rss_soft_budget_bytes,
     )
 
 
@@ -85,6 +87,7 @@ async def _load_from_db() -> tuple[LiveSettings, bool]:
                     max_artifact_bytes=row.max_artifact_bytes,
                     max_artifacts_per_run=row.max_artifacts_per_run,
                     app_timezone=row.app_timezone,
+                    worker_rss_soft_budget_bytes=row.worker_rss_soft_budget_bytes,
                 ),
                 True,
             )

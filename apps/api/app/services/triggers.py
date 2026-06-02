@@ -309,6 +309,25 @@ async def _tick() -> None:
         for d in deployments:
             deployments_by_workflow.setdefault(d.workflow_id, []).append(d)
 
+        # Batch-load the pinned versions referenced by active deployments so the
+        # loop below doesn't issue one ``session.get(WorkflowVersion)`` per
+        # deployment every tick.
+        dep_version_ids = {
+            d.workflow_version_id for d in deployments if d.workflow_version_id
+        }
+        versions_by_id: dict[str, WorkflowVersion] = {}
+        if dep_version_ids:
+            versions_by_id = {
+                v.id: v
+                for v in (
+                    await session.scalars(
+                        select(WorkflowVersion).where(
+                            WorkflowVersion.id.in_(dep_version_ids)
+                        )
+                    )
+                ).all()
+            }
+
         # --- 1. Active deployments take precedence over in-graph schedules.
         for deployment in deployments:
             workflow = wf_by_id.get(deployment.workflow_id)
@@ -316,7 +335,7 @@ async def _tick() -> None:
                 continue
             version: WorkflowVersion | None = None
             if deployment.workflow_version_id:
-                version = await session.get(WorkflowVersion, deployment.workflow_version_id)
+                version = versions_by_id.get(deployment.workflow_version_id)
             if version is None:
                 version = workflow.versions[-1]
             graph = version.graph or {}

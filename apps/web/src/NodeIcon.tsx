@@ -46,13 +46,14 @@ import {
   Terminal,
   TextT,
   Warning,
+  WebhooksLogo,
   type Icon,
 } from "@phosphor-icons/react";
 
 const ICON_MAP: Record<string, Icon> = {
   play: Play,
   clock: Clock,
-  webhook: ArrowsClockwise,
+  webhook: WebhooksLogo,
   alert: Warning,
   branch: GitBranch,
   switch: Shuffle,
@@ -135,7 +136,7 @@ export function NodeIcon({
   return (
     <IconComponent
       size={size}
-      weight="duotone"
+      weight="regular"
       aria-hidden
       className={className}
     />

@@ -89,10 +89,18 @@ async def _version_for_deployment(
     return version
 
 
-async def _info(session: AsyncSession, deployment: Deployment) -> DeploymentInfo:
+async def _info(
+    session: AsyncSession,
+    deployment: Deployment,
+    *,
+    versions: dict[str, WorkflowVersion] | None = None,
+) -> DeploymentInfo:
     workflow_version = None
     if deployment.workflow_version_id:
-        version = await session.get(WorkflowVersion, deployment.workflow_version_id)
+        if versions is not None:
+            version = versions.get(deployment.workflow_version_id)
+        else:
+            version = await session.get(WorkflowVersion, deployment.workflow_version_id)
         workflow_version = version.version if version is not None else None
     return DeploymentInfo(
         id=deployment.id,
@@ -124,7 +132,24 @@ async def list_deployments(
     if workflow_id is not None:
         stmt = stmt.where(Deployment.workflow_id == workflow_id)
     result = await session.scalars(stmt)
-    return [await _info(session, deployment) for deployment in result.all()]
+    deployments = result.all()
+    version_ids = {
+        d.workflow_version_id for d in deployments if d.workflow_version_id
+    }
+    versions: dict[str, WorkflowVersion] = {}
+    if version_ids:
+        versions = {
+            v.id: v
+            for v in (
+                await session.scalars(
+                    select(WorkflowVersion).where(WorkflowVersion.id.in_(version_ids))
+                )
+            ).all()
+        }
+    return [
+        await _info(session, deployment, versions=versions)
+        for deployment in deployments
+    ]
 
 
 @router.post(

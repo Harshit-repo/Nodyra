@@ -346,12 +346,18 @@ async def requeue_expired_leases(
     moment = _now(now)
     leased = (
         await session.scalars(
-            select(RunQueueEntry).where(RunQueueEntry.status == "leased")
+            select(RunQueueEntry).where(
+                RunQueueEntry.status == "leased",
+                RunQueueEntry.lease_expires_at.is_not(None),
+                RunQueueEntry.lease_expires_at <= moment,
+            )
         )
     ).all()
 
     acted = 0
     for entry in leased:
+        # DB-side filter already narrows to expired leases; re-check in Python
+        # to stay correct under naive/aware timestamp mismatches (SQLite).
         if entry.lease_expires_at is None:
             continue
         if _as_aware(entry.lease_expires_at) > moment:
@@ -446,6 +452,7 @@ async def run_queue_dispatch_loop() -> None:
     """
     # Import here to avoid the runner ↔ queue circular import.
     from app.services.runner import _execute_queued_entry  # noqa: PLC0415
+    from app.services.runtime_pool import pool as runtime_pool  # noqa: PLC0415
 
     worker = _worker_id()
     in_flight: set[asyncio.Task[None]] = set()
@@ -466,14 +473,29 @@ async def run_queue_dispatch_loop() -> None:
                 if settings.queue_drain:
                     continue
 
+                # Bound how many LOCAL (in-process pool) runs we lease this
+                # tick to the free concurrency slots measured now — leasing
+                # more would just pile up coroutines blocked on the pool
+                # semaphore. Remote runs aren't subject to this (their
+                # capacity is enforced by the remote pool / _QueuedError).
+                local_budget = runtime_pool.available_global_slots()
                 for _ in range(settings.queue_max_dispatches_per_tick):
                     async with SessionLocal() as session:
                         entry = await lease(session, worker_id=worker)
                         if entry is None:
                             await session.rollback()
                             break
+                        is_local = entry.runner_pool_id is None
+                        if is_local and local_budget <= 0:
+                            # No local capacity — drop the lease (rollback
+                            # leaves it ``queued`` with attempts unchanged) and
+                            # try again on a later tick when a slot frees.
+                            await session.rollback()
+                            break
                         run_id = entry.run_id
                         await session.commit()
+                    if is_local:
+                        local_budget -= 1
                     task = asyncio.create_task(_execute_queued_entry(run_id))
                     in_flight.add(task)
                     task.add_done_callback(in_flight.discard)

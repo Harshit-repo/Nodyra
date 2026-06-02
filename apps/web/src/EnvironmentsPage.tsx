@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { api } from "./api";
+import { api, runnerPoolsApi } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { HomeHeader } from "./HomeHeader";
-import type { Environment, SystemSettings } from "./types";
+import type { Environment, RunnerPoolInfo, SystemSettings } from "./types";
 
 const DESCRIPTION_HELP =
   "Optional notes for your team — what this environment is for, who owns it, gotchas. Shown in the env card.";
@@ -16,6 +16,39 @@ const ELASTIC_HELP =
 
 const SPAWN_HELP =
   "No warm workers. Every run spawns its own interpreter and the worker dies the moment it finishes. Saves RAM but adds cold-start latency on every run.";
+
+const RUNNER_POOL_HELP =
+  "Where workflows using this environment execute. Local (in-process) runs on the API host. Bind a remote runner pool to offload execution to registered agent/Docker/Kubernetes runners. A deployment or workflow-level pool override still takes precedence.";
+
+function PoolSelect({
+  pools,
+  value,
+  onChange,
+}: {
+  pools: RunnerPoolInfo[];
+  value: string | null;
+  onChange: (v: string | null) => void;
+}) {
+  return (
+    <>
+      <label className="field-label">
+        Execution target <InfoTip text={RUNNER_POOL_HELP} />
+      </label>
+      <select
+        className="field-input"
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value || null)}
+      >
+        <option value="">Local (in-process)</option>
+        {pools.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name} ({p.provider} · {p.online_count}/{p.runner_count} online)
+          </option>
+        ))}
+      </select>
+    </>
+  );
+}
 
 type PoolMode = "fixed" | "elastic" | "spawn";
 
@@ -224,15 +257,18 @@ function CreateEnvModal({
   onCreated,
   workspaceCap,
   rssSoftBudget,
+  pools,
 }: {
   onClose: () => void;
   onCreated: () => void;
   workspaceCap: number | null;
   rssSoftBudget: number;
+  pools: RunnerPoolInfo[];
 }) {
   const [name, setName] = useState("");
   const [python, setPython] = useState("3.12");
   const [description, setDescription] = useState("");
+  const [poolId, setPoolId] = useState<string | null>(null);
   const [mode, setMode] = useState<PoolMode>("fixed");
   const [fixedSize, setFixedSize] = useState(1);
   const [elasticMin, setElasticMin] = useState(1);
@@ -251,6 +287,7 @@ function CreateEnvModal({
         name: name.trim(),
         python_version: python,
         description: description.trim(),
+        runner_pool_id: poolId,
         ...pool,
       });
       onCreated();
@@ -298,6 +335,8 @@ function CreateEnvModal({
           onChange={(e) => setDescription(e.target.value)}
         />
 
+        <PoolSelect pools={pools} value={poolId} onChange={setPoolId} />
+
         <PoolModeFields
           mode={mode}
           setMode={setMode}
@@ -338,16 +377,19 @@ function EditEnvModal({
   onSaved,
   workspaceCap,
   rssSoftBudget,
+  pools,
 }: {
   env: Environment;
   onClose: () => void;
   onSaved: () => void;
   workspaceCap: number | null;
   rssSoftBudget: number;
+  pools: RunnerPoolInfo[];
 }) {
   const initialMode = modeFor(env);
   const [name, setName] = useState(env.name);
   const [description, setDescription] = useState(env.description || "");
+  const [poolId, setPoolId] = useState<string | null>(env.runner_pool_id);
   const [mode, setMode] = useState<PoolMode>(initialMode);
   const [fixedSize, setFixedSize] = useState(
     initialMode === "fixed" ? env.runner_pool_size || 1 : 1,
@@ -375,6 +417,8 @@ function EditEnvModal({
       await api.updateEnvironment(env.id, {
         name: name.trim(),
         description: description.trim(),
+        runner_pool_id: poolId,
+        runner_pool_set: true,
         ...pool,
       });
       onSaved();
@@ -403,6 +447,8 @@ function EditEnvModal({
           value={description}
           onChange={(e) => setDescription(e.target.value)}
         />
+
+        <PoolSelect pools={pools} value={poolId} onChange={setPoolId} />
 
         <PoolModeFields
           mode={mode}
@@ -455,11 +501,13 @@ function EnvCard({
   onChanged,
   workspaceCap,
   rssSoftBudget,
+  pools,
 }: {
   env: Environment;
   onChanged: () => void;
   workspaceCap: number | null;
   rssSoftBudget: number;
+  pools: RunnerPoolInfo[];
 }) {
   const [pkg, setPkg] = useState("");
   const [busy, setBusy] = useState(false);
@@ -515,7 +563,12 @@ function EnvCard({
         <span className={`env-status status-${env.status}`}>{env.status}</span>
       </div>
       <div className="env-meta">
-        Python {env.python_version} · {poolLabel(env)}
+        Python {env.python_version} · {poolLabel(env)} ·{" "}
+        <span title="Where runs of this environment execute">
+          {env.runner_pool_id
+            ? `→ ${env.runner_pool_name ?? "runner pool"}`
+            : "→ local (in-process)"}
+        </span>
       </div>
       <div className="env-health-grid">
         <div>
@@ -595,6 +648,7 @@ function EnvCard({
           }}
           workspaceCap={workspaceCap}
           rssSoftBudget={rssSoftBudget}
+          pools={pools}
         />
       )}
       {confirmDelete && (
@@ -615,6 +669,7 @@ export function EnvironmentsPage() {
   const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(
     null,
   );
+  const [pools, setPools] = useState<RunnerPoolInfo[]>([]);
   const [error, setError] = useState("");
   const [modal, setModal] = useState(false);
 
@@ -626,6 +681,14 @@ export function EnvironmentsPage() {
   }
 
   useEffect(load, []);
+  useEffect(() => {
+    runnerPoolsApi
+      .list()
+      .then(setPools)
+      .catch(() => {
+        // Runner pools are optional context; absence just means local-only.
+      });
+  }, []);
   useEffect(() => {
     api.getSystemSettings().then(setSystemSettings).catch(() => {
       // Workspace settings are best-effort context; missing is fine.
@@ -713,6 +776,7 @@ export function EnvironmentsPage() {
                   onChanged={load}
                   workspaceCap={workspaceCap}
                   rssSoftBudget={rssSoftBudget}
+                  pools={pools}
                 />
               ))}
             </div>
@@ -729,6 +793,7 @@ export function EnvironmentsPage() {
           }}
           workspaceCap={workspaceCap}
           rssSoftBudget={rssSoftBudget}
+          pools={pools}
         />
       )}
     </div>

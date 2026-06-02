@@ -405,8 +405,23 @@ class RemoteDispatcher:
         return status
 
     async def _pick_agent(self, pool_id: str) -> _AgentConnection | None:
-        """Return an available agent connection in this pool, or None."""
+        """Return the least-loaded available agent connection in this pool.
+
+        Enforces two ceilings before handing out a runner:
+
+        * **Pool-level**: the sum of ``current_runs`` across the pool's runners
+          must stay below ``pool.max_concurrent_runs``. This was previously
+          stored but never honoured, so a single pool could be oversubscribed.
+        * **Runner-level**: each runner's ``current_runs`` must stay below its
+          own ``max_concurrent_runs``.
+
+        Among eligible *connected* agents we pick the one with the most free
+        capacity (least-loaded) so traffic spreads evenly instead of always
+        landing on the first registered runner.
+        """
         async with SessionLocal() as session:
+            pool = await session.get(RunnerPool, pool_id)
+            pool_cap = pool.max_concurrent_runs if pool is not None else 0
             runners = (
                 await session.scalars(
                     select(Runner).where(
@@ -415,13 +430,29 @@ class RemoteDispatcher:
                     )
                 )
             ).all()
-            runner_ids = {r.id for r in runners if r.current_runs < r.max_concurrent_runs}
+            pool_active = sum(max(0, r.current_runs) for r in runners)
+            runner_max = {r.id: r.max_concurrent_runs for r in runners}
+            runner_db_load = {r.id: max(0, r.current_runs) for r in runners}
+
+        # Pool ceiling reached → queue rather than oversubscribe.
+        if pool_cap and pool_active >= pool_cap:
+            return None
 
         async with self._lock:
+            best: _AgentConnection | None = None
+            best_free = 0
             for runner_id, conn in self._agents.items():
-                if runner_id in runner_ids and len(conn.active_runs) < 1:
-                    return conn
-        return None
+                cap = runner_max.get(runner_id)
+                if cap is None:
+                    continue  # connected agent not (yet) a known runner row
+                # Use whichever load count is higher so a just-assigned run that
+                # hasn't been flushed to the DB row still counts against the cap.
+                live_load = max(runner_db_load.get(runner_id, 0), len(conn.active_runs))
+                effective_free = cap - live_load
+                if effective_free > best_free:
+                    best_free = effective_free
+                    best = conn
+            return best
 
     async def _handle_agent_message(self, conn: _AgentConnection, msg: dict) -> None:
         mtype = msg.get("type")

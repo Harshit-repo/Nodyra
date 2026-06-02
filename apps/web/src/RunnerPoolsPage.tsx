@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { runnerPoolsApi } from "./api";
+import { api, runnerPoolsApi } from "./api";
 import { HomeHeader } from "./HomeHeader";
 import { useCan } from "./permissions";
-import type { RegistrationTokenResponse, RunnerInfo, RunnerPoolInfo } from "./types";
+import type {
+  Environment,
+  RegistrationTokenResponse,
+  RunnerInfo,
+  RunnerPoolInfo,
+} from "./types";
 
 type Config = Record<string, unknown>;
 
@@ -794,10 +799,12 @@ function PoolCard({
   pool,
   onChanged,
   canWrite,
+  boundEnvs,
 }: {
   pool: RunnerPoolInfo;
   onChanged: () => void;
   canWrite: boolean;
+  boundEnvs: string[];
 }) {
   const [runners, setRunners] = useState<RunnerInfo[]>([]);
   const [expanded, setExpanded] = useState(false);
@@ -837,6 +844,15 @@ function PoolCard({
           <div className="pool-meta">
             {pool.provider} · max {pool.max_concurrent_runs} concurrent
             {summary && <> · {summary}</>}
+          </div>
+          <div className="pool-meta">
+            {boundEnvs.length > 0 ? (
+              <>environments: {boundEnvs.join(", ")}</>
+            ) : (
+              <span className="muted">
+                no environments routed here — bind one on the Environments page
+              </span>
+            )}
           </div>
         </div>
         <div className="pool-actions">
@@ -1013,6 +1029,7 @@ function PoolCard({
 
 export function RunnerPoolsPage() {
   const [pools, setPools] = useState<RunnerPoolInfo[] | null>(null);
+  const [environments, setEnvironments] = useState<Environment[]>([]);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const canWrite = useCan("runner_pool:write");
@@ -1023,11 +1040,26 @@ export function RunnerPoolsPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
+    try {
+      setEnvironments(await api.listEnvironments());
+    } catch {
+      /* environments are optional context for binding display */
+    }
   }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const envsByPool = environments.reduce<Record<string, string[]>>(
+    (acc, env) => {
+      if (env.runner_pool_id) {
+        (acc[env.runner_pool_id] ??= []).push(env.name);
+      }
+      return acc;
+    },
+    {},
+  );
 
   return (
     <div className="home">
@@ -1080,6 +1112,7 @@ export function RunnerPoolsPage() {
                 pool={pool}
                 canWrite={canWrite}
                 onChanged={() => void load()}
+                boundEnvs={envsByPool[pool.id] ?? []}
               />
             ))}
           </div>

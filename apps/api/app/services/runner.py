@@ -25,6 +25,7 @@ from app.db import SessionLocal
 from app.models import (
     CodeModule,
     Deployment,
+    Environment,
     NodeRun,
     PinnedData,
     Run,
@@ -43,6 +44,7 @@ from app.services.events import broker
 from app.services.graph_utils import (
     first_trigger_node,
     resolve_trigger_targets,
+    targets_have_trigger,
 )
 from app.services.live_settings import get_live_settings
 from app.services.redaction import load_secret_values, redact_value
@@ -451,6 +453,10 @@ async def start_run(
                 chosen["id"] if isinstance(chosen, dict) else chosen.id
             )
         targets = resolve_trigger_targets(graph, trigger_node_id, None)
+    elif not targets_have_trigger(graph, targets):
+        raise ValueError(
+            "Connect a trigger upstream before running this step."
+        )
 
     cache = _seed_parameters(
         graph, cache, parameters, trigger_id=trigger_node_id
@@ -469,7 +475,11 @@ async def start_run(
     )
 
     async with SessionLocal() as session:
-        # Resolve runner pool: deployment takes precedence, then workflow default.
+        # Resolve runner pool with a clear precedence chain:
+        #   1. Deployment override (most specific)
+        #   2. Workflow default pool
+        #   3. The pool bound to the workflow's Environment
+        #   4. None -> in-process runtime pool
         runner_pool_id: str | None = None
         if deployment_id:
             dep = await session.get(Deployment, deployment_id)
@@ -480,6 +490,14 @@ async def start_run(
             wf_obj = await session.get(Workflow, workflow_id)
             if wf_obj:
                 runner_pool_id = wf_obj.default_runner_pool_id
+        if not runner_pool_id:
+            if wf_obj is None:
+                wf_obj = await session.get(Workflow, workflow_id)
+            env_id = wf_obj.environment_id if wf_obj else None
+            if env_id:
+                env_obj = await session.get(Environment, env_id)
+                if env_obj is not None:
+                    runner_pool_id = env_obj.runner_pool_id
         if wf_obj is None:
             wf_obj = await session.get(Workflow, workflow_id)
         if wf_obj is not None and wf_obj.allow_concurrent is False:
@@ -507,6 +525,20 @@ async def start_run(
             status="running",
             runner_pool_id=runner_pool_id,
         )
+        # Local durable queue: a LOCAL run (no remote runner pool) that can't
+        # grab an admission slot right now is parked as a durable ``queued``
+        # entry instead of blocking a coroutine on the pool semaphore. The
+        # dispatch loop leases it when capacity frees — giving visible queue
+        # depth and restart durability. Only for async dispatch; synchronous
+        # runs (tests) always execute inline.
+        queue_locally = (
+            settings.local_queue_enabled
+            and not settings.run_synchronously
+            and runner_pool_id is None
+            and not runtime_pool.has_immediate_capacity()
+        )
+        if queue_locally:
+            run.status = "queued"
         session.add(run)
         await session.flush()
         run_id = run.id
@@ -518,7 +550,7 @@ async def start_run(
             run_id=run_id,
             workflow_id=workflow_id,
             runner_pool_id=runner_pool_id,
-            reason="start_run",
+            reason="local_capacity" if queue_locally else "start_run",
         )
         await session.commit()
 
@@ -527,6 +559,10 @@ async def start_run(
     # workflow) must execute the published versions — including for any
     # sub-workflow calls.
     prefer_draft = mode in ("manual", "test")
+
+    # Parked for the local durable queue — the dispatch loop owns it now.
+    if queue_locally:
+        return run_id
 
     if settings.run_synchronously:
         current = asyncio.current_task()
@@ -835,14 +871,21 @@ async def _execute_run(
             )
             try:
                 graph = WorkflowGraph.model_validate(graph_dict)
-                result = await execute(
-                    graph,
-                    node_registry,
-                    cache=deserialize_value(cache),
-                    targets=targets,
-                    on_event=on_event,
-                    default_timeouts=_engine_default_timeouts(),
-                )
+                # Bound top-level in-process runs by the same global ceiling
+                # subprocess ``dispatch`` uses, so an in-process deployment
+                # can't spawn unbounded concurrent engine runs. Sub-workflows
+                # reached via ``workflow_caller``/``_call_sub_workflow`` call
+                # ``execute`` directly WITHOUT this slot, so a parent waiting
+                # on a child never deadlocks (mirrors the subprocess split).
+                async with runtime_pool.global_slot():
+                    result = await execute(
+                        graph,
+                        node_registry,
+                        cache=deserialize_value(cache),
+                        targets=targets,
+                        on_event=on_event,
+                        default_timeouts=_engine_default_timeouts(),
+                    )
                 status = str(result.status)
             finally:
                 artifact_store.reset(artifact_token)

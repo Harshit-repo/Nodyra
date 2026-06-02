@@ -126,6 +126,8 @@ export interface Environment {
   runner_pool_size: number;
   runner_pool_max: number | null;
   effective_pool_max: number;
+  runner_pool_id: string | null;
+  runner_pool_name: string | null;
   worker_rss_estimate_bytes: number | null;
   created_at: string;
   updated_at: string;

@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.models import Environment, User
+from app.models import Environment, RunnerPool, User
 from app.schemas import (
     EnvironmentCreate,
     EnvironmentInfo,
@@ -32,7 +32,7 @@ def _effective_pool_max(env: Environment) -> int:
     return 1
 
 
-def _to_info(env: Environment) -> EnvironmentInfo:
+def _to_info(env: Environment, pool_name: str | None = None) -> EnvironmentInfo:
     return EnvironmentInfo(
         id=env.id,
         name=env.name,
@@ -45,10 +45,28 @@ def _to_info(env: Environment) -> EnvironmentInfo:
         runner_pool_size=env.runner_pool_size,
         runner_pool_max=env.runner_pool_max,
         effective_pool_max=_effective_pool_max(env),
+        runner_pool_id=env.runner_pool_id,
+        runner_pool_name=pool_name,
         worker_rss_estimate_bytes=env.worker_rss_estimate_bytes,
         created_at=env.created_at,
         updated_at=env.updated_at,
     )
+
+
+async def _pool_name(session: AsyncSession, pool_id: str | None) -> str | None:
+    if not pool_id:
+        return None
+    pool = await session.get(RunnerPool, pool_id)
+    return pool.name if pool else None
+
+
+async def _validate_pool_ref(session: AsyncSession, pool_id: str | None) -> None:
+    """Ensure a referenced runner pool exists before binding to it."""
+    if pool_id and await session.get(RunnerPool, pool_id) is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"Runner pool {pool_id} not found.",
+        )
 
 
 def _validate_pool(size: int, pool_max: int | None) -> None:
@@ -74,7 +92,15 @@ async def list_environments(session: AsyncSession = Depends(get_session)):
     result = await session.scalars(
         select(Environment).order_by(Environment.is_global.desc(), Environment.name)
     )
-    return [_to_info(env) for env in result.all()]
+    envs = result.all()
+    pool_ids = {e.runner_pool_id for e in envs if e.runner_pool_id}
+    names: dict[str, str] = {}
+    if pool_ids:
+        pools = await session.scalars(
+            select(RunnerPool).where(RunnerPool.id.in_(pool_ids))
+        )
+        names = {p.id: p.name for p in pools.all()}
+    return [_to_info(env, names.get(env.runner_pool_id or "")) for env in envs]
 
 
 @router.post(
@@ -90,6 +116,7 @@ async def create_environment(
     actor: User | None = Depends(optional_current_user),
 ):
     _validate_pool(body.runner_pool_size, body.runner_pool_max)
+    await _validate_pool_ref(session, body.runner_pool_id)
     env = Environment(
         name=body.name,
         python_version=body.python_version,
@@ -97,6 +124,7 @@ async def create_environment(
         description=body.description,
         runner_pool_size=body.runner_pool_size,
         runner_pool_max=body.runner_pool_max,
+        runner_pool_id=body.runner_pool_id,
         status="pending",
     )
     session.add(env)
@@ -106,7 +134,7 @@ async def create_environment(
     await session.commit()
     await session.refresh(env)
     background.add_task(build_environment, env.id)
-    return _to_info(env)
+    return _to_info(env, await _pool_name(session, env.runner_pool_id))
 
 
 @router.patch(
@@ -137,17 +165,21 @@ async def update_environment(
         env.runner_pool_size = body.runner_pool_size
     if "runner_pool_max" in sent:
         env.runner_pool_max = body.runner_pool_max
+    if body.runner_pool_set or "runner_pool_id" in sent:
+        await _validate_pool_ref(session, body.runner_pool_id)
+        env.runner_pool_id = body.runner_pool_id
     await log_audit(session, "update", "environment", env.id, env.name,
                     actor_id=actor.id if actor else None,
                     actor_email=actor.email if actor else None)
     await session.commit()
     await session.refresh(env)
-    return _to_info(env)
+    return _to_info(env, await _pool_name(session, env.runner_pool_id))
 
 
 @router.get("/{env_id}", response_model=EnvironmentInfo)
 async def get_environment(env_id: str, session: AsyncSession = Depends(get_session)):
-    return _to_info(await _load(session, env_id))
+    env = await _load(session, env_id)
+    return _to_info(env, await _pool_name(session, env.runner_pool_id))
 
 
 @router.post(
@@ -170,7 +202,7 @@ async def add_package(
         await session.commit()
         await session.refresh(env)
         background.add_task(build_environment, env.id)
-    return _to_info(env)
+    return _to_info(env, await _pool_name(session, env.runner_pool_id))
 
 
 @router.delete(
@@ -192,7 +224,7 @@ async def remove_package(
         await session.commit()
         await session.refresh(env)
         background.add_task(build_environment, env.id)
-    return _to_info(env)
+    return _to_info(env, await _pool_name(session, env.runner_pool_id))
 
 
 @router.post(
@@ -210,7 +242,7 @@ async def rebuild_environment(
     await session.commit()
     await session.refresh(env)
     background.add_task(build_environment, env.id)
-    return _to_info(env)
+    return _to_info(env, await _pool_name(session, env.runner_pool_id))
 
 
 @router.delete(

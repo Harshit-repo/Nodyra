@@ -545,6 +545,79 @@ async def test_ping_connected_agents_sends_to_each_connection() -> None:
             dispatcher._agents.pop("r-2", None)
 
 
+async def test_pick_agent_prefers_least_loaded(client: AsyncClient) -> None:
+    """``_pick_agent`` spreads load by choosing the most-free connected runner."""
+    from app.db import get_session as _get_session
+    from app.services.remote_dispatch import _AgentConnection
+
+    override = client._transport.app.dependency_overrides[_get_session]
+    pool_id = (await client.post(
+        "/runner-pools",
+        json={"name": "spread", "provider": "agent", "max_concurrent_runs": 10},
+    )).json()["id"]
+
+    busy_id = loaded_id = ""
+    async for session in override():
+        busy = Runner(
+            pool_id=pool_id, name="busy", status="online",
+            current_runs=2, max_concurrent_runs=3,
+        )
+        free = Runner(
+            pool_id=pool_id, name="free", status="online",
+            current_runs=0, max_concurrent_runs=3,
+        )
+        session.add_all([busy, free])
+        await session.flush()
+        busy_id, loaded_id = busy.id, free.id
+        await session.commit()
+        break
+
+    conn_busy = _AgentConnection(runner_id=busy_id, ws=object())
+    conn_free = _AgentConnection(runner_id=loaded_id, ws=object())
+    async with dispatcher._lock:
+        dispatcher._agents[busy_id] = conn_busy
+        dispatcher._agents[loaded_id] = conn_free
+    try:
+        picked = await dispatcher._pick_agent(pool_id)
+        assert picked is conn_free  # 3 free slots beats 1
+    finally:
+        async with dispatcher._lock:
+            dispatcher._agents.pop(busy_id, None)
+            dispatcher._agents.pop(loaded_id, None)
+
+
+async def test_pick_agent_honours_pool_ceiling(client: AsyncClient) -> None:
+    """A pool at its ``max_concurrent_runs`` returns no agent (queue instead)."""
+    from app.db import get_session as _get_session
+    from app.services.remote_dispatch import _AgentConnection
+
+    override = client._transport.app.dependency_overrides[_get_session]
+    pool_id = (await client.post(
+        "/runner-pools",
+        json={"name": "capped", "provider": "agent", "max_concurrent_runs": 2},
+    )).json()["id"]
+
+    runner_id = ""
+    async for session in override():
+        runner = Runner(
+            pool_id=pool_id, name="r", status="online",
+            current_runs=2, max_concurrent_runs=5,
+        )
+        session.add(runner)
+        await session.flush()
+        runner_id = runner.id
+        await session.commit()
+        break
+
+    conn = _AgentConnection(runner_id=runner_id, ws=object())
+    async with dispatcher._lock:
+        dispatcher._agents[runner_id] = conn
+    try:
+        # Pool is already at 2/2 even though the runner could take more.
+        assert await dispatcher._pick_agent(pool_id) is None
+    finally:
+        async with dispatcher._lock:
+            dispatcher._agents.pop(runner_id, None)
 
 
 # ---------------------------------------------------------------------------

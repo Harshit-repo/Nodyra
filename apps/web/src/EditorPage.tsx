@@ -166,8 +166,6 @@ export function EditorPage() {
   const running = useEditor((s) => s.running);
   const runError = useEditor((s) => s.runError);
   const runStatusMap = useEditor((s) => s.runStatus);
-  const devMode = useEditor((s) => s.devMode);
-  const toggleDevMode = useEditor((s) => s.toggleDevMode);
   const runOutputsMap = useEditor((s) => s.runOutputs);
   const runMetaMap = useEditor((s) => s.runMeta);
   const pinnedMap = useEditor((s) => s.pinned);
@@ -833,14 +831,6 @@ export function EditorPage() {
           </span>
         </div>
         <div className="toolbar-right">
-          <button
-            type="button"
-            className={`toolbar-devmode${devMode ? " is-on" : ""}`}
-            title={devMode ? "Dev mode on — click to disable" : "Enable Developer Mode"}
-            onClick={toggleDevMode}
-          >
-            {"</>"}
-          </button>
           <select
             className="toolbar-env"
             title="Run environment"

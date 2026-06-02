@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 import noodle_nodes  # noqa: F401 - registers built-in nodes
 from app.db import get_session
@@ -93,9 +93,41 @@ async def _latest_run(session: AsyncSession, workflow_id: str) -> Run | None:
     )
 
 
-async def _summary(session: AsyncSession, workflow: Workflow) -> WorkflowSummary:
+async def _latest_runs(
+    session: AsyncSession, workflow_ids: list[str]
+) -> dict[str, Run]:
+    """Batch-load the most recent run per workflow in a single query.
+
+    Avoids the N+1 that one ``_latest_run`` call per listed workflow would
+    cause. Uses a window function (``ROW_NUMBER`` partitioned by workflow,
+    newest first) which both Postgres and modern SQLite support.
+    """
+    if not workflow_ids:
+        return {}
+    ranked = (
+        select(
+            Run,
+            func.row_number()
+            .over(
+                partition_by=Run.workflow_id,
+                order_by=Run.started_at.desc(),
+            )
+            .label("_rn"),
+        )
+        .where(Run.workflow_id.in_(workflow_ids))
+        .subquery()
+    )
+    run_alias = aliased(Run, ranked)
+    rows = (
+        await session.scalars(
+            select(run_alias).where(ranked.c._rn == 1)
+        )
+    ).all()
+    return {run.workflow_id: run for run in rows}
+
+
+def _summary_from(workflow: Workflow, latest_run: Run | None) -> WorkflowSummary:
     graph = _draft_graph(workflow)
-    latest_run = await _latest_run(session, workflow.id)
     return WorkflowSummary(
         id=workflow.id,
         name=workflow.name,
@@ -112,6 +144,11 @@ async def _summary(session: AsyncSession, workflow: Workflow) -> WorkflowSummary
         last_run_finished_at=latest_run.finished_at if latest_run is not None else None,
         updated_at=workflow.updated_at,
     )
+
+
+async def _summary(session: AsyncSession, workflow: Workflow) -> WorkflowSummary:
+    latest_run = await _latest_run(session, workflow.id)
+    return _summary_from(workflow, latest_run)
 
 
 def _detail(workflow: Workflow) -> WorkflowDetail:
@@ -147,7 +184,9 @@ async def list_workflows(
         .offset(offset)
         .limit(limit)
     )
-    items = [await _summary(session, w) for w in result.all()]
+    workflows = result.all()
+    latest_by_wf = await _latest_runs(session, [w.id for w in workflows])
+    items = [_summary_from(w, latest_by_wf.get(w.id)) for w in workflows]
     return PageResponse(items=items, total=count or 0, limit=limit, offset=offset)
 
 
