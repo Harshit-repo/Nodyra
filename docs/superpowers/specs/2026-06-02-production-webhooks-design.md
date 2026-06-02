@@ -1,7 +1,51 @@
 # Production-grade webhooks + node hardening — design
 
 **Date:** 2026-06-02
-**Status:** Approved (brainstorm) — pending spec review before planning.
+**Status:** In progress — Units 1, 2(core), 4(core) shipped; Units 2(rest), 3, 5 open.
+
+## Implementation status (2026-06-02)
+
+All work committed to `main` on top of ChatGPT's `bd713dc "Add AI nodes"`. Every
+backend change was TDD; `test_triggers.py` 18/18, nodes 72/72, frontend `tsc` +
+vitest 7/7 green at last commit.
+
+| Commit | Delivered |
+| --- | --- |
+| `ca1de1e` | **Unit 1 ✅ complete** — `webhook_role` defaults to `ingress`; router split (`webhooks.py` `router` = `/webhook-test/*` always mounted, `production_router` = `/webhook/{path}` gated; `main.py` mounts accordingly); `disabled` keeps editor test paths; `runtime_warnings()` flags production+inline. |
+| `8ec8efa` | **Unit 2 core ✅** — `auth_type` gains `bearer` + `jwt` (stdlib HS256: sig+alg+`exp`, see `triggers.py::_jwt_hs256_valid`); HMAC raw-body verification (`triggers.py::_webhook_hmac_passes`, raw bytes threaded via `webhooks.py::_payload` → `dispatch_webhook(raw_body=...)`); manifest options in `builtin.py`. |
+| `d7e0205` | **Unit 4 core ✅** — n8n radiating-waves animation in `NodeDetails.tsx` `WebhookPanel` + `.webhook-waves` CSS in `editor.css` (reduced-motion aware). |
+
+**Remaining work (pick up here):**
+
+- **Unit 2 rest:** IP allowlist (thread client IP from `webhooks.py` handlers →
+  `dispatch_webhook`; CIDR match via stdlib `ipaddress`; reject → 403);
+  dedup/idempotency (reuse `runs` dedup key `0025`; ack 200, no run on repeat);
+  response-data shaping (`First/All/No Body/Custom` on `On Received`); raw/binary
+  body capture as artifacts; frontend conditional show/hide of the new fields
+  (extend `webhookHiddenParam`/`webhookParamLabel` in `NodeDetails.tsx`).
+- **Unit 3 (not started):** `respond_to_webhook` node + `Respond Node`/`Last Node`
+  modes; migration `runs.webhook_response` (nullable JSON, additive); hybrid wait
+  (broker `run_finished` + DB-poll, `webhook_response_timeout_seconds` default 30,
+  504 on timeout). Test on SQLite **and** the Postgres lane.
+- **Unit 4 rest:** move Listen + Test/Prod URLs into the NDV **input column**;
+  render the Unit-2 conditional fields.
+- **Unit 5 (not started):** audit built-in nodes; implement ≤6 low-risk wins.
+
+**Gotchas for the next session:**
+- PyJWT is NOT installed → JWT is HS256-only by design (RS256 = follow-up needing
+  a JWT/crypto lib). Bearer/JWT/HMAC secrets resolve via `_resolve_node_auth`
+  `auth_keys` (already extended with `auth_bearer_token`/`auth_jwt_secret`/`hmac_secret`).
+- Run tests with `.venv\Scripts\python.exe -m pytest` (not `uv run`); Postgres lane
+  via `NOODLE_TEST_DATABASE_URL` (see `conftest.py`).
+- Do NOT edit ChatGPT's files: `app/services/ai_builder.py`, `credential_tests.py`,
+  `tests/test_releases_errors_ai.py`, `packages/nodes/{llm.py,ai_extra.py,integrations.py}`,
+  and coordinate on `packages/nodes/__init__.py`.
+- `builtin.py` has 2 PRE-EXISTING F401s (`traceback`, `noodle.artifacts as artifacts_api`)
+  — leave the `artifacts_api` one (re-export risk; imported by `test_code_multi_output.py`).
+
+---
+
+**Original status:** Approved (brainstorm) — pending spec review before planning.
 
 ## Goal
 
