@@ -93,7 +93,10 @@ async def _payload(request: Request) -> tuple[dict, bytes]:
     body: object
     try:
         body = json.loads(raw) if raw else None
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        # Not JSON: keep a best-effort text view (binary bytes become
+        # replacement chars). The exact bytes are preserved separately via
+        # raw_body capture when the node opts in.
         body = raw.decode("utf-8", "replace")
     payload = {
         "method": request.method,

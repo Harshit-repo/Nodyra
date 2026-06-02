@@ -409,6 +409,52 @@ def _webhook_on_received_response(
     return None
 
 
+def _capture_raw_body_artifact(
+    raw_body: bytes, headers: dict, run_id: str, node_id: str
+) -> dict | None:
+    """Write the raw request bytes as an artifact for ``run_id``.
+
+    Returns the artifact ref, or ``None`` if there are no bytes or the write
+    fails (e.g. over ``max_artifact_bytes``) — capture is best-effort and must
+    never fail the webhook itself. Bytes are written via the run-scoped
+    ``LocalArtifactStore`` so they're cleaned up with the run and never bloat
+    the DB; the caller persists the row (and rehomes to the configured backend)
+    via ``persist_artifact_refs``.
+    """
+    import mimetypes
+
+    from noodle.artifacts import LocalArtifactStore
+    from noodle.context import current_node_id
+
+    if not raw_body:
+        return None
+    lower_headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+    content_type = (
+        lower_headers.get("content-type", "").split(";")[0].strip()
+        or "application/octet-stream"
+    )
+    ext = mimetypes.guess_extension(content_type) or ".bin"
+    store = LocalArtifactStore(
+        settings.artifacts_dir,
+        run_id,
+        max_bytes=settings.max_artifact_bytes,
+        max_count=settings.max_artifacts_per_run,
+    )
+    token = current_node_id.set(node_id)
+    try:
+        return store.write_bytes(
+            raw_body,
+            name=f"webhook-body{ext}",
+            content_type=content_type,
+            kind="binary",
+        )
+    except Exception:  # noqa: BLE001 - capture is best-effort
+        logger.warning("webhook raw-body capture failed", exc_info=True)
+        return None
+    finally:
+        current_node_id.reset(token)
+
+
 @dataclass
 class WebhookDispatch:
     """Outcome of :func:`dispatch_webhook`.
@@ -515,6 +561,27 @@ async def dispatch_webhook(
                 if seen is not None:
                     deduped = True
                     continue
+            # Raw-body capture: when on, write the exact bytes as a run-scoped
+            # artifact and expose the ref on the payload so binary/multipart
+            # uploads reach the workflow without bloating the DB. Requires a
+            # pre-generated run id so the artifact lives under runs/<run_id>/.
+            node_payload = request_payload
+            raw_ref: dict | None = None
+            pre_run_id: str | None = None
+            if (
+                str(node_params.get("raw_body") or "off").lower() == "on"
+                and raw_body
+            ):
+                from uuid import uuid4
+
+                pre_run_id = uuid4().hex
+                raw_ref = _capture_raw_body_artifact(
+                    raw_body, headers, pre_run_id, node["id"]
+                )
+                if raw_ref is not None:
+                    node_payload = {**request_payload, "raw_body": raw_ref}
+                else:
+                    pre_run_id = None
             run_id = await start_run(
                 workflow.id,
                 graph,
@@ -522,11 +589,20 @@ async def dispatch_webhook(
                 workflow_version_id=version_id,
                 mode="test" if prefer_draft else "production",
                 trigger_type="webhook",
-                cache={node["id"]: {"main": request_payload}},
+                cache={node["id"]: {"main": node_payload}},
                 trigger_node_id=node["id"],
                 deduplication_key=dedup_key,
+                run_id=pre_run_id,
             )
             run_ids.append(run_id)
+            if raw_ref is not None:
+                # Create the Artifact row (and rehome to the configured backend)
+                # even if no downstream node carries the ref, so it's tracked by
+                # retention and downloadable. Idempotent with the engine's own
+                # persistence of refs that flow through node outputs.
+                from app.services.artifacts import persist_artifact_refs
+
+                await persist_artifact_refs(run_id, [raw_ref])
             # First dispatched node owns the immediate response shape.
             if shaped_response is None:
                 shaped_response = _webhook_on_received_response(

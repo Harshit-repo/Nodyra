@@ -629,6 +629,46 @@ async def test_webhook_response_data_custom_body_and_headers(
     assert resp.headers.get("X-Foo") == "bar"
 
 
+async def test_webhook_raw_body_captured_as_artifact(
+    client: AsyncClient,
+) -> None:
+    """raw_body='on' writes the raw request bytes as an artifact ref.
+
+    The trigger payload exposes the raw bytes as ``raw_body`` (an artifact
+    ref), so a binary upload never bloats the DB. The artifact is persisted
+    and downloadable, and the bytes round-trip exactly.
+    """
+    workflow_id = (
+        await client.post("/workflows", json={"name": "RawBody"})
+    ).json()["id"]
+    graph = _webhook_graph_with_auth("raw-cap", {"raw_body": "on"})
+    # Surface the captured ref on the downstream node's output.
+    graph["nodes"][1]["params"]["code"] = "output = input.get('raw_body')"
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    body = b"\x89PNG\r\n\x1a\n not-real-png-bytes \x00\x01\x02"
+    resp = await client.post(
+        "/webhook/raw-cap",
+        headers={"Content-Type": "application/octet-stream"},
+        content=body,
+    )
+    assert resp.status_code == 200
+    run_id = resp.json()["runs"][0]
+
+    run = (await client.get(f"/runs/{run_id}")).json()
+    proc = {n["node_id"]: n for n in run["node_runs"]}["proc"]
+    ref = proc["output"]["main"]
+    assert ref.get("__noodle_artifact__") is True
+    assert ref["size_bytes"] == len(body)
+
+    dl = await client.get(f"/artifacts/{ref['artifact_id']}/download")
+    assert dl.status_code == 200
+    assert dl.content == body
+
+
 async def test_webhook_unknown_path_still_returns_200(client: AsyncClient) -> None:
     """Unknown paths return 200 with empty runs (existing behaviour).
 

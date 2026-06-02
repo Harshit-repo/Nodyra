@@ -434,6 +434,7 @@ async def start_run(
     parameters: dict | None = None,
     trigger_node_id: str | None = None,
     deduplication_key: str | None = None,
+    run_id: str | None = None,
 ) -> str:
     """Create a run record and launch execution in the background.
 
@@ -527,6 +528,11 @@ async def start_run(
             runner_pool_id=runner_pool_id,
             deduplication_key=deduplication_key,
         )
+        # A caller can pre-generate the run id (webhook raw-body capture writes
+        # artifacts under runs/<run_id>/ before the run exists). Leaving it unset
+        # lets the model default mint one.
+        if run_id is not None:
+            run.id = run_id
         # Local durable queue: a LOCAL run (no remote runner pool) that can't
         # grab an admission slot right now is parked as a durable ``queued``
         # entry instead of blocking a coroutine on the pool semaphore. The

@@ -179,6 +179,10 @@ def schedule_trigger(
                   "delivery. A repeat value is acknowledged without re-running."
               ),
           },
+          # Raw body capture. When 'on', the exact request bytes are written as
+          # an artifact and exposed as a `raw_body` ref on the trigger output, so
+          # binary/multipart uploads reach the workflow without bloating the DB.
+          "raw_body": {"choices": ["off", "on"]},
           "auth_credentials": {
               # Default credential type for static manifest; the inspector
               # dynamically swaps this based on auth_type — Basic Auth uses
@@ -212,6 +216,7 @@ def webhook_trigger(
     trust_proxy: str = "off",
     dedup: str = "off",
     dedup_key: str = "",
+    raw_body: str = "off",
 ) -> dict:
     """Start the workflow from an inbound HTTP request to a unique URL.
 
