@@ -1547,6 +1547,13 @@ export function webhookCredentialSpec(
 
 const WEBHOOK_LABEL_OVERRIDES: Record<string, string> = {
   auth_type: "Authentication",
+  hmac_verification: "HMAC verification",
+  ip_allowlist: "IP allowlist",
+  trust_proxy: "Trust X-Forwarded-For",
+  dedup: "Deduplicate",
+  dedup_key: "Dedup key",
+  raw_body: "Capture raw body",
+  response_data: "Response data",
 };
 
 export function webhookParamLabel(
@@ -1583,6 +1590,40 @@ export function webhookHiddenParam(
   if (paramName === "auth_credentials") {
     const authType = String(params.auth_type || "none").toLowerCase();
     return authType === "none";
+  }
+  // JWT header only applies to auth_type=jwt.
+  if (paramName === "auth_jwt_header") {
+    return String(params.auth_type || "none").toLowerCase() !== "jwt";
+  }
+  // HMAC signature fields appear only when verification is on.
+  if (
+    paramName === "hmac_header" ||
+    paramName === "hmac_algorithm" ||
+    paramName === "hmac_prefix"
+  ) {
+    return String(params.hmac_verification || "off").toLowerCase() !== "on";
+  }
+  // Trusting X-Forwarded-For only matters when an allowlist is configured.
+  if (paramName === "trust_proxy") {
+    return String(params.ip_allowlist || "").trim() === "";
+  }
+  // The dedup key only applies when dedup is on.
+  if (paramName === "dedup_key") {
+    return String(params.dedup || "off").toLowerCase() !== "on";
+  }
+  // Response shaping is an On Received concern; the custom body/headers
+  // reveal only when response_data=Custom.
+  if (
+    paramName === "response_data" ||
+    paramName === "response_body" ||
+    paramName === "response_headers"
+  ) {
+    const mode = String(params.response_mode || "On Received");
+    if (mode !== "On Received") return true;
+    if (paramName === "response_body" || paramName === "response_headers") {
+      return String(params.response_data || "") !== "Custom";
+    }
+    return false;
   }
   return false;
 }
