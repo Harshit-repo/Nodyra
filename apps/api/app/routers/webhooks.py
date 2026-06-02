@@ -20,7 +20,8 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
-from app.services.triggers import dispatch_webhook
+from app.config import settings
+from app.services.triggers import dispatch_webhook, wait_for_webhook_result
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +60,20 @@ def _shaped_response(shape: dict) -> Response:
     headers = {str(k): str(v) for k, v in (shape.get("headers") or {}).items()}
     if shape.get("no_body"):
         return Response(status_code=status_code, headers=headers)
+    content_type = shape.get("content_type")
+    body = shape.get("body")
+    if content_type and content_type.split(";")[0].strip().lower() != "application/json":
+        # Non-JSON content type: emit the body as text (verbatim if already a
+        # string), tagged with the requested media type.
+        text = body if isinstance(body, str) else json.dumps(body, default=str)
+        return Response(
+            content=text,
+            status_code=status_code,
+            headers=headers,
+            media_type=content_type,
+        )
     return JSONResponse(
-        content=shape.get("body"), status_code=status_code, headers=headers
+        content=body, status_code=status_code, headers=headers
     )
 
 
@@ -196,6 +209,12 @@ async def trigger_webhook(path: str, request: Request) -> dict:
         raise HTTPException(
             result.reject_status, _REJECT_DETAIL[result.reject_status]
         )
+    if result.sync is not None:
+        shape = await wait_for_webhook_result(
+            **result.sync,
+            timeout=settings.webhook_response_timeout_seconds,
+        )
+        return _shaped_response(shape)
     if result.response is not None:
         return _shaped_response(result.response)
     if result.run_ids:

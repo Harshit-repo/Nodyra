@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     # (control-plane-only replica) while keeping the editor ``/webhook-test/*``
     # capture paths available. See ``app/routers/webhooks.py`` + ``app/main.py``.
     webhook_role: Literal["inline", "ingress", "disabled"] = "ingress"
+    # Max seconds a synchronous webhook (response_mode = Last Node / Respond
+    # Node) waits for its run to finish before returning 504. The run keeps
+    # executing in the background past the timeout.
+    webhook_response_timeout_seconds: float = 30.0
     # Gate that decides what happens when a deployment is activated against a
     # workflow that contains risky nodes (Code, HTTP→private IP, SQL with
     # expressions, SSH, exec command). See ``app.services.unsafe_nodes``.

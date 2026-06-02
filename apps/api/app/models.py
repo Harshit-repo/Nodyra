@@ -321,6 +321,9 @@ class Run(Base):
     runner_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     batch_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     deduplication_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    # Synchronous webhook response recorded by a respond_to_webhook node
+    # (Respond Node mode). Shape: {status, headers, body, content_type}.
+    webhook_response: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     queue_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mode: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")

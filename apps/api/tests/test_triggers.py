@@ -669,6 +669,103 @@ async def test_webhook_raw_body_captured_as_artifact(
     assert dl.content == body
 
 
+def _respond_node_graph(path: str, response_mode: str) -> dict:
+    """Webhook → respond_to_webhook, for Respond Node mode tests."""
+    return {
+        "nodes": [
+            {
+                "id": "hook",
+                "type": "webhook_trigger",
+                "params": {
+                    "path": path,
+                    "http_method": "POST",
+                    "response_mode": response_mode,
+                },
+                "position": {"x": 0, "y": 0},
+            },
+            {
+                "id": "resp",
+                "type": "respond_to_webhook",
+                "params": {"status_code": 201, "body_field": "body"},
+                "position": {"x": 250, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e1",
+                "source": "hook",
+                "source_output": "main",
+                "target": "resp",
+                "target_input": "input",
+            }
+        ],
+    }
+
+
+async def test_webhook_respond_node_returns_recorded_response(
+    client: AsyncClient,
+) -> None:
+    """Respond Node mode returns whatever respond_to_webhook recorded."""
+    workflow_id = (
+        await client.post("/workflows", json={"name": "RespondNode"})
+    ).json()["id"]
+    graph = _respond_node_graph("respond-hook", "Respond Node")
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    resp = await client.post("/webhook/respond-hook", json={"hello": "world"})
+    assert resp.status_code == 201
+    assert resp.json() == {"hello": "world"}
+
+
+async def test_webhook_last_node_returns_final_output(
+    client: AsyncClient,
+) -> None:
+    """Last Node mode waits and returns the final node's output."""
+    workflow_id = (
+        await client.post("/workflows", json={"name": "LastNode"})
+    ).json()["id"]
+    graph = _webhook_graph_with_auth("last-node", {"response_mode": "Last Node"})
+    graph["nodes"][1]["params"]["code"] = "output = {'ok': True, 'n': 7}"
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    resp = await client.post("/webhook/last-node", json={})
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "n": 7}
+
+
+async def test_webhook_last_node_error_returns_500(client: AsyncClient) -> None:
+    """A failing run in a synchronous webhook mode returns 500."""
+    workflow_id = (
+        await client.post("/workflows", json={"name": "LastNodeErr"})
+    ).json()["id"]
+    graph = _webhook_graph_with_auth("last-err", {"response_mode": "Last Node"})
+    graph["nodes"][1]["params"]["code"] = "output = input['missing_key']"
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    resp = await client.post("/webhook/last-err", json={})
+    assert resp.status_code == 500
+
+
+async def test_wait_for_webhook_result_times_out() -> None:
+    """The hybrid wait returns a 504 shape when the run never finishes."""
+    shape = await triggers.wait_for_webhook_result(
+        run_id="nonexistent" + "0" * 20,
+        mode="Last Node",
+        response_code=200,
+        timeout=0.3,
+    )
+    assert shape["status"] == 504
+
+
 async def test_webhook_unknown_path_still_returns_200(client: AsyncClient) -> None:
     """Unknown paths return 200 with empty runs (existing behaviour).
 

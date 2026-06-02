@@ -107,7 +107,14 @@ def schedule_trigger(
       inputs=[], params={
           "http_method": {"choices": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
           "path": {"placeholder": "my-webhook", "description": "Last segment of the URL."},
-          "response_mode": {"choices": ["On Received", "Last Node"]},
+          "response_mode": {
+              "choices": ["On Received", "Last Node", "Respond Node"],
+              "description": (
+                  "When to respond: 'On Received' acks immediately; 'Last Node' "
+                  "waits and returns the final node's output; 'Respond Node' "
+                  "waits and returns whatever a Respond to Webhook node records."
+              ),
+          },
           "response_code": {"description": "HTTP status returned to the caller."},
           # Immediate-ack shaping for On Received mode. Operates on the received
           # request body; 'Custom' reveals response_body + response_headers.

@@ -121,6 +121,29 @@ def _cap_output(value: Any, cap: int | None = None) -> Any:
     return _maybe_truncate(value, cap)
 
 
+def _extract_webhook_response(
+    graph: dict, node_events: dict[str, dict]
+) -> dict | None:
+    """Pull the response a respond_to_webhook node recorded, if any.
+
+    Returns the ``{status, headers, body, content_type}`` dict from the first
+    executed ``respond_to_webhook`` node, or ``None``. Persisted to
+    ``runs.webhook_response`` so a waiting webhook handler (Respond Node mode)
+    can return it from any replica (the DB is shared).
+    """
+    for node in (graph or {}).get("nodes", []):
+        if node.get("type") != "respond_to_webhook":
+            continue
+        event = node_events.get(node.get("id"))
+        if not event:
+            continue
+        outputs = event.get("outputs") or {}
+        response = outputs.get("main")
+        if isinstance(response, dict):
+            return response
+    return None
+
+
 def _cap_logs(logs: Any, cap: int | None = None) -> Any:
     """Bound the total bytes of persisted logs the same way as outputs."""
     if cap is None:
@@ -928,6 +951,9 @@ async def _execute_run(
         if run is not None:
             run.status = status
             run.finished_at = datetime.now(UTC)
+            webhook_response = _extract_webhook_response(graph_dict, node_events)
+            if webhook_response is not None:
+                run.webhook_response = webhook_response
             for node_id, event in node_events.items():
                 session.add(
                     NodeRun(

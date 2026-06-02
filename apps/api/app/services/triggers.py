@@ -455,6 +455,126 @@ def _capture_raw_body_artifact(
         current_node_id.reset(token)
 
 
+def _int_or(value: object, default: int) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+_TERMINAL_RUN_STATES = {"success", "error", "cancelled"}
+
+
+async def _await_run_terminal(run_id: str, timeout: float) -> str | None:
+    """Wait until ``run_id`` reaches a terminal state, or ``timeout`` elapses.
+
+    Hybrid: subscribes to the run broker (low latency when the broker is live,
+    incl. cross-replica over Redis) AND polls the shared DB every ~250ms (the
+    authoritative source, and the safety net if a broker event is missed or the
+    run executes on another replica without a shared broker). Returns the
+    terminal status, or ``None`` on timeout.
+    """
+    import contextlib
+
+    from app.services.events import broker
+
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + max(0.0, timeout)
+
+    async def _broker_finished() -> None:
+        with contextlib.suppress(Exception):
+            async for event in broker.subscribe(run_id):
+                if event.get("type") == "run_finished":
+                    return
+
+    broker_task = asyncio.create_task(_broker_finished())
+    try:
+        while True:
+            async with SessionLocal() as session:
+                status = await session.scalar(
+                    select(Run.status).where(Run.id == run_id)
+                )
+            if status in _TERMINAL_RUN_STATES:
+                return str(status)
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return None
+            # Wake early when the broker signals completion; otherwise poll.
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(
+                    asyncio.shield(broker_task), timeout=min(0.25, remaining)
+                )
+    finally:
+        if not broker_task.done():
+            broker_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await broker_task
+
+
+async def _last_node_output(session, run_id: str) -> object:
+    """Return the output of the last node to finish in ``run_id``."""
+    from app.models import NodeRun
+
+    row = await session.scalar(
+        select(NodeRun.output)
+        .where(NodeRun.run_id == run_id)
+        .order_by(NodeRun.finished_at.desc().nullslast())
+        .limit(1)
+    )
+    if isinstance(row, dict):
+        # Single-output nodes expose ``main``; fall back to the whole dict.
+        return row.get("main", row)
+    return row
+
+
+async def wait_for_webhook_result(
+    run_id: str, mode: str, response_code: int, timeout: float
+) -> dict:
+    """Wait for a synchronous webhook run and return a response shape.
+
+    Shape matches ``_webhook_on_received_response`` so the route renders it
+    uniformly: ``{status, headers, body, no_body, content_type?}``. Timeout →
+    504; run error/cancel → 500; success → the respond_to_webhook record
+    (Respond Node) or the last node's output (Last Node, or Respond Node with
+    nothing recorded).
+    """
+    status = await _await_run_terminal(run_id, timeout)
+    if status is None:
+        return {
+            "status": 504,
+            "headers": {},
+            "body": {"error": "Workflow did not respond in time", "run_id": run_id},
+            "no_body": False,
+        }
+    if status != "success":
+        return {
+            "status": 500,
+            "headers": {},
+            "body": {"error": "Workflow run failed", "run_id": run_id},
+            "no_body": False,
+        }
+    async with SessionLocal() as session:
+        run = await session.get(Run, run_id)
+        recorded = getattr(run, "webhook_response", None) if run else None
+        if mode == "Respond Node" and isinstance(recorded, dict):
+            return {
+                "status": _int_or(
+                    recorded.get("status_code") or recorded.get("status"), 200
+                ),
+                "headers": recorded.get("headers") or {},
+                "body": recorded.get("body"),
+                "no_body": False,
+                "content_type": recorded.get("content_type"),
+            }
+        body = await _last_node_output(session, run_id)
+    return {
+        "status": _int_or(response_code, 200),
+        "headers": {},
+        "body": body,
+        "no_body": False,
+    }
+
+
 @dataclass
 class WebhookDispatch:
     """Outcome of :func:`dispatch_webhook`.
@@ -473,6 +593,7 @@ class WebhookDispatch:
     reject_status: int | None = None
     deduped: bool = False
     response: dict | None = None
+    sync: dict | None = None
 
 
 async def dispatch_webhook(
@@ -501,6 +622,7 @@ async def dispatch_webhook(
     ip_rejected = False
     deduped = False
     shaped_response: dict | None = None
+    sync_info: dict | None = None
     headers = request_payload.get("headers") or {}
     query = request_payload.get("query") or {}
     workflows = (
@@ -603,11 +725,21 @@ async def dispatch_webhook(
                 from app.services.artifacts import persist_artifact_refs
 
                 await persist_artifact_refs(run_id, [raw_ref])
-            # First dispatched node owns the immediate response shape.
-            if shaped_response is None:
-                shaped_response = _webhook_on_received_response(
-                    node_params, request_payload
-                )
+            # The first dispatched node owns the response. On Received shapes an
+            # immediate ack; Last Node / Respond Node ask the caller to wait for
+            # the run to finish (handled in the production webhook route).
+            if shaped_response is None and sync_info is None:
+                mode = str(node_params.get("response_mode") or "On Received")
+                if mode in ("Last Node", "Respond Node") and not prefer_draft:
+                    sync_info = {
+                        "run_id": run_id,
+                        "mode": mode,
+                        "response_code": _int_or(node_params.get("response_code"), 200),
+                    }
+                else:
+                    shaped_response = _webhook_on_received_response(
+                        node_params, request_payload
+                    )
     reject_status: int | None = None
     if not run_ids and any_match and not deduped:
         reject_status = 403 if ip_rejected else 401
@@ -617,6 +749,7 @@ async def dispatch_webhook(
         reject_status=reject_status,
         deduped=deduped,
         response=shaped_response,
+        sync=sync_info,
     )
 
 
