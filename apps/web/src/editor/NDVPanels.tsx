@@ -133,12 +133,6 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
             </div>
           );
         })}
-      {manifest.id === "webhook_trigger" && (
-        <WebhookPanel
-          path={String(params.path ?? "noodle")}
-          nodeId={node.id}
-        />
-      )}
     </>
   );
 }
@@ -672,14 +666,30 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
     </div>
   );
 
+  const isWebhookTrigger = node.data.manifest.id === "webhook_trigger";
+
   return (
     <div className="ndv-panels">
-      <DataPanel
-        title="Input"
-        data={inputData}
-        emptyMessage="No upstream data yet. Run the workflow to see input here."
-        dragPrefix="$json"
-      />
+      {isWebhookTrigger ? (
+        <section className="ndv-panel ndv-webhook-panel">
+          <header className="ndv-panel-head">
+            <h3>Trigger</h3>
+          </header>
+          <div className="ndv-panel-body">
+            <WebhookPanel
+              path={String(node.data.params.path ?? "noodle")}
+              nodeId={nodeId}
+            />
+          </div>
+        </section>
+      ) : (
+        <DataPanel
+          title="Input"
+          data={inputData}
+          emptyMessage="No upstream data yet. Run the workflow to see input here."
+          dragPrefix="$json"
+        />
+      )}
 
       <section className="ndv-middle">
         <div className="ndv-tabs">
