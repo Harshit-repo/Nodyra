@@ -54,9 +54,14 @@ Noodle is designed for teams that need more than point-and-click integrations:
 ## Current Status
 
 Noodle is an active product codebase. The local and Docker stacks are usable,
-and the platform includes a broad v1 enterprise surface. Some larger scale-out
-capabilities are still planned, notably remote runner agents and a first-class
-admin restart control.
+and the platform includes a broad v1 enterprise surface: a durable run queue
+with leases, dead-letter, and replay; scheduler leader election; runner pools
+with heartbeats and remote/SSH onboarding; pluggable local/S3 artifact storage;
+credential test-on-save; and an unsafe-node activation policy. See
+[docs/status-matrix.md](docs/status-matrix.md) for the per-component shipped /
+beta / scaffolded / planned breakdown. Known gaps include the webhook-ingress
+role split, a first-class UI operations dashboard, and a first-class admin
+restart control.
 
 ## Key Capabilities
 
