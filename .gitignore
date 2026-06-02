@@ -34,3 +34,4 @@ apps/api/envs/
 data/
 *.db
 *.log
+.superpowers/
