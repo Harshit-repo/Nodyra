@@ -59,20 +59,27 @@ def _record_capture(path: str, payload: dict) -> None:
     _captured[path] = (now, payload)
 
 
-async def _payload(request: Request) -> dict:
+async def _payload(request: Request) -> tuple[dict, bytes]:
+    """Return the node-facing payload dict and the raw request bytes.
+
+    The raw bytes are returned separately (not embedded in the payload, which
+    becomes the trigger node's JSON output) so HMAC verification can sign the
+    exact bytes received.
+    """
     raw = await request.body()
     body: object
     try:
         body = json.loads(raw) if raw else None
     except json.JSONDecodeError:
         body = raw.decode("utf-8", "replace")
-    return {
+    payload = {
         "method": request.method,
         "headers": dict(request.headers),
         "query": dict(request.query_params),
         "body": body,
         "received_at": datetime.now(UTC).isoformat(),
     }
+    return payload, raw
 
 
 # Headers that carry credentials — never store them in the capture buffer.
@@ -108,10 +115,10 @@ async def capture_webhook(path: str, request: Request) -> dict:
     using their draft graph (so unpublished credential refs and auth changes
     apply). Workflow ``active`` is ignored on this path; auth IS still
     checked, so the user can validate their Basic/Header/Query setup."""
-    payload = await _payload(request)
+    payload, raw_body = await _payload(request)
     _record_capture(path, _redacted_payload(payload))
     run_ids, any_path_matched = await dispatch_webhook(
-        path, payload, prefer_draft=True
+        path, payload, prefer_draft=True, raw_body=raw_body
     )
     logger.info(
         "webhook test path=%s matched=%s runs=%d",
@@ -146,9 +153,9 @@ async def clear_webhook(path: str) -> None:
 @production_router.api_route("/webhook/{path}", methods=_METHODS)
 async def trigger_webhook(path: str, request: Request) -> dict:
     """Production webhook — dispatch a run of matching active workflows."""
-    payload = await _payload(request)
+    payload, raw_body = await _payload(request)
     _record_capture(path, _redacted_payload(payload))
-    run_ids, any_path_matched = await dispatch_webhook(path, payload)
+    run_ids, any_path_matched = await dispatch_webhook(path, payload, raw_body=raw_body)
     logger.info(
         "webhook prod path=%s matched=%s runs=%d",
         path, any_path_matched, len(run_ids),

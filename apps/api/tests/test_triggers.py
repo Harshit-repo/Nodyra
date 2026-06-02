@@ -289,6 +289,126 @@ async def test_webhook_query_auth_checks_value(client: AsyncClient) -> None:
     assert len(ok.json()["runs"]) == 1
 
 
+async def test_webhook_bearer_auth_checks_token(client: AsyncClient) -> None:
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Bearer"})
+    ).json()["id"]
+    graph = _webhook_graph_with_auth(
+        "bearer-auth",
+        {"auth_type": "bearer", "auth_bearer_token": "tok-abc-123"},
+    )
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    wrong = await client.post(
+        "/webhook/bearer-auth", headers={"Authorization": "Bearer nope"}, json={}
+    )
+    assert wrong.status_code == 401
+    ok = await client.post(
+        "/webhook/bearer-auth",
+        headers={"Authorization": "Bearer tok-abc-123"},
+        json={},
+    )
+    assert ok.status_code == 200
+    assert len(ok.json()["runs"]) == 1
+
+
+def _make_hs256_jwt(payload: dict, secret: str) -> str:
+    import base64
+    import hashlib
+    import hmac
+    import json as _json
+
+    def b64(raw: bytes) -> str:
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    header = b64(_json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    body = b64(_json.dumps(payload).encode())
+    signing_input = f"{header}.{body}".encode()
+    sig = b64(hmac.new(secret.encode(), signing_input, hashlib.sha256).digest())
+    return f"{header}.{body}.{sig}"
+
+
+async def test_webhook_jwt_auth_verifies_hs256_and_exp(client: AsyncClient) -> None:
+    import time
+
+    secret = "jwt-shared-secret"
+    workflow_id = (
+        await client.post("/workflows", json={"name": "JWT"})
+    ).json()["id"]
+    graph = _webhook_graph_with_auth(
+        "jwt-auth", {"auth_type": "jwt", "auth_jwt_secret": secret}
+    )
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    good = _make_hs256_jwt({"sub": "abc", "exp": int(time.time()) + 3600}, secret)
+    forged = _make_hs256_jwt({"sub": "abc", "exp": int(time.time()) + 3600}, "wrong")
+    expired = _make_hs256_jwt({"sub": "abc", "exp": int(time.time()) - 10}, secret)
+
+    bad_sig = await client.post(
+        "/webhook/jwt-auth", headers={"Authorization": f"Bearer {forged}"}, json={}
+    )
+    assert bad_sig.status_code == 401
+    stale = await client.post(
+        "/webhook/jwt-auth", headers={"Authorization": f"Bearer {expired}"}, json={}
+    )
+    assert stale.status_code == 401
+    ok = await client.post(
+        "/webhook/jwt-auth", headers={"Authorization": f"Bearer {good}"}, json={}
+    )
+    assert ok.status_code == 200
+    assert len(ok.json()["runs"]) == 1
+
+
+async def test_webhook_hmac_verification_checks_signature(
+    client: AsyncClient,
+) -> None:
+    import hashlib
+    import hmac
+
+    secret = "whsec_test"
+    workflow_id = (
+        await client.post("/workflows", json={"name": "HMAC"})
+    ).json()["id"]
+    graph = _webhook_graph_with_auth(
+        "hmac-hook",
+        {
+            "auth_type": "none",
+            "hmac_verification": "on",
+            "hmac_header": "X-Signature",
+            "hmac_secret": secret,
+            "hmac_algorithm": "sha256",
+            "hmac_prefix": "sha256=",
+        },
+    )
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    body = b'{"order": 42}'
+    good_sig = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+    bad = await client.post(
+        "/webhook/hmac-hook",
+        headers={"X-Signature": "sha256=deadbeef", "Content-Type": "application/json"},
+        content=body,
+    )
+    assert bad.status_code == 401
+    ok = await client.post(
+        "/webhook/hmac-hook",
+        headers={"X-Signature": good_sig, "Content-Type": "application/json"},
+        content=body,
+    )
+    assert ok.status_code == 200
+    assert len(ok.json()["runs"]) == 1
+
+
 async def test_webhook_unknown_path_still_returns_200(client: AsyncClient) -> None:
     """Unknown paths return 200 with empty runs (existing behaviour).
 

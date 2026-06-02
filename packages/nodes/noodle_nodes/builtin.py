@@ -110,12 +110,30 @@ def schedule_trigger(
           "response_mode": {"choices": ["On Received", "Last Node"]},
           "response_code": {"description": "HTTP status returned to the caller."},
           "auth_type": {
-              "choices": ["none", "basic", "header", "query"],
+              "choices": ["none", "basic", "header", "query", "bearer", "jwt"],
               "description": (
                   "Authentication required for callers. 'none' accepts any "
                   "request. 'basic' = HTTP Basic Auth. 'header' = check a custom "
-                  "header. 'query' = check a query-string parameter."
+                  "header. 'query' = check a query-string parameter. 'bearer' = "
+                  "Authorization: Bearer <token>. 'jwt' = verify an HS256 JWT."
               ),
+          },
+          "auth_jwt_header": {
+              "placeholder": "Authorization",
+              "description": "Header carrying the JWT (auth_type=jwt). Default Authorization.",
+          },
+          # Signature verification (independent of auth_type). When 'on', the
+          # raw request body is HMAC-verified against a shared secret before the
+          # workflow runs — GitHub/Stripe/Slack style.
+          "hmac_verification": {"choices": ["off", "on"]},
+          "hmac_header": {
+              "placeholder": "X-Signature",
+              "description": "Header carrying the HMAC signature.",
+          },
+          "hmac_algorithm": {"choices": ["sha256", "sha1"]},
+          "hmac_prefix": {
+              "placeholder": "sha256=",
+              "description": "Optional prefix stripped from the signature header (e.g. 'sha256=').",
           },
           "auth_credentials": {
               # Default credential type for static manifest; the inspector
@@ -137,6 +155,12 @@ def webhook_trigger(
     response_code: int = 200,
     auth_type: str = "none",
     auth_credentials: dict | None = None,
+    auth_jwt_header: str = "Authorization",
+    hmac_verification: str = "off",
+    hmac_header: str = "X-Signature",
+    hmac_algorithm: str = "sha256",
+    hmac_prefix: str = "",
+    hmac_secret: str | None = None,
 ) -> dict:
     """Start the workflow from an inbound HTTP request to a unique URL.
 

@@ -117,6 +117,9 @@ async def _resolve_node_auth(
         "auth_password",
         "auth_header_value",
         "auth_query_value",
+        "auth_bearer_token",
+        "auth_jwt_secret",
+        "hmac_secret",
     )
     snapshot = {key: params.get(key) for key in auth_keys}
     async with SessionLocal() as session:
@@ -187,11 +190,118 @@ def _webhook_auth_passes(
             expected = str(resolved.get("auth_query_value") or "")
         return bool(expected) and str((query or {}).get(name) or "") == expected
 
+    if auth_type == "bearer":
+        import hmac
+
+        if creds:
+            expected = str(creds.get("token") or creds.get("value") or "")
+        else:
+            expected = str(resolved.get("auth_bearer_token") or "")
+        got = lower_headers.get("authorization", "")
+        if not got.lower().startswith("bearer "):
+            return False
+        return bool(expected) and hmac.compare_digest(got[7:].strip(), expected)
+
+    if auth_type == "jwt":
+        if creds:
+            secret = str(creds.get("secret") or creds.get("value") or "")
+        else:
+            secret = str(resolved.get("auth_jwt_secret") or "")
+        header_name = str(node_params.get("auth_jwt_header") or "authorization").lower()
+        token = lower_headers.get(header_name, "")
+        if token.lower().startswith("bearer "):
+            token = token[7:].strip()
+        return bool(secret) and _jwt_hs256_valid(token, secret)
+
     return False
 
 
+def _b64url_decode(segment: str) -> bytes:
+    import base64
+
+    padding = "=" * (-len(segment) % 4)
+    return base64.urlsafe_b64decode(segment + padding)
+
+
+def _jwt_hs256_valid(token: str, secret: str) -> bool:
+    """Verify a compact HS256 JWT: signature + alg + ``exp``.
+
+    Intentionally stdlib-only (no PyJWT dependency) and HS256-only — the common
+    shared-secret webhook case. RS256/asymmetric verification is a follow-up
+    that would need a JWT/crypto library.
+    """
+    import hashlib
+    import hmac
+    import json as _json
+    import time
+
+    parts = token.split(".")
+    if len(parts) != 3:
+        return False
+    header_b64, payload_b64, sig_b64 = parts
+    signing_input = f"{header_b64}.{payload_b64}".encode()
+    expected_sig = hmac.new(secret.encode(), signing_input, hashlib.sha256).digest()
+    try:
+        got_sig = _b64url_decode(sig_b64)
+    except Exception:
+        return False
+    if not hmac.compare_digest(got_sig, expected_sig):
+        return False
+    try:
+        header = _json.loads(_b64url_decode(header_b64))
+        payload = _json.loads(_b64url_decode(payload_b64))
+    except Exception:
+        return False
+    if str(header.get("alg")) != "HS256":
+        return False
+    exp = payload.get("exp")
+    if exp is not None:
+        try:
+            if float(exp) < time.time():
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+def _webhook_hmac_passes(
+    node_params: dict, resolved: dict, headers: dict, raw_body: bytes | None
+) -> bool:
+    """Verify an HMAC signature header over the raw request body.
+
+    GitHub/Stripe/Slack style: ``<prefix><hexdigest>`` in a configurable header,
+    computed with a shared secret. Off unless ``hmac_verification == "on"``.
+    """
+    import hashlib
+    import hmac
+
+    if str(node_params.get("hmac_verification") or "off").lower() != "on":
+        return True
+    creds = resolved.get("auth_credentials")
+    creds = creds if isinstance(creds, dict) else None
+    secret = str((creds or {}).get("hmac_secret") or resolved.get("hmac_secret") or "")
+    if not secret:
+        return False
+    header_name = str(node_params.get("hmac_header") or "X-Signature").lower()
+    algo = str(node_params.get("hmac_algorithm") or "sha256").lower()
+    digestmod = {"sha1": hashlib.sha1, "sha256": hashlib.sha256}.get(algo)
+    if digestmod is None:
+        return False
+    prefix = str(node_params.get("hmac_prefix") or "")
+    lower_headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+    provided = lower_headers.get(header_name, "")
+    if prefix and provided.startswith(prefix):
+        provided = provided[len(prefix):]
+    expected = hmac.new(secret.encode(), raw_body or b"", digestmod).hexdigest()
+    return hmac.compare_digest(provided.strip(), expected)
+
+
 async def dispatch_webhook(
-    path: str, request_payload: dict, *, prefer_draft: bool = False
+    path: str,
+    request_payload: dict,
+    *,
+    prefer_draft: bool = False,
+    raw_body: bytes | None = None,
 ) -> tuple[list[str], bool]:
     """Run every active workflow that starts with a matching webhook node.
 
@@ -244,6 +354,8 @@ async def dispatch_webhook(
                 node_params, workflow.id, workflow.environment_id
             )
             if not _webhook_auth_passes(node_params, resolved_auth, headers, query):
+                continue
+            if not _webhook_hmac_passes(node_params, resolved_auth, headers, raw_body):
                 continue
             run_id = await start_run(
                 workflow.id,
