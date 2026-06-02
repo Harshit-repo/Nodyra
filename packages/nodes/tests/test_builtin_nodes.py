@@ -357,6 +357,73 @@ def test_http_request_raises_on_error_status(monkeypatch) -> None:
         raise AssertionError("HTTP error status should fail the node")
 
 
+def test_http_request_passes_configurable_timeout(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
+        captured.update(kwargs)
+        return FakeResponse({"ok": True})
+
+    monkeypatch.setattr(requests, "request", fake_request)
+    registry.get("http_request").func(
+        url="https://api.example.test/x", timeout_seconds=5
+    )
+    assert captured["timeout"] == 5
+
+
+def test_http_request_retries_transient_5xx(monkeypatch) -> None:
+    """max_retries retries on a transient 5xx, then returns the success body."""
+    calls: list[int] = []
+
+    def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
+        calls.append(1)
+        if len(calls) < 3:
+            return FakeResponse({"err": "busy"}, status_code=503)
+        return FakeResponse({"ok": True})
+
+    monkeypatch.setattr(requests, "request", fake_request)
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    result = registry.get("http_request").func(
+        url="https://api.example.test/retry", max_retries=2
+    )
+    assert result == {"ok": True}
+    assert len(calls) == 3
+
+
+def test_http_request_no_retry_by_default(monkeypatch) -> None:
+    """Default max_retries=0 makes a single attempt and surfaces the 5xx."""
+    calls: list[int] = []
+
+    def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
+        calls.append(1)
+        return FakeResponse({"err": "busy"}, status_code=503)
+
+    monkeypatch.setattr(requests, "request", fake_request)
+    try:
+        registry.get("http_request").func(url="https://api.example.test/x")
+    except RuntimeError as exc:
+        assert "HTTP 503" in str(exc)
+    else:
+        raise AssertionError("a 5xx with no retries should fail the node")
+    assert len(calls) == 1
+
+
+def test_graphql_request_passes_configurable_timeout(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
+        captured.update(kwargs)
+        return FakeResponse({"data": {}})
+
+    monkeypatch.setattr(requests, "request", fake_request)
+    registry.get("graphql_request").func(
+        url="https://api.example.test/graphql",
+        query="{ viewer { login } }",
+        timeout_seconds=12,
+    )
+    assert captured["timeout"] == 12
+
+
 def test_slack_node_builds_chat_post_message_payload(monkeypatch) -> None:
     calls: list[dict] = []
 

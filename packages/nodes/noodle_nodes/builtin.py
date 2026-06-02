@@ -754,6 +754,17 @@ def code_node(input: Any = None, code: str = "output = input") -> Any:
         _record_code_variables(namespace)
 
 
+# Transient statuses worth retrying when the caller opts into retries: rate
+# limiting and gateway/upstream hiccups. 4xx other than 429 are the caller's
+# problem and are never retried.
+_RETRYABLE_HTTP_STATUS = frozenset({429, 500, 502, 503, 504})
+
+
+def _http_backoff_seconds(attempt: int) -> float:
+    """Exponential backoff: 1s, 2s, 4s, … capped at 30s."""
+    return min(2.0 ** attempt, 30.0)
+
+
 @node(name="HTTP Request", id="http_request", category="Transform", icon="globe", params={
     "url": {"placeholder": "https://api.example.com/data"},
     "method": {"choices": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
@@ -769,21 +780,56 @@ def code_node(input: Any = None, code: str = "output = input") -> Any:
         "description": "JSON request body — add fields, or switch to raw JSON.",
         "key_value": True,
     },
+    "timeout_seconds": {
+        "description": "Per-request timeout in seconds.",
+    },
+    "max_retries": {
+        "description": (
+            "Retries on a transient failure (429/5xx or a connection/timeout "
+            "error) with exponential backoff. 0 = a single attempt."
+        ),
+    },
 })
 def http_request(input: Any = None, url: str = "", method: str = "GET",
                  headers: dict | None = None, query: dict | None = None,
-                 body: dict | None = None) -> Any:
-    """Call an HTTP API and return the JSON body (or text on non-JSON)."""
+                 body: dict | None = None, timeout_seconds: float = 30,
+                 max_retries: int = 0) -> Any:
+    """Call an HTTP API and return the JSON body (or text on non-JSON).
+
+    Optionally retries transient failures (429/5xx, connection/timeout errors)
+    with exponential backoff; ``max_retries=0`` (default) makes a single attempt.
+    """
+    import time
+
     import requests
 
-    response = requests.request(
-        method,
-        url,
-        headers=headers or None,
-        params=query or None,
-        json=body or None,
-        timeout=30,
-    )
+    timeout = float(timeout_seconds or 30)
+    attempts = max(0, int(max_retries or 0)) + 1
+    response = None
+    for attempt in range(attempts):
+        try:
+            response = requests.request(
+                method,
+                url,
+                headers=headers or None,
+                params=query or None,
+                json=body or None,
+                timeout=timeout,
+            )
+        except requests.RequestException:
+            # Network-level failure: retry while attempts remain, else re-raise
+            # the original error unchanged (default path keeps today's behaviour).
+            if attempt + 1 < attempts:
+                time.sleep(_http_backoff_seconds(attempt))
+                continue
+            raise
+        if (
+            response.status_code in _RETRYABLE_HTTP_STATUS
+            and attempt + 1 < attempts
+        ):
+            time.sleep(_http_backoff_seconds(attempt))
+            continue
+        break
     try:
         payload = response.json()
     except ValueError:
@@ -805,6 +851,7 @@ def http_request(input: Any = None, url: str = "", method: str = "GET",
     "query": {"multiline": True, "description": "GraphQL query or mutation."},
     "variables": {"description": "GraphQL variables object.", "key_value": True},
     "headers": {"description": "Request headers.", "key_value": True},
+    "timeout_seconds": {"description": "Per-request timeout in seconds."},
 })
 def graphql_request(
     input: Any = None,
@@ -812,6 +859,7 @@ def graphql_request(
     query: str = "",
     variables: dict | None = None,
     headers: dict | None = None,
+    timeout_seconds: float = 30,
 ) -> Any:
     """Execute a GraphQL query/mutation over HTTP POST."""
     import requests
@@ -828,7 +876,7 @@ def graphql_request(
         url,
         headers=headers or None,
         json={"query": query, "variables": request_variables},
-        timeout=30,
+        timeout=float(timeout_seconds or 30),
     )
     try:
         payload = response.json()
