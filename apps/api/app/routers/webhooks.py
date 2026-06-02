@@ -23,7 +23,14 @@ from app.services.triggers import dispatch_webhook
 
 logger = logging.getLogger(__name__)
 
+# Editor/test capture paths (`/webhook-test/*`). Always mounted so the builder
+# UX works even on a control-plane-only replica (``webhook_role=disabled``).
 router = APIRouter(tags=["webhooks"])
+
+# Public production path (`/webhook/{path}`). Mounted only when
+# ``webhook_role != "disabled"`` (see ``app/main.py``), so an editor-only
+# replica rejects production webhooks with 404 instead of silently matching.
+production_router = APIRouter(tags=["webhooks"])
 
 # Stored as ``(monotonic_seen_at, payload)`` so we can age entries out
 # without paying for a separate timestamp dict.
@@ -136,7 +143,7 @@ async def clear_webhook(path: str) -> None:
     _captured.pop(path, None)
 
 
-@router.api_route("/webhook/{path}", methods=_METHODS)
+@production_router.api_route("/webhook/{path}", methods=_METHODS)
 async def trigger_webhook(path: str, request: Request) -> dict:
     """Production webhook — dispatch a run of matching active workflows."""
     payload = await _payload(request)

@@ -14,7 +14,12 @@ class Settings(BaseSettings):
     runtime_mode: Literal["local", "production"] = "local"
     queue_backend: Literal["none", "redis"] = "none"
     scheduler_role: Literal["inline", "leader", "disabled"] = "inline"
-    webhook_role: Literal["inline", "ingress", "disabled"] = "inline"
+    # ``ingress`` (default) is the production posture: this process serves the
+    # public ``/webhook/{path}`` routes. ``inline`` is the same routing for a
+    # minimal single-user setup. ``disabled`` unmounts the public webhook routes
+    # (control-plane-only replica) while keeping the editor ``/webhook-test/*``
+    # capture paths available. See ``app/routers/webhooks.py`` + ``app/main.py``.
+    webhook_role: Literal["inline", "ingress", "disabled"] = "ingress"
     # Gate that decides what happens when a deployment is activated against a
     # workflow that contains risky nodes (Code, HTTP→private IP, SQL with
     # expressions, SSH, exec command). See ``app.services.unsafe_nodes``.
@@ -191,6 +196,13 @@ class Settings(BaseSettings):
                 "RUNTIME_MODE=production with no shared queue backend; "
                 "set queue_backend=redis so multiple workers share one durable "
                 "run queue."
+            )
+        if self.webhook_role == "inline":
+            warnings.append(
+                "RUNTIME_MODE=production with webhook_role=inline; inbound "
+                "webhook bursts share the API/editor process. Prefer "
+                "webhook_role=ingress (the default) so webhook intake is a "
+                "dedicated, queue-backed tier."
             )
         return warnings
 

@@ -94,7 +94,21 @@ def test_allow_insecure_override_is_exposed():
     assert s.runtime_allow_insecure is True
 
 
-def test_scheduler_and_webhook_roles_default_inline():
+def test_scheduler_defaults_inline_webhook_defaults_ingress():
     s = _settings()
     assert s.scheduler_role == "inline"
-    assert s.webhook_role == "inline"
+    assert s.webhook_role == "ingress"
+
+
+def test_production_with_inline_webhook_role_warns():
+    """Production + webhook_role=inline is advisory: webhook bursts share the
+    API process; prefer the dedicated ingress role."""
+    s = _settings(
+        runtime_mode="production",
+        database_url=_PG,
+        artifact_storage_backend="s3",
+        artifact_s3_bucket="prod-noodle-artifacts",
+        queue_backend="redis",
+        webhook_role="inline",
+    )
+    assert any("webhook" in w.lower() for w in s.runtime_warnings())

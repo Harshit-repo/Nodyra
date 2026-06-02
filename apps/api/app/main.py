@@ -287,11 +287,15 @@ app.include_router(health.router)
 app.include_router(nodes.router)
 app.include_router(environments.router)
 # Webhook ingress role:
-#   inline    -> serve /webhooks/* from this process (default; dev)
-#   ingress   -> serve /webhooks/* (this process IS the ingress tier)
-#   disabled  -> do not mount /webhooks/* (control-plane only)
+#   ingress   -> serve public /webhook/{path} (default; this process is the
+#                ingress tier — validate fast, enqueue on the durable queue)
+#   inline    -> serve public /webhook/{path} (simple single-user setup)
+#   disabled  -> do NOT mount public /webhook/{path} (control-plane only)
+# The editor capture paths (/webhook-test/*) are always mounted so the builder
+# UX works on any replica, including a disabled (control-plane-only) one.
+app.include_router(webhooks.router)
 if settings.webhook_role != "disabled":
-    app.include_router(webhooks.router)
+    app.include_router(webhooks.production_router)
 app.include_router(workflows.router)
 app.include_router(runs.router)
 app.include_router(deployments.router)

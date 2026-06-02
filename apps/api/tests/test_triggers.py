@@ -321,31 +321,45 @@ def test_is_due_different_timezones_fire_at_different_utc() -> None:
 
 # --- Task 8: webhook ingress role split --------------------------------------
 
-async def test_webhook_role_inline_mounts_router(client: AsyncClient) -> None:
-    """Default webhook_role=='inline' — /webhook/* is reachable."""
+def test_webhook_role_defaults_to_ingress() -> None:
+    """The production-grade ingress posture is the default."""
+    from app.config import Settings
+
+    assert Settings().webhook_role == "ingress"
+
+
+async def test_webhook_role_default_serves_production_path(client: AsyncClient) -> None:
+    """Default role — production /webhook/* is reachable (not 404)."""
     resp = await client.post("/webhook/no-such-path", json={})
     # 200 is the "accepted, no matching trigger" reply; we just need NOT 404.
     assert resp.status_code != 404
 
 
-async def test_webhook_role_disabled_unmounts_router(monkeypatch) -> None:
-    """webhook_role=='disabled' — /webhook/* is not registered on the app."""
+async def test_webhook_role_disabled_blocks_production_but_keeps_test_paths(
+    monkeypatch,
+) -> None:
+    """webhook_role=='disabled' — production /webhook/{path} is unmounted, but
+    the editor capture paths /webhook-test/* stay available so the builder UX
+    works on a control-plane-only replica."""
     import importlib
+
     from app import config as _config
     from app.config import Settings
 
-    # Build a settings instance with webhook_role=disabled, then reload main.
     new_settings = Settings(webhook_role="disabled")
     monkeypatch.setattr(_config, "settings", new_settings)
 
     import app.main as _main
     reloaded = importlib.reload(_main)
     paths = {getattr(r, "path", "") for r in reloaded.app.routes}
-    assert not any(p.startswith("/webhook") for p in paths), (
-        "/webhook routes should not be mounted when webhook_role=disabled"
+    assert "/webhook/{path}" not in paths, (
+        "production /webhook/{path} must not be mounted when role=disabled"
+    )
+    assert any(p.startswith("/webhook-test") for p in paths), (
+        "editor /webhook-test/* paths must stay mounted when role=disabled"
     )
 
-    # Restore normal inline behaviour for subsequent tests in the session.
+    # Restore default behaviour for subsequent tests in the session.
     monkeypatch.setattr(_config, "settings", Settings())
     importlib.reload(_main)
 

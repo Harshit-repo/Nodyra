@@ -29,7 +29,8 @@ audit** of other built-in nodes implementing the high-value, low-risk wins.
   spinner, **not** radiating waves. Conditional fields use
   `webhookHiddenParam` / `webhookParamLabel` / `webhookCredentialSpec`.
 - **Config** (`apps/api/app/config.py`): `webhook_role: inline|ingress|disabled`
-  exists but **nothing branches on it**. `runtime_warnings()` already exists.
+  exists but **nothing branches on it** (current default `inline` → changing to
+  `ingress`). `runtime_warnings()` already exists.
 - **Dedup infra**: `runs` dedup key (`0025_run_dedup_key`) is available to reuse.
 
 ## Non-goals (YAGNI)
@@ -46,20 +47,24 @@ audit** of other built-in nodes implementing the high-value, low-risk wins.
 
 | Role | `/webhook/{path}` (production) | `/webhook-test/*` (editor) |
 | --- | --- | --- |
-| `inline` (default) | served (dispatch as today) | served |
-| `ingress` | served (dispatch/enqueue) | served |
+| `ingress` (**default**) | served (validate → enqueue via durable queue) | served |
+| `inline` | served (dispatch as today) | served |
 | `disabled` | **404** | served |
 
+- **Default is `ingress`** — the production-grade posture (validate fast, enqueue
+  on the durable run queue, return promptly) is on by default. It works in a
+  single all-in-one process too: `webhook_role` only governs the webhook route
+  and is independent of `scheduler_role`, so defaulting to `ingress` does not
+  disable the in-process scheduler/editor.
 - Test/editor paths are **always** served regardless of role, so the builder UX
   works on any replica (per improvement-plan Task 8).
-- `inline` vs `ingress` are semantically about deployment topology (a dedicated
-  ingress replica vs the all-in-one API); the route accepts in both. The lever
-  that changes request handling is `disabled` (editor-only replicas reject
-  production webhooks so a misrouted call fails loudly instead of silently
-  matching nothing).
-- **Production warning:** extend `Settings.runtime_warnings()` to note when
-  `runtime_mode=production` and `webhook_role=inline` that webhook bursts share
-  the API process; advisory only.
+- `inline` keeps the simpler direct-dispatch path for minimal single-user setups.
+  The lever that changes request handling is `disabled` (editor-only replicas
+  reject production webhooks so a misrouted call fails loudly with 404 instead of
+  silently matching nothing).
+- **Production note:** `Settings.runtime_warnings()` flags `runtime_mode=production`
+  + `webhook_role=inline` (advisory: webhook bursts share the API process; prefer
+  `ingress`).
 
 **Files:** `apps/api/app/routers/webhooks.py`, `apps/api/app/config.py`.
 **Tests:** `apps/api/tests/test_triggers.py` — `disabled` → 404 on `/webhook/{path}`,
