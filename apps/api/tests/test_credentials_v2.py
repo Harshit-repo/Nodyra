@@ -12,9 +12,9 @@ class FakeResponse:
 
 async def test_scoped_credentials_resolve_by_specificity(client: AsyncClient) -> None:
     workflow_id = (await client.post("/workflows", json={"name": "Flow"})).json()["id"]
-    env_id = (
-        await client.post("/environments", json={"name": "Prod", "packages": []})
-    ).json()["id"]
+    env_id = (await client.post("/environments", json={"name": "Prod", "packages": []})).json()[
+        "id"
+    ]
 
     await client.post(
         "/credentials",
@@ -75,9 +75,7 @@ async def test_run_logs_and_outputs_redact_known_secrets(client: AsyncClient) ->
             "data": {"token": "super-secret-token"},
         },
     )
-    workflow_id = (await client.post("/workflows", json={"name": "Redact"})).json()[
-        "id"
-    ]
+    workflow_id = (await client.post("/workflows", json={"name": "Redact"})).json()["id"]
     graph = {
         "nodes": [
             {
@@ -111,9 +109,7 @@ async def test_run_logs_and_outputs_redact_known_secrets(client: AsyncClient) ->
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
 
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
     run = (await client.get(f"/runs/{run_id}")).json()
     node = next(nr for nr in run["node_runs"] if nr["node_id"] == "c")
     assert node["output"]["main"]["token"] == "***REDACTED***"
@@ -132,9 +128,7 @@ async def test_integration_node_resolves_stored_credential_ref(
 
     monkeypatch.setattr("requests.request", fake_request)
 
-    workflow_id = (await client.post("/workflows", json={"name": "Slack"})).json()[
-        "id"
-    ]
+    workflow_id = (await client.post("/workflows", json={"name": "Slack"})).json()["id"]
     credential = (
         await client.post(
             "/credentials",
@@ -182,23 +176,17 @@ async def test_integration_node_resolves_stored_credential_ref(
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
 
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
     run = (await client.get(f"/runs/{run_id}")).json()
 
     assert run["status"] == "success"
-    assert calls[0]["kwargs"]["headers"]["Authorization"] == (
-        "Bearer xoxb-stored-secret"
-    )
+    assert calls[0]["kwargs"]["headers"]["Authorization"] == ("Bearer xoxb-stored-secret")
     listed = (await client.get("/credentials")).json()
     assert listed[0]["last_used_at"] is not None
     assert "xoxb-stored-secret" not in str(run)
 
 
-async def test_credential_connection_test_redacts_secret(
-    client: AsyncClient, monkeypatch
-) -> None:
+async def test_credential_connection_test_redacts_secret(client: AsyncClient, monkeypatch) -> None:
     async def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
         return {
             "ok": False,
@@ -219,9 +207,7 @@ async def test_credential_connection_test_redacts_secret(
         )
     ).json()
 
-    response = (
-        await client.post(f"/credentials/{credential['id']}/test", json={})
-    ).json()
+    response = (await client.post(f"/credentials/{credential['id']}/test", json={})).json()
 
     assert response["ok"] is False
     assert response["message"] == "bad ***REDACTED***"
@@ -229,12 +215,44 @@ async def test_credential_connection_test_redacts_secret(
     assert "xoxb-test-secret" not in str(response)
 
 
+async def test_llm_provider_connection_test_supports_openrouter(
+    client: AsyncClient, monkeypatch
+) -> None:
+    calls: list[dict] = []
+
+    async def fake_request(method: str, url: str, **kwargs):
+        calls.append({"method": method, "url": url, "kwargs": kwargs})
+        return {"ok": True, "message": "Connected", "details": {"status_code": 200}}
+
+    monkeypatch.setattr("app.services.credential_tests._request", fake_request)
+    credential = (
+        await client.post(
+            "/credentials",
+            json={
+                "name": "OpenRouter",
+                "type": "llm_provider",
+                "scope": "global",
+                "data": {"provider": "openrouter", "api_key": "sk-or-test"},
+            },
+        )
+    ).json()
+
+    response = (await client.post(f"/credentials/{credential['id']}/test", json={})).json()
+
+    assert response["ok"] is True
+    assert calls == [
+        {
+            "method": "GET",
+            "url": "https://openrouter.ai/api/v1/key",
+            "kwargs": {"headers": {"Authorization": "Bearer sk-or-test"}},
+        }
+    ]
+
+
 async def test_credential_connection_test_respects_scope(
     client: AsyncClient,
 ) -> None:
-    workflow_id = (await client.post("/workflows", json={"name": "Flow"})).json()[
-        "id"
-    ]
+    workflow_id = (await client.post("/workflows", json={"name": "Flow"})).json()["id"]
     credential = (
         await client.post(
             "/credentials",

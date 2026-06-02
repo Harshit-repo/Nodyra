@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import requests
@@ -11,11 +12,16 @@ from noodle.datasets import is_dataset_ref
 from noodle.sdk import registry
 from noodle_nodes.datasets import dataset_to_records, records_to_dataset
 from noodle_nodes.llm import (
+    ai_agent,
     ai_batch_embeddings,
     ai_chat,
+    ai_chat_model,
+    ai_memory_buffer,
     ai_prompt_template,
     ai_structured_output,
     ai_text_chunk,
+    ai_tool,
+    ai_tool_box,
 )
 
 
@@ -35,6 +41,7 @@ def test_ai_nodes_register_in_ai_category() -> None:
     manifests = {m.id: m for m in registry.manifests()}
     expected = {
         "ai_prompt_template",
+        "ai_chat_model",
         "ai_chat",
         "ai_structured_output",
         "ai_text_chunk",
@@ -42,7 +49,9 @@ def test_ai_nodes_register_in_ai_category() -> None:
         "ai_dataset_map",
         "ai_vector_retriever",
         "ai_rag_answer",
+        "ai_memory_buffer",
         "ai_tool",
+        "ai_tool_box",
         "ai_agent",
         "ai_moderation_guard",
         "ai_vision_analyze",
@@ -54,6 +63,21 @@ def test_ai_nodes_register_in_ai_category() -> None:
     }
     assert expected <= manifests.keys()
     assert all(manifests[node_id].category == "AI" for node_id in expected)
+
+
+def test_agent_manifest_has_model_memory_and_tools_ports() -> None:
+    manifest = registry.get("ai_agent").manifest
+    assert [port.name for port in manifest.inputs] == ["input", "model", "memory", "tools"]
+    param_names = {param.name for param in manifest.params}
+    assert "fallback_model" in param_names
+    assert "model" not in param_names
+
+
+def test_chat_model_manifest_uses_provider_and_model_dropdowns() -> None:
+    manifest = registry.get("ai_chat_model").manifest
+    params = {param.name: param for param in manifest.params}
+    assert "openrouter" in params["provider"].choices
+    assert "openai/gpt-4.1-mini" in params["model"].choices
 
 
 def test_prompt_template_renders_jinja_context() -> None:
@@ -107,6 +131,44 @@ def test_ai_chat_normalizes_openai_response(monkeypatch) -> None:
         "role": "system",
         "content": "Be brief.",
     }
+
+
+def test_ai_chat_openrouter_uses_first_class_provider(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    def fake_post(url: str, **kwargs):
+        calls.append({"url": url, "kwargs": kwargs})
+        return FakeResponse(
+            {
+                "model": "openai/gpt-4.1-mini",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "hello"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    out = ai_chat(
+        "hello",
+        credentials={
+            "provider": "openrouter",
+            "api_key": "sk-or-test",
+            "site_url": "https://noodle.dev",
+            "app_name": "Noodle",
+        },
+        provider="openrouter",
+        model="openai/gpt-4.1-mini",
+    )
+
+    assert out["provider"] == "openrouter"
+    assert calls[0]["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    assert calls[0]["kwargs"]["headers"]["Authorization"] == "Bearer sk-or-test"
+    assert calls[0]["kwargs"]["headers"]["HTTP-Referer"] == "https://noodle.dev"
+    assert calls[0]["kwargs"]["headers"]["X-Title"] == "Noodle"
 
 
 def test_structured_output_validates_schema(monkeypatch) -> None:
@@ -178,3 +240,74 @@ def test_batch_embeddings_returns_dataset_for_dataset_input(monkeypatch, tmp_pat
     finally:
         current_node_id.reset(n)
         artifact_store.reset(a)
+
+
+def test_chat_model_and_tool_box_supply_agent_inputs(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    def fake_post(url: str, **kwargs):
+        calls.append({"url": url, "kwargs": kwargs})
+        return FakeResponse(
+            {
+                "model": "gpt-model-node",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": '{"action":"final","answer":"done"}',
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    model_config = ai_chat_model(
+        credentials={"provider": "openai", "api_key": "sk-test"},
+        provider="openai",
+        model="gpt-model-node",
+        temperature=0.05,
+    )
+    memory = ai_memory_buffer(
+        messages_json='[{"role":"user","content":"Earlier context"}]',
+        max_messages=10,
+    )
+    tool = ai_tool(
+        name="lookup_customer",
+        description="Find a customer by id.",
+        parameters_schema_json='{"type":"object","properties":{"id":{"type":"string"}}}',
+        url="https://example.test/customer",
+    )
+    toolbox = ai_tool_box(tool_1=tool)
+
+    out = asyncio.run(
+        ai_agent(
+            input={"task": "Answer using the available context."},
+            model=model_config,
+            memory=memory,
+            tools=toolbox,
+            fallback_model="ignored-model",
+        )
+    )
+
+    assert out["answer"] == "done"
+    assert out["provider"] == "openai"
+    payload = calls[0]["kwargs"]["json"]
+    assert payload["model"] == "gpt-model-node"
+    assert payload["temperature"] == 0.05
+    assert any(msg["content"] == "Earlier context" for msg in payload["messages"])
+    assert "lookup_customer" in payload["messages"][-1]["content"]
+
+
+def test_tool_box_merges_unique_tools() -> None:
+    first = ai_tool(name="search", description="Search records.", url="https://example.test/search")
+    duplicate = ai_tool(name="search", description="Duplicate.", url="https://example.test/dup")
+    second = ai_tool(
+        name="summarize", description="Summarize data.", url="https://example.test/sum"
+    )
+
+    out = ai_tool_box(tool_1=first, tool_2=duplicate, tool_3=second)
+
+    assert out["count"] == 2
+    assert [tool["name"] for tool in out["tools"]] == ["search", "summarize"]

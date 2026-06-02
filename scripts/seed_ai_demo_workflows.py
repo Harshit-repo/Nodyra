@@ -24,6 +24,7 @@ if str(API_DIR) not in sys.path:
 from sqlalchemy import select  # noqa: E402
 from sqlalchemy.orm import selectinload  # noqa: E402
 
+import noodle_nodes  # noqa: E402,F401  # registers bundled nodes
 from app.db import SessionLocal  # noqa: E402
 from app.models import Environment, Workflow, WorkflowVersion  # noqa: E402
 from noodle.artifacts import LocalArtifactStore  # noqa: E402
@@ -31,8 +32,6 @@ from noodle.context import artifact_store  # noqa: E402
 from noodle.engine import execute  # noqa: E402
 from noodle.models import WorkflowGraph  # noqa: E402
 from noodle.sdk import registry  # noqa: E402
-
-import noodle_nodes  # noqa: E402,F401  # registers bundled nodes
 
 
 def node(
@@ -131,8 +130,7 @@ WORKFLOWS: list[dict[str, Any]] = [
                     "ai_prompt_template",
                     {
                         "system_template": (
-                            "You are a support triage assistant. Return strict "
-                            "JSON only."
+                            "You are a support triage assistant. Return strict JSON only."
                         ),
                         "prompt_template": (
                             "Customer: {{ customer }}\nTier: {{ tier }}\n"
@@ -149,13 +147,24 @@ WORKFLOWS: list[dict[str, Any]] = [
                     {
                         "code": dedent(
                             """
-                            prompt = input.get("prompt", "") if isinstance(input, dict) else str(input)
+                            if isinstance(input, dict):
+                                prompt = input.get("prompt", "")
+                            else:
+                                prompt = str(input)
                             lowered = prompt.lower()
+                            customer = (
+                                "Ada Lovelace"
+                                if "ada lovelace" in lowered
+                                else "Unknown"
+                            )
                             output = {
-                                "customer": "Ada Lovelace" if "ada lovelace" in lowered else "Unknown",
+                                "customer": customer,
                                 "category": "incident_summary",
                                 "priority": "high" if "high" in lowered else "normal",
-                                "summary": "Enterprise customer reported API latency after release; route to platform support.",
+                                "summary": (
+                                    "Enterprise customer reported API latency "
+                                    "after release; route to platform support."
+                                ),
                             }
                             """
                         ).strip()
@@ -212,9 +221,12 @@ WORKFLOWS: list[dict[str, Any]] = [
                         "code": dedent(
                             """
                             chunks = input if isinstance(input, list) else []
+                            first_chars = (
+                                chunks[0].get("char_count", 0) if chunks else 0
+                            )
                             output = {
                                 "chunk_count": len(chunks),
-                                "first_chunk_chars": chunks[0].get("char_count", 0) if chunks else 0,
+                                "first_chunk_chars": first_chars,
                                 "preview": chunks[:2],
                             }
                             """
@@ -280,10 +292,19 @@ WORKFLOWS: list[dict[str, Any]] = [
                             rows = input if isinstance(input, list) else []
                             enriched = []
                             for row in rows:
+                                customer = row.get("customer", "Unknown")
+                                issue = row.get("issue", "No issue")
+                                priority = row.get("priority", "normal")
                                 enriched.append({
                                     **row,
-                                    "ai_summary": f"{row.get('customer', 'Unknown')}: {row.get('issue', 'No issue')} [{row.get('priority', 'normal')}]",
-                                    "recommended_queue": "platform" if row.get("priority") in {"high", "urgent"} else "operations",
+                                    "ai_summary": (
+                                        f"{customer}: {issue} [{priority}]"
+                                    ),
+                                    "recommended_queue": (
+                                        "platform"
+                                        if priority in {"high", "urgent"}
+                                        else "operations"
+                                    ),
                                 })
                             output = enriched
                             """
@@ -329,9 +350,7 @@ WORKFLOWS: list[dict[str, Any]] = [
                     "prompt",
                     "ai_prompt_template",
                     {
-                        "system_template": (
-                            "You write concise product workflow summaries."
-                        ),
+                        "system_template": ("You write concise product workflow summaries."),
                         "prompt_template": (
                             "Write three bullet points explaining how {{ product }} "
                             "helps {{ audience }}. Tone: {{ tone }}."
@@ -359,6 +378,130 @@ WORKFLOWS: list[dict[str, Any]] = [
         ),
     },
     {
+        "name": "AI Demo - Agent With Model Memory Tools",
+        "description": (
+            "Needs an LLM provider credential. Exercises n8n-style AI wiring: "
+            "chat model, memory, multiple tools, and an agent."
+        ),
+        "graph": graph(
+            [
+                node(
+                    "trigger",
+                    "manual_trigger",
+                    {
+                        "data": {
+                            "task": (
+                                "Draft a support triage note. Use the policy "
+                                "lookup tool only if you need extra context."
+                            )
+                        }
+                    },
+                    0,
+                    80,
+                ),
+                node(
+                    "model",
+                    "ai_chat_model",
+                    {
+                        "provider": "openrouter",
+                        "model": "openai/gpt-4.1-mini",
+                        "temperature": 0.1,
+                        "max_tokens": 500,
+                        "credentials": "",
+                    },
+                    300,
+                    -120,
+                ),
+                node(
+                    "memory",
+                    "ai_memory_buffer",
+                    {
+                        "session_id": "demo_support_thread",
+                        "messages_json": json.dumps(
+                            [
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        "Customer is enterprise tier and is "
+                                        "blocked by API latency after release."
+                                    ),
+                                },
+                                {
+                                    "role": "assistant",
+                                    "content": (
+                                        "Initial priority should consider "
+                                        "impact, reproducibility, and rollback."
+                                    ),
+                                },
+                            ]
+                        ),
+                        "max_messages": 10,
+                    },
+                    300,
+                    80,
+                ),
+                node(
+                    "policy_tool",
+                    "ai_tool",
+                    {
+                        "name": "lookup_policy",
+                        "description": (
+                            "Fetch a policy lookup echo endpoint for demo tool-call testing."
+                        ),
+                        "tool_type": "http",
+                        "method": "GET",
+                        "url": "https://httpbin.org/get",
+                        "parameters_schema_json": json.dumps(
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "query": {
+                                        "type": "string",
+                                        "description": "Policy search query.",
+                                    }
+                                },
+                                "additionalProperties": False,
+                            }
+                        ),
+                    },
+                    300,
+                    280,
+                ),
+                node(
+                    "toolbox",
+                    "ai_tool_box",
+                    {"strict": True},
+                    600,
+                    280,
+                ),
+                node(
+                    "agent",
+                    "ai_agent",
+                    {
+                        "system": (
+                            "You are a production support triage agent. Return "
+                            "a concise answer with priority, reasoning, and "
+                            "next action."
+                        ),
+                        "fallback_model": "gpt-4.1-mini",
+                        "max_steps": 4,
+                        "memory_max_messages": 10,
+                        "allow_side_effects": False,
+                    },
+                    870,
+                    80,
+                ),
+            ],
+            [
+                edge("e1", "trigger", "agent"),
+                edge("e2", "model", "agent", "model", "model"),
+                edge("e3", "memory", "agent", "memory", "memory"),
+                edge("e4", "policy_tool", "toolbox", "main", "tool_1"),
+                edge("e5", "toolbox", "agent", "tools", "tools"),
+            ],
+        ),
+    },
+    {
         "name": "AI Demo - RAG Answer With Pinecone",
         "description": (
             "Needs LLM provider and Pinecone credentials. Exercises vector "
@@ -371,10 +514,7 @@ WORKFLOWS: list[dict[str, Any]] = [
                     "manual_trigger",
                     {
                         "data": {
-                            "query": (
-                                "What production safeguards should an AI workflow "
-                                "include?"
-                            )
+                            "query": ("What production safeguards should an AI workflow include?")
                         }
                     },
                     0,
@@ -384,10 +524,7 @@ WORKFLOWS: list[dict[str, Any]] = [
                     "retrieve",
                     "ai_vector_retriever",
                     {
-                        "query": (
-                            "What production safeguards should an AI workflow "
-                            "include?"
-                        ),
+                        "query": ("What production safeguards should an AI workflow include?"),
                         "embedding_provider": "openai",
                         "embedding_model": "text-embedding-3-small",
                         "index": "noodle-docs",
@@ -405,10 +542,7 @@ WORKFLOWS: list[dict[str, Any]] = [
                     {
                         "provider": "openai",
                         "model": "gpt-4.1-mini",
-                        "question": (
-                            "What production safeguards should an AI workflow "
-                            "include?"
-                        ),
+                        "question": ("What production safeguards should an AI workflow include?"),
                         "temperature": 0.1,
                         "credentials": "",
                     },
@@ -424,9 +558,7 @@ WORKFLOWS: list[dict[str, Any]] = [
 
 async def seed_workflows() -> list[dict[str, str]]:
     async with SessionLocal() as session:
-        env_id = await session.scalar(
-            select(Environment.id).where(Environment.is_global.is_(True))
-        )
+        env_id = await session.scalar(select(Environment.id).where(Environment.is_global.is_(True)))
         seeded: list[dict[str, str]] = []
         for item in WORKFLOWS:
             workflow = await session.scalar(
@@ -486,9 +618,7 @@ async def run_local_workflows() -> list[dict[str, Any]]:
             terminal_nodes = [
                 candidate["id"]
                 for candidate in item["graph"]["nodes"]
-                if not any(
-                    link["source"] == candidate["id"] for link in item["graph"]["edges"]
-                )
+                if not any(link["source"] == candidate["id"] for link in item["graph"]["edges"])
             ]
             terminal_outputs = {
                 node_id: result.nodes[node_id].outputs.get("main")

@@ -21,10 +21,60 @@ const PORT_KIND_COLOR: Record<string, string> = {
   file: "#f59e0b",
   control: "#94a3b8",
 };
+type AiSemanticPort = "model" | "memory" | "tools";
+
+const AI_PORT_COLOR: Record<AiSemanticPort, string> = {
+  model: "#6ea8ff",
+  memory: "#57c98a",
+  tools: "#f6b44b",
+};
+const AI_AGENT_BOTTOM_INPUTS = new Set(["model", "memory", "tools"]);
 
 function portColor(kind: string | undefined, fallback: string): string {
   if (!kind || kind === "any") return fallback;
   return PORT_KIND_COLOR[kind] ?? fallback;
+}
+
+function aiPortSemantic(
+  manifestId: string,
+  portName: string,
+): AiSemanticPort | undefined {
+  if (portName === "model" || portName === "memory" || portName === "tools") {
+    return portName;
+  }
+  if (manifestId === "ai_tool" && portName === "main") return "tools";
+  if (manifestId === "ai_tool_box" && portName.startsWith("tool_")) return "tools";
+  return undefined;
+}
+
+function semanticPortColor(
+  manifestId: string,
+  name: string,
+  kind: string | undefined,
+  fallback: string,
+): string {
+  const semantic = aiPortSemantic(manifestId, name);
+  return semantic ? AI_PORT_COLOR[semantic] : portColor(kind, fallback);
+}
+
+function portHandleClass(
+  manifestId: string,
+  name: string,
+  kind: string | undefined,
+): string | undefined {
+  const classes: string[] = [];
+  if (kind === "dataset") classes.push("handle-dataset");
+  const semantic = aiPortSemantic(manifestId, name);
+  if (semantic) classes.push(`handle-ai-${semantic}`);
+  return classes.length > 0 ? classes.join(" ") : undefined;
+}
+
+function portLeft(index: number, count: number): number {
+  return (TILE * (index + 1)) / (count + 1);
+}
+
+function isAgentBottomInput(manifestId: string, portName: string): boolean {
+  return manifestId === "ai_agent" && AI_AGENT_BOTTOM_INPUTS.has(portName);
 }
 
 function portKindLabel(kind: string | undefined): string {
@@ -62,6 +112,8 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const isWebhook = manifest.id === "webhook_trigger";
   const color = categoryColor(manifest.category);
   const { inputs } = manifest;
+  const sideInputs = inputs.filter((port) => !isAgentBottomInput(manifest.id, port.name));
+  const bottomInputs = inputs.filter((port) => isAgentBottomInput(manifest.id, port.name));
   const outputNames = outputsOverride ?? manifest.outputs.map((o) => o.name);
   const runStatus = useEditor((s) => s.runStatus[id]);
   const runMeta = useEditor((s) => s.runMeta[id]);
@@ -122,6 +174,9 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   if (hasMissingCredential) tileClass.push("missing-credential");
   if (hasInlineSecret) tileClass.push("inline-secret");
   if (runStatus) tileClass.push(`run-${runStatus}`);
+  const nodeClass = ["node"];
+  if (toolbarVisible) nodeClass.push("is-toolbar-visible");
+  if (bottomInputs.length > 0) nodeClass.push("has-bottom-inputs");
 
   function clearHideTimer(): void {
     if (hideTimerRef.current !== null) {
@@ -152,7 +207,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
 
   return (
     <div
-      className={`node${toolbarVisible ? " is-toolbar-visible" : ""}`}
+      className={nodeClass.join(" ")}
       style={{ "--cat": color } as CSSProperties}
       onMouseEnter={showToolbar}
       onMouseLeave={scheduleToolbarHide}
@@ -300,15 +355,33 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
 
 
 
-        {inputs.map((port, i) => (
+        {sideInputs.map((port, i) => (
           <Handle
             key={`in-${port.name}`}
             type="target"
             position={Position.Left}
             id={port.name}
             title={`${port.name}: ${portKindLabel(port.data_kind)}`}
-            className={port.data_kind === "dataset" ? "handle-dataset" : undefined}
-            style={{ top: portTop(i, inputs.length), background: portColor(port.data_kind, color) }}
+            className={portHandleClass(manifest.id, port.name, port.data_kind)}
+            style={{
+              top: portTop(i, sideInputs.length),
+              background: semanticPortColor(manifest.id, port.name, port.data_kind, color),
+            }}
+          />
+        ))}
+
+        {bottomInputs.map((port, i) => (
+          <Handle
+            key={`in-bottom-${port.name}`}
+            type="target"
+            position={Position.Bottom}
+            id={port.name}
+            title={`${port.name}: ${portKindLabel(port.data_kind)}`}
+            className={portHandleClass(manifest.id, port.name, port.data_kind)}
+            style={{
+              left: portLeft(i, bottomInputs.length),
+              background: semanticPortColor(manifest.id, port.name, port.data_kind, color),
+            }}
           />
         ))}
 
@@ -321,8 +394,11 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
               position={Position.Right}
               id={name}
               title={`${name}: ${portKindLabel(spec?.data_kind)}`}
-              className={spec?.data_kind === "dataset" ? "handle-dataset" : undefined}
-              style={{ top: portTop(i, outputNames.length), background: portColor(spec?.data_kind, color) }}
+              className={portHandleClass(manifest.id, name, spec?.data_kind)}
+              style={{
+                top: portTop(i, outputNames.length),
+                background: semanticPortColor(manifest.id, name, spec?.data_kind, color),
+              }}
             />
           );
         })}

@@ -164,6 +164,15 @@ async def _test_llm_provider(data: dict[str, str], context: dict[str, Any]) -> d
         if url.endswith("/v1"):
             url = url[:-3]
         return await _request("GET", f"{url}/api/tags")
+    if provider in {"openrouter", "open router", "open-router"}:
+        if not api_key:
+            return {"ok": False, "message": "Missing api_key", "details": {}}
+        url = (base_url or "https://openrouter.ai/api/v1").rstrip("/")
+        return await _request(
+            "GET",
+            f"{url}/key",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
     if provider == "azure_openai":
         endpoint = _value(data, "azure_endpoint", "base_url").rstrip("/")
         api_version = _value(data, "azure_api_version") or "2024-02-15-preview"
@@ -253,9 +262,7 @@ async def _test_airtable(data: dict[str, str], context: dict[str, Any]) -> dict[
     )
 
 
-async def _test_google_sheets(
-    data: dict[str, str], context: dict[str, Any]
-) -> dict[str, Any]:
+async def _test_google_sheets(data: dict[str, str], context: dict[str, Any]) -> dict[str, Any]:
     spreadsheet_id = str(context.get("spreadsheet_id") or "").strip()
     if not spreadsheet_id:
         return _missing("spreadsheet_id")
@@ -460,9 +467,7 @@ async def test_credential_connection(
     secret_values = [value for value in data.values() if isinstance(value, str)]
     # Include common derived basic-auth forms in exact redaction.
     if data.get("username") and data.get("password"):
-        token = base64.b64encode(
-            f"{data['username']}:{data['password']}".encode()
-        ).decode()
+        token = base64.b64encode(f"{data['username']}:{data['password']}".encode()).decode()
         secret_values.append(token)
     clean = redact_value(raw, secret_values)
     return CredentialTestResponse(

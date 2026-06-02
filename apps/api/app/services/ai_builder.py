@@ -48,6 +48,7 @@ _ALLOWED_NODE_TYPES = {
     "openai_chat",
     "anthropic_message",
     "ai_prompt_template",
+    "ai_chat_model",
     "ai_chat",
     "ai_structured_output",
     "ai_text_chunk",
@@ -55,7 +56,9 @@ _ALLOWED_NODE_TYPES = {
     "ai_dataset_map",
     "ai_vector_retriever",
     "ai_rag_answer",
+    "ai_memory_buffer",
     "ai_tool",
+    "ai_tool_box",
     "ai_agent",
     "ai_moderation_guard",
     "ai_vision_analyze",
@@ -131,6 +134,19 @@ _NODE_REGISTRY: dict[str, dict[str, Any]] = {
         "name": "AI Prompt Template",
         "params": ["system_template", "prompt_template", "strict_undefined"],
     },
+    "ai_chat_model": {
+        "name": "AI Chat Model",
+        "params": [
+            "credentials",
+            "provider",
+            "model",
+            "temperature",
+            "max_tokens",
+            "response_format",
+            "timeout_seconds",
+        ],
+        "credential_specs": [{"param": "credentials", "type": "llm_provider", "key": "*"}],
+    },
     "ai_chat": {
         "name": "AI Chat",
         "params": [
@@ -194,6 +210,10 @@ _NODE_REGISTRY: dict[str, dict[str, Any]] = {
         "params": ["credentials", "provider", "model", "question", "context_field"],
         "credential_specs": [{"param": "credentials", "type": "llm_provider", "key": "*"}],
     },
+    "ai_memory_buffer": {
+        "name": "AI Simple Memory",
+        "params": ["session_id", "messages_json", "input_role", "max_messages"],
+    },
     "ai_tool": {
         "name": "AI Tool",
         "params": [
@@ -205,9 +225,22 @@ _NODE_REGISTRY: dict[str, dict[str, Any]] = {
             "workflow_id",
         ],
     },
+    "ai_tool_box": {
+        "name": "AI Tool Box",
+        "params": ["strict"],
+    },
     "ai_agent": {
         "name": "AI Agent",
-        "params": ["credentials", "provider", "model", "system", "task", "max_steps"],
+        "params": [
+            "credentials",
+            "provider",
+            "fallback_model",
+            "system",
+            "task",
+            "max_steps",
+            "memory_max_messages",
+            "allow_side_effects",
+        ],
         "credential_specs": [{"param": "credentials", "type": "llm_provider", "key": "*"}],
     },
     "ai_moderation_guard": {
@@ -376,9 +409,7 @@ async def _attach_graph_credentials(
             cred_type = spec.get("credential_type")
             keys = list(spec.get("credential_keys") or [])
             entries = [
-                {"type": cred_type, "param": key, "key": key}
-                for key in keys
-                if cred_type and key
+                {"type": cred_type, "param": key, "key": key} for key in keys if cred_type and key
             ]
         if not entries:
             continue

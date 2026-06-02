@@ -75,7 +75,7 @@ const CREDENTIAL_PRESETS: CredentialPreset[] = [
     group: "AI",
     summary: "Use AI Chat, agents, RAG, and structured-output nodes.",
     description:
-      "Stores a provider API key plus optional OpenAI-compatible or Azure OpenAI endpoint details.",
+      "Stores a provider API key plus optional OpenRouter, OpenAI-compatible, or Azure OpenAI endpoint details.",
     fields: [
       {
         key: "provider",
@@ -85,6 +85,7 @@ const CREDENTIAL_PRESETS: CredentialPreset[] = [
         options: [
           { label: "OpenAI", value: "openai" },
           { label: "Anthropic", value: "anthropic" },
+          { label: "OpenRouter", value: "openrouter" },
           { label: "OpenAI-compatible", value: "openai_compatible" },
           { label: "Ollama", value: "ollama" },
           { label: "Azure OpenAI", value: "azure_openai" },
@@ -99,7 +100,17 @@ const CREDENTIAL_PRESETS: CredentialPreset[] = [
       {
         key: "base_url",
         label: "Base URL",
-        placeholder: "https://api.openai.com/v1 or http://localhost:11434/v1",
+        placeholder: "https://openrouter.ai/api/v1 or http://localhost:11434/v1",
+      },
+      {
+        key: "site_url",
+        label: "Site URL",
+        placeholder: "Optional OpenRouter HTTP-Referer",
+      },
+      {
+        key: "app_name",
+        label: "App name",
+        placeholder: "Optional OpenRouter X-Title",
       },
       {
         key: "organization",

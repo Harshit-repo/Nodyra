@@ -267,20 +267,27 @@ designs should prefer the normalized nodes:
 
 - `AI Prompt Template` renders system/user messages from upstream data with
   Jinja templates.
-- `AI Chat` calls OpenAI, Anthropic, OpenAI-compatible, Ollama, or Azure OpenAI
-  chat APIs and returns a normalized `{text, usage, model, finish_reason}`
-  envelope.
+- `AI Chat Model` supplies reusable provider/model configuration for agents,
+  chat, and future chain nodes. Provider and model values are dropdown-backed,
+  including OpenRouter model ids such as `openai/gpt-4.1-mini`.
+- `AI Chat` calls OpenAI, Anthropic, OpenRouter, OpenAI-compatible, Ollama, or
+  Azure OpenAI chat APIs and returns a normalized
+  `{text, usage, model, finish_reason}` envelope.
 - `AI Structured Output` asks for JSON and validates the result against a JSON
   Schema.
 - `AI Text Chunker`, `AI Batch Embeddings`, `AI Vector Retriever`, and
   `AI RAG Answer` provide the core RAG path.
 - `AI Map Dataset` runs an LLM over a DatasetRef row-by-row and returns a new
   DatasetRef, keeping table data artifact-backed.
-- `AI Tool` and `AI Agent` provide a bounded tool-using agent loop with
-  `max_steps`, visible step logs, and explicit side-effect approval.
+- `AI Simple Memory` supplies bounded chat history to agents.
+- `AI Tool`, `AI Tool Box`, and `AI Agent` provide a bounded tool-using agent
+  loop. `AI Agent` has separate `model`, `memory`, and `tools` input ports;
+  `AI Tool Box` merges several tool nodes into the agent's single tools port.
+  Agents keep `max_steps`, visible step logs, and explicit side-effect approval.
 - `AI Moderation Guard`, `AI Vision Analyze`, and `AI Image Generate` cover
   guardrails and multimodal workflows.
 
 Use an `LLM provider` credential for the normalized nodes. It can hold an
-OpenAI, Anthropic, OpenAI-compatible, Ollama, or Azure OpenAI configuration.
-Pinecone and provider-specific nodes have their own credential presets.
+OpenAI, Anthropic, OpenRouter, OpenAI-compatible, Ollama, or Azure OpenAI
+configuration. Pinecone and provider-specific nodes have their own credential
+presets.

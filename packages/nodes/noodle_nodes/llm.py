@@ -29,6 +29,58 @@ DEFAULT_TIMEOUT = 75
 MAX_AGENT_STEPS = 10
 MAX_DATASET_AI_ROWS = 1000
 MAX_EMBEDDING_BATCH = 96
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+CHAT_PROVIDER_CHOICES = [
+    "openai",
+    "anthropic",
+    "openrouter",
+    "openai_compatible",
+    "ollama",
+    "azure_openai",
+]
+CHAT_MODEL_CHOICES = [
+    "gpt-4.1-mini",
+    "gpt-4.1",
+    "gpt-4o-mini",
+    "gpt-4o",
+    "o4-mini",
+    "o3-mini",
+    "claude-3-5-haiku-latest",
+    "claude-3-5-sonnet-latest",
+    "claude-3-7-sonnet-latest",
+    "openai/gpt-4.1-mini",
+    "openai/gpt-4o-mini",
+    "anthropic/claude-3.5-sonnet",
+    "anthropic/claude-3.5-haiku",
+    "google/gemini-2.0-flash-001",
+    "meta-llama/llama-3.3-70b-instruct",
+    "mistralai/mistral-large",
+    "llama3.2",
+    "llama3.1",
+    "qwen2.5",
+    "mistral",
+    "gemma2",
+]
+EMBEDDING_PROVIDER_CHOICES = ["openai", "openai_compatible", "ollama", "cohere"]
+EMBEDDING_MODEL_CHOICES = [
+    "text-embedding-3-small",
+    "text-embedding-3-large",
+    "nomic-embed-text",
+    "mxbai-embed-large",
+    "embed-english-v3.0",
+    "embed-multilingual-v3.0",
+]
+VISION_MODEL_CHOICES = [
+    "gpt-4.1-mini",
+    "gpt-4.1",
+    "gpt-4o-mini",
+    "gpt-4o",
+    "openai/gpt-4.1-mini",
+    "openai/gpt-4o-mini",
+    "google/gemini-2.0-flash-001",
+]
+IMAGE_MODEL_CHOICES = ["gpt-image-1", "dall-e-3"]
+MODERATION_MODEL_CHOICES = ["omni-moderation-latest"]
 LLM_CREDENTIAL_FIELDS = [
     "provider",
     "api_key",
@@ -37,6 +89,8 @@ LLM_CREDENTIAL_FIELDS = [
     "azure_endpoint",
     "azure_api_version",
     "deployment",
+    "site_url",
+    "app_name",
 ]
 EMBEDDING_CREDENTIAL_FIELDS = ["provider", "api_key", "base_url"]
 
@@ -102,10 +156,57 @@ def _effective_provider(provider: str, credentials: dict[str, str]) -> str:
     aliases = {
         "openai compatible": "openai_compatible",
         "openai-compatible": "openai_compatible",
+        "open router": "openrouter",
+        "open-router": "openrouter",
         "azure": "azure_openai",
         "azure-openai": "azure_openai",
     }
     return aliases.get(value, value)
+
+
+def _model_config(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    if value.get("type") not in (None, "chat_model"):
+        return {}
+    keys = {
+        "credentials",
+        "provider",
+        "model",
+        "temperature",
+        "max_tokens",
+        "response_format",
+        "timeout_seconds",
+        "include_raw",
+    }
+    if not any(key in value for key in keys):
+        return {}
+    return {key: value[key] for key in keys if key in value and value[key] not in (None, "")}
+
+
+def _resolve_chat_config(
+    model_config: Any,
+    *,
+    credentials: dict | None,
+    provider: str,
+    model: str,
+    temperature: float,
+    max_tokens: int | None = None,
+    response_format: str = "text",
+    timeout_seconds: int = DEFAULT_TIMEOUT,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    config = _model_config(model_config)
+    return {
+        "credentials": config.get("credentials", credentials),
+        "provider": str(config.get("provider") or provider or "openai"),
+        "model": str(config.get("model") or model or "gpt-4.1-mini"),
+        "temperature": float(config.get("temperature", temperature)),
+        "max_tokens": config.get("max_tokens", max_tokens),
+        "response_format": str(config.get("response_format") or response_format or "text"),
+        "timeout_seconds": int(config.get("timeout_seconds", timeout_seconds or DEFAULT_TIMEOUT)),
+        "include_raw": bool(config.get("include_raw", include_raw)),
+    }
 
 
 def _messages_from_inputs(
@@ -147,6 +248,54 @@ def _messages_from_inputs(
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": user_text})
     return messages
+
+
+def _memory_messages(value: Any, *, max_messages: int | None = None) -> list[dict[str, str]]:
+    if not value:
+        return []
+    raw = None
+    if isinstance(value, dict):
+        raw = value.get("messages")
+    elif isinstance(value, list):
+        raw = value
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("ai_agent: memory.messages must be a list")
+    messages: list[dict[str, str]] = []
+    for idx, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError(f"ai_agent: memory.messages[{idx}] must be an object")
+        role = str(item.get("role") or "user")
+        if role not in {"system", "user", "assistant", "tool"}:
+            raise ValueError(f"ai_agent: unsupported memory role {role!r}")
+        content = item.get("content")
+        messages.append(
+            {
+                "role": role,
+                "content": _pretty_json(content)
+                if isinstance(content, dict | list)
+                else str(content or ""),
+            }
+        )
+    limit = int(max_messages or 0)
+    if limit > 0:
+        return messages[-limit:]
+    return messages
+
+
+def _with_memory(
+    messages: list[dict[str, str]],
+    memory: Any,
+    *,
+    max_messages: int | None = None,
+) -> list[dict[str, str]]:
+    memory_items = _memory_messages(memory, max_messages=max_messages)
+    if not memory_items:
+        return messages
+    system_items = [msg for msg in messages if msg.get("role") == "system"]
+    non_system_items = [msg for msg in messages if msg.get("role") != "system"]
+    return [*system_items, *memory_items, *non_system_items]
 
 
 def _split_system(messages: list[dict[str, str]]) -> tuple[str, list[dict[str, str]]]:
@@ -276,6 +425,11 @@ def _call_llm(
         if provider_key == "ollama":
             base_url = creds.get("base_url") or "http://localhost:11434/v1"
             api_key = creds.get("api_key", "ollama")
+        elif provider_key == "openrouter":
+            base_url = creds.get("base_url") or OPENROUTER_BASE_URL
+            api_key = creds.get("api_key", "")
+            if not api_key:
+                raise ValueError("ai_chat: credentials.api_key is required for OpenRouter")
         elif provider_key == "openai_compatible":
             base_url = creds.get("base_url")
             api_key = creds.get("api_key", "")
@@ -291,8 +445,14 @@ def _call_llm(
             headers["Authorization"] = f"Bearer {api_key}"
         if creds.get("organization"):
             headers["OpenAI-Organization"] = creds["organization"]
+        if provider_key == "openrouter":
+            if creds.get("site_url"):
+                headers["HTTP-Referer"] = creds["site_url"]
+            if creds.get("app_name"):
+                headers["X-Title"] = creds["app_name"]
+        default_model = "openai/gpt-4.1-mini" if provider_key == "openrouter" else "gpt-4.1-mini"
         payload = _openai_payload(
-            model=model or creds.get("model") or "gpt-4.1-mini",
+            model=model or creds.get("model") or default_model,
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -482,6 +642,19 @@ def _as_tool_list(value: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _merge_tools(*values: Any) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for value in values:
+        for tool in _as_tool_list(value):
+            name = str(tool.get("name") or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            merged.append(tool)
+    return merged
+
+
 def _tool_text(tools: list[dict[str, Any]]) -> str:
     compact = [
         {
@@ -565,6 +738,62 @@ def ai_prompt_template(
 
 
 @node(
+    name="AI Chat Model",
+    id="ai_chat_model",
+    category=AI_CATEGORY,
+    icon="ai",
+    outputs=["model"],
+    params={
+        "credentials": {
+            **cred_multi("llm_provider", "LLM provider credential", LLM_CREDENTIAL_FIELDS),
+            "description": "Credential for the selected chat provider.",
+        },
+        "provider": {
+            "choices": CHAT_PROVIDER_CHOICES,
+            "description": "Provider used by connected AI Chat, AI Agent, and RAG nodes.",
+        },
+        "model": {
+            "choices": CHAT_MODEL_CHOICES,
+            "placeholder": "gpt-4.1-mini",
+            "description": "Model/deployment id. OpenRouter models use provider/model ids.",
+        },
+        "temperature": {"description": "Sampling temperature for connected calls."},
+        "max_tokens": {"description": "Optional response token limit."},
+        "response_format": {
+            "choices": ["text", "json_object"],
+            "description": "Default response format for compatible providers.",
+        },
+        "timeout_seconds": {"description": "HTTP timeout, 1-300 seconds."},
+        "include_raw": {"description": "Include raw provider payload in connected calls."},
+    },
+)
+def ai_chat_model(
+    credentials: dict | None = None,
+    provider: str = "openai",
+    model: str = "gpt-4.1-mini",
+    temperature: float = 0.2,
+    max_tokens: int | None = None,
+    response_format: str = "text",
+    timeout_seconds: int = DEFAULT_TIMEOUT,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    """Supply reusable chat model configuration to AI nodes."""
+    provider_key = _effective_provider(provider, _provider_creds(credentials))
+    default_model = "openai/gpt-4.1-mini" if provider_key == "openrouter" else "gpt-4.1-mini"
+    return {
+        "type": "chat_model",
+        "credentials": credentials or {},
+        "provider": provider_key,
+        "model": model or default_model,
+        "temperature": float(temperature),
+        "max_tokens": max_tokens,
+        "response_format": response_format or "text",
+        "timeout_seconds": int(timeout_seconds or DEFAULT_TIMEOUT),
+        "include_raw": bool(include_raw),
+    }
+
+
+@node(
     name="AI Chat",
     id="ai_chat",
     category=AI_CATEGORY,
@@ -587,10 +816,10 @@ def ai_prompt_template(
             "description": "Provider credential. For Ollama, api_key may be blank.",
         },
         "provider": {
-            "choices": ["openai", "anthropic", "openai_compatible", "ollama", "azure_openai"],
+            "choices": CHAT_PROVIDER_CHOICES,
             "description": "LLM provider API shape.",
         },
-        "model": {"placeholder": "gpt-4.1-mini"},
+        "model": {"choices": CHAT_MODEL_CHOICES, "placeholder": "gpt-4.1-mini"},
         "system": {"multiline": True},
         "prompt": {"multiline": True, "description": "User prompt. Blank uses input."},
         "messages_json": {
@@ -656,9 +885,9 @@ def ai_chat(
             "description": "Provider credential.",
         },
         "provider": {
-            "choices": ["openai", "anthropic", "openai_compatible", "ollama", "azure_openai"],
+            "choices": CHAT_PROVIDER_CHOICES,
         },
-        "model": {"placeholder": "gpt-4.1-mini"},
+        "model": {"choices": CHAT_MODEL_CHOICES, "placeholder": "gpt-4.1-mini"},
         "system": {"multiline": True},
         "prompt": {"multiline": True, "description": "Extraction prompt. Blank uses input."},
         "schema_json": {
@@ -786,8 +1015,8 @@ def ai_text_chunk(
             ),
             "description": "OpenAI/OpenAI-compatible/Cohere/Ollama credential.",
         },
-        "provider": {"choices": ["openai", "openai_compatible", "ollama", "cohere"]},
-        "model": {"placeholder": "text-embedding-3-small"},
+        "provider": {"choices": EMBEDDING_PROVIDER_CHOICES},
+        "model": {"choices": EMBEDDING_MODEL_CHOICES, "placeholder": "text-embedding-3-small"},
         "text_field": {"placeholder": "text"},
         "output_field": {"placeholder": "embedding"},
         "input_type": {
@@ -862,9 +1091,9 @@ def ai_batch_embeddings(
             "description": "Provider credential.",
         },
         "provider": {
-            "choices": ["openai", "anthropic", "openai_compatible", "ollama", "azure_openai"],
+            "choices": CHAT_PROVIDER_CHOICES,
         },
-        "model": {"placeholder": "gpt-4.1-mini"},
+        "model": {"choices": CHAT_MODEL_CHOICES, "placeholder": "gpt-4.1-mini"},
         "system": {"multiline": True},
         "prompt_template": {
             "multiline": True,
@@ -934,8 +1163,11 @@ def ai_dataset_map(
             "description": "Pinecone API key + index host.",
         },
         "query": {"multiline": True, "description": "Search query. Blank uses input."},
-        "embedding_provider": {"choices": ["openai", "openai_compatible", "ollama", "cohere"]},
-        "embedding_model": {"placeholder": "text-embedding-3-small"},
+        "embedding_provider": {"choices": EMBEDDING_PROVIDER_CHOICES},
+        "embedding_model": {
+            "choices": EMBEDDING_MODEL_CHOICES,
+            "placeholder": "text-embedding-3-small",
+        },
         "namespace": {"placeholder": "default"},
         "top_k": {"description": "Number of matches to return."},
         "include_metadata": {"description": "Include vector metadata."},
@@ -1009,9 +1241,9 @@ def ai_vector_retriever(
             "description": "Provider credential.",
         },
         "provider": {
-            "choices": ["openai", "anthropic", "openai_compatible", "ollama", "azure_openai"],
+            "choices": CHAT_PROVIDER_CHOICES,
         },
-        "model": {"placeholder": "gpt-4.1-mini"},
+        "model": {"choices": CHAT_MODEL_CHOICES, "placeholder": "gpt-4.1-mini"},
         "question": {"multiline": True, "description": "Question. Blank uses input.query."},
         "context_field": {"placeholder": "text"},
         "max_context_chars": {"description": "Total context character budget."},
@@ -1093,6 +1325,55 @@ def ai_rag_answer(
 
 
 @node(
+    name="AI Simple Memory",
+    id="ai_memory_buffer",
+    category=AI_CATEGORY,
+    icon="database",
+    outputs=["memory"],
+    params={
+        "session_id": {
+            "placeholder": "chat_history",
+            "description": "Session or conversation key used for audit metadata.",
+        },
+        "messages_json": {
+            "multiline": True,
+            "description": "Optional JSON array of prior {role, content} messages.",
+        },
+        "input_role": {
+            "choices": ["none", "user", "assistant", "system"],
+            "description": "Role used when appending upstream input text to memory.",
+        },
+        "max_messages": {"description": "Most recent messages to keep, 0 keeps all."},
+    },
+)
+def ai_memory_buffer(
+    input: Any = None,
+    session_id: str = "chat_history",
+    messages_json: str = "",
+    input_role: str = "none",
+    max_messages: int = 20,
+) -> dict[str, Any]:
+    """Supply bounded chat memory to AI Agent."""
+    raw_messages = _json_loads(messages_json, label="messages_json", default=[])
+    if not isinstance(raw_messages, list):
+        raise ValueError("messages_json must be a JSON array")
+    messages = _memory_messages({"messages": raw_messages})
+    role = str(input_role or "none")
+    if role != "none" and input is not None:
+        if role not in {"system", "user", "assistant"}:
+            raise ValueError("ai_memory_buffer: input_role is not supported")
+        messages.append({"role": role, "content": _text_from_input(input)})
+    limit = max(0, min(500, int(max_messages or 0)))
+    return {
+        "type": "memory",
+        "memory_type": "buffer",
+        "session_id": session_id or "chat_history",
+        "messages": messages[-limit:] if limit else messages,
+        "max_messages": limit,
+    }
+
+
+@node(
     name="AI Tool",
     id="ai_tool",
     category=AI_CATEGORY,
@@ -1141,10 +1422,39 @@ def ai_tool(
 
 
 @node(
+    name="AI Tool Box",
+    id="ai_tool_box",
+    category=AI_CATEGORY,
+    icon="wrench",
+    inputs=["tool_1", "tool_2", "tool_3", "tool_4", "tool_5"],
+    outputs=["tools"],
+    params={
+        "strict": {
+            "description": "Fail when no valid tools are connected.",
+        },
+    },
+)
+def ai_tool_box(
+    tool_1: Any = None,
+    tool_2: Any = None,
+    tool_3: Any = None,
+    tool_4: Any = None,
+    tool_5: Any = None,
+    strict: bool = False,
+) -> dict[str, Any]:
+    """Merge multiple AI Tool outputs for a single AI Agent tools port."""
+    tools = _merge_tools(tool_1, tool_2, tool_3, tool_4, tool_5)
+    if strict and not tools:
+        raise ValueError("ai_tool_box: connect at least one AI Tool")
+    return {"tools": tools, "count": len(tools)}
+
+
+@node(
     name="AI Agent",
     id="ai_agent",
     category=AI_CATEGORY,
     icon="ai",
+    inputs=["input", "model", "memory", "tools"],
     params={
         "credentials": {
             **cred_multi(
@@ -1155,12 +1465,19 @@ def ai_tool(
             "description": "Provider credential.",
         },
         "provider": {
-            "choices": ["openai", "anthropic", "openai_compatible", "ollama", "azure_openai"],
+            "choices": CHAT_PROVIDER_CHOICES,
         },
-        "model": {"placeholder": "gpt-4.1-mini"},
+        "fallback_model": {
+            "choices": CHAT_MODEL_CHOICES,
+            "placeholder": "gpt-4.1-mini",
+            "description": "Used only when no AI Chat Model is connected to the model port.",
+        },
         "system": {"multiline": True},
         "task": {"multiline": True, "description": "Agent task. Blank uses input.task/input."},
         "max_steps": {"description": "Max tool/planning steps, hard max 10."},
+        "memory_max_messages": {
+            "description": "Most recent connected memory messages to include, 0 keeps all.",
+        },
         "allow_side_effects": {
             "description": "Allow workflow tools and non-GET HTTP tools.",
         },
@@ -1170,18 +1487,31 @@ def ai_tool(
 )
 async def ai_agent(
     input: Any = None,
+    model: Any = None,
+    memory: Any = None,
+    tools: Any = None,
     credentials: dict | None = None,
     provider: str = "openai",
-    model: str = "gpt-4.1-mini",
+    fallback_model: str = "gpt-4.1-mini",
     system: str = "",
     task: str = "",
     max_steps: int = 4,
+    memory_max_messages: int = 20,
     allow_side_effects: bool = False,
     temperature: float = 0.1,
     timeout_seconds: int = DEFAULT_TIMEOUT,
 ) -> dict[str, Any]:
     """Run a bounded, auditable tool-using agent loop."""
-    tools = _as_tool_list(input)
+    tool_list = _merge_tools(tools, input)
+    chat_config = _resolve_chat_config(
+        model,
+        credentials=credentials,
+        provider=provider,
+        model=fallback_model,
+        temperature=temperature,
+        response_format="json_object",
+        timeout_seconds=timeout_seconds,
+    )
     if isinstance(input, dict):
         task_text = task or str(input.get("task") or input.get("prompt") or "")
     else:
@@ -1193,24 +1523,29 @@ async def ai_agent(
     observations: list[dict[str, Any]] = []
     agent_system = system or (
         "You are a bounded workflow agent. You may use tools only when needed. "
-        "Return JSON only: either {\"action\":\"final\",\"answer\":\"...\"} or "
-        "{\"action\":\"tool\",\"tool\":\"tool_name\",\"arguments\":{...}}."
+        'Return JSON only: either {"action":"final","answer":"..."} or '
+        '{"action":"tool","tool":"tool_name","arguments":{...}}.'
     )
     for step in range(steps_limit):
         prompt = (
-            f"Task:\n{task_text}\n\nAvailable tools:\n{_tool_text(tools)}\n\n"
+            f"Task:\n{task_text}\n\nAvailable tools:\n{_tool_text(tool_list)}\n\n"
             f"Prior observations:\n{_pretty_json(observations)}\n\n"
             "Choose the next action as JSON."
         )
         result = await asyncio.to_thread(
             _call_llm,
-            provider=provider,
-            credentials=credentials,
-            model=model,
-            messages=_messages_from_inputs(None, system=agent_system, prompt=prompt),
-            temperature=temperature,
+            provider=chat_config["provider"],
+            credentials=chat_config["credentials"],
+            model=chat_config["model"],
+            messages=_with_memory(
+                _messages_from_inputs(None, system=agent_system, prompt=prompt),
+                memory,
+                max_messages=memory_max_messages,
+            ),
+            temperature=chat_config["temperature"],
+            max_tokens=chat_config["max_tokens"],
             response_format="json_object",
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=chat_config["timeout_seconds"],
         )
         decision = _extract_json_object(result["text"])
         if not isinstance(decision, dict):
@@ -1220,11 +1555,20 @@ async def ai_agent(
         if action == "final":
             answer = str(decision.get("answer") or "")
             step_log.append({**step_entry, "status": "final"})
-            return {"answer": answer, "steps": step_log, "observations": observations}
+            return {
+                "answer": answer,
+                "steps": step_log,
+                "observations": observations,
+                "provider": chat_config["provider"],
+                "model": result.get("model") or chat_config["model"],
+            }
         if action != "tool":
             raise RuntimeError(f"ai_agent: unsupported action {action!r}")
         tool_name = str(decision.get("tool") or "")
-        tool = next((candidate for candidate in tools if candidate.get("name") == tool_name), None)
+        tool = next(
+            (candidate for candidate in tool_list if candidate.get("name") == tool_name),
+            None,
+        )
         if tool is None:
             raise RuntimeError(f"ai_agent: unknown tool {tool_name!r}")
         if _tool_is_side_effecting(tool) and not allow_side_effects:
@@ -1241,6 +1585,8 @@ async def ai_agent(
         "steps": step_log,
         "observations": observations,
         "stopped_reason": "max_steps",
+        "provider": chat_config["provider"],
+        "model": result.get("model") if "result" in locals() else chat_config["model"],
     }
 
 
@@ -1256,7 +1602,7 @@ async def ai_agent(
             "description": "OpenAI API key.",
         },
         "text": {"multiline": True, "description": "Text to moderate. Blank uses input."},
-        "model": {"placeholder": "omni-moderation-latest"},
+        "model": {"choices": MODERATION_MODEL_CHOICES, "placeholder": "omni-moderation-latest"},
     },
 )
 def ai_moderation_guard(
@@ -1301,7 +1647,7 @@ def ai_moderation_guard(
             **cred_multi("llm_provider", "Vision provider credential", ["api_key", "base_url"]),
             "description": "OpenAI-compatible vision credential.",
         },
-        "model": {"placeholder": "gpt-4.1-mini"},
+        "model": {"choices": VISION_MODEL_CHOICES, "placeholder": "gpt-4.1-mini"},
         "prompt": {"multiline": True},
         "image_url": {"description": "Public image URL. Used when image_base64 is blank."},
         "image_base64": {
@@ -1375,7 +1721,7 @@ def ai_vision_analyze(
             "description": "OpenAI API key.",
         },
         "prompt": {"multiline": True, "description": "Image prompt. Blank uses input."},
-        "model": {"placeholder": "gpt-image-1"},
+        "model": {"choices": IMAGE_MODEL_CHOICES, "placeholder": "gpt-image-1"},
         "size": {"choices": ["1024x1024", "1024x1536", "1536x1024", "auto"]},
         "filename": {"placeholder": "generated.png"},
     },
