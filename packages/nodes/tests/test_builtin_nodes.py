@@ -55,6 +55,8 @@ def test_expected_integration_nodes_are_registered() -> None:
     assert expected <= ids
 
     manifests = {m.id: m for m in registry.manifests()}
+    assert manifests["openai_chat"].category == "AI"
+    assert manifests["anthropic_message"].category == "AI"
     assert manifests["slack_send_message"].category == "Integrations"
     assert [port.name for port in manifests["slack_send_message"].inputs] == ["input"]
     bot_token = next(

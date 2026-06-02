@@ -10,6 +10,7 @@ from noodle_nodes import cloud_devops as cloud_devops
 from noodle_nodes import communication as communication
 from noodle_nodes import datasets as datasets
 from noodle_nodes import integrations as integrations
+from noodle_nodes import llm as llm
 from noodle_nodes import ml as ml
 from noodle_nodes import saas as saas
 from noodle_nodes import storage as storage
@@ -25,6 +26,7 @@ __all__ = [
     "communication",
     "datasets",
     "integrations",
+    "llm",
     "ml",
     "saas",
     "storage",

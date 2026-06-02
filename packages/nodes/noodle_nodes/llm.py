@@ -1,0 +1,1428 @@
+"""Production-oriented AI workflow nodes.
+
+This module keeps model calls provider-normalized and keeps data-heavy AI
+operations DatasetRef-aware. Provider SDKs are intentionally avoided: built-in
+nodes should enumerate and run in lean workflow environments.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+import re
+from collections.abc import Iterable
+from typing import Any
+from urllib.parse import urlencode
+
+import requests
+
+from noodle.artifacts import is_artifact_ref, read_text, write_bytes
+from noodle.context import workflow_caller
+from noodle.datasets import is_dataset_ref
+from noodle.sdk import node
+from noodle_nodes._creds import cred_multi, cred_single
+from noodle_nodes.datasets import materialize_dataset, records_to_dataset
+
+AI_CATEGORY = "AI"
+DEFAULT_TIMEOUT = 75
+MAX_AGENT_STEPS = 10
+MAX_DATASET_AI_ROWS = 1000
+MAX_EMBEDDING_BATCH = 96
+LLM_CREDENTIAL_FIELDS = [
+    "provider",
+    "api_key",
+    "base_url",
+    "organization",
+    "azure_endpoint",
+    "azure_api_version",
+    "deployment",
+]
+EMBEDDING_CREDENTIAL_FIELDS = ["provider", "api_key", "base_url"]
+
+
+def _compact_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, default=str, separators=(",", ":"))
+
+
+def _pretty_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, default=str, indent=2)
+
+
+def _text_from_input(input: Any, text: str = "") -> str:
+    if text:
+        return text
+    if input is None:
+        return ""
+    if is_artifact_ref(input):
+        return read_text(input)
+    if isinstance(input, dict | list):
+        return _pretty_json(input)
+    return str(input)
+
+
+def _json_loads(value: Any, *, label: str, default: Any = None) -> Any:
+    if value in (None, ""):
+        return default
+    if isinstance(value, dict | list):
+        return value
+    try:
+        return json.loads(str(value))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} must be valid JSON: {exc}") from exc
+
+
+def _expect_json(response: requests.Response, service: str) -> dict[str, Any]:
+    if response.status_code >= 400:
+        body = response.text[:800]
+        raise RuntimeError(f"{service}: HTTP {response.status_code}: {body}")
+    try:
+        body = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"{service}: expected JSON response") from exc
+    if not isinstance(body, dict):
+        raise RuntimeError(f"{service}: expected JSON object response")
+    return body
+
+
+def _with_chat_completions(base_url: str) -> str:
+    base = (base_url or "https://api.openai.com/v1").rstrip("/")
+    if base.endswith("/chat/completions"):
+        return base
+    return f"{base}/chat/completions"
+
+
+def _provider_creds(credentials: dict | None) -> dict[str, str]:
+    creds = credentials if isinstance(credentials, dict) else {}
+    return {str(k): str(v) for k, v in creds.items() if v not in (None, "")}
+
+
+def _effective_provider(provider: str, credentials: dict[str, str]) -> str:
+    value = (provider or credentials.get("provider") or "openai").strip().lower()
+    aliases = {
+        "openai compatible": "openai_compatible",
+        "openai-compatible": "openai_compatible",
+        "azure": "azure_openai",
+        "azure-openai": "azure_openai",
+    }
+    return aliases.get(value, value)
+
+
+def _messages_from_inputs(
+    input: Any,
+    *,
+    system: str = "",
+    prompt: str = "",
+    messages_json: str = "",
+) -> list[dict[str, str]]:
+    raw_messages = _json_loads(messages_json, label="messages_json", default=None)
+    if raw_messages is None and isinstance(input, dict) and isinstance(input.get("messages"), list):
+        raw_messages = input["messages"]
+    if raw_messages is not None:
+        if not isinstance(raw_messages, list):
+            raise ValueError("messages_json must be a JSON array")
+        messages: list[dict[str, str]] = []
+        for idx, item in enumerate(raw_messages):
+            if not isinstance(item, dict):
+                raise ValueError(f"messages_json[{idx}] must be an object")
+            role = str(item.get("role") or "user")
+            content = item.get("content")
+            if isinstance(content, dict | list):
+                content_text = _pretty_json(content)
+            else:
+                content_text = str(content or "")
+            if role not in {"system", "user", "assistant", "tool"}:
+                raise ValueError(f"messages_json[{idx}].role is not supported: {role}")
+            messages.append({"role": role, "content": content_text})
+        if system and not any(msg["role"] == "system" for msg in messages):
+            messages.insert(0, {"role": "system", "content": system})
+        return messages
+
+    if isinstance(input, dict):
+        system = system or str(input.get("system") or "")
+        prompt = prompt or str(input.get("prompt") or input.get("text") or "")
+    user_text = _text_from_input(input, prompt)
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": user_text})
+    return messages
+
+
+def _split_system(messages: list[dict[str, str]]) -> tuple[str, list[dict[str, str]]]:
+    system_parts = [msg["content"] for msg in messages if msg.get("role") == "system"]
+    non_system = [
+        {"role": msg.get("role") or "user", "content": str(msg.get("content") or "")}
+        for msg in messages
+        if msg.get("role") != "system"
+    ]
+    if not non_system:
+        non_system = [{"role": "user", "content": ""}]
+    return "\n\n".join(part for part in system_parts if part), non_system
+
+
+def _normalize_openai(body: dict[str, Any]) -> dict[str, Any]:
+    choices = body.get("choices") if isinstance(body.get("choices"), list) else []
+    first = choices[0] if choices and isinstance(choices[0], dict) else {}
+    message = first.get("message") if isinstance(first.get("message"), dict) else {}
+    text = str(message.get("content") or "")
+    return {
+        "text": text,
+        "message": message,
+        "tool_calls": message.get("tool_calls") or [],
+        "usage": body.get("usage") or {},
+        "model": body.get("model"),
+        "finish_reason": first.get("finish_reason"),
+    }
+
+
+def _normalize_anthropic(body: dict[str, Any]) -> dict[str, Any]:
+    content = body.get("content") if isinstance(body.get("content"), list) else []
+    text_parts: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
+    for chunk in content:
+        if not isinstance(chunk, dict):
+            continue
+        if chunk.get("type") == "text":
+            text_parts.append(str(chunk.get("text") or ""))
+        elif chunk.get("type") == "tool_use":
+            tool_calls.append(chunk)
+    return {
+        "text": "".join(text_parts),
+        "message": {"role": body.get("role", "assistant"), "content": content},
+        "tool_calls": tool_calls,
+        "usage": body.get("usage") or {},
+        "model": body.get("model"),
+        "finish_reason": body.get("stop_reason"),
+    }
+
+
+def _call_llm(
+    *,
+    provider: str,
+    credentials: dict | None = None,
+    model: str = "",
+    messages: list[dict[str, str]],
+    temperature: float = 0.2,
+    max_tokens: int | None = None,
+    response_format: str = "text",
+    timeout_seconds: int = DEFAULT_TIMEOUT,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    creds = _provider_creds(credentials)
+    provider_key = _effective_provider(provider, creds)
+    timeout = max(1, min(300, int(timeout_seconds or DEFAULT_TIMEOUT)))
+
+    if provider_key == "anthropic":
+        api_key = creds.get("api_key", "")
+        if not api_key:
+            raise ValueError("ai_chat: credentials.api_key is required for Anthropic")
+        system, anthropic_messages = _split_system(messages)
+        payload: dict[str, Any] = {
+            "model": model or creds.get("model") or "claude-3-5-haiku-latest",
+            "max_tokens": int(max_tokens or 1024),
+            "messages": anthropic_messages,
+            "temperature": float(temperature),
+        }
+        if system:
+            payload["system"] = system
+        body = _expect_json(
+            requests.post(
+                (creds.get("base_url") or "https://api.anthropic.com/v1/messages"),
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": creds.get("anthropic_version", "2023-06-01"),
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=timeout,
+            ),
+            "anthropic",
+        )
+        out = _normalize_anthropic(body)
+    elif provider_key == "azure_openai":
+        api_key = creds.get("api_key", "")
+        endpoint = (creds.get("azure_endpoint") or creds.get("base_url") or "").rstrip("/")
+        deployment = creds.get("deployment") or model
+        api_version = creds.get("azure_api_version") or "2024-02-15-preview"
+        if not api_key or not endpoint or not deployment:
+            raise ValueError(
+                "ai_chat: Azure OpenAI requires api_key, azure_endpoint/base_url, "
+                "and deployment/model"
+            )
+        url = (
+            f"{endpoint}/openai/deployments/{deployment}/chat/completions?"
+            f"{urlencode({'api-version': api_version})}"
+        )
+        payload = _openai_payload(
+            model=deployment,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            include_model=False,
+        )
+        body = _expect_json(
+            requests.post(
+                url,
+                headers={"api-key": api_key, "Content-Type": "application/json"},
+                json=payload,
+                timeout=timeout,
+            ),
+            "azure_openai",
+        )
+        out = _normalize_openai(body)
+    else:
+        if provider_key == "ollama":
+            base_url = creds.get("base_url") or "http://localhost:11434/v1"
+            api_key = creds.get("api_key", "ollama")
+        elif provider_key == "openai_compatible":
+            base_url = creds.get("base_url")
+            api_key = creds.get("api_key", "")
+            if not base_url:
+                raise ValueError("ai_chat: base_url is required for openai_compatible")
+        else:
+            base_url = creds.get("base_url") or "https://api.openai.com/v1"
+            api_key = creds.get("api_key", "")
+            if not api_key:
+                raise ValueError("ai_chat: credentials.api_key is required for OpenAI")
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        if creds.get("organization"):
+            headers["OpenAI-Organization"] = creds["organization"]
+        payload = _openai_payload(
+            model=model or creds.get("model") or "gpt-4.1-mini",
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+        )
+        body = _expect_json(
+            requests.post(
+                _with_chat_completions(base_url),
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            ),
+            provider_key,
+        )
+        out = _normalize_openai(body)
+
+    out["provider"] = provider_key
+    if include_raw:
+        out["raw"] = body
+    return out
+
+
+def _openai_payload(
+    *,
+    model: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+    max_tokens: int | None,
+    response_format: str,
+    include_model: bool = True,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "messages": messages,
+        "temperature": float(temperature),
+    }
+    if include_model:
+        payload["model"] = model
+    if max_tokens:
+        payload["max_tokens"] = int(max_tokens)
+    if response_format == "json_object":
+        payload["response_format"] = {"type": "json_object"}
+    return payload
+
+
+def _extract_json_object(text: str) -> Any:
+    value = text.strip()
+    if value.startswith("```"):
+        value = re.sub(r"^```(?:json)?\s*", "", value)
+        value = re.sub(r"\s*```$", "", value)
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        start = value.find("{")
+        end = value.rfind("}")
+        if start >= 0 and end > start:
+            return json.loads(value[start : end + 1])
+        raise
+
+
+def _render_template(template: str, context: dict[str, Any]) -> str:
+    from jinja2 import Environment, StrictUndefined, Undefined
+
+    env = Environment(
+        autoescape=False,
+        undefined=StrictUndefined if context.get("_strict_undefined") else Undefined,
+    )
+    return env.from_string(template or "").render(**context)
+
+
+def _template_context(input: Any, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    row = input if isinstance(input, dict) else {}
+    context = {
+        "input": input,
+        "json": input,
+        "row": row,
+        "data": input,
+    }
+    context.update(extra or {})
+    return context
+
+
+def _text_records(
+    input: Any,
+    *,
+    text_field: str,
+    max_rows: int,
+) -> tuple[list[dict[str, Any]], bool]:
+    if is_dataset_ref(input):
+        rows = materialize_dataset(input, cap=max_rows, allow_truncate=False)
+        return rows, True
+    if isinstance(input, list):
+        rows: list[dict[str, Any]] = []
+        for idx, item in enumerate(input):
+            if isinstance(item, dict):
+                rows.append(dict(item))
+            else:
+                rows.append({text_field or "text": str(item), "_index": idx})
+        return rows, False
+    if isinstance(input, dict):
+        for key in ("rows", "records", "items", "data"):
+            candidate = input.get(key)
+            if isinstance(candidate, list):
+                return _text_records(candidate, text_field=text_field, max_rows=max_rows)
+        return [dict(input)], False
+    return [{text_field or "text": _text_from_input(input)}], False
+
+
+def _texts_from_records(records: list[dict[str, Any]], text_field: str) -> list[str]:
+    field = text_field or "text"
+    texts = []
+    for row in records:
+        value = row.get(field)
+        if value is None:
+            value = row.get("content") or row.get("body") or row.get("chunk") or row
+        texts.append(value if isinstance(value, str) else _compact_json(value))
+    return texts
+
+
+def _call_embeddings(
+    *,
+    provider: str,
+    credentials: dict | None,
+    model: str,
+    texts: list[str],
+    input_type: str = "search_document",
+    timeout_seconds: int = DEFAULT_TIMEOUT,
+) -> tuple[list[list[float]], dict[str, Any]]:
+    creds = _provider_creds(credentials)
+    provider_key = _effective_provider(provider, creds)
+    timeout = max(1, min(300, int(timeout_seconds or DEFAULT_TIMEOUT)))
+    if not texts:
+        return [], {}
+
+    if provider_key == "cohere":
+        api_key = creds.get("api_key", "")
+        if not api_key:
+            raise ValueError("ai_batch_embeddings: credentials.api_key is required")
+        body = _expect_json(
+            requests.post(
+                creds.get("base_url") or "https://api.cohere.ai/v1/embed",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": model or "embed-english-v3.0",
+                    "input_type": input_type or "search_document",
+                    "texts": texts,
+                },
+                timeout=timeout,
+            ),
+            "cohere",
+        )
+        embeddings = body.get("embeddings") or []
+        return [list(map(float, emb)) for emb in embeddings], body
+
+    base_url = creds.get("base_url") or "https://api.openai.com/v1"
+    api_key = creds.get("api_key", "")
+    if provider_key == "ollama":
+        base_url = creds.get("base_url") or "http://localhost:11434/v1"
+        api_key = api_key or "ollama"
+    elif not api_key:
+        raise ValueError("ai_batch_embeddings: credentials.api_key is required")
+    body = _expect_json(
+        requests.post(
+            f"{base_url.rstrip('/')}/embeddings",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": model or "text-embedding-3-small", "input": texts},
+            timeout=timeout,
+        ),
+        provider_key,
+    )
+    data = body.get("data") if isinstance(body.get("data"), list) else []
+    ordered = sorted(
+        [item for item in data if isinstance(item, dict)],
+        key=lambda item: int(item.get("index", 0)),
+    )
+    return [list(map(float, item.get("embedding") or [])) for item in ordered], body
+
+
+def _as_tool_list(value: Any) -> list[dict[str, Any]]:
+    if not value:
+        return []
+    if isinstance(value, dict) and isinstance(value.get("tools"), list):
+        return [tool for tool in value["tools"] if isinstance(tool, dict)]
+    if isinstance(value, list):
+        return [tool for tool in value if isinstance(tool, dict)]
+    if isinstance(value, dict) and value.get("name"):
+        return [value]
+    return []
+
+
+def _tool_text(tools: list[dict[str, Any]]) -> str:
+    compact = [
+        {
+            "name": tool.get("name"),
+            "description": tool.get("description"),
+            "schema": tool.get("parameters_schema") or {},
+        }
+        for tool in tools
+    ]
+    return _pretty_json(compact)
+
+
+def _tool_is_side_effecting(tool: dict[str, Any]) -> bool:
+    tool_type = str(tool.get("type") or "").lower()
+    if tool_type == "workflow":
+        return True
+    if tool_type == "http":
+        return str(tool.get("method") or "GET").upper() not in {"GET", "HEAD", "OPTIONS"}
+    return False
+
+
+async def _execute_tool(tool: dict[str, Any], arguments: dict[str, Any]) -> Any:
+    tool_type = str(tool.get("type") or "").lower()
+    if tool_type == "http":
+        method = str(tool.get("method") or "GET").upper()
+        url = str(tool.get("url") or "")
+        if not url:
+            raise ValueError(f"tool {tool.get('name')}: url is required")
+        kwargs: dict[str, Any] = {"timeout": 45}
+        if method in {"POST", "PUT", "PATCH", "DELETE"}:
+            kwargs["json"] = arguments
+        else:
+            kwargs["params"] = arguments
+        response = await asyncio.to_thread(requests.request, method, url, **kwargs)
+        return _expect_json(response, f"tool:{tool.get('name')}")
+    if tool_type == "workflow":
+        workflow_id = str(tool.get("workflow_id") or "")
+        if not workflow_id:
+            raise ValueError(f"tool {tool.get('name')}: workflow_id is required")
+        caller = workflow_caller.get()
+        if caller is None:
+            raise RuntimeError("ai_agent: workflow tools need a host workflow caller")
+        return await caller(workflow_id, arguments)
+    raise ValueError(f"unsupported tool type: {tool_type}")
+
+
+@node(
+    name="AI Prompt Template",
+    id="ai_prompt_template",
+    category=AI_CATEGORY,
+    icon="braces",
+    params={
+        "system_template": {
+            "multiline": True,
+            "description": "Jinja template for the system message.",
+        },
+        "prompt_template": {
+            "multiline": True,
+            "description": "Jinja template for the user prompt.",
+        },
+        "strict_undefined": {
+            "description": "Fail when a template references a missing value.",
+        },
+    },
+)
+def ai_prompt_template(
+    input: Any = None,
+    system_template: str = "",
+    prompt_template: str = "{{ input }}",
+    strict_undefined: bool = False,
+) -> dict[str, Any]:
+    """Render system/user prompt messages from upstream data."""
+    context = _template_context(input, {"_strict_undefined": bool(strict_undefined)})
+    system = _render_template(system_template, context)
+    prompt = _render_template(prompt_template, context)
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    return {"system": system, "prompt": prompt, "messages": messages}
+
+
+@node(
+    name="AI Chat",
+    id="ai_chat",
+    category=AI_CATEGORY,
+    icon="ai",
+    params={
+        "credentials": {
+            **cred_multi(
+                "llm_provider",
+                "LLM provider credential",
+                [
+                    "provider",
+                    "api_key",
+                    "base_url",
+                    "organization",
+                    "azure_endpoint",
+                    "azure_api_version",
+                    "deployment",
+                ],
+            ),
+            "description": "Provider credential. For Ollama, api_key may be blank.",
+        },
+        "provider": {
+            "choices": ["openai", "anthropic", "openai_compatible", "ollama", "azure_openai"],
+            "description": "LLM provider API shape.",
+        },
+        "model": {"placeholder": "gpt-4.1-mini"},
+        "system": {"multiline": True},
+        "prompt": {"multiline": True, "description": "User prompt. Blank uses input."},
+        "messages_json": {
+            "multiline": True,
+            "description": "Optional JSON array of {role, content} messages.",
+        },
+        "temperature": {"description": "Sampling temperature."},
+        "max_tokens": {"description": "Optional response token limit."},
+        "response_format": {
+            "choices": ["text", "json_object"],
+            "description": "Ask compatible providers for text or JSON object output.",
+        },
+        "timeout_seconds": {"description": "HTTP timeout, 1-300 seconds."},
+        "include_raw": {"description": "Include the raw provider response."},
+    },
+)
+def ai_chat(
+    input: Any = None,
+    credentials: dict | None = None,
+    provider: str = "openai",
+    model: str = "gpt-4.1-mini",
+    system: str = "",
+    prompt: str = "",
+    messages_json: str = "",
+    temperature: float = 0.2,
+    max_tokens: int | None = None,
+    response_format: str = "text",
+    timeout_seconds: int = DEFAULT_TIMEOUT,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    """Call an LLM and return a normalized response envelope."""
+    messages = _messages_from_inputs(
+        input,
+        system=system,
+        prompt=prompt,
+        messages_json=messages_json,
+    )
+    return _call_llm(
+        provider=provider,
+        credentials=credentials,
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        response_format=response_format,
+        timeout_seconds=timeout_seconds,
+        include_raw=include_raw,
+    )
+
+
+@node(
+    name="AI Structured Output",
+    id="ai_structured_output",
+    category=AI_CATEGORY,
+    icon="braces",
+    params={
+        "credentials": {
+            **cred_multi(
+                "llm_provider",
+                "LLM provider credential",
+                LLM_CREDENTIAL_FIELDS,
+            ),
+            "description": "Provider credential.",
+        },
+        "provider": {
+            "choices": ["openai", "anthropic", "openai_compatible", "ollama", "azure_openai"],
+        },
+        "model": {"placeholder": "gpt-4.1-mini"},
+        "system": {"multiline": True},
+        "prompt": {"multiline": True, "description": "Extraction prompt. Blank uses input."},
+        "schema_json": {
+            "multiline": True,
+            "description": "JSON Schema the model output must validate against.",
+        },
+        "temperature": {"description": "Sampling temperature."},
+        "max_tokens": {"description": "Optional response token limit."},
+        "timeout_seconds": {"description": "HTTP timeout, 1-300 seconds."},
+    },
+)
+def ai_structured_output(
+    input: Any = None,
+    credentials: dict | None = None,
+    provider: str = "openai",
+    model: str = "gpt-4.1-mini",
+    system: str = "",
+    prompt: str = "",
+    schema_json: str = '{"type":"object"}',
+    temperature: float = 0.0,
+    max_tokens: int | None = None,
+    timeout_seconds: int = DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    """Ask an LLM for JSON and validate it against a JSON Schema."""
+    import jsonschema
+
+    schema = _json_loads(schema_json, label="schema_json", default={"type": "object"})
+    if not isinstance(schema, dict):
+        raise ValueError("schema_json must decode to a JSON object")
+    schema_instruction = (
+        "Return only valid JSON matching this JSON Schema. Do not wrap it in "
+        f"Markdown.\n\nSchema:\n{_pretty_json(schema)}"
+    )
+    messages = _messages_from_inputs(
+        input,
+        system="\n\n".join(part for part in [system, schema_instruction] if part),
+        prompt=prompt,
+    )
+    result = _call_llm(
+        provider=provider,
+        credentials=credentials,
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        response_format="json_object",
+        timeout_seconds=timeout_seconds,
+    )
+    parsed = _extract_json_object(result["text"])
+    jsonschema.validate(parsed, schema)
+    return {
+        "json": parsed,
+        "text": result["text"],
+        "valid": True,
+        "usage": result.get("usage", {}),
+        "provider": result.get("provider"),
+        "model": result.get("model"),
+    }
+
+
+@node(
+    name="AI Text Chunker",
+    id="ai_text_chunk",
+    category=AI_CATEGORY,
+    icon="list",
+    params={
+        "text": {
+            "multiline": True,
+            "description": "Text to chunk. Blank uses input or ArtifactRef text.",
+        },
+        "chunk_size": {"description": "Approximate chunk size in characters."},
+        "overlap": {"description": "Overlapping characters between chunks."},
+        "metadata_json": {"multiline": True, "description": "Metadata added to every chunk."},
+    },
+)
+def ai_text_chunk(
+    input: Any = None,
+    text: str = "",
+    chunk_size: int = 1200,
+    overlap: int = 120,
+    metadata_json: str = "",
+) -> list[dict[str, Any]]:
+    """Split text into overlapping chunks for retrieval workflows."""
+    payload = _text_from_input(input, text)
+    size = max(100, min(20000, int(chunk_size or 1200)))
+    ov = max(0, min(size - 1, int(overlap or 0)))
+    metadata = _json_loads(metadata_json, label="metadata_json", default={})
+    if not isinstance(metadata, dict):
+        raise ValueError("metadata_json must decode to an object")
+    chunks: list[dict[str, Any]] = []
+    start = 0
+    idx = 0
+    while start < len(payload):
+        end = min(len(payload), start + size)
+        chunk_text = payload[start:end]
+        chunks.append(
+            {
+                "id": f"chunk-{idx}",
+                "index": idx,
+                "text": chunk_text,
+                "start": start,
+                "end": end,
+                "char_count": len(chunk_text),
+                "metadata": metadata,
+            }
+        )
+        idx += 1
+        if end == len(payload):
+            break
+        start = max(0, end - ov)
+    return chunks
+
+
+@node(
+    name="AI Batch Embeddings",
+    id="ai_batch_embeddings",
+    category=AI_CATEGORY,
+    icon="brand:openai",
+    params={
+        "credentials": {
+            **cred_multi(
+                "llm_provider",
+                "Embedding provider credential",
+                ["provider", "api_key", "base_url"],
+            ),
+            "description": "OpenAI/OpenAI-compatible/Cohere/Ollama credential.",
+        },
+        "provider": {"choices": ["openai", "openai_compatible", "ollama", "cohere"]},
+        "model": {"placeholder": "text-embedding-3-small"},
+        "text_field": {"placeholder": "text"},
+        "output_field": {"placeholder": "embedding"},
+        "input_type": {
+            "choices": ["search_document", "search_query", "classification", "clustering"],
+            "description": "Cohere embedding input type.",
+        },
+        "batch_size": {"description": "Texts per request, max 96."},
+        "max_rows": {"description": "Max DatasetRef/list rows to embed, max 1000."},
+        "timeout_seconds": {"description": "HTTP timeout per batch."},
+    },
+)
+def ai_batch_embeddings(
+    input: Any = None,
+    credentials: dict | None = None,
+    provider: str = "openai",
+    model: str = "text-embedding-3-small",
+    text_field: str = "text",
+    output_field: str = "embedding",
+    input_type: str = "search_document",
+    batch_size: int = 64,
+    max_rows: int = 500,
+    timeout_seconds: int = DEFAULT_TIMEOUT,
+) -> Any:
+    """Embed lists or DatasetRefs; DatasetRef inputs return DatasetRef outputs."""
+    cap = max(1, min(MAX_DATASET_AI_ROWS, int(max_rows or 500)))
+    records, was_dataset = _text_records(input, text_field=text_field, max_rows=cap)
+    if len(records) > cap:
+        raise ValueError(f"ai_batch_embeddings: input has more than {cap} rows")
+    texts = _texts_from_records(records, text_field)
+    batch = max(1, min(MAX_EMBEDDING_BATCH, int(batch_size or 64)))
+    all_embeddings: list[list[float]] = []
+    raw_usage: list[Any] = []
+    for start in range(0, len(texts), batch):
+        embeddings, raw = _call_embeddings(
+            provider=provider,
+            credentials=credentials,
+            model=model,
+            texts=texts[start : start + batch],
+            input_type=input_type,
+            timeout_seconds=timeout_seconds,
+        )
+        all_embeddings.extend(embeddings)
+        raw_usage.append(raw.get("usage") or raw.get("meta") or {})
+    if len(all_embeddings) != len(records):
+        raise RuntimeError(
+            "ai_batch_embeddings: provider returned "
+            f"{len(all_embeddings)} embeddings for {len(records)} texts"
+        )
+    field = output_field or "embedding"
+    enriched = []
+    for row, embedding in zip(records, all_embeddings, strict=True):
+        enriched.append({**row, field: embedding})
+    if was_dataset:
+        return records_to_dataset(enriched, name="ai-embeddings.parquet")
+    return {"rows": enriched, "count": len(enriched), "usage": raw_usage}
+
+
+@node(
+    name="AI Map Dataset",
+    id="ai_dataset_map",
+    category=AI_CATEGORY,
+    icon="sparkles",
+    input_kinds={"input": "dataset"},
+    output_kinds={"main": "dataset"},
+    params={
+        "credentials": {
+            **cred_multi(
+                "llm_provider",
+                "LLM provider credential",
+                LLM_CREDENTIAL_FIELDS,
+            ),
+            "description": "Provider credential.",
+        },
+        "provider": {
+            "choices": ["openai", "anthropic", "openai_compatible", "ollama", "azure_openai"],
+        },
+        "model": {"placeholder": "gpt-4.1-mini"},
+        "system": {"multiline": True},
+        "prompt_template": {
+            "multiline": True,
+            "description": "Jinja template rendered once per row.",
+        },
+        "output_column": {"placeholder": "ai_output"},
+        "max_rows": {"description": "Safety cap, max 1000 rows per run."},
+        "temperature": {"description": "Sampling temperature."},
+        "max_tokens": {"description": "Optional response token limit."},
+        "timeout_seconds": {"description": "HTTP timeout per row."},
+    },
+)
+def ai_dataset_map(
+    input: Any = None,
+    credentials: dict | None = None,
+    provider: str = "openai",
+    model: str = "gpt-4.1-mini",
+    system: str = "",
+    prompt_template: str = "Summarize this row: {{ row }}",
+    output_column: str = "ai_output",
+    max_rows: int = 100,
+    temperature: float = 0.2,
+    max_tokens: int | None = None,
+    timeout_seconds: int = DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    """Run an LLM over each row of a DatasetRef and append an output column."""
+    if not is_dataset_ref(input):
+        raise ValueError("ai_dataset_map requires a DatasetRef input")
+    cap = max(1, min(MAX_DATASET_AI_ROWS, int(max_rows or 100)))
+    rows = materialize_dataset(input, cap=cap, allow_truncate=False)
+    output_col = output_column or "ai_output"
+    enriched: list[dict[str, Any]] = []
+    for idx, row in enumerate(rows):
+        prompt = _render_template(
+            prompt_template,
+            _template_context(row, {"index": idx, "_strict_undefined": False}),
+        )
+        result = _call_llm(
+            provider=provider,
+            credentials=credentials,
+            model=model,
+            messages=_messages_from_inputs(row, system=system, prompt=prompt),
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
+        )
+        enriched.append({**row, output_col: result["text"]})
+    return records_to_dataset(enriched, name="ai-map.parquet")
+
+
+@node(
+    name="AI Vector Retriever",
+    id="ai_vector_retriever",
+    category=AI_CATEGORY,
+    icon="brand:pinecone",
+    params={
+        "embedding_credentials": {
+            **cred_multi(
+                "llm_provider",
+                "Embedding provider credential",
+                EMBEDDING_CREDENTIAL_FIELDS,
+            ),
+            "description": "Credential for OpenAI/OpenAI-compatible embeddings.",
+        },
+        "pinecone_credentials": {
+            **cred_multi("pinecone", "Pinecone credentials", ["api_key", "index_host"]),
+            "description": "Pinecone API key + index host.",
+        },
+        "query": {"multiline": True, "description": "Search query. Blank uses input."},
+        "embedding_provider": {"choices": ["openai", "openai_compatible", "ollama", "cohere"]},
+        "embedding_model": {"placeholder": "text-embedding-3-small"},
+        "namespace": {"placeholder": "default"},
+        "top_k": {"description": "Number of matches to return."},
+        "include_metadata": {"description": "Include vector metadata."},
+        "timeout_seconds": {"description": "HTTP timeout."},
+    },
+)
+def ai_vector_retriever(
+    input: Any = None,
+    embedding_credentials: dict | None = None,
+    pinecone_credentials: dict | None = None,
+    query: str = "",
+    embedding_provider: str = "openai",
+    embedding_model: str = "text-embedding-3-small",
+    namespace: str = "default",
+    top_k: int = 5,
+    include_metadata: bool = True,
+    timeout_seconds: int = DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    """Embed a query and retrieve nearest chunks from Pinecone."""
+    query_text = _text_from_input(input, query)
+    embeddings, _raw = _call_embeddings(
+        provider=embedding_provider,
+        credentials=embedding_credentials,
+        model=embedding_model,
+        texts=[query_text],
+        input_type="search_query",
+        timeout_seconds=timeout_seconds,
+    )
+    if not embeddings:
+        raise RuntimeError("ai_vector_retriever: embedding provider returned no vector")
+    creds = _provider_creds(pinecone_credentials)
+    api_key = creds.get("api_key", "")
+    index_host = creds.get("index_host", "")
+    if not api_key or not index_host:
+        raise ValueError("ai_vector_retriever: Pinecone api_key and index_host are required")
+    body = _expect_json(
+        requests.post(
+            f"https://{index_host}/query",
+            headers={"Api-Key": api_key, "Content-Type": "application/json"},
+            json={
+                "vector": embeddings[0],
+                "topK": max(1, int(top_k or 5)),
+                "namespace": namespace or "default",
+                "includeMetadata": bool(include_metadata),
+            },
+            timeout=max(1, min(300, int(timeout_seconds or DEFAULT_TIMEOUT))),
+        ),
+        "pinecone",
+    )
+    matches = body.get("matches") if isinstance(body.get("matches"), list) else []
+    return {
+        "query": query_text,
+        "matches": matches,
+        "count": len(matches),
+        "raw": body,
+    }
+
+
+@node(
+    name="AI RAG Answer",
+    id="ai_rag_answer",
+    category=AI_CATEGORY,
+    icon="sparkles",
+    params={
+        "credentials": {
+            **cred_multi(
+                "llm_provider",
+                "LLM provider credential",
+                LLM_CREDENTIAL_FIELDS,
+            ),
+            "description": "Provider credential.",
+        },
+        "provider": {
+            "choices": ["openai", "anthropic", "openai_compatible", "ollama", "azure_openai"],
+        },
+        "model": {"placeholder": "gpt-4.1-mini"},
+        "question": {"multiline": True, "description": "Question. Blank uses input.query."},
+        "context_field": {"placeholder": "text"},
+        "max_context_chars": {"description": "Total context character budget."},
+        "system": {"multiline": True},
+        "temperature": {"description": "Sampling temperature."},
+        "max_tokens": {"description": "Optional response token limit."},
+        "timeout_seconds": {"description": "HTTP timeout."},
+    },
+)
+def ai_rag_answer(
+    input: Any = None,
+    credentials: dict | None = None,
+    provider: str = "openai",
+    model: str = "gpt-4.1-mini",
+    question: str = "",
+    context_field: str = "text",
+    max_context_chars: int = 12000,
+    system: str = "",
+    temperature: float = 0.2,
+    max_tokens: int | None = None,
+    timeout_seconds: int = DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    """Answer a question using retrieved context chunks."""
+    q = question
+    matches: Iterable[Any] = []
+    if isinstance(input, dict):
+        q = q or str(input.get("query") or input.get("question") or "")
+        matches = input.get("matches") or input.get("contexts") or []
+    elif isinstance(input, list):
+        matches = input
+    if not q:
+        q = _text_from_input(input)
+    budget = max(1000, min(100000, int(max_context_chars or 12000)))
+    context_parts: list[str] = []
+    used = 0
+    for idx, match in enumerate(matches):
+        metadata = match.get("metadata") if isinstance(match, dict) else {}
+        source = metadata if isinstance(metadata, dict) else match
+        if isinstance(source, dict):
+            text = str(
+                source.get(context_field)
+                or source.get("text")
+                or source.get("content")
+                or source.get("chunk")
+                or ""
+            )
+        else:
+            text = str(source)
+        if not text:
+            continue
+        piece = f"[{idx + 1}] {text}"
+        if used + len(piece) > budget:
+            break
+        context_parts.append(piece)
+        used += len(piece)
+    context = "\n\n".join(context_parts)
+    default_system = (
+        "Answer using only the supplied context. If the context is insufficient, "
+        "say what is missing. Cite context numbers in brackets."
+    )
+    prompt = f"Question:\n{q}\n\nContext:\n{context}"
+    result = _call_llm(
+        provider=provider,
+        credentials=credentials,
+        model=model,
+        messages=_messages_from_inputs(None, system=system or default_system, prompt=prompt),
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout_seconds=timeout_seconds,
+    )
+    return {
+        "answer": result["text"],
+        "question": q,
+        "context": context_parts,
+        "usage": result.get("usage", {}),
+        "provider": result.get("provider"),
+        "model": result.get("model"),
+    }
+
+
+@node(
+    name="AI Tool",
+    id="ai_tool",
+    category=AI_CATEGORY,
+    icon="code",
+    params={
+        "name": {"placeholder": "lookup_customer"},
+        "description": {"multiline": True},
+        "tool_type": {"choices": ["http", "workflow"]},
+        "parameters_schema_json": {
+            "multiline": True,
+            "description": "JSON Schema for tool arguments.",
+        },
+        "url": {"placeholder": "https://api.example.com/search"},
+        "method": {"choices": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
+        "workflow_id": {"description": "Workflow to call when tool_type=workflow."},
+    },
+)
+def ai_tool(
+    input: Any = None,
+    name: str = "",
+    description: str = "",
+    tool_type: str = "http",
+    parameters_schema_json: str = '{"type":"object","properties":{}}',
+    url: str = "",
+    method: str = "GET",
+    workflow_id: str = "",
+) -> dict[str, Any]:
+    """Define an explicit tool that AI Agent may call."""
+    existing = _as_tool_list(input)
+    schema = _json_loads(parameters_schema_json, label="parameters_schema_json", default={})
+    if not isinstance(schema, dict):
+        raise ValueError("parameters_schema_json must decode to an object")
+    tool_name = re.sub(r"[^A-Za-z0-9_-]+", "_", name.strip())[:64]
+    if not tool_name:
+        raise ValueError("ai_tool: name is required")
+    tool = {
+        "name": tool_name,
+        "description": description,
+        "type": tool_type,
+        "parameters_schema": schema,
+        "url": url,
+        "method": (method or "GET").upper(),
+        "workflow_id": workflow_id,
+    }
+    return {"tools": [*existing, tool]}
+
+
+@node(
+    name="AI Agent",
+    id="ai_agent",
+    category=AI_CATEGORY,
+    icon="ai",
+    params={
+        "credentials": {
+            **cred_multi(
+                "llm_provider",
+                "LLM provider credential",
+                LLM_CREDENTIAL_FIELDS,
+            ),
+            "description": "Provider credential.",
+        },
+        "provider": {
+            "choices": ["openai", "anthropic", "openai_compatible", "ollama", "azure_openai"],
+        },
+        "model": {"placeholder": "gpt-4.1-mini"},
+        "system": {"multiline": True},
+        "task": {"multiline": True, "description": "Agent task. Blank uses input.task/input."},
+        "max_steps": {"description": "Max tool/planning steps, hard max 10."},
+        "allow_side_effects": {
+            "description": "Allow workflow tools and non-GET HTTP tools.",
+        },
+        "temperature": {"description": "Sampling temperature."},
+        "timeout_seconds": {"description": "HTTP timeout per model call."},
+    },
+)
+async def ai_agent(
+    input: Any = None,
+    credentials: dict | None = None,
+    provider: str = "openai",
+    model: str = "gpt-4.1-mini",
+    system: str = "",
+    task: str = "",
+    max_steps: int = 4,
+    allow_side_effects: bool = False,
+    temperature: float = 0.1,
+    timeout_seconds: int = DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    """Run a bounded, auditable tool-using agent loop."""
+    tools = _as_tool_list(input)
+    if isinstance(input, dict):
+        task_text = task or str(input.get("task") or input.get("prompt") or "")
+    else:
+        task_text = task or _text_from_input(input)
+    if not task_text:
+        raise ValueError("ai_agent: task is required")
+    steps_limit = max(1, min(MAX_AGENT_STEPS, int(max_steps or 4)))
+    step_log: list[dict[str, Any]] = []
+    observations: list[dict[str, Any]] = []
+    agent_system = system or (
+        "You are a bounded workflow agent. You may use tools only when needed. "
+        "Return JSON only: either {\"action\":\"final\",\"answer\":\"...\"} or "
+        "{\"action\":\"tool\",\"tool\":\"tool_name\",\"arguments\":{...}}."
+    )
+    for step in range(steps_limit):
+        prompt = (
+            f"Task:\n{task_text}\n\nAvailable tools:\n{_tool_text(tools)}\n\n"
+            f"Prior observations:\n{_pretty_json(observations)}\n\n"
+            "Choose the next action as JSON."
+        )
+        result = await asyncio.to_thread(
+            _call_llm,
+            provider=provider,
+            credentials=credentials,
+            model=model,
+            messages=_messages_from_inputs(None, system=agent_system, prompt=prompt),
+            temperature=temperature,
+            response_format="json_object",
+            timeout_seconds=timeout_seconds,
+        )
+        decision = _extract_json_object(result["text"])
+        if not isinstance(decision, dict):
+            raise RuntimeError("ai_agent: model decision was not an object")
+        action = str(decision.get("action") or "").lower()
+        step_entry = {"step": step + 1, "decision": decision}
+        if action == "final":
+            answer = str(decision.get("answer") or "")
+            step_log.append({**step_entry, "status": "final"})
+            return {"answer": answer, "steps": step_log, "observations": observations}
+        if action != "tool":
+            raise RuntimeError(f"ai_agent: unsupported action {action!r}")
+        tool_name = str(decision.get("tool") or "")
+        tool = next((candidate for candidate in tools if candidate.get("name") == tool_name), None)
+        if tool is None:
+            raise RuntimeError(f"ai_agent: unknown tool {tool_name!r}")
+        if _tool_is_side_effecting(tool) and not allow_side_effects:
+            raise RuntimeError(
+                f"ai_agent: tool {tool_name!r} may have side effects; "
+                "enable allow_side_effects to run it"
+            )
+        arguments = decision.get("arguments") if isinstance(decision.get("arguments"), dict) else {}
+        observation = await _execute_tool(tool, arguments)
+        observations.append({"tool": tool_name, "arguments": arguments, "result": observation})
+        step_log.append({**step_entry, "status": "tool_executed"})
+    return {
+        "answer": "",
+        "steps": step_log,
+        "observations": observations,
+        "stopped_reason": "max_steps",
+    }
+
+
+@node(
+    name="AI Moderation Guard",
+    id="ai_moderation_guard",
+    category=AI_CATEGORY,
+    icon="alert",
+    outputs=["safe", "flagged"],
+    params={
+        "credentials": {
+            **cred_single("openai", "api_key", "OpenAI API key"),
+            "description": "OpenAI API key.",
+        },
+        "text": {"multiline": True, "description": "Text to moderate. Blank uses input."},
+        "model": {"placeholder": "omni-moderation-latest"},
+    },
+)
+def ai_moderation_guard(
+    input: Any = None,
+    credentials: str = "",
+    text: str = "",
+    model: str = "omni-moderation-latest",
+) -> dict[str, Any]:
+    """Route text to safe/flagged outputs using OpenAI moderation."""
+    api_key = credentials
+    if not api_key:
+        raise ValueError("ai_moderation_guard: credentials are required")
+    payload_text = _text_from_input(input, text)
+    body = _expect_json(
+        requests.post(
+            "https://api.openai.com/v1/moderations",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": model or "omni-moderation-latest", "input": payload_text},
+            timeout=45,
+        ),
+        "openai",
+    )
+    results = body.get("results") if isinstance(body.get("results"), list) else []
+    first = results[0] if results and isinstance(results[0], dict) else {}
+    out = {
+        "text": payload_text,
+        "flagged": bool(first.get("flagged")),
+        "categories": first.get("categories") or {},
+        "category_scores": first.get("category_scores") or {},
+        "raw": body,
+    }
+    return {"flagged": out} if out["flagged"] else {"safe": out}
+
+
+@node(
+    name="AI Vision Analyze",
+    id="ai_vision_analyze",
+    category=AI_CATEGORY,
+    icon="eye",
+    params={
+        "credentials": {
+            **cred_multi("llm_provider", "Vision provider credential", ["api_key", "base_url"]),
+            "description": "OpenAI-compatible vision credential.",
+        },
+        "model": {"placeholder": "gpt-4.1-mini"},
+        "prompt": {"multiline": True},
+        "image_url": {"description": "Public image URL. Used when image_base64 is blank."},
+        "image_base64": {
+            "multiline": True,
+            "description": "Base64 image bytes. Dict input may provide image_base64/data.",
+        },
+        "mime_type": {"placeholder": "image/png"},
+        "timeout_seconds": {"description": "HTTP timeout."},
+    },
+)
+def ai_vision_analyze(
+    input: Any = None,
+    credentials: dict | None = None,
+    model: str = "gpt-4.1-mini",
+    prompt: str = "Describe this image.",
+    image_url: str = "",
+    image_base64: str = "",
+    mime_type: str = "image/png",
+    timeout_seconds: int = DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    """Analyze an image with an OpenAI-compatible vision chat model."""
+    creds = _provider_creds(credentials)
+    api_key = creds.get("api_key", "")
+    if not api_key:
+        raise ValueError("ai_vision_analyze: credentials.api_key is required")
+    if isinstance(input, dict):
+        image_url = image_url or str(input.get("image_url") or "")
+        image_base64 = image_base64 or str(input.get("image_base64") or input.get("data") or "")
+        prompt = prompt or str(input.get("prompt") or "")
+    if image_base64:
+        image_ref = f"data:{mime_type or 'image/png'};base64,{image_base64}"
+    elif image_url:
+        image_ref = image_url
+    else:
+        raise ValueError("ai_vision_analyze: image_url or image_base64 is required")
+    payload = {
+        "model": model or "gpt-4.1-mini",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt or "Describe this image."},
+                    {"type": "image_url", "image_url": {"url": image_ref}},
+                ],
+            }
+        ],
+    }
+    body = _expect_json(
+        requests.post(
+            _with_chat_completions(creds.get("base_url") or "https://api.openai.com/v1"),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=max(1, min(300, int(timeout_seconds or DEFAULT_TIMEOUT))),
+        ),
+        "openai",
+    )
+    out = _normalize_openai(body)
+    out["raw"] = body
+    return out
+
+
+@node(
+    name="AI Image Generate",
+    id="ai_image_generate",
+    category=AI_CATEGORY,
+    icon="sparkles",
+    output_kinds={"main": "artifact"},
+    params={
+        "credentials": {
+            **cred_single("openai", "api_key", "OpenAI API key"),
+            "description": "OpenAI API key.",
+        },
+        "prompt": {"multiline": True, "description": "Image prompt. Blank uses input."},
+        "model": {"placeholder": "gpt-image-1"},
+        "size": {"choices": ["1024x1024", "1024x1536", "1536x1024", "auto"]},
+        "filename": {"placeholder": "generated.png"},
+    },
+)
+def ai_image_generate(
+    input: Any = None,
+    credentials: str = "",
+    prompt: str = "",
+    model: str = "gpt-image-1",
+    size: str = "1024x1024",
+    filename: str = "generated.png",
+) -> dict[str, Any]:
+    """Generate an image and store it as an artifact."""
+    api_key = credentials
+    if not api_key:
+        raise ValueError("ai_image_generate: credentials are required")
+    payload_prompt = _text_from_input(input, prompt)
+    body = _expect_json(
+        requests.post(
+            "https://api.openai.com/v1/images/generations",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": model or "gpt-image-1",
+                "prompt": payload_prompt,
+                "size": size or "1024x1024",
+            },
+            timeout=180,
+        ),
+        "openai",
+    )
+    data = body.get("data") if isinstance(body.get("data"), list) else []
+    first = data[0] if data and isinstance(data[0], dict) else {}
+    b64 = str(first.get("b64_json") or "")
+    if not b64:
+        url = first.get("url")
+        if not url:
+            raise RuntimeError("ai_image_generate: provider returned no image")
+        image_response = requests.get(str(url), timeout=180)
+        if image_response.status_code >= 400:
+            raise RuntimeError(f"ai_image_generate: image URL HTTP {image_response.status_code}")
+        data_bytes = image_response.content
+    else:
+        data_bytes = base64.b64decode(b64)
+    return write_bytes(
+        data_bytes,
+        name=filename or "generated.png",
+        content_type="image/png",
+        kind="image",
+        metadata={"model": model, "prompt": payload_prompt},
+    )

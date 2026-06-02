@@ -69,6 +69,118 @@ const CREDENTIAL_PRESETS: CredentialPreset[] = [
     ],
   },
   {
+    id: "llm_provider",
+    type: "llm_provider",
+    label: "LLM provider",
+    group: "AI",
+    summary: "Use AI Chat, agents, RAG, and structured-output nodes.",
+    description:
+      "Stores a provider API key plus optional OpenAI-compatible or Azure OpenAI endpoint details.",
+    fields: [
+      {
+        key: "provider",
+        label: "Provider",
+        kind: "select",
+        defaultValue: "openai",
+        options: [
+          { label: "OpenAI", value: "openai" },
+          { label: "Anthropic", value: "anthropic" },
+          { label: "OpenAI-compatible", value: "openai_compatible" },
+          { label: "Ollama", value: "ollama" },
+          { label: "Azure OpenAI", value: "azure_openai" },
+        ],
+      },
+      {
+        key: "api_key",
+        label: "API key",
+        placeholder: "Paste provider key",
+        kind: "password",
+      },
+      {
+        key: "base_url",
+        label: "Base URL",
+        placeholder: "https://api.openai.com/v1 or http://localhost:11434/v1",
+      },
+      {
+        key: "organization",
+        label: "Organization",
+        placeholder: "Optional OpenAI organization",
+      },
+      {
+        key: "azure_endpoint",
+        label: "Azure endpoint",
+        placeholder: "https://resource.openai.azure.com",
+      },
+      {
+        key: "azure_api_version",
+        label: "Azure API version",
+        placeholder: "2024-02-15-preview",
+      },
+      {
+        key: "deployment",
+        label: "Deployment",
+        placeholder: "Azure deployment name",
+      },
+    ],
+  },
+  {
+    id: "cohere",
+    type: "cohere",
+    label: "Cohere API key",
+    group: "AI",
+    summary: "Use Cohere embedding nodes.",
+    description: "Stores a Cohere API key for embedding workflows.",
+    fields: [
+      {
+        key: "api_key",
+        label: "API key",
+        placeholder: "Paste Cohere key",
+        kind: "password",
+        required: true,
+      },
+    ],
+  },
+  {
+    id: "deepl",
+    type: "deepl",
+    label: "DeepL API key",
+    group: "AI",
+    summary: "Translate text with DeepL.",
+    description: "Free-tier keys ending in :fx use the free DeepL endpoint.",
+    fields: [
+      {
+        key: "api_key",
+        label: "API key",
+        placeholder: "Paste DeepL key",
+        kind: "password",
+        required: true,
+      },
+    ],
+  },
+  {
+    id: "pinecone",
+    type: "pinecone",
+    label: "Pinecone index",
+    group: "AI",
+    summary: "Use vector retriever and Pinecone query/upsert nodes.",
+    description: "Store the API key and index host without https://.",
+    fields: [
+      {
+        key: "api_key",
+        label: "API key",
+        placeholder: "Paste Pinecone key",
+        kind: "password",
+        required: true,
+      },
+      {
+        key: "index_host",
+        label: "Index host",
+        placeholder: "my-index-xxxx.svc.region.pinecone.io",
+        required: true,
+      },
+    ],
+  },
+  {
     id: "slack_bot",
     type: "slack_bot",
     label: "Slack bot token",

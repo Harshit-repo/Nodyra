@@ -54,7 +54,7 @@ def http_request(input: Any = None, url: str = "", method: str = "GET") -> Any:
 
 ### Categories and icons
 
-Set `category` to one of `Triggers`, `Logic`, `Data`, `Transform`,
+Set `category` to one of `Triggers`, `Logic`, `AI`, `Data`, `Transform`,
 `Integrations`, `Utility`. The editor colours nodes by category. `icon` is a
 name from the built-in icon set (`play`, `clock`, `webhook`, `branch`,
 `switch`, `filter`, `merge`, `pencil`, `sort`, `limit`, `aggregate`,
@@ -258,3 +258,29 @@ compatible stores, OpenAI, Anthropic, Stripe, and Airtable.
 Most call public HTTP APIs with `requests`. `Postgres Query`, `MySQL Query`,
 and `S3` nodes need Python drivers in the selected environment:
 `psycopg[binary]`, `PyMySQL`, and `boto3` respectively.
+
+## AI nodes
+
+The canonical AI surface lives in the `AI` category. Provider-specific nodes
+still exist for direct OpenAI/Anthropic/Pinecone operations, but new workflow
+designs should prefer the normalized nodes:
+
+- `AI Prompt Template` renders system/user messages from upstream data with
+  Jinja templates.
+- `AI Chat` calls OpenAI, Anthropic, OpenAI-compatible, Ollama, or Azure OpenAI
+  chat APIs and returns a normalized `{text, usage, model, finish_reason}`
+  envelope.
+- `AI Structured Output` asks for JSON and validates the result against a JSON
+  Schema.
+- `AI Text Chunker`, `AI Batch Embeddings`, `AI Vector Retriever`, and
+  `AI RAG Answer` provide the core RAG path.
+- `AI Map Dataset` runs an LLM over a DatasetRef row-by-row and returns a new
+  DatasetRef, keeping table data artifact-backed.
+- `AI Tool` and `AI Agent` provide a bounded tool-using agent loop with
+  `max_steps`, visible step logs, and explicit side-effect approval.
+- `AI Moderation Guard`, `AI Vision Analyze`, and `AI Image Generate` cover
+  guardrails and multimodal workflows.
+
+Use an `LLM provider` credential for the normalized nodes. It can hold an
+OpenAI, Anthropic, OpenAI-compatible, Ollama, or Azure OpenAI configuration.
+Pinecone and provider-specific nodes have their own credential presets.

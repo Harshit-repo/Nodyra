@@ -152,6 +152,78 @@ async def _test_anthropic(data: dict[str, str], context: dict[str, Any]) -> dict
     return result
 
 
+async def _test_llm_provider(data: dict[str, str], context: dict[str, Any]) -> dict[str, Any]:
+    provider = _value(data, "provider") or str(context.get("provider") or "openai")
+    provider = provider.strip().lower()
+    api_key = _value(data, "api_key", "token")
+    base_url = _value(data, "base_url")
+    if provider == "anthropic":
+        return await _test_anthropic(data, context)
+    if provider == "ollama":
+        url = (base_url or "http://localhost:11434").rstrip("/")
+        if url.endswith("/v1"):
+            url = url[:-3]
+        return await _request("GET", f"{url}/api/tags")
+    if provider == "azure_openai":
+        endpoint = _value(data, "azure_endpoint", "base_url").rstrip("/")
+        api_version = _value(data, "azure_api_version") or "2024-02-15-preview"
+        if not endpoint or not api_key:
+            return {
+                "ok": False,
+                "message": "Missing api_key or azure_endpoint",
+                "details": {},
+            }
+        return await _request(
+            "GET",
+            f"{endpoint}/openai/deployments",
+            headers={"api-key": api_key},
+            params={"api-version": api_version},
+        )
+    if not api_key and provider != "ollama":
+        return {"ok": False, "message": "Missing api_key", "details": {}}
+    url = f"{(base_url or 'https://api.openai.com/v1').rstrip('/')}/models"
+    return await _request("GET", url, headers={"Authorization": f"Bearer {api_key}"})
+
+
+async def _test_cohere(data: dict[str, str], context: dict[str, Any]) -> dict[str, Any]:
+    api_key = _value(data, "api_key", "token")
+    if not api_key:
+        return {"ok": False, "message": "Missing api_key", "details": {}}
+    return await _request(
+        "GET",
+        "https://api.cohere.ai/v1/models",
+        headers={"Authorization": f"Bearer {api_key}"},
+    )
+
+
+async def _test_deepl(data: dict[str, str], context: dict[str, Any]) -> dict[str, Any]:
+    api_key = _value(data, "api_key", "auth_key")
+    if not api_key:
+        return {"ok": False, "message": "Missing api_key", "details": {}}
+    base = "https://api-free.deepl.com" if api_key.endswith(":fx") else "https://api.deepl.com"
+    return await _request(
+        "GET",
+        f"{base}/v2/usage",
+        headers={"Authorization": f"DeepL-Auth-Key {api_key}"},
+    )
+
+
+async def _test_pinecone(data: dict[str, str], context: dict[str, Any]) -> dict[str, Any]:
+    api_key = _value(data, "api_key")
+    index_host = _value(data, "index_host")
+    if not api_key or not index_host:
+        return {
+            "ok": False,
+            "message": "Missing api_key or index_host",
+            "details": {},
+        }
+    return await _request(
+        "POST",
+        f"https://{index_host}/describe_index_stats",
+        headers={"Api-Key": api_key, "Content-Type": "application/json"},
+    )
+
+
 async def _test_notion(data: dict[str, str], context: dict[str, Any]) -> dict[str, Any]:
     token = _value(data, "token", "api_key")
     if not token:
@@ -336,6 +408,10 @@ _TESTERS: dict[str, TestFn] = {
     "github": _test_github,
     "openai": _test_openai,
     "anthropic": _test_anthropic,
+    "llm_provider": _test_llm_provider,
+    "cohere": _test_cohere,
+    "deepl": _test_deepl,
+    "pinecone": _test_pinecone,
     "notion": _test_notion,
     "stripe": _test_stripe,
     "airtable": _test_airtable,

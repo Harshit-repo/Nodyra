@@ -436,6 +436,12 @@ const CRED_FIELD_LABELS: Record<string, string> = {
   port: "Port",
   database: "Database",
   access_token: "Access Token",
+  provider: "Provider",
+  base_url: "Base URL",
+  organization: "Organization",
+  azure_endpoint: "Azure Endpoint",
+  azure_api_version: "Azure API Version",
+  deployment: "Deployment",
 };
 
 const CRED_TYPE_LABELS: Record<string, string> = {
@@ -445,6 +451,9 @@ const CRED_TYPE_LABELS: Record<string, string> = {
   webhook_secret: "Webhook Secret",
   openai: "OpenAI API Key",
   anthropic: "Anthropic API Key",
+  llm_provider: "LLM Provider",
+  cohere: "Cohere API Key",
+  deepl: "DeepL API Key",
   slack_bot: "Slack Bot Token",
   smtp: "SMTP Credentials",
   github: "GitHub Token",

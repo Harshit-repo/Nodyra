@@ -47,6 +47,19 @@ _ALLOWED_NODE_TYPES = {
     "s3_get_object",
     "openai_chat",
     "anthropic_message",
+    "ai_prompt_template",
+    "ai_chat",
+    "ai_structured_output",
+    "ai_text_chunk",
+    "ai_batch_embeddings",
+    "ai_dataset_map",
+    "ai_vector_retriever",
+    "ai_rag_answer",
+    "ai_tool",
+    "ai_agent",
+    "ai_moderation_guard",
+    "ai_vision_analyze",
+    "ai_image_generate",
     "airtable_list_records",
     "airtable_create_record",
     "csv_parse",
@@ -113,6 +126,104 @@ _NODE_REGISTRY: dict[str, dict[str, Any]] = {
         "params": ["api_key", "model", "system", "prompt", "max_tokens", "temperature"],
         "credential_type": "anthropic",
         "credential_keys": ["api_key"],
+    },
+    "ai_prompt_template": {
+        "name": "AI Prompt Template",
+        "params": ["system_template", "prompt_template", "strict_undefined"],
+    },
+    "ai_chat": {
+        "name": "AI Chat",
+        "params": [
+            "credentials",
+            "provider",
+            "model",
+            "system",
+            "prompt",
+            "messages_json",
+            "temperature",
+            "max_tokens",
+            "response_format",
+            "timeout_seconds",
+        ],
+        "credential_specs": [{"param": "credentials", "type": "llm_provider", "key": "*"}],
+    },
+    "ai_structured_output": {
+        "name": "AI Structured Output",
+        "params": ["credentials", "provider", "model", "system", "prompt", "schema_json"],
+        "credential_specs": [{"param": "credentials", "type": "llm_provider", "key": "*"}],
+    },
+    "ai_text_chunk": {
+        "name": "AI Text Chunker",
+        "params": ["text", "chunk_size", "overlap", "metadata_json"],
+    },
+    "ai_batch_embeddings": {
+        "name": "AI Batch Embeddings",
+        "params": ["credentials", "provider", "model", "text_field", "output_field"],
+        "credential_specs": [{"param": "credentials", "type": "llm_provider", "key": "*"}],
+    },
+    "ai_dataset_map": {
+        "name": "AI Map Dataset",
+        "params": [
+            "credentials",
+            "provider",
+            "model",
+            "system",
+            "prompt_template",
+            "output_column",
+        ],
+        "credential_specs": [{"param": "credentials", "type": "llm_provider", "key": "*"}],
+    },
+    "ai_vector_retriever": {
+        "name": "AI Vector Retriever",
+        "params": [
+            "embedding_credentials",
+            "pinecone_credentials",
+            "query",
+            "embedding_provider",
+            "embedding_model",
+            "namespace",
+            "top_k",
+        ],
+        "credential_specs": [
+            {"param": "embedding_credentials", "type": "llm_provider", "key": "*"},
+            {"param": "pinecone_credentials", "type": "pinecone", "key": "*"},
+        ],
+    },
+    "ai_rag_answer": {
+        "name": "AI RAG Answer",
+        "params": ["credentials", "provider", "model", "question", "context_field"],
+        "credential_specs": [{"param": "credentials", "type": "llm_provider", "key": "*"}],
+    },
+    "ai_tool": {
+        "name": "AI Tool",
+        "params": [
+            "name",
+            "description",
+            "tool_type",
+            "parameters_schema_json",
+            "url",
+            "workflow_id",
+        ],
+    },
+    "ai_agent": {
+        "name": "AI Agent",
+        "params": ["credentials", "provider", "model", "system", "task", "max_steps"],
+        "credential_specs": [{"param": "credentials", "type": "llm_provider", "key": "*"}],
+    },
+    "ai_moderation_guard": {
+        "name": "AI Moderation Guard",
+        "params": ["credentials", "text", "model"],
+        "credential_specs": [{"param": "credentials", "type": "openai", "key": "api_key"}],
+    },
+    "ai_vision_analyze": {
+        "name": "AI Vision Analyze",
+        "params": ["credentials", "model", "prompt", "image_url", "image_base64"],
+        "credential_specs": [{"param": "credentials", "type": "llm_provider", "key": "*"}],
+    },
+    "ai_image_generate": {
+        "name": "AI Image Generate",
+        "params": ["credentials", "prompt", "model", "size", "filename"],
+        "credential_specs": [{"param": "credentials", "type": "openai", "key": "api_key"}],
     },
     "notion_create_page": {
         "name": "Notion Create Page",
@@ -254,19 +365,37 @@ async def _attach_graph_credentials(
     missing: list[str] = []
     for node in graph.nodes:
         spec = _NODE_REGISTRY.get(node.type, {})
-        cred_type = spec.get("credential_type")
-        keys = list(spec.get("credential_keys") or [])
-        if not cred_type or not keys:
+        credential_specs = spec.get("credential_specs")
+        if isinstance(credential_specs, list):
+            entries = [
+                entry
+                for entry in credential_specs
+                if isinstance(entry, dict) and entry.get("type") and entry.get("param")
+            ]
+        else:
+            cred_type = spec.get("credential_type")
+            keys = list(spec.get("credential_keys") or [])
+            entries = [
+                {"type": cred_type, "param": key, "key": key}
+                for key in keys
+                if cred_type and key
+            ]
+        if not entries:
             continue
-        cred = await _find_credential(
-            session,
-            str(cred_type),
-            workflow_id=workflow_id,
-            environment_id=environment_id,
-        )
-        _attach_credential(node.params, keys, cred)
-        if cred is None:
-            missing.append(_credential_label(str(cred_type), keys))
+        for entry in entries:
+            cred_type = str(entry["type"])
+            param_name = str(entry["param"])
+            key = str(entry.get("key") or param_name)
+            cred = await _find_credential(
+                session,
+                cred_type,
+                workflow_id=workflow_id,
+                environment_id=environment_id,
+            )
+            if cred is not None:
+                node.params[param_name] = credential_ref(cred.id, key)
+            else:
+                missing.append(_credential_label(cred_type, [key]))
     return sorted(set(missing))
 
 
@@ -275,6 +404,10 @@ def _credential_label(cred_type: str, keys: list[str]) -> str:
         return "OpenAI API key"
     if cred_type == "anthropic":
         return "Anthropic API key"
+    if cred_type == "llm_provider":
+        return "LLM provider credential"
+    if cred_type == "pinecone":
+        return "Pinecone credentials"
     if cred_type == "slack_bot":
         return "Slack bot token"
     if cred_type == "smtp":
@@ -556,11 +689,25 @@ async def _fallback_result(
         workflow_id=workflow_id,
         environment_id=environment_id,
     )
-    credential_labels = {
-        _credential_label(str(spec.get("credential_type")), list(spec.get("credential_keys") or []))
-        for spec in _NODE_REGISTRY.values()
-        if spec.get("credential_type")
-    }
+    credential_labels: set[str] = set()
+    for spec in _NODE_REGISTRY.values():
+        if spec.get("credential_type"):
+            credential_labels.add(
+                _credential_label(
+                    str(spec.get("credential_type")),
+                    list(spec.get("credential_keys") or []),
+                )
+            )
+        credential_specs = spec.get("credential_specs")
+        if isinstance(credential_specs, list):
+            for entry in credential_specs:
+                if isinstance(entry, dict) and entry.get("type"):
+                    credential_labels.add(
+                        _credential_label(
+                            str(entry.get("type")),
+                            [str(entry.get("key") or "")],
+                        )
+                    )
     other_missing = [item for item in result.missing_credentials if item not in credential_labels]
     result.missing_credentials = sorted(set([*other_missing, *server_missing]))
     return result
@@ -655,32 +802,23 @@ def _fallback_draft(prompt: str) -> _DraftResult:
         previous = "transform"
 
     if wants_openai or wants_anthropic:
-        ai_type = "anthropic_message" if wants_anthropic else "openai_chat"
-        params = (
-            {
-                "api_key": "",
-                "model": "claude-3-5-haiku-latest",
-                "system": "You summarize workflow input clearly for an operations user.",
-                "prompt": "Summarize this event and include the most important next action.",
-                "max_tokens": 1024,
-                "temperature": 0.2,
-            }
-            if wants_anthropic
-            else {
-                "api_key": "",
-                "model": "gpt-4.1-mini",
-                "system": "You summarize workflow input clearly for an operations user.",
-                "prompt": "Summarize this event and include the most important next action.",
-                "temperature": 0.2,
-                "max_tokens": 500,
-            }
-        )
+        provider = "anthropic" if wants_anthropic else "openai"
+        params = {
+            "credentials": "",
+            "provider": provider,
+            "model": "claude-3-5-haiku-latest" if wants_anthropic else "gpt-4.1-mini",
+            "system": "You summarize workflow input clearly for an operations user.",
+            "prompt": "Summarize this event and include the most important next action.",
+            "temperature": 0.2,
+            "max_tokens": 1024 if wants_anthropic else 500,
+            "response_format": "text",
+            "timeout_seconds": 75,
+        }
+        ai_type = "ai_chat"
         nodes.append(_node("summarize", ai_type, 280 + 280 * (len(nodes) - 1), 0, params))
         edges.append(_edge(previous, "summarize"))
         previous = "summarize"
-        missing_credentials.append(
-            "OpenAI API key" if ai_type == "openai_chat" else "Anthropic API key"
-        )
+        missing_credentials.append("LLM provider credential")
 
     if wants_slack:
         slack_params: dict = {

@@ -17,6 +17,7 @@ from typing import Any
 
 import requests
 
+from noodle.artifacts import write_bytes
 from noodle.sdk import node
 from noodle_nodes._creds import cred_multi, cred_single
 
@@ -43,7 +44,7 @@ def _expect_ok(response: requests.Response, service: str) -> dict:
 @node(
     name="OpenAI Embeddings",
     id="openai_embeddings",
-    category="Integrations",
+    category="AI",
     icon="brand:openai",
     params={
         "credentials": {
@@ -75,6 +76,8 @@ def openai_embeddings(
     if not api_key:
         raise ValueError("openai_embeddings: credentials are required")
     payload_text = text or (str(input) if input is not None else "")
+    if not payload_text:
+        raise ValueError("openai_embeddings: text is required")
     response = requests.post(
         "https://api.openai.com/v1/embeddings",
         headers={
@@ -103,7 +106,7 @@ def openai_embeddings(
 @node(
     name="OpenAI Whisper Transcribe",
     id="openai_whisper_transcribe",
-    category="Integrations",
+    category="AI",
     icon="brand:openai",
     params={
         "credentials": {
@@ -153,7 +156,10 @@ def openai_whisper_transcribe(
         encoded = input
     if not encoded:
         raise ValueError("openai_whisper_transcribe: audio is required")
-    audio_bytes = base64.b64decode(encoded)
+    try:
+        audio_bytes = base64.b64decode(encoded, validate=True)
+    except Exception as exc:
+        raise ValueError("openai_whisper_transcribe: audio_base64 is invalid") from exc
     data: dict[str, Any] = {"model": model or "whisper-1"}
     if language:
         data["language"] = language
@@ -175,8 +181,9 @@ def openai_whisper_transcribe(
 @node(
     name="OpenAI Text-to-Speech",
     id="openai_tts",
-    category="Integrations",
+    category="AI",
     icon="brand:openai",
+    output_kinds={"main": "artifact"},
     params={
         "credentials": {
             **cred_single("openai", "api_key", "OpenAI API key"),
@@ -198,6 +205,10 @@ def openai_whisper_transcribe(
             "choices": ["mp3", "opus", "aac", "flac", "wav", "pcm"],
             "description": "Audio container format.",
         },
+        "filename": {
+            "placeholder": "speech.mp3",
+            "description": "Artifact filename for the generated audio.",
+        },
     },
 )
 def openai_tts(
@@ -207,8 +218,9 @@ def openai_tts(
     voice: str = "alloy",
     model: str = "tts-1",
     response_format: str = "mp3",
+    filename: str = "speech.mp3",
 ) -> dict:
-    """Synthesize speech with OpenAI; returns base64-encoded audio bytes."""
+    """Synthesize speech with OpenAI and store audio as an artifact."""
     api_key = credentials
     if not api_key:
         raise ValueError("openai_tts: credentials are required")
@@ -232,11 +244,18 @@ def openai_tts(
     if response.status_code >= 400:
         body = response.text[:500]
         raise RuntimeError(f"openai_tts: HTTP {response.status_code} — {body}")
-    return {
-        "audio_base64": base64.b64encode(response.content).decode("ascii"),
-        "content_type": response.headers.get("content-type", "audio/mpeg"),
-        "size_bytes": len(response.content),
-    }
+    content_type = response.headers.get("content-type", "audio/mpeg")
+    ext = response_format or "mp3"
+    artifact_name = filename or f"speech.{ext}"
+    if "." not in artifact_name:
+        artifact_name = f"{artifact_name}.{ext}"
+    return write_bytes(
+        response.content,
+        name=artifact_name,
+        content_type=content_type,
+        kind="audio",
+        metadata={"model": model or "tts-1", "voice": voice or "alloy"},
+    )
 
 
 # ============================================================================
@@ -247,7 +266,7 @@ def openai_tts(
 @node(
     name="Cohere Embed",
     id="cohere_embed",
-    category="Integrations",
+    category="AI",
     icon="brand:cohere",
     params={
         "credentials": {
@@ -289,6 +308,8 @@ def cohere_embed(
     if not api_key:
         raise ValueError("cohere_embed: credentials are required")
     payload_text = text or (str(input) if input is not None else "")
+    if not payload_text:
+        raise ValueError("cohere_embed: text is required")
     response = requests.post(
         "https://api.cohere.ai/v1/embed",
         headers={
@@ -319,7 +340,7 @@ def cohere_embed(
 @node(
     name="DeepL Translate",
     id="deepl_translate",
-    category="Integrations",
+    category="AI",
     icon="brand:deepl",
     params={
         "credentials": {
@@ -389,7 +410,7 @@ def deepl_translate(
 @node(
     name="Pinecone Upsert",
     id="pinecone_upsert",
-    category="Integrations",
+    category="AI",
     icon="brand:pinecone",
     params={
         "credentials": {
@@ -437,10 +458,17 @@ def pinecone_upsert(
             "pinecone_upsert: credentials (api_key + index_host) and "
             "vector_id are required"
         )
-    try:
-        values = json_mod.loads(values_json) if values_json else []
-    except json_mod.JSONDecodeError as exc:
-        raise ValueError(f"pinecone_upsert: values_json invalid: {exc}") from exc
+    if values_json:
+        try:
+            values = json_mod.loads(values_json)
+        except json_mod.JSONDecodeError as exc:
+            raise ValueError(f"pinecone_upsert: values_json invalid: {exc}") from exc
+    elif isinstance(input, list):
+        values = input
+    elif isinstance(input, dict) and isinstance(input.get("embedding"), list):
+        values = input["embedding"]
+    else:
+        values = []
     if not isinstance(values, list) or not values:
         raise ValueError("pinecone_upsert: values_json must be a non-empty array")
     metadata = {}
@@ -451,6 +479,8 @@ def pinecone_upsert(
             raise ValueError(
                 f"pinecone_upsert: metadata_json invalid: {exc}"
             ) from exc
+    elif isinstance(input, dict) and isinstance(input.get("metadata"), dict):
+        metadata = input["metadata"]
     vector = {"id": vector_id, "values": values}
     if metadata:
         vector["metadata"] = metadata
@@ -466,7 +496,7 @@ def pinecone_upsert(
 @node(
     name="Pinecone Query",
     id="pinecone_query",
-    category="Integrations",
+    category="AI",
     icon="brand:pinecone",
     params={
         "credentials": {

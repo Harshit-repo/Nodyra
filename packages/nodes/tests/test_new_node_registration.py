@@ -14,7 +14,7 @@ import pytest
 
 import noodle_nodes  # noqa: F401 - registers nodes
 from noodle.sdk import registry
-from noodle_nodes import ai_extra, cloud_devops, communication, saas, storage
+from noodle_nodes import ai_extra, cloud_devops, communication, llm, saas, storage
 
 BRAND_NODE_IDS = {
     # Communication (Integrations)
@@ -33,14 +33,16 @@ BRAND_NODE_IDS = {
     "zoom_create_meeting": ("brand:zoom", "Integrations"),
     "mailchimp_add_subscriber": ("brand:mailchimp", "Integrations"),
     "shopify_list_orders": ("brand:shopify", "Integrations"),
-    # AI/ML (Integrations)
-    "openai_embeddings": ("brand:openai", "Integrations"),
-    "openai_whisper_transcribe": ("brand:openai", "Integrations"),
-    "openai_tts": ("brand:openai", "Integrations"),
-    "cohere_embed": ("brand:cohere", "Integrations"),
-    "deepl_translate": ("brand:deepl", "Integrations"),
-    "pinecone_upsert": ("brand:pinecone", "Integrations"),
-    "pinecone_query": ("brand:pinecone", "Integrations"),
+    # AI
+    "openai_embeddings": ("brand:openai", "AI"),
+    "openai_whisper_transcribe": ("brand:openai", "AI"),
+    "openai_tts": ("brand:openai", "AI"),
+    "cohere_embed": ("brand:cohere", "AI"),
+    "deepl_translate": ("brand:deepl", "AI"),
+    "pinecone_upsert": ("brand:pinecone", "AI"),
+    "pinecone_query": ("brand:pinecone", "AI"),
+    "ai_batch_embeddings": ("brand:openai", "AI"),
+    "ai_vector_retriever": ("brand:pinecone", "AI"),
     # Storage / DB (Integrations)
     "mongodb_query": ("brand:mongodb", "Integrations"),
     "redis_command": ("brand:redis", "Integrations"),
@@ -100,6 +102,16 @@ def test_brand_nodes_registered_with_brand_icon() -> None:
         ai_extra.deepl_translate,
         ai_extra.pinecone_upsert,
         ai_extra.pinecone_query,
+        llm.ai_chat,
+        llm.ai_structured_output,
+        llm.ai_batch_embeddings,
+        llm.ai_dataset_map,
+        llm.ai_vector_retriever,
+        llm.ai_rag_answer,
+        llm.ai_agent,
+        llm.ai_moderation_guard,
+        llm.ai_vision_analyze,
+        llm.ai_image_generate,
         # Storage / DB
         storage.mongodb_query,
         storage.redis_command,

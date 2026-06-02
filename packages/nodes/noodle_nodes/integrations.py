@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import quote
 
 from noodle.sdk import node
+from noodle_nodes.llm import AI_CATEGORY, _normalize_anthropic, _normalize_openai
 
 
 def _json_or_text(response: Any) -> Any:
@@ -773,7 +774,7 @@ def s3_get_object(
 @node(
     name="OpenAI Chat",
     id="openai_chat",
-    category="Integrations",
+    category=AI_CATEGORY,
     icon="ai",
     params={
         "api_key": {
@@ -785,6 +786,7 @@ def s3_get_object(
         "prompt": {"multiline": True, "description": "User prompt. Blank uses input."},
         "temperature": {"description": "Sampling temperature."},
         "max_tokens": {"description": "Optional response token limit."},
+        "include_raw": {"description": "Include the raw provider response."},
     },
 )
 def openai_chat(
@@ -795,8 +797,11 @@ def openai_chat(
     prompt: str = "",
     temperature: float = 0.2,
     max_tokens: int | None = None,
+    include_raw: bool = False,
 ) -> Any:
     """Call OpenAI's chat completions API."""
+    if not api_key:
+        raise ValueError("openai_chat: api_key is required")
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
@@ -808,18 +813,25 @@ def openai_chat(
     }
     if max_tokens:
         payload["max_tokens"] = int(max_tokens)
-    return _request_json(
+    raw = _request_json(
         "POST",
         "https://api.openai.com/v1/chat/completions",
         headers=_with_json(_bearer(api_key)),
         json_body=payload,
     )
+    if not isinstance(raw, dict):
+        raise RuntimeError("openai_chat: expected JSON object response")
+    out = _normalize_openai(raw)
+    out["provider"] = "openai"
+    if include_raw:
+        out["raw"] = raw
+    return out
 
 
 @node(
     name="Anthropic Message",
     id="anthropic_message",
-    category="Integrations",
+    category=AI_CATEGORY,
     icon="ai",
     params={
         "api_key": {
@@ -831,6 +843,7 @@ def openai_chat(
         "prompt": {"multiline": True, "description": "User prompt. Blank uses input."},
         "max_tokens": {"description": "Maximum output tokens."},
         "temperature": {"description": "Sampling temperature."},
+        "include_raw": {"description": "Include the raw provider response."},
     },
 )
 def anthropic_message(
@@ -841,8 +854,11 @@ def anthropic_message(
     prompt: str = "",
     max_tokens: int = 1024,
     temperature: float = 0.2,
+    include_raw: bool = False,
 ) -> Any:
     """Call Anthropic's Messages API."""
+    if not api_key:
+        raise ValueError("anthropic_message: api_key is required")
     payload: dict[str, Any] = {
         "model": model,
         "max_tokens": int(max_tokens),
@@ -851,7 +867,7 @@ def anthropic_message(
     }
     if system:
         payload["system"] = system
-    return _request_json(
+    raw = _request_json(
         "POST",
         "https://api.anthropic.com/v1/messages",
         headers=_with_json(
@@ -862,6 +878,13 @@ def anthropic_message(
         ),
         json_body=payload,
     )
+    if not isinstance(raw, dict):
+        raise RuntimeError("anthropic_message: expected JSON object response")
+    out = _normalize_anthropic(raw)
+    out["provider"] = "anthropic"
+    if include_raw:
+        out["raw"] = raw
+    return out
 
 
 @node(

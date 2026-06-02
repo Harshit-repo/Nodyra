@@ -159,8 +159,8 @@ async def test_ai_builder_returns_and_applies_editable_graph(
     ).json()
 
     node_types = [node["type"] for node in response["graph"]["nodes"]]
-    assert node_types == ["webhook_trigger", "openai_chat", "slack_send_message"]
-    assert "OpenAI API key" in response["missing_credentials"]
+    assert node_types == ["webhook_trigger", "ai_chat", "slack_send_message"]
+    assert "LLM provider credential" in response["missing_credentials"]
     assert "Slack bot token" in response["missing_credentials"]
 
     workflow = (await client.get(f"/workflows/{workflow_id}")).json()
@@ -172,14 +172,14 @@ async def test_ai_builder_attaches_existing_credentials(
     client: AsyncClient,
 ) -> None:
     workflow_id = (await client.post("/workflows", json={"name": "AI with creds"})).json()["id"]
-    openai_cred = (
+    llm_cred = (
         await client.post(
             "/credentials",
             json={
-                "name": "OpenAI",
-                "type": "openai",
+                "name": "OpenAI LLM",
+                "type": "llm_provider",
                 "scope": "global",
-                "data": {"api_key": "sk-test"},
+                "data": {"provider": "openai", "api_key": "sk-test"},
             },
         )
     ).json()
@@ -205,13 +205,13 @@ async def test_ai_builder_attaches_existing_credentials(
     ).json()
 
     nodes = {node["id"]: node for node in response["graph"]["nodes"]}
-    summarize_key = nodes["summarize"]["params"]["api_key"]
+    summarize_key = nodes["summarize"]["params"]["credentials"]
     slack_token = nodes["notify_slack"]["params"]["bot_token"]
 
     assert summarize_key == {
         "__noodle_credential__": True,
-        "id": openai_cred["id"],
-        "key": "api_key",
+        "id": llm_cred["id"],
+        "key": "*",
     }
     assert slack_token == {
         "__noodle_credential__": True,
@@ -225,14 +225,14 @@ async def test_ai_builder_skips_attach_when_credential_ambiguous(
     client: AsyncClient,
 ) -> None:
     workflow_id = (await client.post("/workflows", json={"name": "AI"})).json()["id"]
-    for name in ("Prod OpenAI", "Dev OpenAI"):
+    for name in ("Prod LLM", "Dev LLM"):
         await client.post(
             "/credentials",
             json={
                 "name": name,
-                "type": "openai",
+                "type": "llm_provider",
                 "scope": "global",
-                "data": {"api_key": "sk-test"},
+                "data": {"provider": "openai", "api_key": "sk-test"},
             },
         )
 
@@ -244,8 +244,8 @@ async def test_ai_builder_skips_attach_when_credential_ambiguous(
     ).json()
 
     summarize = next(node for node in response["graph"]["nodes"] if node["id"] == "summarize")
-    assert summarize["params"]["api_key"] == ""
-    assert "OpenAI API key" in response["missing_credentials"]
+    assert summarize["params"]["credentials"] == ""
+    assert "LLM provider credential" in response["missing_credentials"]
 
 
 async def test_ai_builder_uses_llm_planner_when_available(
@@ -341,7 +341,7 @@ async def test_ai_builder_invalid_llm_output_falls_back(
     ).json()
 
     assert response["planner"] == "deterministic_fallback"
-    assert any(node["type"] == "openai_chat" for node in response["graph"]["nodes"])
+    assert any(node["type"] == "ai_chat" for node in response["graph"]["nodes"])
     assert any("LLM planner output was invalid" in item for item in response["assumptions"])
 
 
