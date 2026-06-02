@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { webhookHiddenParam, webhookParamLabel } from "./NodeDetails";
+import {
+  webhookAdvancedParam,
+  webhookHiddenParam,
+  webhookParamLabel,
+} from "./NodeDetails";
 
 const ID = "webhook_trigger";
 
@@ -71,6 +75,43 @@ describe("webhookHiddenParam — conditional Unit-2 fields", () => {
 
   it("leaves non-webhook manifests untouched", () => {
     expect(webhookHiddenParam("code", "dedup_key", {})).toBe(false);
+  });
+});
+
+describe("webhookAdvancedParam — optional/advanced grouping", () => {
+  it("classifies security/idempotency/body/response fields as advanced", () => {
+    for (const name of [
+      "hmac_verification",
+      "hmac_header",
+      "ip_allowlist",
+      "trust_proxy",
+      "dedup",
+      "dedup_key",
+      "raw_body",
+      "response_data",
+      "response_body",
+      "response_headers",
+    ]) {
+      expect(webhookAdvancedParam(ID, name)).toBe(true);
+    }
+  });
+
+  it("keeps core fields out of the advanced group", () => {
+    for (const name of [
+      "http_method",
+      "path",
+      "response_mode",
+      "response_code",
+      "auth_type",
+      "auth_credentials",
+      "auth_jwt_header",
+    ]) {
+      expect(webhookAdvancedParam(ID, name)).toBe(false);
+    }
+  });
+
+  it("never marks non-webhook params as advanced", () => {
+    expect(webhookAdvancedParam("code", "ip_allowlist")).toBe(false);
   });
 });
 

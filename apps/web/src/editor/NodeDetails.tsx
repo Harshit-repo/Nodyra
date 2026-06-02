@@ -1570,6 +1570,33 @@ export function webhookParamLabel(
   return WEBHOOK_LABEL_OVERRIDES[paramName] ?? null;
 }
 
+// Optional webhook options that live behind a collapsed "Advanced options"
+// disclosure in the NDV, so the default view stays focused on method/path/
+// auth/response basics. Their dependent fields (hmac_header, dedup_key, …) are
+// part of the same group.
+const WEBHOOK_ADVANCED_PARAMS = new Set([
+  "hmac_verification",
+  "hmac_header",
+  "hmac_algorithm",
+  "hmac_prefix",
+  "ip_allowlist",
+  "trust_proxy",
+  "dedup",
+  "dedup_key",
+  "raw_body",
+  "response_data",
+  "response_body",
+  "response_headers",
+]);
+
+export function webhookAdvancedParam(
+  manifestId: string,
+  paramName: string,
+): boolean {
+  if (manifestId !== "webhook_trigger") return false;
+  return WEBHOOK_ADVANCED_PARAMS.has(paramName);
+}
+
 export function webhookHiddenParam(
   manifestId: string,
   paramName: string,

@@ -1411,6 +1411,9 @@ body.is-resizing-vertical {
   line-height: 1.25;
   color: var(--ink);
 }
+.node.has-bottom-inputs .node-label {
+  margin-top: 13px;
+}
 .node-error-callout {
   position: absolute;
   bottom: -30px;
@@ -1469,11 +1472,23 @@ body.is-resizing-vertical {
 .react-flow__handle-right {
   right: -5px;
 }
+.react-flow__handle-bottom {
+  bottom: -5px;
+}
 .react-flow__handle:hover {
   border-color: var(--accent);
 }
 .react-flow__handle.handle-dataset {
   box-shadow: 0 0 0 3px rgba(124, 92, 255, 0.18);
+}
+.react-flow__handle.handle-ai-model {
+  box-shadow: 0 0 0 3px rgba(110, 168, 255, 0.2);
+}
+.react-flow__handle.handle-ai-memory {
+  box-shadow: 0 0 0 3px rgba(87, 201, 138, 0.2);
+}
+.react-flow__handle.handle-ai-tools {
+  box-shadow: 0 0 0 3px rgba(246, 180, 75, 0.2);
 }
 .port-tag-dataset {
   color: #c9bdff;
@@ -1636,6 +1651,33 @@ body.is-resizing-vertical {
 .webhook-panel {
   border-top: 1px solid var(--line-2);
 }
+/* Collapsed "Advanced options" disclosure for optional node fields. */
+.ndv-advanced {
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.ndv-advanced > summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted, var(--accent));
+  list-style: none;
+  user-select: none;
+  padding: 4px 0;
+}
+.ndv-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+.ndv-advanced > summary::before {
+  content: "▸ ";
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+.ndv-advanced[open] > summary::before {
+  content: "▾ ";
+}
+
 .webhook-url {
   display: flex;
   align-items: center;

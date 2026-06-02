@@ -8,6 +8,7 @@ import {
   WebhookPanel,
   WEBHOOK_AUTH_TYPE_OPTIONS,
   formatParamLabel,
+  webhookAdvancedParam,
   webhookCredentialSpec,
   webhookHiddenParam,
   webhookParamLabel,
@@ -74,9 +75,8 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
       {manifest.params.length === 0 && (
         <p className="muted">This node has no parameters.</p>
       )}
-      {manifest.params
-        .filter((spec) => !webhookHiddenParam(manifest.id, spec.name, params))
-        .map((spec) => {
+      {(() => {
+        const renderField = (spec: (typeof manifest.params)[number]) => {
           const value = params[spec.name];
           const displayLabel =
             webhookParamLabel(manifest.id, spec.name, params) ??
@@ -132,7 +132,34 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
               )}
             </div>
           );
-        })}
+        };
+
+        const visible = manifest.params.filter(
+          (spec) => !webhookHiddenParam(manifest.id, spec.name, params),
+        );
+        const core = visible.filter(
+          (spec) => !webhookAdvancedParam(manifest.id, spec.name),
+        );
+        const advanced = visible.filter((spec) =>
+          webhookAdvancedParam(manifest.id, spec.name),
+        );
+
+        return (
+          <>
+            {core.map(renderField)}
+            {advanced.length > 0 && (
+              <details className="ndv-advanced">
+                <summary>Advanced options</summary>
+                <p className="field-desc">
+                  Security, idempotency, raw-body capture and response shaping —
+                  all optional.
+                </p>
+                {advanced.map(renderField)}
+              </details>
+            )}
+          </>
+        );
+      })()}
     </>
   );
 }
