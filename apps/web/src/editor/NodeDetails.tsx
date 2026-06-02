@@ -1676,13 +1676,23 @@ export function WebhookPanel({
       <div className="webhook-listen">
         {!listening ? (
           <button className="btn btn-sm" onClick={() => void listen()}>
-            Listen for test event
+            ▶ Listen for test event
           </button>
         ) : (
-          <button className="btn btn-sm btn-listening" onClick={stop}>
-            <span className="node-spinner" />
-            Listening… (Stop)
-          </button>
+          <div className="webhook-listening">
+            <div className="webhook-waves" aria-hidden="true">
+              <span className="webhook-wave" />
+              <span className="webhook-wave" />
+              <span className="webhook-wave" />
+              <span className="webhook-wave-dot" />
+            </div>
+            <p className="webhook-listening-label">
+              Listening for a test event…
+            </p>
+            <button className="btn btn-sm" onClick={stop}>
+              Stop
+            </button>
+          </div>
         )}
         {received && (
           <span className="muted">Request captured — see Output panel.</span>
