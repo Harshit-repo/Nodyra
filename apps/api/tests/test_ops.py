@@ -1,6 +1,23 @@
 from httpx import AsyncClient
 
 
+async def _seed_parents(session, workflow_id: str, run_ids: list[str]) -> None:
+    """Create the parent ``Workflow`` and ``Run`` rows a ``RunQueueEntry``
+    references, so its FK (``run_queue.run_id`` -> ``runs.id``) is satisfied.
+
+    SQLite ignores FKs by default, so orphan queue rows slipped through there;
+    Postgres enforces them and rejects the insert. Seeding the parents keeps the
+    tests honest on both backends.
+    """
+    from app.models import Run, Workflow
+
+    session.add(Workflow(id=workflow_id, name=f"wf-{workflow_id}"))
+    await session.flush()
+    for rid in run_ids:
+        session.add(Run(id=rid, workflow_id=workflow_id, status="queued"))
+    await session.flush()
+
+
 async def test_system_status(client: AsyncClient) -> None:
     resp = await client.get("/system/status")
     assert resp.status_code == 200
@@ -71,6 +88,7 @@ async def test_queue_stats_reflects_queue_entries(client: AsyncClient) -> None:
 
     override = fastapi_app.dependency_overrides[get_session]
     async for session in override():
+        await _seed_parents(session, "wf", ["r1", "r2", "r3"])
         session.add(RunQueueEntry(run_id="r1", workflow_id="wf", status="queued"))
         session.add(
             RunQueueEntry(run_id="r2", workflow_id="wf", status="leased", attempts=1)
@@ -125,6 +143,7 @@ async def _seed_dead_letter(run_ids: list[str]) -> None:
 
     override = fastapi_app.dependency_overrides[get_session]
     async for session in override():
+        await _seed_parents(session, "wf-dlq", run_ids)
         for rid in run_ids:
             session.add(
                 RunQueueEntry(
@@ -166,10 +185,11 @@ async def test_dead_letter_list_returns_dead_lettered_entries(
 
 
 async def test_dead_letter_replay_bulk_resets_entries(client: AsyncClient) -> None:
+    from sqlalchemy import select
+
     from app.db import get_session
     from app.main import app as fastapi_app
     from app.models import RunQueueEntry
-    from sqlalchemy import select
 
     await _seed_dead_letter(["dl-a", "dl-b"])
 

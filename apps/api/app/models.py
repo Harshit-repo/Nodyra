@@ -17,9 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     false,
     func,
-)
-from sqlalchemy import (
-    text as sa_text,
+    true,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -182,7 +180,11 @@ class Workflow(Base):
     )
     error_alerts: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     allow_concurrent: Mapped[bool] = mapped_column(
-        Boolean, default=True, nullable=False, server_default=sa_text("1")
+        # ``true()`` renders the dialect-correct literal (``true`` on Postgres,
+        # ``1`` on SQLite). A bare ``sa_text("1")`` is rejected by Postgres:
+        # "column is of type boolean but default expression is of type integer"
+        # — matches migration 0023's ``server_default=sa.text("true")``.
+        Boolean, default=True, nullable=False, server_default=true()
     )
     # Per-workflow wall-clock cap (seconds) for a single run. NULL falls back
     # to ``settings.workflow_run_timeout_seconds``; 0 means no cap.

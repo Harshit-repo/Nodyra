@@ -23,6 +23,7 @@ broker falls back silently to the pure in-process implementation.  Set
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -48,7 +49,39 @@ class RunBroker:
         self._events: dict[str, list[Event]] = {}
         self._subscribers: dict[str, set[asyncio.Queue[Event]]] = {}
         self._finished: dict[str, float] = {}
-        self._redis_ok: bool = True  # set False if Redis ping fails on first use
+        # Transport is pinned ONCE by ``connect()`` (called from app startup),
+        # not probed per call. ``publish()`` and ``subscribe()`` then always
+        # agree on where events live. The old per-call Redis probe could
+        # split-brain: a *synchronous* publish (no running loop) buffered the
+        # event in-process while an *async* subscribe saw Redis was reachable
+        # and blocked on its pub/sub channel forever waiting for an event that
+        # never arrived there. Defaulting to ``"inprocess"`` makes a bare
+        # ``RunBroker()`` (unit tests, single-process dev) fully deterministic
+        # and Redis-independent; production calls ``connect()`` to opt into the
+        # shared Redis transport that fans out across replicas.
+        self._mode: str = "inprocess"
+        self._redis: Any = None
+
+    async def connect(self) -> str:
+        """Probe Redis once and pin the broker transport. Call from the app
+        lifespan on startup. Idempotent and safe when Redis is absent: the
+        broker then stays in in-process mode (dev / single replica / tests).
+
+        Returns the chosen mode (``"redis"`` or ``"inprocess"``) so startup can
+        log it.
+        """
+        try:
+            from app.redis_client import redis_client  # local import: avoid cycle
+            await redis_client.ping()
+        except Exception:
+            self._mode = "inprocess"
+            self._redis = None
+            logger.warning("Redis unavailable — using in-process event broker")
+            return self._mode
+        self._redis = redis_client
+        self._mode = "redis"
+        logger.info("Run-event broker using Redis transport")
+        return self._mode
 
     # ------------------------------------------------------------------
     # Helpers
@@ -60,41 +93,38 @@ class RunBroker:
     def _history_key(self, run_id: str) -> str:
         return f"{_CHANNEL_PREFIX}{run_id}{_HISTORY_SUFFIX}"
 
-    async def _get_redis(self):  # type: ignore[return]
-        """Return the app-wide Redis client, or None if unavailable."""
-        if not self._redis_ok:
-            return None
-        try:
-            from app.redis_client import redis_client  # local import to avoid circular
-            await redis_client.ping()
-            return redis_client
-        except Exception:
-            self._redis_ok = False
-            logger.warning("Redis unavailable — falling back to in-process event broker")
-            return None
-
     # ------------------------------------------------------------------
     # Publish
     # ------------------------------------------------------------------
 
     def publish(self, run_id: str, event: Event) -> None:
-        """Publish an event (usually from an async engine context).
+        """Publish an event for ``run_id``.
 
-        Redis fan-out needs a running event loop. When called without one
-        (synchronous callers and tests), fall back to synchronous in-process
-        buffering so subscribers and the reaper still observe the event
-        instead of raising ``RuntimeError: no running event loop``.
+        Transport follows the pinned ``self._mode`` so it can never diverge
+        from what ``subscribe()`` reads:
+
+        - in-process mode → buffer synchronously.
+        - Redis mode + a running loop (the production path: every publisher
+          runs inside the engine's async context) → schedule the async Redis
+          publish on that loop.
+        - Redis mode + *no* running loop (a synchronous caller after
+          ``connect()``; not hit in production) → do a one-shot Redis publish
+          so the event still reaches Redis subscribers instead of being
+          silently buffered where no Redis subscriber would ever look.
         """
+        if self._mode != "redis" or self._redis is None:
+            self._publish_inprocess(run_id, event)
+            return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            self._publish_inprocess(run_id, event)
+            asyncio.run(self._publish_oneshot(run_id, event))
             return
         loop.create_task(self._async_publish(run_id, event))
 
     async def _async_publish(self, run_id: str, event: Event) -> None:
         payload = json.dumps(event)
-        r = await self._get_redis()
+        r = self._redis
         if r is not None:
             try:
                 pipe = r.pipeline()
@@ -109,6 +139,32 @@ class RunBroker:
         # Fallback: in-process
         self._publish_inprocess(run_id, event)
 
+    async def _publish_oneshot(self, run_id: str, event: Event) -> None:
+        """Publish a single event over a short-lived Redis connection.
+
+        Used only when a synchronous caller publishes in Redis mode (no running
+        loop to reuse the shared, loop-bound client). Rare and non-production;
+        kept correct so the broker never splits its transport.
+        """
+        import redis.asyncio as aioredis
+
+        from app.config import settings
+
+        client = aioredis.from_url(settings.redis_url)
+        try:
+            payload = json.dumps(event)
+            pipe = client.pipeline()
+            pipe.rpush(self._history_key(run_id), payload)
+            pipe.expire(self._history_key(run_id), RUN_EVENT_TTL_SECONDS)
+            pipe.publish(self._channel(run_id), payload)
+            await pipe.execute()
+        except Exception:
+            logger.exception("Redis one-shot publish failed for run %s", run_id)
+            self._publish_inprocess(run_id, event)
+        finally:
+            with contextlib.suppress(Exception):
+                await client.aclose()
+
     def _publish_inprocess(self, run_id: str, event: Event) -> None:
         self._events.setdefault(run_id, []).append(event)
         for queue in self._subscribers.get(run_id, set()):
@@ -121,13 +177,12 @@ class RunBroker:
     # ------------------------------------------------------------------
 
     async def subscribe(self, run_id: str) -> AsyncIterator[Event]:
-        r = await self._get_redis()
-        if r is not None:
-            async for event in self._redis_subscribe(run_id, r):
+        if self._mode == "redis" and self._redis is not None:
+            async for event in self._redis_subscribe(run_id, self._redis):
                 yield event
             return
 
-        # Fallback: in-process
+        # In-process (default until ``connect()`` pins Redis).
         async for event in self._inprocess_subscribe(run_id):
             yield event
 

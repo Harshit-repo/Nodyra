@@ -172,6 +172,13 @@ async def lifespan(app: FastAPI):
         if settings.use_subprocess_runner and settings.runner_idle_seconds > 0
         else None
     )
+    # Pin the run-event broker transport once: Redis (fans out across
+    # replicas) when reachable, else the in-process buffer. Doing this at
+    # startup — rather than probing Redis on every publish/subscribe — is what
+    # stops publish() and subscribe() from ever choosing different transports.
+    from app.services.events import broker as event_broker
+
+    await event_broker.connect()
     # Broker reaper: every replica owns its own pub/sub buffer, so it
     # always runs (independent of the scheduler flag).
     broker_reaper = asyncio.create_task(broker_reaper_loop())

@@ -1,5 +1,14 @@
 # Deployment
 
+> **⚠️ Trust boundary — read before exposing Noodle.** Workflow Code nodes and
+> uploaded code modules run **arbitrary Python in the worker process on the
+> Noodle host**. Deploy Noodle for **single-tenant, trusted authors** only:
+> put it behind authentication, restrict edit/deploy access to people you trust
+> to run code on the host, and never offer it as a multi-tenant builder to
+> untrusted users. Multi-tenant isolation (containers / gVisor / Firecracker per
+> run) is a planned capability of the remote-runner seam, not something the warm
+> local pools provide today. See [SECURITY.md](../SECURITY.md).
+
 ## Local development
 
 ```sh

@@ -5,6 +5,7 @@ on:
   pull_request:
 
 jobs:
+  # Fast default lane: lint + full suite on SQLite (no external services).
   python:
     runs-on: ubuntu-latest
     steps:
@@ -14,7 +15,72 @@ jobs:
           python-version: "3.12"
       - run: uv sync --all-packages
       - run: uv run ruff check .
-      - run: uv run pytest
+      # --timeout guards against a hung test wedging the whole run (see the
+      # event-broker fix); 300s is generous for the subprocess-spawning tests.
+      - run: uv run pytest --timeout=300 --timeout-method=thread
+
+  # Real-backend lane: runs the suite against Postgres + Redis so behaviour that
+  # SQLite can't model is actually exercised:
+  #   * the durable run queue's SELECT ... FOR UPDATE SKIP LOCKED lease path
+  #     (SQLite has no row locking, so the concurrency guarantee is untested
+  #     there);
+  #   * Postgres type/constraint strictness (boolean server defaults, foreign
+  #     key enforcement — SQLite leaves FKs off by default);
+  #   * a real runtime subprocess executing a workflow end to end.
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: noodle
+          POSTGRES_PASSWORD: noodle
+          POSTGRES_DB: noodle
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U noodle"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NOODLE_TEST_DATABASE_URL: postgresql+asyncpg://noodle:noodle@localhost:5432/noodle
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages
+
+      # REQUIRED — verified green on Postgres. Gates the lane.
+      #   * test_run_queue: the durable queue incl. the Postgres-only
+      #     SKIP LOCKED lease path (the crown jewel that SQLite can't cover).
+      #   * packages/runtime: spawns the `noodle_runtime` subprocess and runs a
+      #     real workflow graph through it end to end.
+      - name: Postgres queue + real subprocess (required)
+        run: >-
+          uv run pytest --timeout=300 --timeout-method=thread
+          apps/api/tests/test_run_queue.py
+          packages/runtime/tests
+
+      # ADVISORY — the full API suite on Postgres. Surfaces remaining
+      # cross-backend gaps being hardened (orphan-row FK violations in a few
+      # ops/AI tests, async-dispatch ordering sensitivity). Non-blocking so it
+      # reports without gating merges; remove continue-on-error once green.
+      - name: Full API suite on Postgres (advisory)
+        continue-on-error: true
+        run: >-
+          uv run pytest --timeout=300 --timeout-method=thread apps/api/tests
 
   web:
     runs-on: ubuntu-latest
