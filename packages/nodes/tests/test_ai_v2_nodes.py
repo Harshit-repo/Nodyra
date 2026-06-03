@@ -38,6 +38,7 @@ from noodle.context import node_debug, workflow_caller
 from noodle.engine import execute
 from noodle.models import Edge, GraphNode, WorkflowGraph
 from noodle.sdk import NodeRegistry, node, registry
+from noodle_nodes.ai_v2.agents import _session_id, _task_text
 
 # ---------------------------------------------------------------------------
 # Registration + typed ports
@@ -934,9 +935,6 @@ def test_guardrail_passes_clean_response() -> None:
 # ---------------------------------------------------------------------------
 # _task_text / _session_id — Chat Trigger key recognition
 # ---------------------------------------------------------------------------
-
-
-from noodle_nodes.ai_v2.agents import _session_id, _task_text
 
 
 def test_task_text_reads_chat_input_key() -> None:
