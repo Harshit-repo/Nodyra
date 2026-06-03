@@ -416,6 +416,22 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  testCredentialDraft: (body: {
+    type: string;
+    data: Record<string, string>;
+    context?: Record<string, unknown>;
+  }) =>
+    request<CredentialTestResponse>("/credentials/test-draft", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  dynamicOptions: (loaderId: string, params: Record<string, string> = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request<{
+      loader_id: string;
+      options: { value: string; label: string; description?: string }[];
+    }>(`/nodes/dynamic-options/${loaderId}${qs ? `?${qs}` : ""}`);
+  },
   refreshCredential: (id: string) =>
     request<Credential>(`/credentials/${id}/refresh`, { method: "POST" }),
   deleteCredential: (id: string) =>

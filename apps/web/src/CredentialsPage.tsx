@@ -2,6 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "./api";
 import { HomeHeader } from "./HomeHeader";
+import {
+  LLM_PROVIDER_VARIANTS,
+  getLlmVariant,
+  visibleCredentialFields,
+} from "./llmProviders";
 import { useToast } from "./ToastProvider";
 import type { Credential, CredentialTestResponse, CredentialTypeInfo } from "./types";
 
@@ -79,61 +84,17 @@ const CREDENTIAL_PRESETS: CredentialPreset[] = [
     summary: "Use AI Chat, agents, RAG, and structured-output nodes.",
     description:
       "Stores a provider API key plus optional OpenRouter, OpenAI-compatible, or Azure OpenAI endpoint details.",
+    // Only `provider` lives in the preset; the rest of the fields are rendered
+    // provider-aware at form time (see `visibleCredentialFields`). `submit`
+    // also special-cases llm_provider so only the chosen provider's fields are
+    // persisted.
     fields: [
       {
         key: "provider",
         label: "Provider",
         kind: "select",
         defaultValue: "openai",
-        options: [
-          { label: "OpenAI", value: "openai" },
-          { label: "Anthropic", value: "anthropic" },
-          { label: "OpenRouter", value: "openrouter" },
-          { label: "OpenAI-compatible", value: "openai_compatible" },
-          { label: "Ollama", value: "ollama" },
-          { label: "Azure OpenAI", value: "azure_openai" },
-        ],
-      },
-      {
-        key: "api_key",
-        label: "API key",
-        placeholder: "Paste provider key",
-        kind: "password",
-      },
-      {
-        key: "base_url",
-        label: "Base URL",
-        placeholder: "https://openrouter.ai/api/v1 or http://localhost:11434/v1",
-      },
-      {
-        key: "site_url",
-        label: "Site URL",
-        placeholder: "Optional OpenRouter HTTP-Referer",
-      },
-      {
-        key: "app_name",
-        label: "App name",
-        placeholder: "Optional OpenRouter X-Title",
-      },
-      {
-        key: "organization",
-        label: "Organization",
-        placeholder: "Optional OpenAI organization",
-      },
-      {
-        key: "azure_endpoint",
-        label: "Azure endpoint",
-        placeholder: "https://resource.openai.azure.com",
-      },
-      {
-        key: "azure_api_version",
-        label: "Azure API version",
-        placeholder: "2024-02-15-preview",
-      },
-      {
-        key: "deployment",
-        label: "Deployment",
-        placeholder: "Azure deployment name",
+        options: LLM_PROVIDER_VARIANTS.map((v) => ({ label: v.label, value: v.value })),
       },
     ],
   },
@@ -479,6 +440,19 @@ const CREDENTIAL_PRESETS: CredentialPreset[] = [
 
 const PRESET_BY_TYPE = new Map(CREDENTIAL_PRESETS.map((preset) => [preset.type, preset]));
 
+// Field definitions for the provider-aware llm_provider form. Which of these
+// are shown is decided per provider by `visibleCredentialFields`.
+const LLM_FIELD_DEFS: Record<string, CredentialFormField> = {
+  api_key: { key: "api_key", label: "API key", kind: "password", placeholder: "Paste provider key" },
+  base_url: { key: "base_url", label: "Base URL", placeholder: "https://…" },
+  organization: { key: "organization", label: "Organization", placeholder: "Optional OpenAI org" },
+  site_url: { key: "site_url", label: "Site URL", placeholder: "Optional OpenRouter HTTP-Referer" },
+  app_name: { key: "app_name", label: "App name", placeholder: "Optional OpenRouter X-Title" },
+  azure_endpoint: { key: "azure_endpoint", label: "Azure endpoint", placeholder: "https://resource.openai.azure.com" },
+  azure_api_version: { key: "azure_api_version", label: "Azure API version", placeholder: "2024-02-15-preview" },
+  deployment: { key: "deployment", label: "Deployment", placeholder: "Azure deployment name" },
+};
+
 function authMethodLabel(method: string): string {
   if (method === "api_key") return "API key";
   if (method === "oauth2") return "OAuth2";
@@ -615,8 +589,10 @@ function CreateCredentialModal({
   );
   const [customFields, setCustomFields] = useState<Field[]>([{ key: "", value: "" }]);
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [oauthStarted, setOauthStarted] = useState("");
   const oauthPopupRef = useRef<Window | null>(null);
 
@@ -813,18 +789,44 @@ function CreateCredentialModal({
     );
   }
 
-  async function submit() {
-    if (!name.trim() || busy) return;
-    setBusy(true);
-    setError("");
+  const isLlm = preset.type === "llm_provider";
+  const llmVariant = isLlm ? getLlmVariant(values.provider) : null;
+  const llmFields = isLlm
+    ? visibleCredentialFields(values.provider, showAdvanced)
+    : [];
+
+  function onProviderChange(next: string) {
+    const v = getLlmVariant(next);
+    setValues((cur) => ({
+      ...cur,
+      provider: next,
+      base_url: cur.base_url?.trim() ? cur.base_url : (v.baseUrlDefault ?? ""),
+    }));
+    setShowAdvanced(false);
+  }
+
+  /** Build the credential data dict for submit/test. Returns null and sets an
+   *  error message when a required field is missing. */
+  function collectData(): Record<string, string> | null {
     const data: Record<string, string> = {};
+    if (isLlm) {
+      data.provider = values.provider || "openai";
+      if (llmVariant?.apiKey === "required" && !values.api_key?.trim()) {
+        setError("Enter API key.");
+        return null;
+      }
+      // Persist only the chosen provider's fields (advanced included if filled).
+      for (const key of visibleCredentialFields(values.provider, true)) {
+        if (values[key]?.trim()) data[key] = values[key].trim();
+      }
+      return data;
+    }
     if (preset.fields.length) {
       for (const field of preset.fields) {
         const value = values[field.key] ?? "";
         if (field.required && !value.trim()) {
           setError(`Enter ${field.label}.`);
-          setBusy(false);
-          return;
+          return null;
         }
         if (value.trim() || field.defaultValue !== undefined) {
           data[field.key] = value.trim();
@@ -836,18 +838,55 @@ function CreateCredentialModal({
         !data.access_token
       ) {
         setError("Enter either API key or OAuth access token.");
-        setBusy(false);
-        return;
+        return null;
       }
-    } else {
-      for (const field of customFields) {
-        if (field.key.trim()) data[field.key.trim()] = field.value;
-      }
-      if (Object.keys(data).length === 0) {
-        setError("Add at least one custom field.");
-        setBusy(false);
-        return;
-      }
+      return data;
+    }
+    for (const field of customFields) {
+      if (field.key.trim()) data[field.key.trim()] = field.value;
+    }
+    if (Object.keys(data).length === 0) {
+      setError("Add at least one custom field.");
+      return null;
+    }
+    return data;
+  }
+
+  async function handleTest() {
+    if (testing) return;
+    setTesting(true);
+    setError("");
+    const data = collectData();
+    if (data === null) {
+      setTesting(false);
+      return;
+    }
+    try {
+      const res = await api.testCredentialDraft({
+        type: preset.type,
+        data,
+        context: {},
+      });
+      notify(
+        res.ok ? "Credential connected." : res.message,
+        res.ok ? "success" : "error",
+      );
+      if (!res.ok) setError(res.message);
+    } catch (err) {
+      notify(String(err), "error");
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function submit() {
+    if (!name.trim() || busy) return;
+    setBusy(true);
+    setError("");
+    const data = collectData();
+    if (data === null) {
+      setBusy(false);
+      return;
     }
     try {
       if (!validateScopeInputs()) {
@@ -1017,7 +1056,42 @@ function CreateCredentialModal({
               </div>
             )}
 
-            {preset.fields.length > 0 ? (
+            {isLlm ? (
+              <div className="credential-form-grid">
+                <label className="credential-form-field">
+                  <span>Provider</span>
+                  <select
+                    className="field-input"
+                    value={values.provider || "openai"}
+                    onChange={(e) => onProviderChange(e.target.value)}
+                  >
+                    {LLM_PROVIDER_VARIANTS.map((v) => (
+                      <option key={v.value} value={v.value}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {llmFields.map((key) => {
+                  const def = LLM_FIELD_DEFS[key];
+                  if (!def) return null;
+                  const required =
+                    key === "api_key" && llmVariant?.apiKey === "required";
+                  return renderField({ ...def, required });
+                })}
+                {llmVariant &&
+                  llmVariant.advancedFields.length > 0 &&
+                  llmVariant.value !== "azure_openai" && (
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      onClick={() => setShowAdvanced((v) => !v)}
+                    >
+                      {showAdvanced ? "Hide advanced" : "Advanced options"}
+                    </button>
+                  )}
+              </div>
+            ) : preset.fields.length > 0 ? (
               <div className="credential-form-grid">
                 {preset.fields.map((field) => renderField(field))}
               </div>
@@ -1063,6 +1137,15 @@ function CreateCredentialModal({
           <button className="btn btn-ghost" onClick={onClose}>
             Cancel
           </button>
+          {!isOAuthPreset && (
+            <button
+              className="btn btn-ghost"
+              onClick={() => void handleTest()}
+              disabled={testing}
+            >
+              {testing ? "Testing..." : "Test connection"}
+            </button>
+          )}
           <button
             className="btn btn-primary"
             onClick={() => void submit()}

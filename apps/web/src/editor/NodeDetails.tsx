@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from "react";
 
 import { api } from "../api";
 import { categoryColor } from "../categories";
+import {
+  LLM_PROVIDER_VARIANTS,
+  getLlmVariant,
+  visibleCredentialFields,
+} from "../llmProviders";
 import { NodeIcon } from "../NodeIcon";
 import { useToast } from "../ToastProvider";
 import type {
@@ -479,6 +484,8 @@ const CRED_FIELD_LABELS: Record<string, string> = {
   provider: "Provider",
   base_url: "Base URL",
   organization: "Organization",
+  site_url: "Site URL",
+  app_name: "App name",
   azure_endpoint: "Azure Endpoint",
   azure_api_version: "Azure API Version",
   deployment: "Deployment",
@@ -550,27 +557,59 @@ function CredentialCreateModal({
   onCreated: (id: string, key: string, credential: Credential) => void;
 }) {
   const displayLabel = CRED_TYPE_LABELS[credType] ?? typeLabel;
+  const isLlm = credType === "llm_provider";
   const [name, setName] = useState(displayLabel);
-  const [fieldValues, setFieldValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(fields.map((f) => [f, ""])),
-  );
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>(() => {
+    const init = Object.fromEntries(fields.map((f) => [f, ""]));
+    if (isLlm) {
+      init.provider = "openai";
+      init.base_url = getLlmVariant("openai").baseUrlDefault ?? "";
+    }
+    return init;
+  });
   const [scope, setScope] = useState<"workflow" | "global">(
     workflowId ? "workflow" : "global",
   );
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [error, setError] = useState("");
   const { notify } = useToast();
 
   const refKey = fields.length > 1 ? "*" : (fields[0] ?? credType);
+  const variant = isLlm ? getLlmVariant(fieldValues.provider) : null;
+  // The set of credential fields actually rendered (provider-aware for LLM).
+  const renderedFields = isLlm
+    ? visibleCredentialFields(fieldValues.provider, showAdvanced)
+    : fields;
+
+  function setField(key: string, value: string): void {
+    setFieldValues((cur) => ({ ...cur, [key]: value }));
+  }
+
+  function onProviderChange(next: string): void {
+    const v = getLlmVariant(next);
+    setFieldValues((cur) => ({
+      ...cur,
+      provider: next,
+      base_url: cur.base_url?.trim() ? cur.base_url : (v.baseUrlDefault ?? ""),
+    }));
+    setShowAdvanced(false);
+  }
+
+  function collectData(): Record<string, string> {
+    const data: Record<string, string> = {};
+    if (isLlm && fieldValues.provider) data.provider = fieldValues.provider;
+    for (const f of renderedFields) {
+      if (fieldValues[f]?.trim()) data[f] = fieldValues[f].trim();
+    }
+    return data;
+  }
 
   async function handleCreate(): Promise<void> {
     if (!name.trim() || busy) return;
     setBusy(true);
     setError("");
-    const data: Record<string, string> = {};
-    for (const f of fields) {
-      if (fieldValues[f]?.trim()) data[f] = fieldValues[f].trim();
-    }
     try {
       const created = await api.createCredential({
         name: name.trim(),
@@ -578,13 +617,36 @@ function CredentialCreateModal({
         scope,
         workflow_id: scope === "workflow" ? workflowId : null,
         description: displayLabel,
-        data,
+        data: collectData(),
       });
       notify("Credential created.", "success");
       onCreated(created.id, refKey, created);
     } catch (err) {
       setError(String(err));
       setBusy(false);
+    }
+  }
+
+  async function handleTest(): Promise<void> {
+    if (testing) return;
+    setTesting(true);
+    setError("");
+    try {
+      const result = await api.testCredentialDraft({
+        type: credType,
+        data: collectData(),
+        context: {},
+      });
+      notify(
+        result.ok ? "Credential connected." : result.message,
+        result.ok ? "success" : "error",
+      );
+      if (!result.ok) setError(result.message);
+    } catch (err) {
+      setError(String(err));
+      notify(String(err), "error");
+    } finally {
+      setTesting(false);
     }
   }
 
@@ -624,17 +686,39 @@ function CredentialCreateModal({
           />
         </label>
 
-        {fields.map((field) => (
+        {isLlm && (
+          <label className="credential-form-field">
+            <span>Provider</span>
+            <select
+              className="field-input"
+              value={fieldValues.provider}
+              onChange={(e) => onProviderChange(e.target.value)}
+            >
+              {LLM_PROVIDER_VARIANTS.map((v) => (
+                <option key={v.value} value={v.value}>
+                  {v.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {renderedFields.map((field) => (
           <label key={field} className="credential-form-field">
-            <span>{CRED_FIELD_LABELS[field] ?? field}</span>
+            <span>
+              {CRED_FIELD_LABELS[field] ?? field}
+              {isLlm &&
+              field === "api_key" &&
+              variant?.apiKey === "required"
+                ? " *"
+                : ""}
+            </span>
             <input
               className="field-input"
               type={isSecretField(field) ? "password" : "text"}
               placeholder={CRED_FIELD_LABELS[field] ?? field}
               value={fieldValues[field] ?? ""}
-              onChange={(e) =>
-                setFieldValues({ ...fieldValues, [field]: e.target.value })
-              }
+              onChange={(e) => setField(field, e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void handleCreate();
                 if (e.key === "Escape") onClose();
@@ -642,6 +726,19 @@ function CredentialCreateModal({
             />
           </label>
         ))}
+
+        {isLlm &&
+          variant !== null &&
+          variant.advancedFields.length > 0 &&
+          variant.value !== "azure_openai" && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm cred-advanced-toggle"
+              onClick={() => setShowAdvanced((v) => !v)}
+            >
+              {showAdvanced ? "Hide advanced" : "Advanced options"}
+            </button>
+          )}
 
         {workflowId && (
           <div className="cred-quick-scope">
@@ -673,6 +770,14 @@ function CredentialCreateModal({
             onClick={onClose}
           >
             Cancel
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            disabled={testing}
+            onClick={() => void handleTest()}
+          >
+            {testing ? "Testing…" : "Test connection"}
           </button>
           <button
             type="button"
