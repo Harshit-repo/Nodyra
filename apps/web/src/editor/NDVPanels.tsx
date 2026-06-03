@@ -30,7 +30,8 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
   const updateParams = useEditor((s) => s.updateParams);
   const runOutputs = useEditor((s) => s.runOutputs);
   const edges = useEditor((s) => s.edges);
-  const [showCode, setShowCode] = useState(false);
+  // Inspector (form) vs Python (node source) view of the node.
+  const [mode, setMode] = useState<"inspector" | "python">("inspector");
   // Which optional groups the user has explicitly opened/closed this session.
   // Reset when switching nodes so each node starts from its own value-derived
   // state. `undefined` for a group means "decide from saved values".
@@ -86,25 +87,40 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
 
   return (
     <>
+      <div className="ndv-mode-toggle" role="tablist" aria-label="Inspector or Python">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "inspector"}
+          className={mode === "inspector" ? "active" : ""}
+          onClick={() => setMode("inspector")}
+        >
+          Inspector
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "python"}
+          className={mode === "python" ? "active" : ""}
+          onClick={() => setMode("python")}
+        >
+          Python
+        </button>
+      </div>
+      {mode === "python" ? (
+        <NodeCodePanel
+          nodeId={node.id}
+          manifest={manifest}
+          inputData={hasIncomingInputs ? incomingInputs : undefined}
+          onClose={() => setMode("inspector")}
+        />
+      ) : (
+      <>
       <p className="expr-hint field-desc">
         Use <code>{"{{ $json.field }}"}</code> or{" "}
         <code>{'{{ $node["nodeId"].main.field }}'}</code> in string fields to
         reference upstream data.
       </p>
-      <button
-        className="btn btn-sm btn-ghost node-code-toggle"
-        onClick={() => setShowCode((v) => !v)}
-      >
-        {showCode ? "Hide code" : "</> Show code"}
-      </button>
-      {showCode && (
-        <NodeCodePanel
-          nodeId={node.id}
-          manifest={manifest}
-          inputData={hasIncomingInputs ? incomingInputs : undefined}
-          onClose={() => setShowCode(false)}
-        />
-      )}
       {manifest.params.length === 0 && (
         <p className="muted">This node has no parameters.</p>
       )}
@@ -218,6 +234,8 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
           </>
         );
       })()}
+      </>
+      )}
     </>
   );
 }

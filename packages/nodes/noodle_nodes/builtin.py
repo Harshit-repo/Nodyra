@@ -16,7 +16,7 @@ from typing import Any
 import noodle.artifacts as artifacts_api
 from noodle.context import node_debug
 from noodle.sdk import node
-from noodle_nodes._creds import cred_multi
+from noodle_nodes._creds import cred_multi, cred_single
 
 OPERATORS = [
     "equals",
@@ -160,6 +160,11 @@ def schedule_trigger(
               "group": "Security",
               "placeholder": "sha256=",
               "description": "Optional prefix stripped from the signature header (e.g. 'sha256=').",
+          },
+          "hmac_secret": {
+              "group": "Security",
+              **cred_single("hmac", "secret", "HMAC shared secret"),
+              "description": "Shared secret used to verify the HMAC signature.",
           },
           # IP allowlist: non-empty → callers outside the listed CIDRs/IPs are
           # rejected with 403 before any auth check.

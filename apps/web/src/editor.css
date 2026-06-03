@@ -1651,6 +1651,32 @@ body.is-resizing-vertical {
 .webhook-panel {
   border-top: 1px solid var(--line-2);
 }
+/* Inspector | Python segmented toggle at the top of the node panel. */
+.ndv-mode-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: color-mix(in srgb, var(--line) 35%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  margin-bottom: 12px;
+}
+.ndv-mode-toggle button {
+  border: none;
+  background: transparent;
+  color: var(--text-muted, inherit);
+  padding: 4px 16px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.ndv-mode-toggle button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
 /* Optional-parameter groups + "Add option" chips (n8n-style). An added group
    renders as a titled block with a remove (×); unopened groups are chips. */
 .ndv-group {
