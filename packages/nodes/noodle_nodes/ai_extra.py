@@ -106,6 +106,7 @@ def openai_embeddings(
 @node(
     name="OpenAI Whisper Transcribe",
     id="openai_whisper_transcribe",
+    param_groups={"Options": ["model", "language"]},
     category="AI",
     icon="brand:openai",
     params={
@@ -181,6 +182,7 @@ def openai_whisper_transcribe(
 @node(
     name="OpenAI Text-to-Speech",
     id="openai_tts",
+    param_groups={"Options": ["voice", "model", "response_format", "filename"]},
     category="AI",
     icon="brand:openai",
     output_kinds={"main": "artifact"},
@@ -266,6 +268,7 @@ def openai_tts(
 @node(
     name="Cohere Embed",
     id="cohere_embed",
+    param_groups={"Options": ["input_type"]},
     category="AI",
     icon="brand:cohere",
     params={
@@ -340,6 +343,7 @@ def cohere_embed(
 @node(
     name="DeepL Translate",
     id="deepl_translate",
+    param_groups={"Options": ["source_lang"]},
     category="AI",
     icon="brand:deepl",
     params={
@@ -410,6 +414,7 @@ def deepl_translate(
 @node(
     name="Pinecone Upsert",
     id="pinecone_upsert",
+    param_groups={"Options": ["metadata_json"]},
     category="AI",
     icon="brand:pinecone",
     params={
@@ -496,6 +501,7 @@ def pinecone_upsert(
 @node(
     name="Pinecone Query",
     id="pinecone_query",
+    param_groups={"Options": ["top_k", "include_metadata"]},
     category="AI",
     icon="brand:pinecone",
     params={

@@ -145,7 +145,7 @@ def make_chart(
             "all numeric columns except x.",
             "placeholder": "revenue, cost",
         },
-        "title": {"placeholder": "Monthly revenue"},
+        "title": {"group": "Options", "placeholder": "Monthly revenue"},
     },
 )
 def chart(
@@ -642,9 +642,9 @@ def _svg_to_png(svg: str) -> bytes:
             "dependencies; PNG needs the optional 'cairosvg' package.",
             "choices": ["svg", "png"],
         },
-        "width": {"description": "Image width in pixels."},
-        "height": {"description": "Image height in pixels."},
-        "name": {"placeholder": "chart.svg"},
+        "width": {"group": "Options", "description": "Image width in pixels."},
+        "height": {"group": "Options", "description": "Image height in pixels."},
+        "name": {"group": "Options", "placeholder": "chart.svg"},
     },
 )
 def chart_to_image(

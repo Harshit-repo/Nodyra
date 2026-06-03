@@ -45,6 +45,10 @@ class ParamSpec(BaseModel):
     multiline: bool = False
     key_value: bool = False
     credential: CredentialSpec | None = None
+    # Optional parameter grouping. A non-empty ``group`` marks the param as an
+    # optional, "Add option"-style field the inspector tucks behind a chip;
+    # params with no ``group`` are core and always shown.
+    group: str | None = None
 
 
 class PortDataKind(StrEnum):

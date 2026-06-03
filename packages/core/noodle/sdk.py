@@ -191,6 +191,7 @@ def _build_manifest(
                 multiline=bool(meta.get("multiline", False)),
                 key_value=bool(meta.get("key_value", False)),
                 credential=credential,
+                group=meta.get("group") or None,
             )
         )
 
@@ -392,6 +393,7 @@ def _decorated_node_from_ast(
                 multiline=bool(meta.get("multiline", False)),
                 key_value=bool(meta.get("key_value", False)),
                 credential=credential,
+                group=meta.get("group") or None,
             )
         )
 
@@ -680,6 +682,7 @@ def node(
     version: str = "1.0.0",
     description: str = "",
     params: dict[str, dict[str, Any]] | None = None,
+    param_groups: dict[str, list[str]] | None = None,
     inputs: list[str] | None = None,
     outputs: list[str] | None = None,
     input_kinds: dict[str, str] | None = None,
@@ -705,6 +708,14 @@ def node(
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         node_id = id or func.__name__
+        # ``param_groups={"Options": ["a", "b"]}`` is a shorthand for setting
+        # ``"group"`` on many optional params at once; an explicit per-param
+        # ``group`` in ``params`` still wins.
+        param_meta = {k: dict(v) for k, v in (params or {}).items()}
+        for group_name, names in (param_groups or {}).items():
+            for pname in names:
+                meta = param_meta.setdefault(pname, {})
+                meta.setdefault("group", group_name)
         manifest = _build_manifest(
             func,
             node_id=node_id,
@@ -712,7 +723,7 @@ def node(
             category=category,
             version=version,
             description=description or (func.__doc__ or "").strip(),
-            param_meta=params or {},
+            param_meta=param_meta,
             inputs=["input"] if inputs is None else inputs,
             outputs=outputs or ["main"],
             icon=icon,

@@ -87,6 +87,7 @@ def _coerce_env_vars(value: Any) -> dict[str, str] | None:
             "multiline": True,
         },
         "shell": {
+            "group": "Options",
             "choices": _SHELL_CHOICES,
             "description": (
                 "Which shell to invoke. 'auto' picks bash on POSIX and "
@@ -94,10 +95,12 @@ def _coerce_env_vars(value: Any) -> dict[str, str] | None:
             ),
         },
         "cwd": {
+            "group": "Options",
             "placeholder": "/tmp",
             "description": "Working directory (defaults to the runtime's cwd).",
         },
         "env_vars": {
+            "group": "Options",
             "placeholder": '{"FOO": "bar"}',
             "description": (
                 "Extra environment variables, JSON object or dict. Merged "
@@ -106,11 +109,13 @@ def _coerce_env_vars(value: Any) -> dict[str, str] | None:
             "multiline": True,
         },
         "timeout_seconds": {
+            "group": "Options",
             "description": (
                 "Kill the process if it runs longer than this many seconds."
             ),
         },
         "fail_on_nonzero": {
+            "group": "Options",
             "description": (
                 "If true, a non-zero exit raises a node error so retry/"
                 "error-workflow logic engages."

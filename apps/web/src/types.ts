@@ -17,6 +17,8 @@ export interface ParamSpec {
   multiline: boolean;
   key_value: boolean;
   credential?: CredentialParamSpec | null;
+  /** Optional "Add option" group; null/absent = a core param shown by default. */
+  group?: string | null;
 }
 
 export interface PortSpec {

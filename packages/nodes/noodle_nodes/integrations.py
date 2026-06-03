@@ -140,6 +140,7 @@ def _credential(
 @node(
     name="Slack Send Message",
     id="slack_send_message",
+    param_groups={"Options": ["blocks", "thread_ts"]},
     category="Integrations",
     icon="message",
     params={
@@ -178,6 +179,7 @@ def slack_send_message(
 @node(
     name="Discord Send Message",
     id="discord_send_message",
+    param_groups={"Options": ["username", "embeds"]},
     category="Integrations",
     icon="message",
     params={
@@ -209,6 +211,7 @@ def discord_send_message(
 @node(
     name="SMTP Send Email",
     id="smtp_send_email",
+    param_groups={"Options": ["port", "use_tls", "body_format"]},
     category="Integrations",
     icon="mail",
     params={
@@ -361,6 +364,7 @@ def google_sheets_read(
 @node(
     name="Google Sheets Append",
     id="google_sheets_append",
+    param_groups={"Options": ["value_input_option"]},
     category="Integrations",
     icon="sheet",
     params={
@@ -405,6 +409,7 @@ def google_sheets_append(
 @node(
     name="Notion Create Page",
     id="notion_create_page",
+    param_groups={"Options": ["parent_page_id", "title_property", "properties", "content"]},
     category="Integrations",
     icon="page",
     params={
@@ -486,6 +491,7 @@ def github_get_repo(input: Any = None, repo: str = "", token: str = "") -> Any: 
 @node(
     name="GitHub Create Issue",
     id="github_create_issue",
+    param_groups={"Options": ["body", "labels"]},
     category="Integrations",
     icon="github",
     params={
@@ -522,6 +528,7 @@ def github_create_issue(
 @node(
     name="Postgres Query",
     id="postgres_query",
+    param_groups={"Options": ["parameters"]},
     category="Integrations",
     icon="database",
     params={
@@ -558,6 +565,7 @@ def postgres_query(
 @node(
     name="MySQL Query",
     id="mysql_query",
+    param_groups={"Options": ["port", "parameters"]},
     category="Integrations",
     icon="database",
     params={
@@ -641,6 +649,15 @@ def _boto3_s3_client(
 @node(
     name="S3 Put Object",
     id="s3_put_object",
+    param_groups={
+        "Options": [
+            "content_type",
+            "aws_access_key_id",
+            "aws_secret_access_key",
+            "region_name",
+            "endpoint_url",
+        ]
+    },
     category="Integrations",
     icon="storage",
     params={
@@ -710,6 +727,9 @@ def s3_put_object(
 @node(
     name="S3 Get Object",
     id="s3_get_object",
+    param_groups={
+        "Options": ["aws_access_key_id", "aws_secret_access_key", "region_name", "endpoint_url"]
+    },
     category="Integrations",
     icon="storage",
     params={
@@ -774,6 +794,7 @@ def s3_get_object(
 @node(
     name="OpenAI Chat",
     id="openai_chat",
+    param_groups={"Options": ["system", "temperature", "max_tokens", "include_raw"]},
     category=AI_CATEGORY,
     icon="ai",
     params={
@@ -831,6 +852,7 @@ def openai_chat(
 @node(
     name="Anthropic Message",
     id="anthropic_message",
+    param_groups={"Options": ["system", "max_tokens", "temperature", "include_raw"]},
     category=AI_CATEGORY,
     icon="ai",
     params={
@@ -890,6 +912,7 @@ def anthropic_message(
 @node(
     name="Stripe Create Customer",
     id="stripe_create_customer",
+    param_groups={"Options": ["name", "description", "metadata"]},
     category="Integrations",
     icon="card",
     params={
@@ -930,6 +953,7 @@ def stripe_create_customer(
 @node(
     name="Airtable List Records",
     id="airtable_list_records",
+    param_groups={"Options": ["view", "max_records", "filter_formula"]},
     category="Integrations",
     icon="table",
     params={
@@ -966,6 +990,7 @@ def airtable_list_records(
 @node(
     name="Airtable Create Record",
     id="airtable_create_record",
+    param_groups={"Options": ["typecast"]},
     category="Integrations",
     icon="table",
     params={

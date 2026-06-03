@@ -1,12 +1,33 @@
 import { describe, expect, it } from "vitest";
 
+import type { ParamSpec } from "../types";
 import {
-  webhookAdvancedParam,
+  groupActiveByValue,
+  paramGroup,
   webhookHiddenParam,
   webhookParamLabel,
 } from "./NodeDetails";
 
 const ID = "webhook_trigger";
+
+function spec(
+  name: string,
+  group: string | null = null,
+  def: unknown = "",
+): ParamSpec {
+  return {
+    name,
+    type: "string",
+    required: false,
+    default: def,
+    description: "",
+    placeholder: "",
+    choices: null,
+    multiline: false,
+    key_value: false,
+    group,
+  };
+}
 
 describe("webhookHiddenParam — conditional Unit-2 fields", () => {
   it("hides HMAC dependent fields unless hmac_verification is on", () => {
@@ -78,40 +99,28 @@ describe("webhookHiddenParam — conditional Unit-2 fields", () => {
   });
 });
 
-describe("webhookAdvancedParam — optional/advanced grouping", () => {
-  it("classifies security/idempotency/body/response fields as advanced", () => {
-    for (const name of [
-      "hmac_verification",
-      "hmac_header",
-      "ip_allowlist",
-      "trust_proxy",
-      "dedup",
-      "dedup_key",
-      "raw_body",
-      "response_data",
-      "response_body",
-      "response_headers",
-    ]) {
-      expect(webhookAdvancedParam(ID, name)).toBe(true);
-    }
+describe("paramGroup — generic optional grouping", () => {
+  it("returns the spec's group, or null for a core param", () => {
+    expect(paramGroup(spec("ip_allowlist", "Security"))).toBe("Security");
+    expect(paramGroup(spec("path"))).toBeNull();
+    expect(paramGroup(spec("x", ""))).toBeNull();
+  });
+});
+
+describe("groupActiveByValue — auto-expand groups with saved values", () => {
+  const specs = [
+    spec("hmac_verification", "Security", "off"),
+    spec("ip_allowlist", "Security", ""),
+  ];
+
+  it("is inactive when every grouped param is at its default/empty", () => {
+    expect(groupActiveByValue(specs, { hmac_verification: "off" })).toBe(false);
+    expect(groupActiveByValue(specs, {})).toBe(false);
   });
 
-  it("keeps core fields out of the advanced group", () => {
-    for (const name of [
-      "http_method",
-      "path",
-      "response_mode",
-      "response_code",
-      "auth_type",
-      "auth_credentials",
-      "auth_jwt_header",
-    ]) {
-      expect(webhookAdvancedParam(ID, name)).toBe(false);
-    }
-  });
-
-  it("never marks non-webhook params as advanced", () => {
-    expect(webhookAdvancedParam("code", "ip_allowlist")).toBe(false);
+  it("is active when any grouped param holds a non-default value", () => {
+    expect(groupActiveByValue(specs, { hmac_verification: "on" })).toBe(true);
+    expect(groupActiveByValue(specs, { ip_allowlist: "10.0.0.0/8" })).toBe(true);
   });
 });
 

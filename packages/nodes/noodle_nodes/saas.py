@@ -68,10 +68,12 @@ def _coerce_dict(value: Any) -> dict[str, Any]:
         },
         "title": {"description": "Issue title."},
         "description": {
+            "group": "Options",
             "description": "Issue description (markdown).",
             "multiline": True,
         },
         "priority": {
+            "group": "Options",
             "choices": ["0", "1", "2", "3", "4"],
             "description": "0=none, 1=urgent, 2=high, 3=medium, 4=low.",
         },
@@ -144,10 +146,12 @@ def linear_create_issue(
         },
         "summary": {"description": "Issue summary."},
         "description": {
+            "group": "Options",
             "description": "Issue description (plain text).",
             "multiline": True,
         },
         "issue_type": {
+            "group": "Options",
             "placeholder": "Task",
             "description": "Issue type name (Task / Bug / Story).",
         },
@@ -220,6 +224,7 @@ def jira_create_issue(
         },
         "name": {"description": "Card title."},
         "desc": {
+            "group": "Options",
             "description": "Card description.",
             "multiline": True,
         },
@@ -275,9 +280,10 @@ def trello_create_card(
             "placeholder": "user@example.com",
             "description": "Contact email (the natural identifier).",
         },
-        "firstname": {"description": "First name."},
-        "lastname": {"description": "Last name."},
+        "firstname": {"group": "Options", "description": "First name."},
+        "lastname": {"group": "Options", "description": "Last name."},
         "properties_json": {
+            "group": "Options",
             "placeholder": '{"phone": "+1-555-0100"}',
             "description": "Additional contact properties as JSON.",
             "multiline": True,
@@ -341,6 +347,7 @@ def hubspot_create_contact(
         },
         "name": {"description": "Task name."},
         "notes": {
+            "group": "Options",
             "description": "Task description / notes.",
             "multiline": True,
         },
@@ -435,15 +442,18 @@ def calendly_get_event(
             "description": "OAuth access token (server-to-server app credentials).",
         },
         "user_id": {
+            "group": "Options",
             "placeholder": "me",
             "description": "Zoom user id or 'me' for the token's owner.",
         },
         "topic": {"description": "Meeting topic / title."},
         "start_time": {
+            "group": "Options",
             "placeholder": "2026-06-01T14:00:00Z",
             "description": "Start time in ISO 8601 (UTC).",
         },
         "duration": {
+            "group": "Options",
             "description": "Length in minutes.",
         },
     },
@@ -502,10 +512,12 @@ def zoom_create_meeting(
         },
         "email": {"description": "Subscriber email."},
         "status": {
+            "group": "Options",
             "choices": ["subscribed", "pending", "unsubscribed", "cleaned"],
             "description": "Subscription status to set.",
         },
         "merge_fields_json": {
+            "group": "Options",
             "placeholder": '{"FNAME": "Alice", "LNAME": "Lee"}',
             "description": "Optional merge fields (FNAME/LNAME/etc) as JSON.",
             "multiline": True,
@@ -568,10 +580,12 @@ def mailchimp_add_subscriber(
             "description": "Store *.myshopify.com domain + Admin API access token.",
         },
         "status": {
+            "group": "Options",
             "choices": ["any", "open", "closed", "cancelled"],
             "description": "Order status filter.",
         },
         "limit": {
+            "group": "Options",
             "description": "Max orders to return (1-250).",
         },
     },
