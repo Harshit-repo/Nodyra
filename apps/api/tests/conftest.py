@@ -11,6 +11,7 @@ from sqlalchemy.pool import NullPool
 
 import app.routers.runner_pools as runner_pools_module
 import app.services.artifacts as artifacts_module
+import app.services.chat_service as chat_service_module
 import app.services.live_settings as live_settings_module
 import app.services.provider_triggers as provider_triggers_module
 import app.services.redaction as redaction_module
@@ -169,6 +170,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     originals = {
         venv_module: venv_module.SessionLocal,
         artifacts_module: artifacts_module.SessionLocal,
+        chat_service_module: chat_service_module.SessionLocal,
         runner_module: runner_module.SessionLocal,
         triggers_module: triggers_module.SessionLocal,
         retention_module: retention_module.SessionLocal,
@@ -180,6 +182,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     }
     venv_module.SessionLocal = test_session
     artifacts_module.SessionLocal = test_session
+    chat_service_module.SessionLocal = test_session
     runner_module.SessionLocal = test_session
     triggers_module.SessionLocal = test_session
     retention_module.SessionLocal = test_session
