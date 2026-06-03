@@ -10,6 +10,8 @@ import type {
   Credential,
   Deployment,
   Environment,
+  ProviderTriggerStatusCounts,
+  ProviderTriggerSubscription,
   WorkflowSummary,
 } from "./types";
 import { WORKFLOW_TEMPLATES as TEMPLATES } from "./workflowTemplates";
@@ -25,6 +27,55 @@ function relativeTime(iso: string): string {
   const days = Math.round(hours / 24);
   if (days < 30) return `${days}d ago`;
   return new Date(iso).toLocaleDateString();
+}
+
+function providerCounts(wf: WorkflowSummary): ProviderTriggerStatusCounts {
+  return (
+    wf.provider_trigger_counts ?? {
+      total: 0,
+      active: 0,
+      activating: 0,
+      error: 0,
+      deleted: 0,
+    }
+  );
+}
+
+function providerStatusBadge(
+  counts: ProviderTriggerStatusCounts,
+): { className: string; label: string; title: string } | null {
+  if (counts.error > 0) {
+    return {
+      className: "hook-error",
+      label: `${counts.error} hook error${counts.error === 1 ? "" : "s"}`,
+      title: "Provider trigger error",
+    };
+  }
+  if (counts.activating > 0) {
+    return {
+      className: "hook-activating",
+      label: `${counts.activating} hook activating`,
+      title: "Provider trigger activating",
+    };
+  }
+  if (counts.active > 0) {
+    return {
+      className: "hook-active",
+      label: `${counts.active} hook active`,
+      title: "Provider trigger active",
+    };
+  }
+  return null;
+}
+
+function lastDelivery(
+  row: ProviderTriggerSubscription,
+): Record<string, unknown> | null {
+  const delivery = row.config?.last_delivery;
+  if (!delivery || typeof delivery !== "object" || Array.isArray(delivery)) {
+    return null;
+  }
+  return delivery as Record<string, unknown>;
 }
 
 function CreateModal({
@@ -140,6 +191,11 @@ export function WorkflowsPage() {
   const [sort, setSort] = useState("updated");
   const [pendingDelete, setPendingDelete] = useState<WorkflowSummary | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [providerModalWorkflow, setProviderModalWorkflow] =
+    useState<WorkflowSummary | null>(null);
+  const [providerRows, setProviderRows] =
+    useState<ProviderTriggerSubscription[] | null>(null);
+  const [providerError, setProviderError] = useState("");
   const navigate = useNavigate();
   const { notify } = useToast();
 
@@ -194,16 +250,39 @@ export function WorkflowsPage() {
     }
   }
 
+  async function openProviderStatus(
+    wf: WorkflowSummary,
+    event: { stopPropagation: () => void },
+  ): Promise<void> {
+    event.stopPropagation();
+    setProviderModalWorkflow(wf);
+    setProviderRows(null);
+    setProviderError("");
+    try {
+      setProviderRows(await api.listWorkflowProviderTriggers(wf.id));
+    } catch (err) {
+      setProviderError(String(err));
+    }
+  }
+
+  function closeProviderStatus(): void {
+    setProviderModalWorkflow(null);
+    setProviderRows(null);
+    setProviderError("");
+  }
+
   const visible = useMemo(() => {
     const rows = workflows ?? [];
     const search = query.trim().toLowerCase();
     return rows
       .filter((wf) => {
+        const counts = providerCounts(wf);
         if (search && !wf.name.toLowerCase().includes(search)) return false;
         if (statusFilter === "active" && !wf.active) return false;
         if (statusFilter === "inactive" && wf.active) return false;
         if (statusFilter === "draft" && !wf.has_unpublished_changes) return false;
         if (statusFilter === "failed" && wf.last_run_status !== "error") return false;
+        if (statusFilter === "provider_error" && counts.error === 0) return false;
         return true;
       })
       .sort((a, b) => {
@@ -225,6 +304,7 @@ export function WorkflowsPage() {
       drafts: rows.filter((wf) => wf.has_unpublished_changes).length,
       failed: rows.filter((wf) => wf.last_run_status === "error").length,
       running: rows.filter((wf) => wf.last_run_status === "running").length,
+      providerErrors: rows.filter((wf) => providerCounts(wf).error > 0).length,
     };
   }, [workflows]);
 
@@ -275,6 +355,10 @@ export function WorkflowsPage() {
               <strong>{stats.failed}</strong>
               <span>Failed runs</span>
             </button>
+            <button type="button" onClick={() => setStatusFilter("provider_error")}>
+              <strong>{stats.providerErrors}</strong>
+              <span>Trigger errors</span>
+            </button>
             <button type="button" onClick={() => setStatusFilter("all")}>
               <strong>{stats.running}</strong>
               <span>Running runs</span>
@@ -315,6 +399,7 @@ export function WorkflowsPage() {
             <option value="inactive">Inactive</option>
             <option value="draft">Draft changes</option>
             <option value="failed">Failed recently</option>
+            <option value="provider_error">Trigger errors</option>
           </select>
           <select
             className="field-input"
@@ -371,54 +456,67 @@ export function WorkflowsPage() {
 
         {workflows && workflows.length > 0 && (
           <div className="wf-grid">
-            {visible.map((wf) => (
-              <article
-                key={wf.id}
-                className="wf-card"
-                onClick={() => navigate(`/workflows/${wf.id}`)}
-              >
-                <div className="wf-card-top">
-                  <span className={`wf-status ${wf.active ? "on" : "off"}`}>
-                    {wf.active ? "active" : "inactive"}
-                  </span>
-                  {wf.has_unpublished_changes && (
-                    <span className="wf-status draft">draft changes</span>
-                  )}
-                  {wf.last_run_status && (
-                    <span className={`wf-status run-${wf.last_run_status}`}>
-                      last {wf.last_run_status}
+            {visible.map((wf) => {
+              const hookBadge = providerStatusBadge(providerCounts(wf));
+              return (
+                <article
+                  key={wf.id}
+                  className="wf-card"
+                  onClick={() => navigate(`/workflows/${wf.id}`)}
+                >
+                  <div className="wf-card-top">
+                    <span className={`wf-status ${wf.active ? "on" : "off"}`}>
+                      {wf.active ? "active" : "inactive"}
                     </span>
-                  )}
-                  <button
-                    className="wf-delete"
-                    title="Delete workflow"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPendingDelete(wf);
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-                <h3 className="wf-name">{wf.name}</h3>
-                <div className="wf-meta">
-                  <span>
-                    {wf.node_count} node{wf.node_count === 1 ? "" : "s"}
-                  </span>
-                  <span className="dot-sep" />
-                  <span>v{wf.version}</span>
-                  <span className="dot-sep" />
-                  <span>published v{wf.published_version}</span>
-                  <span className="dot-sep" />
-                  <span>{relativeTime(wf.updated_at)}</span>
-                </div>
-                {wf.last_run_started_at && (
-                  <div className="wf-meta wf-run-meta">
-                    Last run {relativeTime(wf.last_run_started_at)}
+                    {wf.has_unpublished_changes && (
+                      <span className="wf-status draft">draft changes</span>
+                    )}
+                    {wf.last_run_status && (
+                      <span className={`wf-status run-${wf.last_run_status}`}>
+                        last {wf.last_run_status}
+                      </span>
+                    )}
+                    {hookBadge && (
+                      <button
+                        type="button"
+                        className={`wf-status wf-trigger-status ${hookBadge.className}`}
+                        title={hookBadge.title}
+                        onClick={(event) => void openProviderStatus(wf, event)}
+                      >
+                        {hookBadge.label}
+                      </button>
+                    )}
+                    <button
+                      className="wf-delete"
+                      title="Delete workflow"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPendingDelete(wf);
+                      }}
+                    >
+                      ×
+                    </button>
                   </div>
-                )}
-              </article>
-            ))}
+                  <h3 className="wf-name">{wf.name}</h3>
+                  <div className="wf-meta">
+                    <span>
+                      {wf.node_count} node{wf.node_count === 1 ? "" : "s"}
+                    </span>
+                    <span className="dot-sep" />
+                    <span>v{wf.version}</span>
+                    <span className="dot-sep" />
+                    <span>published v{wf.published_version}</span>
+                    <span className="dot-sep" />
+                    <span>{relativeTime(wf.updated_at)}</span>
+                  </div>
+                  {wf.last_run_started_at && (
+                    <div className="wf-meta wf-run-meta">
+                      Last run {relativeTime(wf.last_run_started_at)}
+                    </div>
+                  )}
+                </article>
+              );
+            })}
           </div>
         )}
         {workflows && workflows.length > 0 && visible.length === 0 && (
@@ -447,6 +545,80 @@ export function WorkflowsPage() {
           onCancel={() => setPendingDelete(null)}
           onConfirm={() => void remove(pendingDelete.id)}
         />
+      )}
+      {providerModalWorkflow && (
+        <div className="modal-overlay" onClick={closeProviderStatus}>
+          <div
+            className="modal provider-trigger-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="provider-trigger-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="provider-trigger-title">Provider triggers</h2>
+            <p className="muted">{providerModalWorkflow.name}</p>
+            {providerError && <p className="error-text">{providerError}</p>}
+            {!providerRows && !providerError && <p className="muted">Loading…</p>}
+            {providerRows && providerRows.length === 0 && (
+              <p className="muted">No provider trigger subscriptions.</p>
+            )}
+            {providerRows && providerRows.length > 0 && (
+              <div className="provider-trigger-list">
+                {providerRows.map((row) => {
+                  const delivery = lastDelivery(row);
+                  return (
+                    <div className="provider-trigger-row" key={row.id}>
+                      <div className="provider-trigger-head">
+                        <strong>
+                          {row.provider} · {row.trigger_key}
+                        </strong>
+                        <span className={`run-pill status-run-${row.status}`}>
+                          {row.status}
+                        </span>
+                      </div>
+                      <div className="provider-trigger-meta">
+                        <span>{row.node_id}</span>
+                        <span>
+                          version {row.workflow_version_id?.slice(0, 8) ?? "draft"}
+                        </span>
+                        <span>
+                          last event{" "}
+                          {row.last_event_at
+                            ? relativeTime(row.last_event_at)
+                            : "never"}
+                        </span>
+                      </div>
+                      {delivery && (
+                        <div className="provider-trigger-meta">
+                          {typeof delivery.response_status === "number" && (
+                            <span>HTTP {delivery.response_status}</span>
+                          )}
+                          {typeof delivery.latency_ms === "number" && (
+                            <span>{delivery.latency_ms}ms</span>
+                          )}
+                          {typeof delivery.event === "string" && (
+                            <span>{delivery.event}</span>
+                          )}
+                          {typeof delivery.repository === "string" && (
+                            <span>{delivery.repository}</span>
+                          )}
+                          {delivery.duplicate === true && <span>duplicate</span>}
+                        </div>
+                      )}
+                      {row.callback_url && <code>{row.callback_url}</code>}
+                      {row.error && <p className="error-text">{row.error}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="modal-actions">
+              <button className="btn" type="button" onClick={closeProviderStatus}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

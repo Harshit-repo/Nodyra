@@ -703,6 +703,15 @@ function CredentialParamField({
   });
 
   const selectedValue = selected ? `${selected.id}:${selected.key}` : "";
+  const selectedCredential = selected
+    ? credentials.find((cred) => cred.id === selected.id)
+    : undefined;
+  const requiredScopes = spec.required_scopes ?? [];
+  const credentialScopes = new Set(selectedCredential?.oauth_scopes ?? []);
+  const missingScopes =
+    selectedCredential && requiredScopes.length > 0
+      ? requiredScopes.filter((scope) => !credentialScopes.has(scope))
+      : [];
   const selectedMissing =
     selected &&
     !matching.some((cred) => {
@@ -844,6 +853,12 @@ function CredentialParamField({
       )}
 
       {error && <p className="error-text">{error}</p>}
+
+      {missingScopes.length > 0 && (
+        <div className="credential-inline-warning">
+          <span>Missing OAuth scopes: {missingScopes.join(", ")}</span>
+        </div>
+      )}
 
       {modalOpen && meta && (
         <CredentialCreateModal
@@ -2427,7 +2442,7 @@ export function NodeDetails({
             const fx = typeof value === "string" && /\{\{.+?\}\}/s.test(value);
             const displayLabel =
               webhookParamLabel(manifest.id, spec.name, params) ??
-              formatParamLabel(spec.name);
+              (spec.display_name || formatParamLabel(spec.name));
 
             // Webhook auth_type renders as a friendly-labelled dropdown,
             // and auth_credentials uses a synthetic credential spec whose

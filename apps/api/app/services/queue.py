@@ -60,7 +60,7 @@ def _default_max_attempts() -> int:
     return settings.queue_default_max_attempts
 
 # Orchestration states that are still "live" (occupy the run's single queue slot).
-ACTIVE_STATUSES = ("queued", "leased", "running")
+ACTIVE_STATUSES = ("queued", "leased", "running", "waiting")
 
 # Terminal orchestration states. Task 6 adds ``dead_lettered`` handling on top.
 TERMINAL_STATUSES = ("completed", "failed", "cancelled", "dead_lettered")
@@ -213,6 +213,40 @@ async def complete(session: AsyncSession, *, run_id: str) -> bool:
     entry.leased_by = None
     entry.lease_expires_at = None
     return True
+
+
+async def wait_for_approval(session: AsyncSession, *, run_id: str) -> bool:
+    """Park a run until an operator approval explicitly resumes it."""
+    entry = await _get(session, run_id)
+    if entry is None:
+        return False
+    entry.status = "waiting"
+    entry.queue_reason = "agent_approval"
+    entry.leased_by = None
+    entry.lease_expires_at = None
+    return True
+
+
+async def resume_waiting(
+    session: AsyncSession,
+    *,
+    run_id: str,
+    replay_seed: dict,
+    now: datetime | None = None,
+) -> RunQueueEntry | None:
+    """Move an approval-waiting run back to the queue with resume state."""
+    entry = await _get(session, run_id)
+    if entry is None or entry.status != "waiting":
+        return None
+    moment = _now(now)
+    _append_attempt(entry, event="approval_resume", error=None, ts=moment)
+    entry.status = "queued"
+    entry.queue_reason = "approval_resume"
+    entry.leased_by = None
+    entry.lease_expires_at = None
+    entry.available_at = moment
+    entry.replay_seed = replay_seed
+    return entry
 
 
 async def fail(
@@ -409,6 +443,7 @@ async def stats(session: AsyncSession, *, now: datetime | None = None) -> dict:
         "queued": counts.get("queued", 0),
         "leased": counts.get("leased", 0),
         "running": counts.get("running", 0),
+        "waiting": counts.get("waiting", 0),
         "completed": counts.get("completed", 0),
         "failed": counts.get("failed", 0),
         "dead_lettered": counts.get("dead_lettered", 0),

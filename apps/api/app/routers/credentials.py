@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,17 +10,34 @@ from app.models import Credential, Environment, User, Workflow
 from app.schemas import (
     CredentialCreate,
     CredentialInfo,
+    CredentialOAuthStartRequest,
+    CredentialOAuthStartResponse,
     CredentialTestRequest,
     CredentialTestResponse,
+    CredentialTypeInfo,
     CredentialUpdate,
 )
-from app.security import current_user, optional_current_user, require_permission
+from app.security import optional_current_user, require_permission
 from app.services.audit import log_audit
 from app.services.credential_tests import (
     available_test_services,
     test_credential_connection,
 )
+from app.services.credential_types import get_credential_type, list_credential_types
 from app.services.crypto import decrypt_credential, encrypt_credential
+from app.services.oauth import (
+    OAuthError,
+    build_authorization_url,
+    create_oauth_state,
+    decode_oauth_state,
+    default_scopes,
+    exchange_authorization_code,
+    parse_expires_at,
+    refresh_stored_credential,
+    resolve_redirect_uri,
+    scopes_from_credential_data,
+    token_payload_to_credential_data,
+)
 from app.services.redaction import invalidate_secret_cache
 
 router = APIRouter(prefix="/credentials", tags=["credentials"])
@@ -29,20 +47,32 @@ SCOPES = {"global", "environment", "workflow", "runner_pool"}
 
 def _info(cred: Credential) -> CredentialInfo:
     data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek)
+    type_spec = get_credential_type(cred.type)
     return CredentialInfo(
         id=cred.id,
         name=cred.name,
         type=cred.type,
+        auth_method=type_spec.auth_method if type_spec else None,
         scope=cred.scope,
         workflow_id=cred.workflow_id,
         environment_id=cred.environment_id,
         runner_pool_id=cred.runner_pool_id,
         description=cred.description,
         keys=sorted(data.keys()),
+        oauth_scopes=scopes_from_credential_data(data)
+        if type_spec and type_spec.auth_method == "oauth2"
+        else [],
+        oauth_expires_at=parse_expires_at(data.get("expires_at"))
+        if type_spec and type_spec.auth_method == "oauth2"
+        else None,
         last_used_at=cred.last_used_at,
         created_at=cred.created_at,
         updated_at=cred.updated_at,
     )
+
+
+def _oauth_http_error(exc: OAuthError) -> HTTPException:
+    return HTTPException(exc.status_code, str(exc))
 
 
 async def _load(session: AsyncSession, cred_id: str) -> Credential:
@@ -126,6 +156,268 @@ async def _resolve(
         return None
     candidates.sort(key=lambda item: item[0], reverse=True)
     return candidates[0][1]
+
+
+@router.get(
+    "/types",
+    response_model=list[CredentialTypeInfo],
+    dependencies=[Depends(require_permission("credential:read"))],
+)
+async def list_types() -> list[CredentialTypeInfo]:
+    """Credential definitions owned by the backend.
+
+    The editor should use these specs to render credential creation forms and
+    OAuth connect actions instead of hard-coded frontend presets.
+    """
+    return [
+        CredentialTypeInfo.model_validate(spec, from_attributes=True)
+        for spec in list_credential_types()
+    ]
+
+
+@router.post(
+    "/oauth/start",
+    response_model=CredentialOAuthStartResponse,
+    dependencies=[Depends(require_permission("credential:write"))],
+)
+async def start_oauth_credential(
+    body: CredentialOAuthStartRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
+) -> CredentialOAuthStartResponse:
+    await _validate_scope(
+        session,
+        body.scope,
+        body.workflow_id,
+        body.environment_id,
+        body.runner_pool_id,
+    )
+    try:
+        scopes = default_scopes(body.credential_type, body.scopes)
+        redirect_uri = resolve_redirect_uri(
+            body.redirect_uri,
+            str(request.url_for("oauth_callback")),
+        )
+        state, expires_at = create_oauth_state(
+            {
+                "credential_type": body.credential_type,
+                "name": body.name,
+                "scope": body.scope,
+                "workflow_id": body.workflow_id,
+                "environment_id": body.environment_id,
+                "runner_pool_id": body.runner_pool_id,
+                "description": body.description,
+                "redirect_uri": redirect_uri,
+                "scopes": scopes,
+                "actor_id": actor.id if actor else None,
+                "actor_email": actor.email if actor else None,
+            }
+        )
+        authorization_url = build_authorization_url(
+            type_id=body.credential_type,
+            redirect_uri=redirect_uri,
+            state=state,
+            scopes=scopes,
+        )
+    except OAuthError as exc:
+        raise _oauth_http_error(exc) from exc
+    return CredentialOAuthStartResponse(
+        authorization_url=authorization_url,
+        state=state,
+        credential_type=body.credential_type,
+        redirect_uri=redirect_uri,
+        scopes=scopes,
+        expires_at=expires_at,
+    )
+
+
+@router.get("/oauth/callback", name="oauth_callback")
+async def oauth_callback(
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> HTMLResponse:
+    """Handle provider OAuth redirect.
+
+    Returns an HTML page that posts a ``noodle_oauth_success`` (or
+    ``noodle_oauth_error``) message to the opener window and closes itself.  If
+    no opener is present (direct navigation) the page shows a brief status
+    message instead.
+    """
+    if error:
+        return _oauth_popup_html(
+            success=False,
+            message=error_description or error,
+            credential_id=None,
+        )
+    if not code or not state:
+        return _oauth_popup_html(
+            success=False,
+            message="OAuth callback requires code and state.",
+            credential_id=None,
+        )
+    try:
+        payload = decode_oauth_state(state)
+        credential_type = str(payload["credential_type"])
+        scopes = [
+            str(scope)
+            for scope in payload.get("scopes", [])
+            if str(scope).strip()
+        ]
+        token_payload = await exchange_authorization_code(
+            type_id=credential_type,
+            code=code,
+            redirect_uri=str(payload["redirect_uri"]),
+            scopes=scopes,
+        )
+        data = token_payload_to_credential_data(
+            type_id=credential_type,
+            token_payload=token_payload,
+            requested_scopes=scopes,
+        )
+    except OAuthError as exc:
+        return _oauth_popup_html(success=False, message=str(exc), credential_id=None)
+
+    scope = str(payload["scope"])
+    workflow_id = payload.get("workflow_id")
+    environment_id = payload.get("environment_id")
+    runner_pool_id = payload.get("runner_pool_id")
+    await _validate_scope(
+        session,
+        scope,
+        str(workflow_id) if workflow_id else None,
+        str(environment_id) if environment_id else None,
+        str(runner_pool_id) if runner_pool_id else None,
+    )
+    _enc_data, _enc_dek = encrypt_credential(data)
+    cred = Credential(
+        name=str(payload["name"]),
+        type=credential_type,
+        scope=scope,
+        workflow_id=str(workflow_id) if scope == "workflow" and workflow_id else None,
+        environment_id=(
+            str(environment_id) if scope == "environment" and environment_id else None
+        ),
+        runner_pool_id=(
+            str(runner_pool_id) if scope == "runner_pool" and runner_pool_id else None
+        ),
+        description=str(payload.get("description") or ""),
+        encrypted_data=_enc_data,
+        encrypted_dek=_enc_dek,
+    )
+    session.add(cred)
+    await log_audit(
+        session,
+        "create",
+        "credential",
+        detail=cred.name,
+        actor_id=str(payload.get("actor_id") or "") or None,
+        actor_email=str(payload.get("actor_email") or "") or None,
+    )
+    await session.commit()
+    await session.refresh(cred)
+    invalidate_secret_cache()
+    return _oauth_popup_html(
+        success=True,
+        message=f"Connected \u2014 {cred.name}",
+        credential_id=str(cred.id),
+    )
+
+
+def _oauth_popup_html(
+    *,
+    success: bool,
+    message: str,
+    credential_id: str | None,
+) -> HTMLResponse:
+    """Return an HTML page that communicates back to the opener and closes.
+
+    The parent window listens for ``noodle_oauth_success`` / ``noodle_oauth_error``
+    messages and refreshes the credentials list accordingly.
+    """
+    event_type = "noodle_oauth_success" if success else "noodle_oauth_error"
+    cred_id_js = f'"{credential_id}"' if credential_id else "null"
+    # Escape message for JS string literal (no user-controlled content reaches
+    # here, but be explicit).
+    safe_msg = message.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+    bg = "#1a2633" if success else "#2d1a1a"
+    icon = "\u2705" if success else "\u274c"
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Noodle &#8212; OAuth</title>
+  <style>
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{background:{bg};color:#e0e6ed;font-family:system-ui,sans-serif;
+         display:flex;align-items:center;justify-content:center;min-height:100vh}}
+    .card{{background:#1f2d3d;border-radius:12px;padding:32px 40px;
+           text-align:center;max-width:360px;box-shadow:0 8px 32px #0006}}
+    h2{{font-size:2rem;margin-bottom:8px}}
+    p{{color:#8aa;font-size:.95rem;margin-top:8px}}
+    small{{display:block;color:#556;margin-top:16px;font-size:.8rem}}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>{icon}</h2>
+    <p id="msg">{message}</p>
+    <small>This window will close automatically.</small>
+  </div>
+  <script>
+    (function () {{
+      var payload = {{
+        type: "{event_type}",
+        credentialId: {cred_id_js},
+        message: "{safe_msg}"
+      }};
+      if (window.opener && !window.opener.closed) {{
+        try {{
+          window.opener.postMessage(payload, window.location.origin);
+        }} catch (e) {{}}
+      }}
+      // Give the parent a moment to receive the message before closing
+      setTimeout(function () {{ window.close(); }}, 800);
+    }})();
+  </script>
+</body>
+</html>
+"""
+    return HTMLResponse(content=html, status_code=200)
+
+
+@router.post(
+    "/{cred_id}/refresh",
+    response_model=CredentialInfo,
+    dependencies=[Depends(require_permission("credential:write"))],
+)
+async def refresh_credential(
+    cred_id: str,
+    session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
+) -> CredentialInfo:
+    cred = await _load(session, cred_id)
+    data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek)
+    try:
+        await refresh_stored_credential(cred, data)
+    except OAuthError as exc:
+        raise _oauth_http_error(exc) from exc
+    await log_audit(
+        session,
+        "update",
+        "credential",
+        cred.id,
+        f"{cred.name} refreshed",
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
+    )
+    await session.commit()
+    await session.refresh(cred)
+    invalidate_secret_cache()
+    return _info(cred)
 
 
 @router.get(
@@ -299,7 +591,9 @@ async def test_credential(
             "Credential is not visible for the supplied workflow/environment scope.",
         )
     data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek)
-    result = await test_credential_connection(cred.type, data, body.context)
+    type_spec = get_credential_type(cred.type)
+    test_service = type_spec.test_service if type_spec and type_spec.test_service else cred.type
+    result = await test_credential_connection(test_service, data, body.context)
     cred.last_used_at = datetime.now(UTC)
     await session.commit()
     return result

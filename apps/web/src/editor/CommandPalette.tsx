@@ -87,15 +87,17 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     },
   ];
 
-  const nodeItems: PaletteItem[] = manifests.map((m) => ({
-    id: m.id,
-    label: m.name,
-    description: m.category,
-    action: () => {
-      addNode(m.id, center);
-      onClose();
-    },
-  }));
+  const nodeItems: PaletteItem[] = manifests
+    .filter((m) => !m.hidden)
+    .map((m) => ({
+      id: m.id,
+      label: m.name,
+      description: m.category,
+      action: () => {
+        addNode(m.id, center);
+        onClose();
+      },
+    }));
 
   const allItems = [...fixedCommands, ...nodeItems];
   const q = query.trim().toLowerCase();

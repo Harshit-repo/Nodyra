@@ -531,8 +531,14 @@ export function EditorPage() {
           notify(
             payload.status === "success"
               ? "Workflow run succeeded."
-              : `Workflow run ${payload.status ?? "finished"}.`,
-            payload.status === "success" ? "success" : "error",
+              : payload.status === "waiting"
+                ? "Workflow run waiting for approval."
+                : `Workflow run ${payload.status ?? "finished"}.`,
+            payload.status === "success"
+              ? "success"
+              : payload.status === "waiting"
+                ? "info"
+                : "error",
           );
         } else if (payload.type === "run_error") {
           notify(

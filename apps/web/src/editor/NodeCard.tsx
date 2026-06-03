@@ -20,6 +20,15 @@ const PORT_KIND_COLOR: Record<string, string> = {
   artifact: "#f59e0b",
   file: "#f59e0b",
   control: "#94a3b8",
+  ai_language_model: "#6ea8ff",
+  ai_embedding_model: "#6ea8ff",
+  ai_memory: "#57c98a",
+  ai_tool: "#f6b44b",
+  ai_output_parser: "#c084fc",
+  ai_retriever: "#22d3ee",
+  ai_vector_store: "#2dd4bf",
+  ai_document_loader: "#38bdf8",
+  ai_guardrail: "#fb7185",
 };
 type AiSemanticPort = "model" | "memory" | "tools";
 
@@ -64,9 +73,14 @@ function portHandleClass(
 ): string | undefined {
   const classes: string[] = [];
   if (kind === "dataset") classes.push("handle-dataset");
+  if (kind === "ai_language_model" || kind === "ai_embedding_model") {
+    classes.push("handle-ai-model");
+  }
+  if (kind === "ai_memory") classes.push("handle-ai-memory");
+  if (kind === "ai_tool") classes.push("handle-ai-tools");
   const semantic = aiPortSemantic(manifestId, name);
   if (semantic) classes.push(`handle-ai-${semantic}`);
-  return classes.length > 0 ? classes.join(" ") : undefined;
+  return classes.length > 0 ? Array.from(new Set(classes)).join(" ") : undefined;
 }
 
 function portLeft(index: number, count: number): number {
@@ -82,6 +96,16 @@ function portKindLabel(kind: string | undefined): string {
   if (kind === "artifact") return "Artifact";
   if (kind === "file") return "File";
   if (kind === "control") return "Control";
+  if (kind === "main") return "Main data";
+  if (kind === "ai_language_model") return "AI language model";
+  if (kind === "ai_embedding_model") return "AI embedding model";
+  if (kind === "ai_memory") return "AI memory";
+  if (kind === "ai_tool") return "AI tool";
+  if (kind === "ai_output_parser") return "AI output parser";
+  if (kind === "ai_retriever") return "AI retriever";
+  if (kind === "ai_vector_store") return "AI vector store";
+  if (kind === "ai_document_loader") return "AI document loader";
+  if (kind === "ai_guardrail") return "AI guardrail";
   return "Any data";
 }
 
@@ -90,6 +114,7 @@ const STATUS_GLYPH: Record<string, string> = {
   error: "!",
   skipped: "–",
   cancelled: "■",
+  waiting: "…",
 };
 
 function stop(event: MouseEvent): void {

@@ -1,20 +1,18 @@
 """Pydantic request/response schemas for the API."""
 
 from datetime import datetime
-from typing import Any, Generic, TypeVar
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
-T = TypeVar("T")
+from noodle.models import WorkflowGraph
 
 
-class PageResponse(BaseModel, Generic[T]):
+class PageResponse[T](BaseModel):
     items: list[T]
     total: int
     limit: int
     offset: int
-
-from noodle.models import WorkflowGraph
 
 
 class WorkflowCreate(BaseModel):
@@ -35,6 +33,35 @@ class WorkflowUpdate(BaseModel):
     run_timeout_seconds: float | None = Field(default=None, ge=0)
 
 
+class ProviderTriggerStatusCounts(BaseModel):
+    total: int = 0
+    active: int = 0
+    activating: int = 0
+    error: int = 0
+    deleted: int = 0
+
+
+class ProviderTriggerSubscriptionInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    workflow_id: str
+    workflow_version_id: str | None = None
+    node_id: str
+    node_type: str
+    provider: str
+    trigger_key: str
+    status: str
+    external_id: str
+    callback_url: str
+    config: dict[str, Any] = Field(default_factory=dict)
+    error: str = ""
+    expires_at: datetime | None = None
+    last_event_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class WorkflowSummary(BaseModel):
     id: str
     name: str
@@ -49,6 +76,9 @@ class WorkflowSummary(BaseModel):
     last_run_status: str | None = None
     last_run_started_at: datetime | None = None
     last_run_finished_at: datetime | None = None
+    provider_trigger_counts: ProviderTriggerStatusCounts = Field(
+        default_factory=ProviderTriggerStatusCounts
+    )
     updated_at: datetime
 
 
@@ -64,6 +94,9 @@ class WorkflowDetail(BaseModel):
     error_alerts: dict[str, Any] = Field(default_factory=dict)
     allow_concurrent: bool = True
     run_timeout_seconds: float | None = None
+    provider_trigger_counts: ProviderTriggerStatusCounts = Field(
+        default_factory=ProviderTriggerStatusCounts
+    )
     graph: WorkflowGraph
     created_at: datetime
     updated_at: datetime
@@ -320,15 +353,67 @@ class CredentialInfo(BaseModel):
     id: str
     name: str
     type: str
+    auth_method: str | None = None
     scope: str
     workflow_id: str | None = None
     environment_id: str | None = None
     runner_pool_id: str | None = None
     description: str
     keys: list[str]
+    oauth_scopes: list[str] = Field(default_factory=list)
+    oauth_expires_at: datetime | None = None
     last_used_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class CredentialTypeFieldInfo(BaseModel):
+    key: str
+    label: str
+    secret: bool = True
+    required: bool = True
+    placeholder: str = ""
+    help: str = ""
+
+
+class OAuthCredentialTypeInfo(BaseModel):
+    auth_url: str
+    token_url: str
+    scopes: list[str] = Field(default_factory=list)
+    authorization_params: dict[str, str] = Field(default_factory=dict)
+
+
+class CredentialTypeInfo(BaseModel):
+    id: str
+    name: str
+    provider: str
+    auth_method: str
+    fields: list[CredentialTypeFieldInfo] = Field(default_factory=list)
+    oauth: OAuthCredentialTypeInfo | None = None
+    test_service: str | None = None
+    documentation_url: str = ""
+    default_scopes: list[str] = Field(default_factory=list)
+
+
+class CredentialOAuthStartRequest(BaseModel):
+    credential_type: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=120)
+    scope: str = "global"
+    workflow_id: str | None = None
+    environment_id: str | None = None
+    runner_pool_id: str | None = None
+    description: str = ""
+    redirect_uri: str = Field(default="", max_length=1000)
+    scopes: list[str] = Field(default_factory=list)
+
+
+class CredentialOAuthStartResponse(BaseModel):
+    authorization_url: str
+    state: str
+    credential_type: str
+    redirect_uri: str
+    scopes: list[str]
+    expires_at: datetime
 
 
 class CredentialTestRequest(BaseModel):
@@ -711,6 +796,7 @@ class QueueStats(BaseModel):
     queued: int = 0
     leased: int = 0
     running: int = 0
+    waiting: int = 0
     completed: int = 0
     failed: int = 0
     dead_lettered: int = 0
@@ -770,6 +856,35 @@ class RunTimeline(BaseModel):
     run_id: str
     status: str
     events: list[RunTimelineEvent]
+
+
+class RunApprovalInfo(BaseModel):
+    """A side-effecting AI tool call waiting for, or carrying, a decision."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    run_id: str
+    approval_key: str
+    status: str
+    node_id: str | None = None
+    agent_node_id: str | None = None
+    step: int
+    max_steps: int | None = None
+    tool_call_id: str
+    tool_name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    message: str = ""
+    requested_at: datetime
+    resolved_at: datetime | None = None
+    resolved_by: str | None = None
+    reason: str = ""
+
+
+class RunApprovalDecisionRequest(BaseModel):
+    decision: Literal["approve", "reject"]
+    reason: str | None = Field(default=None, max_length=4000)
+    resolved_by: str | None = Field(default=None, max_length=120)
 
 
 class RunReplayResponse(BaseModel):

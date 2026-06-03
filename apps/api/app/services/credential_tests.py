@@ -138,6 +138,18 @@ async def _test_openai(data: dict[str, str], context: dict[str, Any]) -> dict[st
     )
 
 
+async def _test_openrouter(data: dict[str, str], context: dict[str, Any]) -> dict[str, Any]:
+    api_key = _value(data, "api_key", "token")
+    if not api_key:
+        return {"ok": False, "message": "Missing api_key", "details": {}}
+    base_url = (_value(data, "base_url") or "https://openrouter.ai/api/v1").rstrip("/")
+    return await _request(
+        "GET",
+        f"{base_url}/key",
+        headers={"Authorization": f"Bearer {api_key}"},
+    )
+
+
 async def _test_anthropic(data: dict[str, str], context: dict[str, Any]) -> dict[str, Any]:
     api_key = _value(data, "api_key", "token")
     if not api_key:
@@ -233,6 +245,21 @@ async def _test_pinecone(data: dict[str, str], context: dict[str, Any]) -> dict[
     )
 
 
+async def _test_qdrant(data: dict[str, str], context: dict[str, Any]) -> dict[str, Any]:
+    url = _value(data, "url", "base_url", "cluster_url").rstrip("/")
+    if not url:
+        return {"ok": False, "message": "Missing url", "details": {}}
+    headers: dict[str, str] = {}
+    api_key = _value(data, "api_key", "token")
+    if api_key:
+        headers["api-key"] = api_key
+    return await _request(
+        "GET",
+        f"{url}/collections",
+        headers=headers or None,
+    )
+
+
 async def _test_notion(data: dict[str, str], context: dict[str, Any]) -> dict[str, Any]:
     token = _value(data, "token", "api_key")
     if not token:
@@ -281,6 +308,20 @@ async def _test_google_sheets(data: dict[str, str], context: dict[str, Any]) -> 
         f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}",
         headers=headers or None,
         params=params,
+    )
+
+
+async def _test_microsoft_outlook(
+    data: dict[str, str],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    access_token = _value(data, "access_token", "token")
+    if not access_token:
+        return {"ok": False, "message": "Missing access_token", "details": {}}
+    return await _request(
+        "GET",
+        "https://graph.microsoft.com/v1.0/me",
+        headers={"Authorization": f"Bearer {access_token}"},
     )
 
 
@@ -414,15 +455,18 @@ _TESTERS: dict[str, TestFn] = {
     "discord_webhook": _test_discord,
     "github": _test_github,
     "openai": _test_openai,
+    "openrouter": _test_openrouter,
     "anthropic": _test_anthropic,
     "llm_provider": _test_llm_provider,
     "cohere": _test_cohere,
     "deepl": _test_deepl,
     "pinecone": _test_pinecone,
+    "qdrant": _test_qdrant,
     "notion": _test_notion,
     "stripe": _test_stripe,
     "airtable": _test_airtable,
     "google_sheets": _test_google_sheets,
+    "microsoft_outlook": _test_microsoft_outlook,
     "smtp": _test_smtp,
     "postgres": _test_postgres,
     "mysql": _test_mysql,

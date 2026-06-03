@@ -241,13 +241,16 @@ async def metrics(session: AsyncSession = Depends(get_session)) -> Response:
         f'noodle_queue_depth{{status="queued"}} {queue["queued"]}',
         f'noodle_queue_depth{{status="leased"}} {queue["leased"]}',
         f'noodle_queue_depth{{status="running"}} {queue["running"]}',
+        f'noodle_queue_depth{{status="waiting"}} {queue["waiting"]}',
         f'noodle_queue_depth{{status="completed"}} {queue["completed"]}',
         f'noodle_queue_depth{{status="failed"}} {queue["failed"]}',
         f'noodle_queue_depth{{status="dead_lettered"}} {queue["dead_lettered"]}',
         f'noodle_queue_depth{{status="cancelled"}} {queue["cancelled"]}',
-        "# HELP noodle_queue_oldest_queued_age_seconds Wait of the oldest queued entry; -1 when empty.",
+        "# HELP noodle_queue_oldest_queued_age_seconds Wait of the oldest "
+        "queued entry; -1 when empty.",
         "# TYPE noodle_queue_oldest_queued_age_seconds gauge",
-        f"noodle_queue_oldest_queued_age_seconds {queue_oldest if queue_oldest is not None else -1}",
+        "noodle_queue_oldest_queued_age_seconds "
+        f"{queue_oldest if queue_oldest is not None else -1}",
         "# HELP noodle_queue_draining 1 if the dispatch loop is currently draining, else 0.",
         "# TYPE noodle_queue_draining gauge",
         f"noodle_queue_draining {1 if settings.queue_drain else 0}",

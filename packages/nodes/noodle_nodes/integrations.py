@@ -143,6 +143,9 @@ def _credential(
     param_groups={"Options": ["blocks", "thread_ts"]},
     category="Integrations",
     icon="message",
+    hidden=True,
+    deprecated=True,
+    replacement_id="slack_send_message_v2",
     params={
         "bot_token": {
             **_credential("slack_bot", "bot_token", "Slack bot token"),
@@ -327,6 +330,9 @@ def smtp_send_email(
     id="google_sheets_read",
     category="Integrations",
     icon="sheet",
+    hidden=True,
+    deprecated=True,
+    replacement_id="google_sheets_read_v2",
     params={
         "spreadsheet_id": {"placeholder": "Google Sheets spreadsheet ID"},
         "range_name": {"placeholder": "Sheet1!A1:D20"},
@@ -367,6 +373,9 @@ def google_sheets_read(
     param_groups={"Options": ["value_input_option"]},
     category="Integrations",
     icon="sheet",
+    hidden=True,
+    deprecated=True,
+    replacement_id="google_sheets_append_v2",
     params={
         "spreadsheet_id": {"placeholder": "Google Sheets spreadsheet ID"},
         "range_name": {"placeholder": "Sheet1!A:D"},
@@ -412,6 +421,9 @@ def google_sheets_append(
     param_groups={"Options": ["parent_page_id", "title_property", "properties", "content"]},
     category="Integrations",
     icon="page",
+    hidden=True,
+    deprecated=True,
+    replacement_id="notion_create_page_v2",
     params={
         "token": {
             **_credential("notion", "token", "Notion integration token"),
@@ -475,6 +487,9 @@ def notion_create_page(
     id="github_get_repo",
     category="Integrations",
     icon="github",
+    hidden=True,
+    deprecated=True,
+    replacement_id="github_get_repo_v2",
     params={
         "repo": {"placeholder": "owner/name"},
         "token": {
@@ -494,6 +509,9 @@ def github_get_repo(input: Any = None, repo: str = "", token: str = "") -> Any: 
     param_groups={"Options": ["body", "labels"]},
     category="Integrations",
     icon="github",
+    hidden=True,
+    deprecated=True,
+    replacement_id="github_create_issue_v2",
     params={
         "repo": {"placeholder": "owner/name"},
         "token": {
@@ -915,6 +933,9 @@ def anthropic_message(
     param_groups={"Options": ["name", "description", "metadata"]},
     category="Integrations",
     icon="card",
+    hidden=True,
+    deprecated=True,
+    replacement_id="stripe_create_customer_v2",
     params={
         "api_key": {
             **_credential("stripe", "api_key", "Stripe API key"),
@@ -956,6 +977,9 @@ def stripe_create_customer(
     param_groups={"Options": ["view", "max_records", "filter_formula"]},
     category="Integrations",
     icon="table",
+    hidden=True,
+    deprecated=True,
+    replacement_id="airtable_list_records_v2",
     params={
         "token": {
             **_credential("airtable", "token", "Airtable token"),
@@ -993,6 +1017,9 @@ def airtable_list_records(
     param_groups={"Options": ["typecast"]},
     category="Integrations",
     icon="table",
+    hidden=True,
+    deprecated=True,
+    replacement_id="airtable_create_record_v2",
     params={
         "token": {
             **_credential("airtable", "token", "Airtable token"),

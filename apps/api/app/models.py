@@ -340,6 +340,12 @@ class Run(Base):
     node_runs: Mapped[list["NodeRun"]] = relationship(
         back_populates="run", cascade="all, delete-orphan"
     )
+    events: Mapped[list["RunEvent"]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+    approvals: Mapped[list["RunApproval"]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
     artifacts: Mapped[list["Artifact"]] = relationship(
         back_populates="run", cascade="all, delete-orphan"
     )
@@ -376,6 +382,69 @@ class NodeRun(Base):
     # Composite index for fast per-run, per-node lookup during replay/retry.
     __table_args__ = (
         Index("ix_node_runs_run_id_node_id", "run_id", "node_id"),
+    )
+
+
+class RunEvent(Base):
+    """Durable non-node run events, such as AI agent tool steps."""
+
+    __tablename__ = "run_events"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("runs.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    ts: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    node_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    agent_node_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+    run: Mapped[Run] = relationship(back_populates="events")
+
+    __table_args__ = (
+        Index("ix_run_events_run_id_sequence", "run_id", "sequence"),
+        Index("ix_run_events_run_id_ts", "run_id", "ts"),
+    )
+
+
+class RunApproval(Base):
+    """Operator decision record for an AI agent tool call."""
+
+    __tablename__ = "run_approvals"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("runs.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    approval_key: Mapped[str] = mapped_column(String(240), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    node_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    agent_node_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_steps: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tool_call_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    arguments: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    message: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    resume_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    resolved_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, default="", nullable=False)
+
+    run: Mapped[Run] = relationship(back_populates="approvals")
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "approval_key", name="uq_run_approvals_key"),
+        Index("ix_run_approvals_run_id_status", "run_id", "status"),
     )
 
 
@@ -501,6 +570,56 @@ class Deployment(Base):
     )
 
 
+class ProviderTriggerSubscription(Base):
+    """Lifecycle state for a provider-managed trigger subscription."""
+
+    __tablename__ = "provider_trigger_subscriptions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    workflow_id: Mapped[str] = mapped_column(
+        ForeignKey("workflows.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    workflow_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workflow_versions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    node_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    node_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    provider: Mapped[str] = mapped_column(String(80), nullable=False)
+    trigger_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    external_id: Mapped[str] = mapped_column(String(240), nullable=False, default="")
+    callback_url: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    error: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_event_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workflow_id",
+            "node_id",
+            name="uq_provider_trigger_subscriptions_workflow_node",
+        ),
+        Index(
+            "ix_provider_trigger_subscriptions_provider_status",
+            "provider",
+            "status",
+        ),
+    )
+
+
 class ScheduleState(Base):
     """Durable record of when each workflow's schedule trigger last fired.
 
@@ -579,10 +698,12 @@ class RunQueueEntry(Base):
 
     This is the production source of truth for *run scheduling and backpressure*.
     It is distinct from :class:`Run`: ``Run.status`` stays the user-facing run
-    state (``pending``/``running``/``queued``/``success``/``error``/``cancelled``)
+    state
+    (``pending``/``running``/``queued``/``waiting``/``success``/``error``/
+    ``cancelled``)
     and is not renamed, while ``RunQueueEntry.status`` is the orchestration state
-    (``queued``/``leased``/``running``/``completed``/``failed``/``dead_lettered``/
-    ``cancelled``). The queue service maps between the two.
+    (``queued``/``leased``/``running``/``waiting``/``completed``/``failed``/
+    ``dead_lettered``/``cancelled``). The queue service maps between the two.
 
     ``run_id`` is unique: a run has at most one live queue entry. Replay/retry
     resets the existing entry rather than inserting a second one, so the queue

@@ -159,7 +159,7 @@ async def test_ai_builder_returns_and_applies_editable_graph(
     ).json()
 
     node_types = [node["type"] for node in response["graph"]["nodes"]]
-    assert node_types == ["webhook_trigger", "ai_chat", "slack_send_message"]
+    assert node_types == ["webhook_trigger", "ai_chat", "slack_send_message_v2"]
     assert "LLM provider credential" in response["missing_credentials"]
     assert "Slack bot token" in response["missing_credentials"]
 
@@ -206,19 +206,54 @@ async def test_ai_builder_attaches_existing_credentials(
 
     nodes = {node["id"]: node for node in response["graph"]["nodes"]}
     summarize_key = nodes["summarize"]["params"]["credentials"]
-    slack_token = nodes["notify_slack"]["params"]["bot_token"]
+    slack_credentials = nodes["notify_slack"]["params"]["credentials"]
 
     assert summarize_key == {
         "__noodle_credential__": True,
         "id": llm_cred["id"],
         "key": "*",
     }
-    assert slack_token == {
+    assert slack_credentials == {
         "__noodle_credential__": True,
         "id": slack_cred["id"],
-        "key": "bot_token",
+        "key": "*",
     }
     assert response["missing_credentials"] == []
+
+
+async def test_ai_builder_uses_github_v2_operations_and_credentials(
+    client: AsyncClient,
+) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "GitHub AI"})).json()[
+        "id"
+    ]
+    github_cred = (
+        await client.post(
+            "/credentials",
+            json={
+                "name": "GitHub",
+                "type": "github",
+                "scope": "global",
+                "data": {"token": "ghp-test"},
+            },
+        )
+    ).json()
+
+    response = (
+        await client.post(
+            f"/workflows/{workflow_id}/ai-draft",
+            json={"prompt": "Create a GitHub issue when a webhook arrives."},
+        )
+    ).json()
+
+    nodes = {node["id"]: node for node in response["graph"]["nodes"]}
+    assert nodes["create_issue"]["type"] == "github_create_issue_v2"
+    assert nodes["create_issue"]["params"]["credentials"] == {
+        "__noodle_credential__": True,
+        "id": github_cred["id"],
+        "key": "*",
+    }
+    assert "GitHub token" not in response["missing_credentials"]
 
 
 async def test_ai_builder_skips_attach_when_credential_ambiguous(

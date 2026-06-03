@@ -979,7 +979,9 @@ export const useEditor = create<EditorStore>((set, get) => ({
           ? "cancelled"
           : event.status === "error"
             ? "error"
-            : "skipped";
+            : event.status === "waiting"
+              ? "waiting"
+              : "skipped";
       set((state) => ({
         running: false,
         runError:

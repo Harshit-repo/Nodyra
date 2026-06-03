@@ -5,7 +5,9 @@ import type {
   AiWorkflowDraftRequest,
   AiWorkflowDraftResponse,
   Credential,
+  CredentialOAuthStartResponse,
   CredentialTestResponse,
+  CredentialTypeInfo,
   Environment,
   NodeManifest,
   NodeSource,
@@ -16,7 +18,9 @@ import type {
   DeploymentCreate,
   DeploymentUpdate,
   DatasetQueryResult,
-  RunBatchInfo,  RunInfo,
+  ProviderTriggerSubscription,
+  RunBatchInfo,
+  RunInfo,
   RunListItem,
   RunnerInfo,
   RunnerPoolInfo,
@@ -159,6 +163,10 @@ export const api = {
     request<void>(`/workflows/${id}`, { method: "DELETE" }),
   listWorkflowVersions: (workflowId: string) =>
     request<WorkflowVersionInfo[]>(`/workflows/${workflowId}/versions`),
+  listWorkflowProviderTriggers: (workflowId: string, includeDeleted = true) =>
+    request<ProviderTriggerSubscription[]>(
+      `/workflows/${workflowId}/provider-triggers?include_deleted=${includeDeleted ? "true" : "false"}`,
+    ),
   restoreWorkflowVersion: (workflowId: string, versionId: string) =>
     request<WorkflowDetail>(`/workflows/${workflowId}`, {
       method: "PUT",
@@ -355,6 +363,22 @@ export const api = {
     request<NodeManifest[]>(`/code-modules/manifests/workflow/${workflowId}`),
 
   listCredentials: () => request<Credential[]>("/credentials"),
+  listCredentialTypes: () => request<CredentialTypeInfo[]>("/credentials/types"),
+  startCredentialOAuth: (body: {
+    credential_type: string;
+    name: string;
+    scope?: string;
+    workflow_id?: string | null;
+    environment_id?: string | null;
+    runner_pool_id?: string | null;
+    description?: string;
+    redirect_uri?: string;
+    scopes?: string[];
+  }) =>
+    request<CredentialOAuthStartResponse>("/credentials/oauth/start", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   createCredential: (body: {
     name: string;
     type: string;
@@ -382,6 +406,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  refreshCredential: (id: string) =>
+    request<Credential>(`/credentials/${id}/refresh`, { method: "POST" }),
   deleteCredential: (id: string) =>
     request<void>(`/credentials/${id}`, { method: "DELETE" }),
 
@@ -445,6 +471,18 @@ export const api = {
   runtimeMode: () => request<RuntimeModeStatus>("/ops/runtime-mode"),
   queueStats: () => request<QueueStats>("/ops/queue"),
   runTimeline: (runId: string) => request<RunTimeline>(`/runs/${runId}/timeline`),
+  runApprovals: (runId: string) =>
+    request<RunApprovalInfo[]>(`/runs/${runId}/approvals`),
+  decideRunApproval: (
+    runId: string,
+    approvalId: string,
+    decision: "approve" | "reject",
+    reason = "",
+  ) =>
+    request<RunApprovalInfo>(`/runs/${runId}/approvals/${approvalId}/decision`, {
+      method: "POST",
+      body: JSON.stringify({ decision, reason }),
+    }),
   runDebugSnapshot: (runId: string) =>
     request<RunDebugSnapshot>(`/runs/${runId}/debug-snapshot`),
 };
@@ -467,6 +505,7 @@ export interface QueueStats {
   queued: number;
   leased: number;
   running: number;
+  waiting: number;
   completed: number;
   failed: number;
   dead_lettered: number;
@@ -484,6 +523,25 @@ export interface RunTimeline {
   run_id: string;
   status: string;
   events: RunTimelineEvent[];
+}
+
+export interface RunApprovalInfo {
+  id: string;
+  run_id: string;
+  approval_key: string;
+  status: string;
+  node_id: string | null;
+  agent_node_id: string | null;
+  step: number;
+  max_steps: number | null;
+  tool_call_id: string;
+  tool_name: string;
+  arguments: Record<string, unknown>;
+  message: string;
+  requested_at: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+  reason: string;
 }
 
 export interface RunDebugSnapshot {

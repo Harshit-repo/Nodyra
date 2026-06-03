@@ -49,6 +49,21 @@ class ParamSpec(BaseModel):
     # optional, "Add option"-style field the inspector tucks behind a chip;
     # params with no ``group`` are core and always shown.
     group: str | None = None
+    # Rich UI/runtime metadata used by production integrations and AI nodes.
+    # Defaults keep existing manifests and saved workflows backward-compatible.
+    display_name: str = ""
+    display_when: dict[str, Any] | None = None
+    hide_when: dict[str, Any] | None = None
+    widget: str = ""
+    depends_on: list[str] = Field(default_factory=list)
+    load_options: str | None = None
+    resource_mapper: dict[str, Any] | None = None
+    fixed_collection: dict[str, Any] | None = None
+    credential_type: str | None = None
+    required_scopes: list[str] = Field(default_factory=list)
+    advanced: bool = False
+    documentation_url: str = ""
+    validation: dict[str, Any] | None = None
 
 
 class PortDataKind(StrEnum):
@@ -60,10 +75,30 @@ class PortDataKind(StrEnum):
     """
 
     any = "any"
+    main = "main"
     control = "control"
     dataset = "dataset"
     artifact = "artifact"
     file = "file"
+    ai_language_model = "ai_language_model"
+    ai_embedding_model = "ai_embedding_model"
+    ai_memory = "ai_memory"
+    ai_tool = "ai_tool"
+    ai_output_parser = "ai_output_parser"
+    ai_retriever = "ai_retriever"
+    ai_vector_store = "ai_vector_store"
+    ai_document_loader = "ai_document_loader"
+    ai_guardrail = "ai_guardrail"
+
+
+class NodeRole(StrEnum):
+    """Declares how the engine/editor should treat a node type."""
+
+    executable = "executable"
+    supplier = "supplier"
+    trigger = "trigger"
+    tool = "tool"
+    output_parser = "output_parser"
 
 
 class PortSpec(BaseModel):
@@ -83,6 +118,10 @@ class NodeManifest(BaseModel):
     version: str = "1.0.0"
     description: str = ""
     icon: str | None = None
+    role: NodeRole = NodeRole.executable
+    hidden: bool = False
+    deprecated: bool = False
+    replacement_id: str | None = None
     inputs: list[PortSpec] = Field(default_factory=list)
     params: list[ParamSpec] = Field(default_factory=list)
     outputs: list[PortSpec] = Field(default_factory=list)
@@ -131,12 +170,14 @@ class WorkflowGraph(BaseModel):
 class NodeStatus(StrEnum):
     pending = "pending"
     running = "running"
+    waiting = "waiting"
     success = "success"
     error = "error"
     skipped = "skipped"
 
 
 class RunStatus(StrEnum):
+    waiting = "waiting"
     success = "success"
     error = "error"
 

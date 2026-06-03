@@ -132,10 +132,22 @@ in readiness scripts. `POST /ops/drain` requires the `ops:drain` permission
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
-| `AUTH_REQUIRED` | `false` | Bearer-token gate on all routes except `/auth`, `/health`, `/webhook`, `/internal`. |
+| `AUTH_REQUIRED` | `false` | Bearer-token gate on all routes except public auth, health, webhook, provider-webhook, and internal callback paths. |
 | `SECRET_KEY` | dev placeholder | Encrypts credentials + signs session tokens. **Must** be rotated for production. |
 | `INTERNAL_API_TOKEN` | unset | Shared secret for `/internal/*` worker callbacks when `AUTH_REQUIRED=true`. |
 | `CORS_ORIGINS` | `*` (dev) | Comma-separated allowed origins. |
+
+### External callbacks
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `PUBLIC_API_URL` | `http://localhost:8000` fallback | Externally reachable API base URL used for provider-managed trigger callbacks such as GitHub repository webhooks. Set this to the public HTTPS API origin in production. |
+| `WEBHOOK_ROLE` | `ingress` | Controls whether webhook/provider-webhook ingress routes are mounted. Use `ingress` or `inline` to receive inbound webhook traffic, and `disabled` for API replicas that should never receive production webhook traffic. |
+
+Provider-managed triggers create callback URLs like
+`$PUBLIC_API_URL/provider-webhook/{subscription_id}` during workflow
+activation/publish. The URL must be reachable by the external provider over
+HTTPS before activating those workflows.
 
 ## Migration ordering
 
@@ -169,6 +181,8 @@ Migration policy:
   signs session tokens.
 - Set `AUTH_REQUIRED=true` and create the first admin via `/auth/register`.
 - Set `CORS_ORIGINS` to your real frontend origin.
+- Set `PUBLIC_API_URL` to the public HTTPS API origin before activating
+  provider-managed triggers.
 - Put the API behind TLS (Ingress with `tls: true`, or a reverse proxy).
 - Code modules and the Code node execute arbitrary Python in the workflow's
   env. Gate Code Library access to Editor/Admin roles.

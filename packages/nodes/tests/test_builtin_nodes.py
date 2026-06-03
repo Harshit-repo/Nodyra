@@ -58,6 +58,33 @@ def test_expected_integration_nodes_are_registered() -> None:
     assert manifests["openai_chat"].category == "AI"
     assert manifests["anthropic_message"].category == "AI"
     assert manifests["slack_send_message"].category == "Integrations"
+    assert manifests["slack_send_message"].hidden is True
+    assert manifests["slack_send_message"].deprecated is True
+    assert manifests["slack_send_message"].replacement_id == "slack_send_message_v2"
+    assert manifests["google_sheets_read"].hidden is True
+    assert manifests["google_sheets_read"].deprecated is True
+    assert manifests["google_sheets_read"].replacement_id == "google_sheets_read_v2"
+    assert manifests["google_sheets_append"].hidden is True
+    assert manifests["google_sheets_append"].deprecated is True
+    assert manifests["google_sheets_append"].replacement_id == "google_sheets_append_v2"
+    assert manifests["github_get_repo"].hidden is True
+    assert manifests["github_get_repo"].deprecated is True
+    assert manifests["github_get_repo"].replacement_id == "github_get_repo_v2"
+    assert manifests["github_create_issue"].hidden is True
+    assert manifests["github_create_issue"].deprecated is True
+    assert manifests["github_create_issue"].replacement_id == "github_create_issue_v2"
+    assert manifests["stripe_create_customer"].hidden is True
+    assert manifests["stripe_create_customer"].deprecated is True
+    assert manifests["stripe_create_customer"].replacement_id == "stripe_create_customer_v2"
+    assert manifests["airtable_list_records"].hidden is True
+    assert manifests["airtable_list_records"].deprecated is True
+    assert manifests["airtable_list_records"].replacement_id == "airtable_list_records_v2"
+    assert manifests["airtable_create_record"].hidden is True
+    assert manifests["airtable_create_record"].deprecated is True
+    assert manifests["airtable_create_record"].replacement_id == "airtable_create_record_v2"
+    assert manifests["notion_create_page"].hidden is True
+    assert manifests["notion_create_page"].deprecated is True
+    assert manifests["notion_create_page"].replacement_id == "notion_create_page_v2"
     assert [port.name for port in manifests["slack_send_message"].inputs] == ["input"]
     bot_token = next(
         param for param in manifests["slack_send_message"].params if param.name == "bot_token"
@@ -89,8 +116,13 @@ def test_expected_integration_nodes_are_registered() -> None:
 def test_trigger_inputs_and_node_inputs() -> None:
     triggers = {"manual_trigger", "schedule_trigger", "webhook_trigger", "error_trigger"}
     for manifest in registry.manifests():
-        if manifest.id in triggers:
+        role = getattr(manifest.role, "value", manifest.role)
+        if manifest.id in triggers or role == "trigger":
             assert manifest.inputs == []
+        elif role in {"supplier", "tool", "output_parser"}:
+            # Typed supplier/tool nodes may be pure config nodes with no main
+            # data input.
+            continue
         else:
             # Non-trigger nodes have at least one input. Most use the single
             # "input" port; some (merge, build_report) expose several named
@@ -408,6 +440,19 @@ def test_http_request_no_retry_by_default(monkeypatch) -> None:
     assert len(calls) == 1
 
 
+def test_http_request_blocks_private_targets(monkeypatch) -> None:
+    def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
+        raise AssertionError("private target should be blocked before requests")
+
+    monkeypatch.setattr(requests, "request", fake_request)
+    try:
+        registry.get("http_request").func(url="http://127.0.0.1:8000/internal")
+    except ValueError as exc:
+        assert "private" in str(exc)
+    else:
+        raise AssertionError("private HTTP target should be blocked")
+
+
 def test_graphql_request_passes_configurable_timeout(monkeypatch) -> None:
     captured: dict = {}
 
@@ -422,6 +467,22 @@ def test_graphql_request_passes_configurable_timeout(monkeypatch) -> None:
         timeout_seconds=12,
     )
     assert captured["timeout"] == 12
+
+
+def test_graphql_request_blocks_private_targets(monkeypatch) -> None:
+    def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
+        raise AssertionError("private target should be blocked before requests")
+
+    monkeypatch.setattr(requests, "request", fake_request)
+    try:
+        registry.get("graphql_request").func(
+            url="http://localhost/graphql",
+            query="{ viewer { login } }",
+        )
+    except ValueError as exc:
+        assert "private" in str(exc)
+    else:
+        raise AssertionError("private GraphQL target should be blocked")
 
 
 def test_slack_node_builds_chat_post_message_payload(monkeypatch) -> None:

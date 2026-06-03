@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import {
   api,
   type QueueStats,
+  type RunApprovalInfo,
   type RunStreamHandle,
   type RuntimeModeStatus,
   type RunTimeline,
@@ -91,7 +92,8 @@ function OpsDashboard() {
           <div className="ops-card-label">Queue depth</div>
           <div className="ops-card-value">{queue.queued}</div>
           <div className="ops-card-sub">
-            {queue.dead_lettered} dead-lettered · {queue.failed} failed
+            {queue.waiting} waiting · {queue.dead_lettered} dead-lettered ·{" "}
+            {queue.failed} failed
           </div>
         </div>
         <div className="ops-card">
@@ -180,7 +182,7 @@ function RunTimelinePanel({ runId }: { runId: string }) {
         const summary = formatTimelineSummary(e);
         return (
           <li key={i} className={`run-timeline-event evt-${e.type}`}>
-            <span className="run-timeline-type">{e.type}</span>
+            <span className="run-timeline-type">{formatTimelineType(e.type)}</span>
             {summary && <span className="run-timeline-summary">{summary}</span>}
             {e.ts && (
               <span className="run-timeline-ts">
@@ -196,6 +198,12 @@ function RunTimelinePanel({ runId }: { runId: string }) {
 
 function formatTimelineSummary(e: RunTimelineEvent): string {
   const d = e.data as Record<string, unknown>;
+  if (e.type.startsWith("agent_")) {
+    return formatAgentTimelineSummary(e.type, d);
+  }
+  if (e.type.startsWith("guardrail_")) {
+    return formatGuardrailTimelineSummary(e.type, d);
+  }
   if (typeof d.node_id === "string") {
     const parts: string[] = [d.node_id as string];
     if (typeof d.duration_ms === "number") {
@@ -207,6 +215,204 @@ function formatTimelineSummary(e: RunTimelineEvent): string {
   if (typeof d.attempt === "number") return `attempt ${d.attempt}`;
   if (typeof d.reason === "string") return d.reason as string;
   return "";
+}
+
+function formatTimelineType(type: string): string {
+  const labels: Record<string, string> = {
+    agent_action_requested: "Agent action",
+    agent_tool_started: "Agent tool started",
+    agent_tool_approval_required: "Agent approval required",
+    agent_tool_auto_approved: "Agent auto-approved",
+    agent_tool_finished: "Agent tool finished",
+    agent_action_completed: "Agent resumed",
+    agent_tool_approval_decided: "Agent approval decided",
+    agent_resume_prepared: "Agent resume prepared",
+    provider_trigger_received: "Provider trigger",
+    guardrail_blocked: "Guardrail blocked",
+    guardrail_redacted: "Guardrail redacted",
+    node_started: "Node started",
+    node_finished: "Node finished",
+    queue_failed: "Queue failed",
+    dead_lettered: "Dead lettered",
+  };
+  return labels[type] || type.replaceAll("_", " ");
+}
+
+function formatAgentTimelineSummary(
+  type: string,
+  data: Record<string, unknown>,
+): string {
+  const parts: string[] = [];
+  if (typeof data.agent_node_id === "string") parts.push(data.agent_node_id);
+  if (typeof data.tool_name === "string") parts.push(data.tool_name);
+  if (typeof data.step === "number") parts.push(`step ${data.step}`);
+  if (typeof data.status === "string") parts.push(data.status);
+  if (typeof data.message === "string") parts.push(data.message);
+  if (type === "agent_action_requested" && Array.isArray(data.tool_calls)) {
+    const count = data.tool_calls.length;
+    parts.push(`${count} tool call${count === 1 ? "" : "s"}`);
+  }
+  if (type === "agent_resume_prepared") {
+    const cached = Array.isArray(data.cached_node_ids)
+      ? data.cached_node_ids.length
+      : 0;
+    const skipped = Array.isArray(data.skipped_cache_nodes)
+      ? data.skipped_cache_nodes.length
+      : 0;
+    parts.push(`${cached} cached`);
+    if (skipped > 0) parts.push(`${skipped} recomputed`);
+  }
+  if (type === "provider_trigger_received") {
+    if (typeof data.provider === "string") parts.push(data.provider);
+    if (typeof data.event === "string") parts.push(data.event);
+    if (typeof data.repository === "string") parts.push(data.repository);
+    if (typeof data.delivery_id === "string") parts.push(data.delivery_id);
+    if (typeof data.response_status === "number") {
+      parts.push(`HTTP ${data.response_status}`);
+    }
+    if (typeof data.latency_ms === "number") parts.push(`${data.latency_ms}ms`);
+  }
+  const toolResult = data.tool_result;
+  if (
+    type === "agent_tool_finished" &&
+    toolResult &&
+    typeof toolResult === "object" &&
+    "is_error" in toolResult &&
+    (toolResult as { is_error?: unknown }).is_error === true
+  ) {
+    parts.push("error");
+  }
+  return parts.join(" · ");
+}
+
+function formatGuardrailTimelineSummary(
+  type: string,
+  data: Record<string, unknown>,
+): string {
+  const parts: string[] = [];
+  if (typeof data.node_id === "string") parts.push(data.node_id);
+  if (typeof data.reason === "string") parts.push(data.reason.replaceAll("_", " "));
+  if (typeof data.replacement_count === "number") {
+    parts.push(`${data.replacement_count} replacement${data.replacement_count === 1 ? "" : "s"}`);
+  }
+  if (type === "guardrail_blocked" && typeof data.observed_length === "number") {
+    parts.push(`${data.observed_length} chars`);
+  }
+  return parts.join(" · ");
+}
+
+function RunApprovalsPanel({
+  runId,
+  runStatus,
+  onChanged,
+}: {
+  runId: string;
+  runStatus: string;
+  onChanged?: () => void;
+}) {
+  const [approvals, setApprovals] = useState<RunApprovalInfo[]>([]);
+  const [error, setError] = useState("");
+  const [pendingId, setPendingId] = useState<string | null>(null);
+
+  async function refresh(): Promise<void> {
+    try {
+      const rows = await api.runApprovals(runId);
+      setApprovals(rows);
+      setError("");
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+    if (runStatus !== "running" && runStatus !== "waiting") return;
+    const timer = window.setInterval(() => void refresh(), 2500);
+    return () => window.clearInterval(timer);
+  }, [runId, runStatus]);
+
+  async function decide(
+    approvalId: string,
+    decision: "approve" | "reject",
+  ): Promise<void> {
+    setPendingId(approvalId);
+    try {
+      const updated = await api.decideRunApproval(runId, approvalId, decision);
+      setApprovals((rows) =>
+        rows.map((row) => (row.id === updated.id ? updated : row)),
+      );
+      onChanged?.();
+      setError("");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setPendingId(null);
+    }
+  }
+
+  if (approvals.length === 0 && !error) return null;
+
+  return (
+    <section className="exec-approvals">
+      <div className="exec-approvals-head">
+        <h3>Tool approvals</h3>
+        {approvals.some((row) => row.status === "pending") && (
+          <span className="run-pill status-run-running">pending</span>
+        )}
+      </div>
+      {error && <p className="error-text">{error}</p>}
+      {approvals.map((approval) => (
+        <article
+          key={approval.id}
+          className={`exec-approval status-approval-${approval.status}`}
+        >
+          <div className="exec-approval-main">
+            <div>
+              <div className="exec-approval-tool">{approval.tool_name}</div>
+              <div className="exec-approval-meta">
+                {approval.agent_node_id || approval.node_id || "agent"} · step{" "}
+                {approval.step}
+              </div>
+            </div>
+            <span className={`run-pill status-run-${approval.status}`}>
+              {approval.status}
+            </span>
+          </div>
+          {approval.message && (
+            <div className="exec-approval-message">{approval.message}</div>
+          )}
+          {Object.keys(approval.arguments || {}).length > 0 && (
+            <details className="exec-approval-args">
+              <summary>Arguments</summary>
+              <pre className="data-json">
+                {JSON.stringify(approval.arguments, null, 2)}
+              </pre>
+            </details>
+          )}
+          {approval.status === "pending" && (
+            <div className="exec-approval-actions">
+              <button
+                type="button"
+                className="btn btn-sm"
+                disabled={pendingId === approval.id}
+                onClick={() => void decide(approval.id, "approve")}
+              >
+                Approve
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                disabled={pendingId === approval.id}
+                onClick={() => void decide(approval.id, "reject")}
+              >
+                Reject
+              </button>
+            </div>
+          )}
+        </article>
+      ))}
+    </section>
+  );
 }
 
 type RunTimelineEvent = RunTimeline["events"][number];
@@ -419,14 +625,18 @@ function RunDetailPanel({
   );
   const wsRef = useRef<RunStreamHandle | null>(null);
 
-  useEffect(() => {
-    setRun(null);
-    setError("");
-    setActionPending(null);
+  function refreshRun(): void {
     api
       .getRun(runId)
       .then(setRun)
       .catch((err) => setError(String(err)));
+  }
+
+  useEffect(() => {
+    setRun(null);
+    setError("");
+    setActionPending(null);
+    refreshRun();
   }, [runId]);
 
   async function rerun(): Promise<void> {
@@ -533,6 +743,14 @@ function RunDetailPanel({
 
       {error && <p className="error-text">{error}</p>}
       {!run && !error && <p className="muted">Loading…</p>}
+
+      {run && (
+        <RunApprovalsPanel
+          runId={runId}
+          runStatus={run.status}
+          onChanged={refreshRun}
+        />
+      )}
 
       {run && (
         <div className="exec-nodes">

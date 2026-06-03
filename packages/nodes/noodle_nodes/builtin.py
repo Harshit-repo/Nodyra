@@ -9,14 +9,13 @@ import base64
 import hashlib
 import hmac
 import json
-import traceback
 from types import ModuleType
 from typing import Any
 
-import noodle.artifacts as artifacts_api
 from noodle.context import node_debug
 from noodle.sdk import node
 from noodle_nodes._creds import cred_multi, cred_single
+from noodle_nodes.http_security import assert_public_http_url
 
 OPERATORS = [
     "equals",
@@ -827,6 +826,7 @@ def http_request(input: Any = None, url: str = "", method: str = "GET",
 
     import requests
 
+    assert_public_http_url(url, context="http_request")
     timeout = float(timeout_seconds or 30)
     attempts = max(0, int(max_retries or 0)) + 1
     response = None
@@ -892,6 +892,7 @@ def graphql_request(
         raise ValueError("graphql_request: url is required")
     if not query:
         raise ValueError("graphql_request: query is required")
+    assert_public_http_url(url, context="graphql_request")
     request_variables = (
         variables if variables is not None else (input if isinstance(input, dict) else {})
     )

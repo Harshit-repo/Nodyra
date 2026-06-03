@@ -1,10 +1,12 @@
 import asyncio
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 
 from app.config import settings
 from app.services.events import broker
+from noodle.models import RunResult, RunStatus
 
 GRAPH = {
     "nodes": [
@@ -568,6 +570,348 @@ async def test_run_timeline_returns_ordered_events(client: AsyncClient) -> None:
         assert started[node_id] < idx
 
 
+async def test_run_timeline_includes_persisted_agent_events(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.runner as runner_module
+
+    workflow_id = await _workflow_with_graph(client)
+
+    async def fake_execute(graph, registry, **kwargs) -> RunResult:  # noqa: ANN001, ARG001
+        on_event = kwargs["on_event"]
+        await on_event({"type": "node_started", "node_id": "agent"})
+        await on_event(
+            {
+                "type": "agent_action_requested",
+                "agent_node_id": "agent",
+                "step": 0,
+                "max_steps": 3,
+                "tool_calls": [
+                    {"id": "call_1", "name": "lookup", "arguments": {"q": "Ada"}}
+                ],
+            }
+        )
+        await on_event(
+            {
+                "type": "agent_tool_started",
+                "agent_node_id": "agent",
+                "step": 0,
+                "max_steps": 3,
+                "tool_call_id": "call_1",
+                "tool_name": "lookup",
+                "arguments": {"q": "Ada"},
+            }
+        )
+        await on_event(
+            {
+                "type": "agent_tool_approval_required",
+                "agent_node_id": "agent",
+                "step": 0,
+                "max_steps": 3,
+                "tool_call_id": "call_1",
+                "tool_name": "lookup",
+                "status": "blocked",
+                "message": "Tool 'lookup' requires approval before running.",
+                "arguments": {"q": "Ada"},
+            }
+        )
+        await on_event(
+            {
+                "type": "agent_tool_finished",
+                "agent_node_id": "agent",
+                "step": 0,
+                "max_steps": 3,
+                "tool_call_id": "call_1",
+                "tool_name": "lookup",
+                "status": "success",
+                "tool_result": {
+                    "tool_call_id": "call_1",
+                    "name": "lookup",
+                    "content": "Ada Lovelace",
+                    "is_error": False,
+                },
+            }
+        )
+        await on_event(
+            {
+                "type": "agent_action_completed",
+                "agent_node_id": "agent",
+                "step": 1,
+                "max_steps": 3,
+                "status": "success",
+            }
+        )
+        await on_event(
+            {
+                "type": "node_finished",
+                "node_id": "agent",
+                "status": "success",
+                "outputs": {"main": {"answer": "done"}},
+                "started_at": 1.0,
+                "finished_at": 2.0,
+            }
+        )
+        return RunResult(status=RunStatus.success)
+
+    monkeypatch.setattr(runner_module, "execute", fake_execute)
+
+    run_id = (
+        await client.post(f"/workflows/{workflow_id}/run", json={})
+    ).json()["run_id"]
+    body = (await client.get(f"/runs/{run_id}/timeline")).json()
+    types = [event["type"] for event in body["events"]]
+
+    assert "agent_action_requested" in types
+    assert "agent_tool_started" in types
+    assert "agent_tool_approval_required" in types
+    assert "agent_tool_finished" in types
+    assert "agent_action_completed" in types
+    finished = next(e for e in body["events"] if e["type"] == "agent_tool_finished")
+    assert finished["data"]["agent_node_id"] == "agent"
+    assert finished["data"]["tool_result"]["content"] == "Ada Lovelace"
+
+
+async def test_run_timeline_includes_persisted_guardrail_events(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.runner as runner_module
+
+    workflow_id = await _workflow_with_graph(client)
+
+    async def fake_execute(graph, registry, **kwargs) -> RunResult:  # noqa: ANN001, ARG001
+        on_event = kwargs["on_event"]
+        await on_event({"type": "node_started", "node_id": "agent"})
+        await on_event(
+            {
+                "type": "node_finished",
+                "node_id": "agent",
+                "status": "success",
+                "outputs": {"main": {"answer": "done"}},
+                "debug": {
+                    "guardrail_events": [
+                        {
+                            "type": "guardrail_redacted",
+                            "adapter": "keyword_guardrail",
+                            "replacement_count": 2,
+                        }
+                    ]
+                },
+                "started_at": 1.0,
+                "finished_at": 2.0,
+            }
+        )
+        return RunResult(status=RunStatus.success)
+
+    monkeypatch.setattr(runner_module, "execute", fake_execute)
+
+    run_id = (
+        await client.post(f"/workflows/{workflow_id}/run", json={})
+    ).json()["run_id"]
+    body = (await client.get(f"/runs/{run_id}/timeline")).json()
+    event = next(e for e in body["events"] if e["type"] == "guardrail_redacted")
+    assert event["data"]["node_id"] == "agent"
+    assert event["data"]["adapter"] == "keyword_guardrail"
+    assert event["data"]["replacement_count"] == 2
+
+
+async def test_run_approvals_are_recorded_and_decidable(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.runner as runner_module
+
+    workflow_id = await _workflow_with_graph(client)
+
+    async def fake_execute(graph, registry, **kwargs) -> RunResult:  # noqa: ANN001, ARG001
+        on_event = kwargs["on_event"]
+        await on_event(
+            {
+                "type": "agent_tool_approval_required",
+                "agent_node_id": "agent",
+                "step": 0,
+                "max_steps": 3,
+                "tool_call_id": "call_pending",
+                "tool_name": "send_email",
+                "status": "blocked",
+                "message": "Tool 'send_email' requires approval before running.",
+                "arguments": {"to": "ada@example.com"},
+            }
+        )
+        await on_event(
+            {
+                "type": "agent_tool_auto_approved",
+                "agent_node_id": "agent",
+                "step": 0,
+                "max_steps": 3,
+                "tool_call_id": "call_auto",
+                "tool_name": "update_sheet",
+                "status": "approved",
+                "message": "Side-effecting tool auto-approved by agent setting.",
+                "arguments": {"row": 3},
+            }
+        )
+        return RunResult(status=RunStatus.success)
+
+    monkeypatch.setattr(runner_module, "execute", fake_execute)
+
+    run_id = (
+        await client.post(f"/workflows/{workflow_id}/run", json={})
+    ).json()["run_id"]
+    approvals = (await client.get(f"/runs/{run_id}/approvals")).json()
+
+    by_tool = {approval["tool_name"]: approval for approval in approvals}
+    assert by_tool["send_email"]["status"] == "pending"
+    assert by_tool["send_email"]["arguments"] == {"to": "ada@example.com"}
+    assert by_tool["update_sheet"]["status"] == "approved"
+    assert by_tool["update_sheet"]["resolved_by"] == "auto"
+
+    pending_id = by_tool["send_email"]["id"]
+    decision = (
+        await client.post(
+            f"/runs/{run_id}/approvals/{pending_id}/decision",
+            json={"decision": "approve", "reason": "Looks correct"},
+        )
+    ).json()
+    assert decision["status"] == "approved"
+    assert decision["reason"] == "Looks correct"
+
+    conflict = await client.post(
+        f"/runs/{run_id}/approvals/{pending_id}/decision",
+        json={"decision": "reject"},
+    )
+    assert conflict.status_code == 409
+
+    timeline = (await client.get(f"/runs/{run_id}/timeline")).json()
+    assert "agent_tool_auto_approved" in [
+        event["type"] for event in timeline["events"]
+    ]
+    decided = [
+        event
+        for event in timeline["events"]
+        if event["type"] == "agent_tool_approval_decided"
+    ]
+    assert decided[0]["data"]["approval_id"] == pending_id
+    assert decided[0]["data"]["status"] == "approved"
+
+
+async def test_approval_decision_requeues_waiting_run(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.runner as runner_module
+    from noodle.ai_runtime import AgentActionRequest, AIMessage, ToolCall
+
+    workflow_id = await _workflow_with_graph(client)
+    approval_key = "agent|0|call_pending|send_email"
+    request = AgentActionRequest(
+        tool_calls=[
+            ToolCall(
+                id="call_pending",
+                name="send_email",
+                arguments={"to": "ada@example.com"},
+            )
+        ],
+        messages_so_far=[AIMessage.user("Send the update")],
+        step=0,
+        max_steps=3,
+    )
+    calls: list[object] = []
+
+    async def fake_execute(graph, registry, **kwargs) -> RunResult:  # noqa: ANN001, ARG001
+        calls.append(kwargs.get("agent_action_resume"))
+        on_event = kwargs["on_event"]
+        if kwargs.get("agent_action_resume"):
+            await on_event(
+                {
+                    "type": "node_finished",
+                    "node_id": "agent",
+                    "status": "success",
+                    "outputs": {"main": {"answer": "sent"}},
+                    "started_at": 3.0,
+                    "finished_at": 4.0,
+                }
+            )
+            return RunResult(status=RunStatus.success)
+
+        await on_event(
+            {
+                "type": "node_finished",
+                "node_id": "supplier",
+                "status": "success",
+                "outputs": {"main": object()},
+                "started_at": 0.1,
+                "finished_at": 0.2,
+            }
+        )
+        await on_event(
+            {
+                "type": "agent_tool_approval_required",
+                "agent_node_id": "agent",
+                "step": 0,
+                "max_steps": 3,
+                "tool_call_id": "call_pending",
+                "tool_name": "send_email",
+                "approval_key": approval_key,
+                "status": "blocked",
+                "message": "Tool 'send_email' requires approval before running.",
+                "arguments": {"to": "ada@example.com"},
+            }
+        )
+        await on_event(
+            {
+                "type": "node_finished",
+                "node_id": "agent",
+                "status": "waiting",
+                "outputs": {},
+                "error": "Tool 'send_email' requires approval before running.",
+                "debug": {
+                    "agent_approval_state": {
+                        "agent_node_id": "agent",
+                        "approval_key": approval_key,
+                        "tool_call_id": "call_pending",
+                        "tool_name": "send_email",
+                        "request": request.model_dump(mode="json"),
+                    }
+                },
+                "started_at": 1.0,
+                "finished_at": 2.0,
+            }
+        )
+        return RunResult(status=RunStatus.waiting)
+
+    monkeypatch.setattr(runner_module, "execute", fake_execute)
+
+    run_id = (
+        await client.post(f"/workflows/{workflow_id}/run", json={})
+    ).json()["run_id"]
+    waiting_run = (await client.get(f"/runs/{run_id}")).json()
+    assert waiting_run["status"] == "waiting"
+
+    approval = (await client.get(f"/runs/{run_id}/approvals")).json()[0]
+    assert approval["status"] == "pending"
+
+    response = await client.post(
+        f"/runs/{run_id}/approvals/{approval['id']}/decision",
+        json={"decision": "approve"},
+    )
+    assert response.status_code == 200, response.text
+
+    resumed_run = (await client.get(f"/runs/{run_id}")).json()
+    assert resumed_run["status"] == "success"
+    assert any(call is not None for call in calls)
+
+    timeline = (await client.get(f"/runs/{run_id}/timeline")).json()
+    prepared = [
+        event for event in timeline["events"] if event["type"] == "agent_resume_prepared"
+    ]
+    assert prepared
+    assert prepared[0]["data"]["cached_node_ids"] == []
+    assert prepared[0]["data"]["skipped_cache_nodes"][0]["node_id"] == "supplier"
+    assert prepared[0]["data"]["skipped_cache_nodes"][0]["reason"] == "unrestorable_output"
+
+
 async def test_run_timeline_includes_queue_enqueue_event(client: AsyncClient) -> None:
     workflow_id = await _workflow_with_graph(client)
     run_id = (
@@ -669,7 +1013,7 @@ async def test_replay_from_node_seeds_cache_with_upstream_outputs(
     """
     from app.db import get_session
     from app.main import app as fastapi_app
-    from app.models import NodeRun, Run, RunQueueEntry
+    from app.models import Run, RunQueueEntry
 
     workflow_id = await _workflow_with_graph(client)
     run_id = (

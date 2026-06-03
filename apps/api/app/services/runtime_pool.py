@@ -238,6 +238,8 @@ class _RuntimeProcess:
         on_event: EventCallback,
         sub_workflow_caller: SubWorkflowCaller | None = None,
         workflow_modules: list[dict] | None = None,
+        pause_on_approval: bool = False,
+        agent_action_resume: dict | None = None,
     ) -> str:
         async with self._run_lock:
             if self.dead or self.process.returncode is not None:
@@ -259,6 +261,8 @@ class _RuntimeProcess:
                         "cache": cache,
                         "targets": targets,
                         "workflow_modules": workflow_modules or [],
+                        "pause_on_approval": pause_on_approval,
+                        "agent_action_resume": agent_action_resume or {},
                         # Subprocess writes artifact bytes to the SAME path the
                         # API reads from — only safe because the runner is
                         # co-located on the host today. Remote runners (Slice 8)
@@ -605,6 +609,8 @@ class RuntimePool:
         sub_workflow_caller: SubWorkflowCaller | None = None,
         workflow_modules: list[dict] | None = None,
         run_timeout: float | None = None,
+        pause_on_approval: bool = False,
+        agent_action_resume: dict | None = None,
     ) -> str:
         envpool = await self._env_pool(env_id)
         budget = await _rss_soft_budget_bytes()
@@ -630,6 +636,8 @@ class RuntimePool:
                         on_event,
                         sub_workflow_caller,
                         workflow_modules=workflow_modules,
+                        pause_on_approval=pause_on_approval,
+                        agent_action_resume=agent_action_resume,
                     )
                     if timeout and timeout > 0:
                         return await asyncio.wait_for(run, timeout=timeout)

@@ -6,6 +6,8 @@ from noodle.sdk import (
     discover_module_nodes,
     node,
     register_module_functions,
+)
+from noodle.sdk import (
     registry as global_registry,
 )
 
@@ -105,6 +107,73 @@ def test_param_groups_arg_assigns_groups() -> None:
     assert params["temperature"].group == "Options"
     assert params["max_tokens"].group == "Options"
     assert params["model"].group is None
+
+
+def test_rich_manifest_metadata_is_captured() -> None:
+    reg = NodeRegistry()
+
+    @node(
+        name="Chat Model",
+        role="supplier",
+        hidden=True,
+        deprecated=True,
+        replacement_id="ai_chat_model_openai",
+        outputs=["model"],
+        output_kinds={"model": "ai_language_model"},
+        params={
+            "model": {
+                "display_name": "Model",
+                "widget": "model_selector",
+                "load_options": "openai_models",
+                "required_scopes": ["models.read"],
+                "documentation_url": "https://example.test/docs",
+                "validation": {"min_length": 1},
+            },
+            "temperature": {
+                "group": "Options",
+                "display_when": {"provider": "openai"},
+                "hide_when": {"mode": "deterministic"},
+                "depends_on": ["provider"],
+                "advanced": True,
+            },
+            "columns": {
+                "resource_mapper": {"mode": "columns"},
+                "fixed_collection": {"multiple": True},
+            },
+            "credentials": {
+                "credential_type": "openai_api_key",
+            },
+        },
+        registry=reg,
+    )
+    def chat_model(
+        model: str = "gpt-4.1-mini",
+        temperature: float = 0.2,
+        columns: list | None = None,
+        credentials: str = "",
+    ) -> dict:
+        return {}
+
+    manifest = reg.get("chat_model").manifest
+    assert manifest.role == "supplier"
+    assert manifest.hidden is True
+    assert manifest.deprecated is True
+    assert manifest.replacement_id == "ai_chat_model_openai"
+    assert manifest.outputs[0].data_kind == "ai_language_model"
+    params = {p.name: p for p in manifest.params}
+    assert params["model"].display_name == "Model"
+    assert params["model"].widget == "model_selector"
+    assert params["model"].load_options == "openai_models"
+    assert params["model"].required_scopes == ["models.read"]
+    assert params["model"].documentation_url == "https://example.test/docs"
+    assert params["model"].validation == {"min_length": 1}
+    assert params["temperature"].display_when == {"provider": "openai"}
+    assert params["temperature"].hide_when == {"mode": "deterministic"}
+    assert params["temperature"].depends_on == ["provider"]
+    assert params["temperature"].advanced is True
+    assert params["columns"].resource_mapper == {"mode": "columns"}
+    assert params["columns"].fixed_collection == {"multiple": True}
+    assert params["credentials"].credential_type == "openai_api_key"
 
 
 def test_credential_param_metadata_is_captured() -> None:
@@ -306,6 +375,51 @@ def test_explicit_mode_reads_decorator_metadata() -> None:
     assert transform.manifest.params[0].description == "scale"
     # ``rows`` is a wired input port, not a config param.
     assert transform.wires == {"rows": "ingest.rows"}
+
+
+def test_ast_decorator_reads_role_param_groups_and_rich_metadata() -> None:
+    source = '''
+from noodle import node
+
+@node(
+    name="Tool",
+    id="tool",
+    role="tool",
+    hidden=True,
+    deprecated=True,
+    replacement_id="ai_http_tool",
+    outputs=["tool"],
+    output_kinds={"tool": "ai_tool"},
+    param_groups={"Options": ["timeout"]},
+    params={
+        "query": {
+            "display_name": "Search query",
+            "widget": "textarea",
+            "required_scopes": ["search.read"],
+            "validation": {"min_length": 3},
+        },
+        "timeout": {"advanced": True},
+    },
+)
+def tool(query: str, timeout: int = 30) -> dict:
+    return {}
+'''
+    discovered, skipped = discover_module_nodes("mod", source)
+
+    assert skipped == []
+    manifest = discovered[0].manifest
+    assert manifest.role == "tool"
+    assert manifest.hidden is True
+    assert manifest.deprecated is True
+    assert manifest.replacement_id == "ai_http_tool"
+    assert manifest.outputs[0].data_kind == "ai_tool"
+    params = {p.name: p for p in manifest.params}
+    assert params["query"].display_name == "Search query"
+    assert params["query"].widget == "textarea"
+    assert params["query"].required_scopes == ["search.read"]
+    assert params["query"].validation == {"min_length": 3}
+    assert params["timeout"].group == "Options"
+    assert params["timeout"].advanced is True
 
 
 def test_include_undecorated_surfaces_helpers() -> None:

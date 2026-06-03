@@ -7,13 +7,22 @@ and used to keep re-inventing it locally.
 
 from typing import Any
 
+import noodle_nodes  # noqa: F401 - ensure provider trigger nodes register
 from noodle.models import WorkflowGraph
+from noodle_nodes.integrations_v2.registry import is_registered_provider_trigger
 
 TRIGGER_TYPES: tuple[str, ...] = (
     "manual_trigger",
     "webhook_trigger",
     "schedule_trigger",
 )
+
+
+def is_trigger_type(node_type: str | None) -> bool:
+    return bool(
+        node_type
+        and (node_type in TRIGGER_TYPES or is_registered_provider_trigger(node_type))
+    )
 
 
 def _graph_nodes(graph: dict | WorkflowGraph) -> list[Any]:
@@ -103,12 +112,10 @@ def targets_have_trigger(
         if nid is not None:
             type_by_id[nid] = _node_type(node)
     for target in targets:
-        if type_by_id.get(target) in TRIGGER_TYPES:
+        if is_trigger_type(type_by_id.get(target)):
             continue
         ancestors = backward_ancestors(graph, {target})
-        if not any(
-            type_by_id.get(a) in TRIGGER_TYPES for a in ancestors
-        ):
+        if not any(is_trigger_type(type_by_id.get(a)) for a in ancestors):
             return False
     return True
 
@@ -128,7 +135,7 @@ def first_trigger_node(
             if _node_type(node) == "manual_trigger":
                 return node
     for node in nodes:
-        if _node_type(node) in TRIGGER_TYPES:
+        if is_trigger_type(_node_type(node)):
             return node
     return None
 
@@ -164,7 +171,7 @@ def resolve_trigger_targets(
         raise ValueError(
             f"trigger_node_id '{trigger_node_id}' is not a node in this graph"
         )
-    if _node_type(match) not in TRIGGER_TYPES:
+    if not is_trigger_type(_node_type(match)):
         raise ValueError(
             f"node '{trigger_node_id}' is not a trigger "
             f"(type={_node_type(match)!r})"

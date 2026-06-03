@@ -14,6 +14,8 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
 
+from pydantic import BaseModel
+
 TYPED_MARKER = "__noodle_typed__"
 TYPED_VERSION = 1
 DEFAULT_DATAFRAME_ROWS = 100
@@ -179,6 +181,12 @@ def serialize_value(
         return _envelope("time", value.isoformat())
     if isinstance(value, Decimal):
         return _envelope("decimal", str(value))
+    if isinstance(value, BaseModel):
+        return serialize_value(
+            value.model_dump(mode="json"),
+            dataframe_max_rows=dataframe_max_rows,
+            _seen=seen,
+        )
     if isinstance(value, bytes):
         return _serialize_bytes(value, "bytes")
     if isinstance(value, bytearray):

@@ -70,6 +70,8 @@ async def _run_once(api_url: str, run_id: str, token: str) -> None:
                     targets=msg.get("targets") or None,
                     workflow_modules=msg.get("workflow_modules") or [],
                     on_event=on_event,
+                    pause_on_approval=bool(msg.get("pause_on_approval")),
+                    agent_action_resume=msg.get("agent_action_resume") or {},
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.exception("k8s run failed run_id=%s", run_id)

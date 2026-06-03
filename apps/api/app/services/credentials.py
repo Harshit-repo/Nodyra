@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Credential, Workflow
 from app.services.crypto import decrypt_credential
+from app.services.oauth import OAuthError, refresh_credential_if_needed
 
 CREDENTIAL_REF_MARKER = "__noodle_credential__"
 
@@ -72,6 +73,10 @@ async def _resolve_ref(
         raise RuntimeError(f"credential '{cred.name}' is not visible to this run")
 
     data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek)
+    try:
+        data = await refresh_credential_if_needed(cred, data)
+    except OAuthError as exc:
+        raise RuntimeError(str(exc)) from exc
     cred.last_used_at = datetime.now(UTC)
     # ``*`` means "the whole credential dict" — used by multi-field params
     # so a node receives e.g. ``{"username": ..., "password": ...}`` in a

@@ -46,6 +46,7 @@ import uuid
 from typing import Any
 
 import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
+from noodle.ai_runtime import AgentActionRequest
 from noodle.artifacts import LocalArtifactStore
 from noodle.context import artifact_store, workflow_caller
 from noodle.engine import execute
@@ -185,6 +186,12 @@ async def _handle_run(request: dict[str, Any]) -> None:
         )
     try:
         graph = WorkflowGraph.model_validate(request["graph"])
+        raw_agent_resume = request.get("agent_action_resume") or {}
+        agent_action_resume = {
+            str(node_id): AgentActionRequest.model_validate(action_request)
+            for node_id, action_request in raw_agent_resume.items()
+            if isinstance(action_request, dict)
+        } if isinstance(raw_agent_resume, dict) else {}
         result = await execute(
             graph,
             registry,
@@ -192,6 +199,8 @@ async def _handle_run(request: dict[str, Any]) -> None:
             targets=request.get("targets") or None,
             on_event=on_event,
             default_timeouts=_RUNTIME_DEFAULT_TIMEOUTS,
+            pause_on_approval=bool(request.get("pause_on_approval")),
+            agent_action_resume=agent_action_resume,
         )
         _emit(
             {

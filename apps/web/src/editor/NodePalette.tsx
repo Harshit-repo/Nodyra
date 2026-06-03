@@ -82,28 +82,29 @@ function integrationOf(node: NodeManifest): string | null {
 function recommendedIdsFor(manifest: NodeManifest | null): string[] {
   if (!manifest) return [];
   if (manifest.category === "Triggers") {
-    return ["http_request", "code", "filter", "switch", "slack_send_message"];
+    return ["http_request", "code", "filter", "switch", "slack_send_message_v2"];
   }
   if (manifest.id === "http_request") {
-    return ["records_to_dataset", "code", "filter", "limit", "google_sheets_append", "slack_send_message"];
+    return ["records_to_dataset", "code", "filter", "limit", "google_sheets_append_v2", "slack_send_message_v2"];
   }
   if (manifest.id === "code") {
-    return ["records_to_dataset", "filter", "switch", "google_sheets_append", "notion_create_page"];
+    return ["records_to_dataset", "filter", "switch", "google_sheets_append_v2", "notion_create_page_v2"];
   }
   if (manifest.outputs.some((port) => port.data_kind === "dataset")) {
     return ["dataset_preview", "duckdb_sql", "dataset_filter", "dataset_to_records", "csv_write"];
   }
   if (manifest.id.includes("stripe")) {
-    return ["code", "slack_send_message", "google_sheets_append"];
+    return ["code", "slack_send_message_v2", "google_sheets_append_v2"];
   }
   if (manifest.outputs.length > 1) {
-    return ["merge", "code", "slack_send_message"];
+    return ["merge", "code", "slack_send_message_v2"];
   }
-  return ["code", "http_request", "slack_send_message"];
+  return ["code", "http_request", "slack_send_message_v2"];
 }
 
 function nodeBadges(node: NodeManifest): string[] {
   const badges: string[] = [];
+  if (node.deprecated) badges.push("Deprecated");
   if (node.category === "Triggers") badges.push("Trigger");
   else badges.push("Action");
   if (node.params.some((param) => param.type === "credential")) badges.push("Auth");
@@ -189,9 +190,14 @@ export function NodePalette() {
   const [recent, setRecent] = useState<string[]>(() => readStoredList(RECENTS_KEY));
   const searchRef = useRef<HTMLInputElement | null>(null);
 
-  const manifestsById = useMemo(
-    () => new Map(manifests.map((manifest) => [manifest.id, manifest])),
+  const visibleManifests = useMemo(
+    () => manifests.filter((manifest) => !manifest.hidden),
     [manifests],
+  );
+
+  const manifestsById = useMemo(
+    () => new Map(visibleManifests.map((manifest) => [manifest.id, manifest])),
+    [visibleManifests],
   );
 
   const selectedManifest =
@@ -214,7 +220,9 @@ export function NodePalette() {
   }, []);
 
   const categories = useMemo(() => {
-    const names = Array.from(new Set(manifests.map((manifest) => manifest.category)));
+    const names = Array.from(
+      new Set(visibleManifests.map((manifest) => manifest.category)),
+    );
     return names.sort((a, b) => {
       const ai = CATEGORY_ORDER.indexOf(a);
       const bi = CATEGORY_ORDER.indexOf(b);
@@ -222,11 +230,11 @@ export function NodePalette() {
       const br = bi === -1 ? Number.MAX_SAFE_INTEGER : bi;
       return ar === br ? a.localeCompare(b) : ar - br;
     });
-  }, [manifests]);
+  }, [visibleManifests]);
 
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const matched = manifests
+    const matched = visibleManifests
       .filter(
         (m) =>
           (categoryFilter === "all" || m.category === categoryFilter) &&
@@ -263,7 +271,7 @@ export function NodePalette() {
       category,
       nodes: byCategory.get(category)!.sort((a, b) => a.name.localeCompare(b.name)),
     }));
-  }, [categoryFilter, manifests, query]);
+  }, [categoryFilter, query, visibleManifests]);
   const matchedCount = groups.reduce((sum, group) => sum + group.nodes.length, 0);
 
   // Flat ordered list mirroring what's rendered — drives the command-palette
@@ -332,7 +340,9 @@ export function NodePalette() {
       <div className="panel-head">
         <h2>Nodes</h2>
         <span className="panel-count">
-          {query.trim() ? `${matchedCount}/${manifests.length}` : manifests.length}
+          {query.trim()
+            ? `${matchedCount}/${visibleManifests.length}`
+            : visibleManifests.length}
         </span>
       </div>
       <div className="palette-search-wrap">

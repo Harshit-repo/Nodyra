@@ -28,6 +28,7 @@ from app.routers import (
     nodes,
     ops,
     pinned,
+    provider_webhooks,
     runner_pools,
     runs,
     system_settings,
@@ -231,6 +232,7 @@ _AUTH_EXEMPT_PREFIXES = (
     "/health",
     "/webhook",
     "/webhook-test",
+    "/provider-webhook",
     "/internal",
     "/runner-pools/ws",  # agent runner WS — uses its own token query param
 )
@@ -296,6 +298,7 @@ app.include_router(environments.router)
 app.include_router(webhooks.router)
 if settings.webhook_role != "disabled":
     app.include_router(webhooks.production_router)
+    app.include_router(provider_webhooks.router)
 app.include_router(workflows.router)
 app.include_router(runs.router)
 app.include_router(deployments.router)

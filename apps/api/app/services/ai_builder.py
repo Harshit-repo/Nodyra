@@ -36,11 +36,11 @@ _ALLOWED_NODE_TYPES = {
     "edit_fields",
     "code",
     "http_request",
-    "slack_send_message",
+    "slack_send_message_v2",
     "smtp_send_email",
-    "notion_create_page",
-    "github_get_repo",
-    "github_create_issue",
+    "notion_create_page_v2",
+    "github_get_repo_v2",
+    "github_create_issue_v2",
     "postgres_query",
     "mysql_query",
     "s3_put_object",
@@ -63,8 +63,8 @@ _ALLOWED_NODE_TYPES = {
     "ai_moderation_guard",
     "ai_vision_analyze",
     "ai_image_generate",
-    "airtable_list_records",
-    "airtable_create_record",
+    "airtable_list_records_v2",
+    "airtable_create_record_v2",
     "csv_parse",
     "csv_write",
     "json_schema_validate",
@@ -84,11 +84,10 @@ _NODE_REGISTRY: dict[str, dict[str, Any]] = {
         "name": "HTTP Request",
         "params": ["url", "method", "headers", "query", "body", "timeout_seconds"],
     },
-    "slack_send_message": {
-        "name": "Slack Send Message",
-        "params": ["bot_token", "channel", "text", "blocks", "thread_ts"],
-        "credential_type": "slack_bot",
-        "credential_keys": ["bot_token"],
+    "slack_send_message_v2": {
+        "name": "Slack Send Message V2",
+        "params": ["credentials", "channel", "text", "blocks", "thread_ts"],
+        "credential_specs": [{"type": "slack_bot", "param": "credentials", "key": "*"}],
     },
     "smtp_send_email": {
         "name": "SMTP Send Email",
@@ -106,17 +105,15 @@ _NODE_REGISTRY: dict[str, dict[str, Any]] = {
         "credential_type": "smtp",
         "credential_keys": ["username", "password"],
     },
-    "github_get_repo": {
-        "name": "GitHub Get Repository",
-        "params": ["repo", "token"],
-        "credential_type": "github",
-        "credential_keys": ["token"],
+    "github_get_repo_v2": {
+        "name": "GitHub Get Repository V2",
+        "params": ["credentials", "repo"],
+        "credential_specs": [{"type": "github", "param": "credentials", "key": "*"}],
     },
-    "github_create_issue": {
-        "name": "GitHub Create Issue",
-        "params": ["repo", "token", "title", "body", "labels"],
-        "credential_type": "github",
-        "credential_keys": ["token"],
+    "github_create_issue_v2": {
+        "name": "GitHub Create Issue V2",
+        "params": ["credentials", "repo", "title", "body", "labels"],
+        "credential_specs": [{"type": "github", "param": "credentials", "key": "*"}],
     },
     "openai_chat": {
         "name": "OpenAI Chat",
@@ -258,21 +255,32 @@ _NODE_REGISTRY: dict[str, dict[str, Any]] = {
         "params": ["credentials", "prompt", "model", "size", "filename"],
         "credential_specs": [{"param": "credentials", "type": "openai", "key": "api_key"}],
     },
-    "notion_create_page": {
-        "name": "Notion Create Page",
-        "params": ["token", "parent_id", "properties", "children"],
+    "notion_create_page_v2": {
+        "name": "Notion Create Page V2",
+        "params": [
+            "credentials",
+            "database_id",
+            "parent_page_id",
+            "title",
+            "title_property",
+            "properties",
+            "content",
+        ],
+        "credential_specs": [{"type": "notion", "param": "credentials", "key": "*"}],
     },
     "postgres_query": {"name": "Postgres Query", "params": ["dsn", "query", "params"]},
     "mysql_query": {"name": "MySQL Query", "params": ["dsn", "query", "params"]},
     "s3_put_object": {"name": "S3 Put Object", "params": ["bucket", "key", "body", "content_type"]},
     "s3_get_object": {"name": "S3 Get Object", "params": ["bucket", "key"]},
-    "airtable_list_records": {
-        "name": "Airtable List Records",
-        "params": ["api_key", "base_id", "table"],
+    "airtable_list_records_v2": {
+        "name": "Airtable List Records V2",
+        "params": ["credentials", "base_id", "table_name", "view", "max_records", "filter_formula"],
+        "credential_specs": [{"type": "airtable", "param": "credentials", "key": "*"}],
     },
-    "airtable_create_record": {
-        "name": "Airtable Create Record",
-        "params": ["api_key", "base_id", "table", "fields"],
+    "airtable_create_record_v2": {
+        "name": "Airtable Create Record V2",
+        "params": ["credentials", "base_id", "table_name", "fields", "typecast"],
+        "credential_specs": [{"type": "airtable", "param": "credentials", "key": "*"}],
     },
     "csv_parse": {"name": "CSV Parse", "params": ["text", "delimiter"]},
     "csv_write": {"name": "CSV Write", "params": ["rows", "delimiter"]},
@@ -853,7 +861,7 @@ def _fallback_draft(prompt: str) -> _DraftResult:
 
     if wants_slack:
         slack_params: dict = {
-            "bot_token": "",
+            "credentials": "",
             "channel": "#alerts",
             "text": "{{ $json }}",
             "blocks": None,
@@ -861,7 +869,11 @@ def _fallback_draft(prompt: str) -> _DraftResult:
         }
         nodes.append(
             _node(
-                "notify_slack", "slack_send_message", 280 + 280 * (len(nodes) - 1), 0, slack_params
+                "notify_slack",
+                "slack_send_message_v2",
+                280 + 280 * (len(nodes) - 1),
+                0,
+                slack_params,
             )
         )
         edges.append(_edge(previous, "notify_slack"))
@@ -904,14 +916,20 @@ def _fallback_draft(prompt: str) -> _DraftResult:
 
     if wants_github and "create" in lower and "issue" in lower:
         gh_params: dict = {
+            "credentials": "",
             "repo": "owner/repo",
-            "token": "",
             "title": "{{ $json.title }}",
             "body": "{{ $json.body }}",
             "labels": None,
         }
         nodes.append(
-            _node("create_issue", "github_create_issue", 280 + 280 * (len(nodes) - 1), 0, gh_params)
+            _node(
+                "create_issue",
+                "github_create_issue_v2",
+                280 + 280 * (len(nodes) - 1),
+                0,
+                gh_params,
+            )
         )
         edges.append(_edge(previous, "create_issue"))
         missing_credentials.append("GitHub token")

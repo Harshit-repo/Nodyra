@@ -161,6 +161,21 @@ class Settings(BaseSettings):
     # Blank = no check (fine for local dev where only your machine reaches
     # the API). Set this when exposing the API to anything else.
     internal_api_token: str = ""
+    # Public API base URL used to build OAuth redirect URIs. Blank falls back
+    # to the incoming request URL, which is fine for local dev/tests but should
+    # be explicit behind production proxies.
+    oauth_redirect_base_url: str = ""
+    # Public API base URL used for remote runners and provider webhook callback
+    # URLs. Blank falls back to localhost in non-request lifecycle paths.
+    public_api_url: str = ""
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    microsoft_oauth_client_id: str = ""
+    microsoft_oauth_client_secret: str = ""
+    slack_oauth_client_id: str = ""
+    slack_oauth_client_secret: str = ""
+    github_oauth_client_id: str = ""
+    github_oauth_client_secret: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:

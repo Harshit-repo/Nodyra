@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "./api";
 import { HomeHeader } from "./HomeHeader";
 import { useToast } from "./ToastProvider";
-import type { Credential, CredentialTestResponse } from "./types";
+import type { Credential, CredentialTestResponse, CredentialTypeInfo } from "./types";
 
 interface Field {
   key: string;
@@ -31,6 +31,9 @@ interface CredentialPreset {
   summary: string;
   fields: CredentialFormField[];
   description: string;
+  authMethod?: string;
+  defaultScopes?: string[];
+  documentationUrl?: string;
 }
 
 const CREDENTIAL_PRESETS: CredentialPreset[] = [
@@ -475,7 +478,87 @@ const CREDENTIAL_PRESETS: CredentialPreset[] = [
 ];
 
 const PRESET_BY_TYPE = new Map(CREDENTIAL_PRESETS.map((preset) => [preset.type, preset]));
-const PRESET_BY_ID = new Map(CREDENTIAL_PRESETS.map((preset) => [preset.id, preset]));
+
+function authMethodLabel(method: string): string {
+  if (method === "api_key") return "API key";
+  if (method === "oauth2") return "OAuth2";
+  if (method === "service_account") return "Service account";
+  if (method === "basic") return "Basic auth";
+  if (method === "connection_string") return "Connection string";
+  return method;
+}
+
+function credentialTypePreset(spec: CredentialTypeInfo): CredentialPreset {
+  const oauthScopes = spec.default_scopes.length
+    ? ` Default scopes: ${spec.default_scopes.join(" ")}`
+    : "";
+  const fields: CredentialFormField[] = spec.fields.map((field) => ({
+    key: field.key,
+    label: field.label,
+    placeholder: field.placeholder,
+    kind: field.key.includes("json") ? "textarea" : field.secret ? "password" : "text",
+    required: field.required,
+    help: field.help,
+  }));
+  const manualOAuthFields: CredentialFormField[] =
+    spec.auth_method === "oauth2" && fields.length === 0
+      ? [
+          {
+            key: "access_token",
+            label: "Access token",
+            placeholder: "Paste access token for manual setup",
+            kind: "password",
+            required: true,
+          },
+          {
+            key: "refresh_token",
+            label: "Refresh token",
+            placeholder: "Optional refresh token",
+            kind: "password",
+          },
+          {
+            key: "expires_at",
+            label: "Expires at",
+            placeholder: "2026-06-01T12:00:00Z",
+          },
+          {
+            key: "scope",
+            label: "Scopes",
+            placeholder: spec.default_scopes.join(" "),
+            defaultValue: spec.default_scopes.join(" "),
+          },
+        ]
+      : [];
+  return {
+    id: spec.id,
+    type: spec.id,
+    label: spec.name,
+    group: spec.provider,
+    summary: `${authMethodLabel(spec.auth_method)} credential for ${spec.provider}.`,
+    description:
+      spec.auth_method === "oauth2"
+        ? `Backend OAuth type.${oauthScopes}`
+        : spec.documentation_url
+          ? `Backend credential type. Docs: ${spec.documentation_url}`
+          : "Backend credential type.",
+    fields: fields.length > 0 ? fields : manualOAuthFields,
+    authMethod: spec.auth_method,
+    defaultScopes: spec.default_scopes,
+    documentationUrl: spec.documentation_url,
+  };
+}
+
+function mergedCredentialPresets(types: CredentialTypeInfo[] | null): CredentialPreset[] {
+  if (!types) return CREDENTIAL_PRESETS;
+  const byType = new Map(CREDENTIAL_PRESETS.map((preset) => [preset.type, preset]));
+  for (const spec of types) {
+    byType.set(spec.id, credentialTypePreset(spec));
+  }
+  return Array.from(byType.values()).sort((a, b) => {
+    const group = a.group.localeCompare(b.group);
+    return group || a.label.localeCompare(b.label);
+  });
+}
 
 function presetInitialValues(preset: CredentialPreset): Record<string, string> {
   return Object.fromEntries(
@@ -489,8 +572,11 @@ function fieldInputType(field: CredentialFormField): string {
   return "text";
 }
 
-function credentialTypeLabel(type: string): string {
-  return PRESET_BY_TYPE.get(type)?.label ?? type;
+function credentialTypeLabel(
+  type: string,
+  presetsByType: Map<string, CredentialPreset> = PRESET_BY_TYPE,
+): string {
+  return presetsByType.get(type)?.label ?? type;
 }
 
 function credentialScopeLabel(cred: Credential): string {
@@ -507,31 +593,76 @@ function credentialScopeLabel(cred: Credential): string {
 }
 
 function CreateCredentialModal({
+  presets,
   onClose,
   onCreated,
 }: {
+  presets: CredentialPreset[];
   onClose: () => void;
   onCreated: () => void;
 }) {
-  const [presetId, setPresetId] = useState(CREDENTIAL_PRESETS[0].id);
-  const [name, setName] = useState(CREDENTIAL_PRESETS[0].label);
+  const { notify } = useToast();
+  const firstPreset = presets[0] ?? CREDENTIAL_PRESETS[0];
+  const [presetId, setPresetId] = useState(firstPreset.id);
+  const [name, setName] = useState(firstPreset.label);
   const [scope, setScope] = useState<CredentialScope>("global");
   const [workflowId, setWorkflowId] = useState("");
   const [environmentId, setEnvironmentId] = useState("");
   const [runnerPoolId, setRunnerPoolId] = useState("");
   const [description, setDescription] = useState("");
   const [values, setValues] = useState<Record<string, string>>(
-    presetInitialValues(CREDENTIAL_PRESETS[0]),
+    presetInitialValues(firstPreset),
   );
   const [customFields, setCustomFields] = useState<Field[]>([{ key: "", value: "" }]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [oauthStarted, setOauthStarted] = useState("");
+  const oauthPopupRef = useRef<Window | null>(null);
 
-  const preset = PRESET_BY_ID.get(presetId) ?? CREDENTIAL_PRESETS[0];
+  // Listen for popup postMessage and call onCreated on success
+  useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) return;
+      if (!event.data || typeof event.data !== "object") return;
+      const { type, message: msg } = event.data as {
+        type?: string;
+        message?: string;
+      };
+      if (type === "noodle_oauth_success") {
+        setOauthStarted("");
+        notify(`Connected${msg ? ` — ${msg.replace(/^Connected — /, "")}` : ""}`, "success");
+        oauthPopupRef.current = null;
+        onCreated();
+      } else if (type === "noodle_oauth_error") {
+        setOauthStarted("");
+        setError(msg ?? "OAuth failed.");
+        notify(msg ?? "OAuth failed.", "error");
+        oauthPopupRef.current = null;
+      }
+    }
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [notify, onCreated]);
+
+  const presetsById = useMemo(
+    () => new Map(presets.map((preset) => [preset.id, preset])),
+    [presets],
+  );
+  const preset = presetsById.get(presetId) ?? firstPreset;
+  const isOAuthPreset = preset.authMethod === "oauth2";
+
+  useEffect(() => {
+    if (presetsById.has(presetId)) return;
+    setPresetId(firstPreset.id);
+    setName(firstPreset.label);
+    setValues(presetInitialValues(firstPreset));
+    setDescription(firstPreset.description);
+  }, [firstPreset, presetId, presetsById]);
+
   const groups = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    const visible = CREDENTIAL_PRESETS.filter((item) => {
+    const visible = presets.filter((item) => {
       if (!needle) return true;
       return `${item.label} ${item.type} ${item.group} ${item.summary}`
         .toLowerCase()
@@ -541,15 +672,16 @@ function CreateCredentialModal({
       acc[item.group] = [...(acc[item.group] ?? []), item];
       return acc;
     }, {});
-  }, [search]);
+  }, [presets, search]);
 
   function selectPreset(nextId: string) {
-    const next = PRESET_BY_ID.get(nextId) ?? CREDENTIAL_PRESETS[0];
-    const previous = PRESET_BY_ID.get(presetId);
+    const next = presetsById.get(nextId) ?? firstPreset;
+    const previous = presetsById.get(presetId);
     setPresetId(next.id);
     setValues(presetInitialValues(next));
     setCustomFields([{ key: "", value: "" }]);
     setError("");
+    setOauthStarted("");
     if (!name.trim() || name === previous?.label) {
       setName(next.label);
     }
@@ -562,6 +694,64 @@ function CreateCredentialModal({
     setCustomFields((current) =>
       current.map((field, i) => (i === index ? { ...field, ...patch } : field)),
     );
+  }
+
+  function validateScopeInputs(): boolean {
+    if (scope === "workflow" && !workflowId.trim()) {
+      setError("Enter Workflow ID.");
+      return false;
+    }
+    if (scope === "environment" && !environmentId.trim()) {
+      setError("Enter Environment ID.");
+      return false;
+    }
+    if (scope === "runner_pool" && !runnerPoolId.trim()) {
+      setError("Enter Runner pool ID.");
+      return false;
+    }
+    return true;
+  }
+
+  async function startOAuth() {
+    if (!name.trim() || busy || !isOAuthPreset) return;
+    setBusy(true);
+    setError("");
+    setOauthStarted("");
+    try {
+      if (!validateScopeInputs()) {
+        setBusy(false);
+        return;
+      }
+      const started = await api.startCredentialOAuth({
+        credential_type: preset.type,
+        name: name.trim(),
+        scope,
+        workflow_id: scope === "workflow" ? workflowId.trim() : null,
+        environment_id: scope === "environment" ? environmentId.trim() : null,
+        runner_pool_id: scope === "runner_pool" ? runnerPoolId.trim() : null,
+        description: description.trim(),
+        scopes: preset.defaultScopes ?? [],
+      });
+      const popup = window.open(
+        started.authorization_url,
+        "noodle_oauth",
+        "width=600,height=720,resizable=yes,scrollbars=yes",
+      );
+      if (!popup) {
+        window.location.assign(started.authorization_url);
+        return;
+      }
+      oauthPopupRef.current = popup;
+      setOauthStarted(
+        "Complete authorization in the popup window. This page will update automatically.",
+      );
+      notify("OAuth authorization opened.", "success");
+    } catch (err) {
+      setError(String(err));
+      notify("Could not start OAuth authorization.", "error");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function renderField(field: CredentialFormField) {
@@ -660,18 +850,7 @@ function CreateCredentialModal({
       }
     }
     try {
-      if (scope === "workflow" && !workflowId.trim()) {
-        setError("Enter Workflow ID.");
-        setBusy(false);
-        return;
-      }
-      if (scope === "environment" && !environmentId.trim()) {
-        setError("Enter Environment ID.");
-        setBusy(false);
-        return;
-      }
-      if (scope === "runner_pool" && !runnerPoolId.trim()) {
-        setError("Enter Runner pool ID.");
+      if (!validateScopeInputs()) {
         setBusy(false);
         return;
       }
@@ -816,6 +995,28 @@ function CreateCredentialModal({
               <span>{preset.group}</span>
             </div>
 
+            {isOAuthPreset && (
+              <div className="credential-oauth-panel">
+                <div>
+                  <h3>Provider authorization</h3>
+                  <p>
+                    {preset.defaultScopes?.length
+                      ? preset.defaultScopes.join(" ")
+                      : "OAuth scopes configured by the provider."}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => void startOAuth()}
+                  disabled={busy}
+                >
+                  {busy ? "Opening..." : "Connect OAuth"}
+                </button>
+                {oauthStarted && <small>{oauthStarted}</small>}
+              </div>
+            )}
+
             {preset.fields.length > 0 ? (
               <div className="credential-form-grid">
                 {preset.fields.map((field) => renderField(field))}
@@ -867,7 +1068,7 @@ function CreateCredentialModal({
             onClick={() => void submit()}
             disabled={busy}
           >
-            {busy ? "Saving..." : "Create"}
+            {busy ? "Saving..." : isOAuthPreset ? "Save manual" : "Create"}
           </button>
         </div>
       </div>
@@ -877,22 +1078,32 @@ function CreateCredentialModal({
 
 export function CredentialsPage() {
   const [credentials, setCredentials] = useState<Credential[] | null>(null);
+  const [credentialTypes, setCredentialTypes] = useState<CredentialTypeInfo[] | null>(null);
   const [error, setError] = useState("");
   const [modal, setModal] = useState(false);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [scopeFilter, setScopeFilter] = useState("all");
   const [testing, setTesting] = useState<Record<string, boolean>>({});
+  const [refreshing, setRefreshing] = useState<Record<string, boolean>>({});
   const [testResults, setTestResults] = useState<
     Record<string, CredentialTestResponse>
   >({});
   const { notify } = useToast();
+  const credentialPresets = useMemo(
+    () => mergedCredentialPresets(credentialTypes),
+    [credentialTypes],
+  );
+  const presetsByType = useMemo(
+    () => new Map(credentialPresets.map((preset) => [preset.type, preset])),
+    [credentialPresets],
+  );
 
   const filteredCredentials = useMemo(() => {
     if (!credentials) return [];
     const needle = query.trim().toLowerCase();
     return credentials.filter((cred) => {
-      const preset = PRESET_BY_TYPE.get(cred.type);
+      const preset = presetsByType.get(cred.type);
       const text = `${cred.name} ${cred.type} ${preset?.label ?? ""} ${
         cred.description ?? ""
       } ${cred.keys.join(" ")}`.toLowerCase();
@@ -901,19 +1112,31 @@ export function CredentialsPage() {
       if (scopeFilter !== "all" && cred.scope !== scopeFilter) return false;
       return true;
     });
-  }, [credentials, query, scopeFilter, typeFilter]);
+  }, [credentials, presetsByType, query, scopeFilter, typeFilter]);
 
   const availableTypes = useMemo(() => {
     const types = new Set(credentials?.map((cred) => cred.type) ?? []);
     return Array.from(types).sort((a, b) =>
-      credentialTypeLabel(a).localeCompare(credentialTypeLabel(b)),
+      credentialTypeLabel(a, presetsByType).localeCompare(
+        credentialTypeLabel(b, presetsByType),
+      ),
     );
-  }, [credentials]);
+  }, [credentials, presetsByType]);
 
   function load() {
-    api
-      .listCredentials()
-      .then(setCredentials)
+    Promise.allSettled([api.listCredentials(), api.listCredentialTypes()])
+      .then(([credentialsResult, typesResult]) => {
+        if (credentialsResult.status === "fulfilled") {
+          setCredentials(credentialsResult.value);
+        } else {
+          setError(String(credentialsResult.reason));
+        }
+        if (typesResult.status === "fulfilled") {
+          setCredentialTypes(typesResult.value);
+        } else {
+          setCredentialTypes(null);
+        }
+      })
       .catch((err) => setError(String(err)));
   }
 
@@ -949,6 +1172,19 @@ export function CredentialsPage() {
       notify(String(err), "error");
     } finally {
       setTesting((current) => ({ ...current, [cred.id]: false }));
+    }
+  }
+
+  async function refreshCredential(cred: Credential): Promise<void> {
+    setRefreshing((current) => ({ ...current, [cred.id]: true }));
+    try {
+      await api.refreshCredential(cred.id);
+      notify("Credential refreshed.", "success");
+      load();
+    } catch (err) {
+      notify(String(err), "error");
+    } finally {
+      setRefreshing((current) => ({ ...current, [cred.id]: false }));
     }
   }
 
@@ -1001,7 +1237,7 @@ export function CredentialsPage() {
                 <option value="all">All types</option>
                 {availableTypes.map((type) => (
                   <option key={type} value={type}>
-                    {credentialTypeLabel(type)}
+                    {credentialTypeLabel(type, presetsByType)}
                   </option>
                 ))}
               </select>
@@ -1023,11 +1259,18 @@ export function CredentialsPage() {
             <div className="env-grid">
               {filteredCredentials.map((cred) => (
               <article className="env-card" key={cred.id}>
+                {(() => {
+                  const preset = presetsByType.get(cred.type);
+                  const isOAuthCredential = preset?.authMethod === "oauth2";
+                  return (
+                <>
                 <div className="env-card-head">
                   <div className="env-title">
                     <h3>{cred.name}</h3>
                   </div>
-                  <span className="cred-type">{credentialTypeLabel(cred.type)}</span>
+                  <span className="cred-type">
+                    {credentialTypeLabel(cred.type, presetsByType)}
+                  </span>
                 </div>
                 <div className="env-meta">
                   {credentialScopeLabel(cred)}
@@ -1055,6 +1298,15 @@ export function CredentialsPage() {
                   >
                     {testing[cred.id] ? "Testing..." : "Test"}
                   </button>
+                  {isOAuthCredential && (
+                    <button
+                      className="btn btn-sm"
+                      onClick={() => void refreshCredential(cred)}
+                      disabled={Boolean(refreshing[cred.id])}
+                    >
+                      {refreshing[cred.id] ? "Refreshing..." : "Refresh"}
+                    </button>
+                  )}
                   <button
                     className="btn btn-sm btn-ghost"
                     onClick={() => void remove(cred.id, cred.name)}
@@ -1072,6 +1324,9 @@ export function CredentialsPage() {
                     {testResults[cred.id].latency_ms} ms
                   </p>
                 )}
+                </>
+                  );
+                })()}
               </article>
               ))}
             </div>
@@ -1081,6 +1336,7 @@ export function CredentialsPage() {
 
       {modal && (
         <CreateCredentialModal
+          presets={credentialPresets}
           onClose={() => setModal(false)}
           onCreated={() => {
             setModal(false);

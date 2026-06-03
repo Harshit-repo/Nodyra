@@ -556,6 +556,22 @@ textarea:focus-visible {
   color: #f0747a;
   background: rgba(240, 116, 122, 0.12);
 }
+.wf-trigger-status {
+  border: 0;
+  text-align: left;
+}
+.wf-trigger-status.hook-active {
+  color: #7dd3c0;
+  background: rgba(69, 179, 143, 0.13);
+}
+.wf-trigger-status.hook-activating {
+  color: #79b6ff;
+  background: rgba(76, 158, 255, 0.13);
+}
+.wf-trigger-status.hook-error {
+  color: #f0747a;
+  background: rgba(240, 116, 122, 0.14);
+}
 .wf-delete {
   border: none;
   background: transparent;
@@ -735,6 +751,52 @@ textarea:focus-visible {
   justify-content: flex-end;
   gap: 9px;
   margin-top: 5px;
+}
+.provider-trigger-modal {
+  width: min(680px, calc(100vw - 34px));
+}
+.provider-trigger-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 5px;
+  max-height: min(58vh, 520px);
+  overflow: auto;
+}
+.provider-trigger-row {
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  padding: 11px 12px;
+  background: var(--bg);
+}
+.provider-trigger-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+.provider-trigger-head strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.provider-trigger-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 7px;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.provider-trigger-row code {
+  display: block;
+  margin-top: 9px;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
 }
 .confirm-modal {
   width: min(420px, calc(100vw - 34px));
@@ -1581,6 +1643,31 @@ kbd {
   background: var(--bg);
   padding: 10px;
 }
+.credential-oauth-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  padding: 10px;
+}
+.credential-oauth-panel h3 {
+  margin: 0;
+  font-size: 13px;
+}
+.credential-oauth-panel p,
+.credential-oauth-panel small {
+  margin: 4px 0 0;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.credential-oauth-panel small {
+  grid-column: 1 / -1;
+}
 .credential-filters {
   grid-template-columns: minmax(0, 1fr) 210px 160px;
 }
@@ -1887,6 +1974,22 @@ kbd {
 .status-run-cancelled {
   background: #b59bff;
   color: #100822;
+}
+.status-run-waiting {
+  background: #f2c94c;
+  color: #1d1602;
+}
+.status-run-active {
+  background: #45b38f;
+  color: #06140c;
+}
+.status-run-activating {
+  background: #79b6ff;
+  color: #06101e;
+}
+.status-run-deleted {
+  background: var(--surface-3);
+  color: var(--ink-3);
 }
 
 /* ---- Executions page ---- */

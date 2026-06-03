@@ -49,6 +49,57 @@ _AST_TYPE_MAP: dict[str, str] = {
 _MISSING = object()
 
 
+def _dict_meta(meta: dict[str, Any], key: str) -> dict[str, Any] | None:
+    value = meta.get(key)
+    return value if isinstance(value, dict) else None
+
+
+def _list_meta(meta: dict[str, Any], key: str) -> list[str]:
+    value = meta.get(key)
+    if value is None or value == "":
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
+def _param_meta_kwargs(meta: dict[str, Any]) -> dict[str, Any]:
+    """Return rich ParamSpec kwargs shared by runtime and AST discovery paths."""
+    return {
+        "group": meta.get("group") or None,
+        "display_name": str(meta.get("display_name") or ""),
+        "display_when": _dict_meta(meta, "display_when"),
+        "hide_when": _dict_meta(meta, "hide_when"),
+        "widget": str(meta.get("widget") or ""),
+        "depends_on": _list_meta(meta, "depends_on"),
+        "load_options": meta.get("load_options") or None,
+        "resource_mapper": _dict_meta(meta, "resource_mapper"),
+        "fixed_collection": _dict_meta(meta, "fixed_collection"),
+        "credential_type": meta.get("credential_type") or None,
+        "required_scopes": _list_meta(meta, "required_scopes"),
+        "advanced": bool(meta.get("advanced", False)),
+        "documentation_url": str(meta.get("documentation_url") or ""),
+        "validation": _dict_meta(meta, "validation"),
+    }
+
+
+def _apply_param_groups(
+    params: dict[str, dict[str, Any]] | None,
+    param_groups: dict[str, list[str]] | None,
+) -> dict[str, dict[str, Any]]:
+    """Apply ``param_groups`` shorthand while preserving explicit per-param group."""
+    param_meta = {
+        key: dict(value) if isinstance(value, dict) else {}
+        for key, value in (params or {}).items()
+    }
+    for group_name, names in (param_groups or {}).items():
+        names_iter = [names] if isinstance(names, str) else names
+        for pname in names_iter:
+            meta = param_meta.setdefault(str(pname), {})
+            meta.setdefault("group", group_name)
+    return param_meta
+
+
 @dataclass
 class NodeDef:
     func: Callable[..., Any]
@@ -153,6 +204,10 @@ def _build_manifest(
     category: str,
     version: str,
     description: str,
+    role: str,
+    hidden: bool,
+    deprecated: bool,
+    replacement_id: str | None,
     param_meta: dict[str, dict[str, Any]],
     inputs: list[str],
     outputs: list[str],
@@ -191,7 +246,7 @@ def _build_manifest(
                 multiline=bool(meta.get("multiline", False)),
                 key_value=bool(meta.get("key_value", False)),
                 credential=credential,
-                group=meta.get("group") or None,
+                **_param_meta_kwargs(meta),
             )
         )
 
@@ -204,6 +259,10 @@ def _build_manifest(
         version=version,
         description=description,
         icon=icon,
+        role=role,
+        hidden=hidden,
+        deprecated=deprecated,
+        replacement_id=replacement_id,
         inputs=[
             PortSpec(name=n, data_kind=in_kinds.get(n, "any"))
             for n in inputs
@@ -357,15 +416,25 @@ def _decorated_node_from_ast(
     category = str(kwargs.get("category") or default_category)
     version = str(kwargs.get("version") or "1.0.0")
     description = str(kwargs.get("description") or ast.get_docstring(stmt) or "")
+    role = str(kwargs.get("role") or "executable")
+    hidden = bool(kwargs.get("hidden", False))
+    deprecated = bool(kwargs.get("deprecated", False))
+    replacement_id = kwargs.get("replacement_id")
+    if replacement_id is not None:
+        replacement_id = str(replacement_id)
     icon = kwargs.get("icon")
     inputs = kwargs.get("inputs")
     inputs = ["input"] if inputs is None else list(inputs)
     outputs = list(kwargs.get("outputs") or ["main"])
     input_kinds = kwargs.get("input_kinds") or {}
     output_kinds = kwargs.get("output_kinds") or {}
-    param_meta = kwargs.get("params") or {}
-    if not isinstance(param_meta, dict):
-        param_meta = {}
+    raw_param_meta = kwargs.get("params") or {}
+    if not isinstance(raw_param_meta, dict):
+        raw_param_meta = {}
+    raw_param_groups = kwargs.get("param_groups") or {}
+    if not isinstance(raw_param_groups, dict):
+        raw_param_groups = {}
+    param_meta = _apply_param_groups(raw_param_meta, raw_param_groups)
 
     input_set = set(inputs)
     params: list[ParamSpec] = []
@@ -393,7 +462,7 @@ def _decorated_node_from_ast(
                 multiline=bool(meta.get("multiline", False)),
                 key_value=bool(meta.get("key_value", False)),
                 credential=credential,
-                group=meta.get("group") or None,
+                **_param_meta_kwargs(meta),
             )
         )
 
@@ -404,6 +473,10 @@ def _decorated_node_from_ast(
         version=version,
         description=description,
         icon=icon,
+        role=role,
+        hidden=hidden,
+        deprecated=deprecated,
+        replacement_id=replacement_id,
         inputs=[
             PortSpec(name=n, data_kind=input_kinds.get(n, "any")) for n in inputs
         ],
@@ -681,6 +754,10 @@ def node(
     category: str = "General",
     version: str = "1.0.0",
     description: str = "",
+    role: str = "executable",
+    hidden: bool = False,
+    deprecated: bool = False,
+    replacement_id: str | None = None,
     params: dict[str, dict[str, Any]] | None = None,
     param_groups: dict[str, list[str]] | None = None,
     inputs: list[str] | None = None,
@@ -711,11 +788,7 @@ def node(
         # ``param_groups={"Options": ["a", "b"]}`` is a shorthand for setting
         # ``"group"`` on many optional params at once; an explicit per-param
         # ``group`` in ``params`` still wins.
-        param_meta = {k: dict(v) for k, v in (params or {}).items()}
-        for group_name, names in (param_groups or {}).items():
-            for pname in names:
-                meta = param_meta.setdefault(pname, {})
-                meta.setdefault("group", group_name)
+        param_meta = _apply_param_groups(params, param_groups)
         manifest = _build_manifest(
             func,
             node_id=node_id,
@@ -723,6 +796,10 @@ def node(
             category=category,
             version=version,
             description=description or (func.__doc__ or "").strip(),
+            role=role,
+            hidden=hidden,
+            deprecated=deprecated,
+            replacement_id=replacement_id,
             param_meta=param_meta,
             inputs=["input"] if inputs is None else inputs,
             outputs=outputs or ["main"],

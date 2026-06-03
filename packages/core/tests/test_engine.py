@@ -68,6 +68,115 @@ async def test_multiple_named_inputs() -> None:
     assert result.nodes["sum"].outputs["main"] == 12
 
 
+async def test_matching_ai_port_kinds_are_allowed() -> None:
+    reg = NodeRegistry()
+
+    @node(
+        name="Model",
+        id="model",
+        inputs=[],
+        outputs=["model"],
+        output_kinds={"model": "ai_language_model"},
+        registry=reg,
+    )
+    def model() -> dict:
+        return {"provider": "test"}
+
+    @node(
+        name="Agent",
+        id="agent",
+        inputs=["model"],
+        input_kinds={"model": "ai_language_model"},
+        registry=reg,
+    )
+    def agent(model=None) -> str:
+        return str(model["provider"])
+
+    graph = WorkflowGraph(
+        nodes=[GraphNode(id="m", type="model"), GraphNode(id="a", type="agent")],
+        edges=[Edge(source="m", source_output="model", target="a", target_input="model")],
+    )
+
+    result = await execute(graph, reg)
+
+    assert result.status == RunStatus.success
+    assert result.nodes["a"].outputs["main"] == "test"
+
+
+async def test_ai_port_kind_mismatch_is_rejected_before_execution() -> None:
+    reg = NodeRegistry()
+
+    @node(
+        name="Records",
+        id="records",
+        inputs=[],
+        output_kinds={"main": "main"},
+        registry=reg,
+    )
+    def records() -> dict:
+        return {"rows": []}
+
+    @node(
+        name="Agent",
+        id="agent",
+        inputs=["model"],
+        input_kinds={"model": "ai_language_model"},
+        registry=reg,
+    )
+    def agent(model=None) -> str:  # pragma: no cover - graph validation should stop first
+        return str(model)
+
+    graph = WorkflowGraph(
+        nodes=[GraphNode(id="r", type="records"), GraphNode(id="a", type="agent")],
+        edges=[Edge(source="r", target="a", target_input="model")],
+    )
+
+    with pytest.raises(GraphError, match="AI language model"):
+        await execute(graph, reg)
+
+
+async def test_port_kind_mismatch_outside_targets_is_ignored() -> None:
+    reg = NodeRegistry()
+
+    @node(
+        name="Records",
+        id="records",
+        inputs=[],
+        output_kinds={"main": "main"},
+        registry=reg,
+    )
+    def records() -> dict:
+        return {"rows": []}
+
+    @node(
+        name="Agent",
+        id="agent",
+        inputs=["model"],
+        input_kinds={"model": "ai_language_model"},
+        registry=reg,
+    )
+    def agent(model=None) -> str:
+        return str(model)
+
+    @node(name="Const", id="const", inputs=[], registry=reg)
+    def const() -> int:
+        return 1
+
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="r", type="records"),
+            GraphNode(id="a", type="agent"),
+            GraphNode(id="c", type="const"),
+        ],
+        edges=[Edge(source="r", target="a", target_input="model")],
+    )
+
+    result = await execute(graph, reg, targets=["c"])
+
+    assert result.status == RunStatus.success
+    assert set(result.nodes) == {"c"}
+
+
 async def test_async_node_is_awaited() -> None:
     reg = make_registry()
     graph = WorkflowGraph(

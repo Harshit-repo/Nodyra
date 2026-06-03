@@ -741,6 +741,9 @@ def ai_prompt_template(
 @node(
     name="AI Chat Model",
     id="ai_chat_model",
+    hidden=True,
+    deprecated=True,
+    replacement_id="ai_chat_model_openai",
     param_groups={
         "Options": [
             "temperature",
@@ -1376,6 +1379,9 @@ def ai_rag_answer(
 @node(
     name="AI Simple Memory",
     id="ai_memory_buffer",
+    hidden=True,
+    deprecated=True,
+    replacement_id="ai_buffer_memory",
     param_groups={"Options": ["input_role", "max_messages"]},
     category=AI_CATEGORY,
     icon="database",
@@ -1426,6 +1432,9 @@ def ai_memory_buffer(
 @node(
     name="AI Tool",
     id="ai_tool",
+    hidden=True,
+    deprecated=True,
+    replacement_id="ai_http_tool",
     param_groups={"Options": ["parameters_schema_json", "url", "method", "workflow_id"]},
     category=AI_CATEGORY,
     icon="code",
@@ -1475,6 +1484,9 @@ def ai_tool(
 @node(
     name="AI Tool Box",
     id="ai_tool_box",
+    hidden=True,
+    deprecated=True,
+    replacement_id="ai_tool_bundle",
     category=AI_CATEGORY,
     icon="wrench",
     inputs=["tool_1", "tool_2", "tool_3", "tool_4", "tool_5"],
@@ -1503,6 +1515,9 @@ def ai_tool_box(
 @node(
     name="AI Agent",
     id="ai_agent",
+    hidden=True,
+    deprecated=True,
+    replacement_id="ai_agent_v2",
     param_groups={
         "Options": [
             "fallback_model",

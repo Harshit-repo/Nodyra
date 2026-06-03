@@ -9,9 +9,20 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.db import get_session
-from app.models import NodeRun, PinnedData, Run, RunQueueEntry, Workflow, WorkflowVersion
+from app.models import (
+    NodeRun,
+    PinnedData,
+    Run,
+    RunApproval,
+    RunEvent,
+    RunQueueEntry,
+    Workflow,
+    WorkflowVersion,
+)
 from app.schemas import (
     PageResponse,
+    RunApprovalDecisionRequest,
+    RunApprovalInfo,
     RunCancelResponse,
     RunCreated,
     RunDebugSnapshot,
@@ -31,7 +42,7 @@ from app.services.graph_utils import (
     first_trigger_node,
     forward_descendants,
 )
-from app.services.runner import cancel_run, start_run
+from app.services.runner import cancel_run, resume_waiting_run_from_approval, start_run
 
 router = APIRouter(tags=["runs"])
 
@@ -203,7 +214,11 @@ async def list_all_runs(
 
 @router.get("/runs/{run_id}", response_model=RunInfo)
 async def get_run(run_id: str, session: AsyncSession = Depends(get_session)):
-    run = await session.get(Run, run_id, options=[selectinload(Run.node_runs)])
+    run = await session.get(
+        Run,
+        run_id,
+        options=[selectinload(Run.node_runs), selectinload(Run.events)],
+    )
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
     workflow_name: str | None = None
@@ -451,6 +466,14 @@ def _epoch_to_dt(value: float | None) -> datetime | None:
     return datetime.fromtimestamp(value, tz=UTC)
 
 
+def _timeline_sort_ts(value: datetime | None) -> datetime:
+    if value is None:
+        return datetime.max.replace(tzinfo=UTC)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 @router.get("/runs/{run_id}/timeline", response_model=RunTimeline)
 async def run_timeline(
     run_id: str, session: AsyncSession = Depends(get_session)
@@ -469,6 +492,13 @@ async def run_timeline(
     entry = await session.scalar(
         select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
     )
+    persisted_events = (
+        await session.scalars(
+            select(RunEvent)
+            .where(RunEvent.run_id == run_id)
+            .order_by(RunEvent.sequence.asc())
+        )
+    ).all()
 
     events: list[RunTimelineEvent] = []
 
@@ -523,16 +553,16 @@ async def run_timeline(
         )
     )
 
-    node_events: list[RunTimelineEvent] = []
+    execution_events: list[RunTimelineEvent] = []
     for nr in run.node_runs:
-        node_events.append(
+        execution_events.append(
             RunTimelineEvent(
                 type="node_started",
                 ts=_epoch_to_dt(nr.started_at),
                 data={"node_id": nr.node_id},
             )
         )
-        node_events.append(
+        execution_events.append(
             RunTimelineEvent(
                 type="node_finished",
                 ts=_epoch_to_dt(nr.finished_at),
@@ -544,17 +574,42 @@ async def run_timeline(
                 },
             )
         )
+    for event in persisted_events:
+        payload = dict(event.payload or {})
+        payload.pop("type", None)
+        execution_events.append(
+            RunTimelineEvent(
+                type=event.event_type,
+                ts=event.ts,
+                data=payload,
+            )
+        )
     # Stable order: events with a timestamp sort first by time, then by type so
     # node_started precedes node_finished for the same instant; events without a
     # timestamp keep their list position at the end.
-    node_events.sort(
+    type_priority = {
+        "node_started": 0,
+        "provider_trigger_received": 1,
+        "agent_action_requested": 2,
+        "agent_tool_started": 3,
+        "agent_tool_approval_required": 4,
+        "agent_tool_auto_approved": 5,
+        "agent_tool_finished": 6,
+        "agent_action_completed": 7,
+        "agent_tool_approval_decided": 8,
+        "agent_resume_prepared": 9,
+        "guardrail_blocked": 10,
+        "guardrail_redacted": 11,
+        "node_finished": 12,
+    }
+    execution_events.sort(
         key=lambda e: (
             e.ts is None,
-            e.ts or datetime.max.replace(tzinfo=UTC),
-            0 if e.type == "node_started" else 1,
+            _timeline_sort_ts(e.ts),
+            type_priority.get(e.type, 10),
         )
     )
-    events.extend(node_events)
+    events.extend(execution_events)
 
     if run.finished_at is not None:
         terminal_type = {
@@ -571,6 +626,92 @@ async def run_timeline(
         )
 
     return RunTimeline(run_id=run_id, status=run.status, events=events)
+
+
+@router.get("/runs/{run_id}/approvals", response_model=list[RunApprovalInfo])
+async def run_approvals(
+    run_id: str, session: AsyncSession = Depends(get_session)
+) -> list[RunApprovalInfo]:
+    """Approval records for side-effecting AI tools in a run."""
+    exists = await session.scalar(select(Run.id).where(Run.id == run_id))
+    if exists is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
+
+    approvals = (
+        await session.scalars(
+            select(RunApproval)
+            .where(RunApproval.run_id == run_id)
+            .order_by(RunApproval.requested_at.asc(), RunApproval.id.asc())
+        )
+    ).all()
+    return list(approvals)
+
+
+@router.post(
+    "/runs/{run_id}/approvals/{approval_id}/decision",
+    response_model=RunApprovalInfo,
+)
+async def decide_run_approval(
+    run_id: str,
+    approval_id: str,
+    body: RunApprovalDecisionRequest,
+    session: AsyncSession = Depends(get_session),
+) -> RunApprovalInfo:
+    """Record an operator decision for a pending AI tool approval."""
+    approval = await session.scalar(
+        select(RunApproval).where(
+            RunApproval.run_id == run_id,
+            RunApproval.id == approval_id,
+        )
+    )
+    if approval is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Approval not found")
+    if approval.status != "pending":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Approval has already been {approval.status}.",
+        )
+
+    approval.status = "approved" if body.decision == "approve" else "rejected"
+    approval.reason = body.reason or ""
+    approval.resolved_by = body.resolved_by or None
+    approval.resolved_at = datetime.now(UTC)
+
+    max_sequence = await session.scalar(
+        select(func.max(RunEvent.sequence)).where(RunEvent.run_id == run_id)
+    )
+    event_payload = {
+        "type": "agent_tool_approval_decided",
+        "approval_id": approval.id,
+        "approval_key": approval.approval_key,
+        "agent_node_id": approval.agent_node_id,
+        "node_id": approval.node_id,
+        "step": approval.step,
+        "max_steps": approval.max_steps,
+        "tool_call_id": approval.tool_call_id,
+        "tool_name": approval.tool_name,
+        "status": approval.status,
+        "decision": body.decision,
+        "reason": approval.reason,
+        "resolved_by": approval.resolved_by,
+    }
+    session.add(
+        RunEvent(
+            run_id=run_id,
+            event_type="agent_tool_approval_decided",
+            sequence=int(max_sequence or 0) + 1,
+            ts=approval.resolved_at,
+            node_id=approval.node_id,
+            agent_node_id=approval.agent_node_id,
+            payload=event_payload,
+        )
+    )
+    await session.commit()
+    await session.refresh(approval)
+    broker.publish(run_id, event_payload)
+    if body.decision == "approve":
+        await resume_waiting_run_from_approval(run_id, approval.id)
+    return approval
 
 
 @router.get("/runs/{run_id}/debug-snapshot", response_model=RunDebugSnapshot)

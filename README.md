@@ -59,9 +59,8 @@ with leases, dead-letter, and replay; scheduler leader election; runner pools
 with heartbeats and remote/SSH onboarding; pluggable local/S3 artifact storage;
 credential test-on-save; and an unsafe-node activation policy. See
 [docs/status-matrix.md](docs/status-matrix.md) for the per-component shipped /
-beta / scaffolded / planned breakdown. Known gaps include the webhook-ingress
-role split, a first-class UI operations dashboard, and a first-class admin
-restart control.
+beta / scaffolded / planned breakdown. Known gaps include a first-class UI
+operations dashboard and a first-class admin restart control.
 
 ## Key Capabilities
 
@@ -379,6 +378,7 @@ Core API settings are environment variables loaded by `apps/api/app/config.py`.
 | `CELERY_BROKER_URL` | Celery broker URL | Redis DB/index |
 | `CELERY_RESULT_BACKEND` | Celery result backend | Redis DB/index |
 | `CORS_ORIGINS` | Allowed web origins | public web URL |
+| `PUBLIC_API_URL` | Public API origin for provider webhook callbacks | public HTTPS API URL |
 | `AUTH_REQUIRED` | Require login | `true` |
 | `AUTH_ALLOW_REGISTRATION` | Allow open registration | `false` |
 | `AUTH_REGISTRATION_ROLE` | Default role when registration is open | `viewer` |
@@ -569,6 +569,15 @@ Planned or designed areas:
 ## Documentation
 
 - `docs/architecture.md` contains a deeper architecture walkthrough.
+- `docs/deployment.md` covers local, Docker Compose, and Helm deployment.
+- `docs/nodes.md` covers built-in nodes, uploaded code modules, artifacts, and
+  DatasetRef patterns.
+- `docs/integration-development.md` covers spec-driven v2 provider operations,
+  triggers, credentials, dynamic options, transport, and tests.
+- `docs/provider-coverage-matrix.md` tracks official provider operation and
+  trigger coverage.
+- `docs/status-matrix.md` tracks shipped/beta/scaffolded/planned architecture
+  tasks.
 - `plan.md` contains milestone and slice history.
 - `HANDOFF.md` contains compact context for engineering handoff.
 

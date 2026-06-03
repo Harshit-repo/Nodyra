@@ -4,7 +4,32 @@ export interface CredentialParamSpec {
   label: string;
   fields: string[];
   multi?: boolean;
+  test_service?: string | null;
 }
+
+export type NodeRole =
+  | "executable"
+  | "supplier"
+  | "trigger"
+  | "tool"
+  | "output_parser";
+
+export type PortDataKind =
+  | "any"
+  | "main"
+  | "control"
+  | "dataset"
+  | "artifact"
+  | "file"
+  | "ai_language_model"
+  | "ai_embedding_model"
+  | "ai_memory"
+  | "ai_tool"
+  | "ai_output_parser"
+  | "ai_retriever"
+  | "ai_vector_store"
+  | "ai_document_loader"
+  | "ai_guardrail";
 
 export interface ParamSpec {
   name: string;
@@ -19,12 +44,25 @@ export interface ParamSpec {
   credential?: CredentialParamSpec | null;
   /** Optional "Add option" group; null/absent = a core param shown by default. */
   group?: string | null;
+  display_name?: string;
+  display_when?: Record<string, unknown> | null;
+  hide_when?: Record<string, unknown> | null;
+  widget?: string;
+  depends_on?: string[];
+  load_options?: string | null;
+  resource_mapper?: Record<string, unknown> | null;
+  fixed_collection?: Record<string, unknown> | null;
+  credential_type?: string | null;
+  required_scopes?: string[];
+  advanced?: boolean;
+  documentation_url?: string;
+  validation?: Record<string, unknown> | null;
 }
 
 export interface PortSpec {
   name: string;
   description: string;
-  data_kind?: "any" | "control" | "dataset" | "artifact" | "file";
+  data_kind?: PortDataKind;
 }
 
 export interface NodeManifest {
@@ -34,6 +72,10 @@ export interface NodeManifest {
   version: string;
   description: string;
   icon: string | null;
+  role?: NodeRole;
+  hidden?: boolean;
+  deprecated?: boolean;
+  replacement_id?: string | null;
   inputs: PortSpec[];
   params: ParamSpec[];
   outputs: PortSpec[];
@@ -76,6 +118,33 @@ export interface WorkflowVersionInfo {
   published: boolean;
 }
 
+export interface ProviderTriggerStatusCounts {
+  total: number;
+  active: number;
+  activating: number;
+  error: number;
+  deleted: number;
+}
+
+export interface ProviderTriggerSubscription {
+  id: string;
+  workflow_id: string;
+  workflow_version_id?: string | null;
+  node_id: string;
+  node_type: string;
+  provider: string;
+  trigger_key: string;
+  status: string;
+  external_id: string;
+  callback_url: string;
+  config: Record<string, unknown>;
+  error: string;
+  expires_at?: string | null;
+  last_event_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface WorkflowSummary {
   id: string;
   name: string;
@@ -90,6 +159,7 @@ export interface WorkflowSummary {
   last_run_status?: string | null;
   last_run_started_at?: string | null;
   last_run_finished_at?: string | null;
+  provider_trigger_counts?: ProviderTriggerStatusCounts;
   updated_at: string;
 }
 
@@ -104,6 +174,7 @@ export interface WorkflowDetail {
   error_workflow_id?: string | null;
   error_alerts?: Record<string, unknown>;
   run_timeout_seconds?: number | null;
+  provider_trigger_counts?: ProviderTriggerStatusCounts;
   graph: WorkflowGraph;
   created_at: string;
   updated_at: string;
@@ -338,12 +409,15 @@ export interface Credential {
   id: string;
   name: string;
   type: string;
+  auth_method?: string | null;
   scope: string;
   workflow_id: string | null;
   environment_id: string | null;
   runner_pool_id: string | null;
   description: string;
   keys: string[];
+  oauth_scopes?: string[];
+  oauth_expires_at?: string | null;
   last_used_at: string | null;
   created_at: string;
   updated_at: string;
@@ -357,6 +431,43 @@ export interface CredentialTestResponse {
   latency_ms: number;
   checked_at: string;
   details: Record<string, unknown>;
+}
+
+export interface CredentialTypeFieldInfo {
+  key: string;
+  label: string;
+  secret: boolean;
+  required: boolean;
+  placeholder: string;
+  help: string;
+}
+
+export interface OAuthCredentialTypeInfo {
+  auth_url: string;
+  token_url: string;
+  scopes: string[];
+  authorization_params: Record<string, string>;
+}
+
+export interface CredentialTypeInfo {
+  id: string;
+  name: string;
+  provider: string;
+  auth_method: string;
+  fields: CredentialTypeFieldInfo[];
+  oauth: OAuthCredentialTypeInfo | null;
+  test_service: string | null;
+  documentation_url: string;
+  default_scopes: string[];
+}
+
+export interface CredentialOAuthStartResponse {
+  authorization_url: string;
+  state: string;
+  credential_type: string;
+  redirect_uri: string;
+  scopes: string[];
+  expires_at: string;
 }
 
 export type AiDraftMode = "draft" | "fix";

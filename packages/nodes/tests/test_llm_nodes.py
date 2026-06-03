@@ -73,6 +73,21 @@ def test_agent_manifest_has_model_memory_and_tools_ports() -> None:
     assert "model" not in param_names
 
 
+def test_legacy_agent_stack_is_hidden_with_v2_replacements() -> None:
+    replacements = {
+        "ai_chat_model": "ai_chat_model_openai",
+        "ai_memory_buffer": "ai_buffer_memory",
+        "ai_tool": "ai_http_tool",
+        "ai_tool_box": "ai_tool_bundle",
+        "ai_agent": "ai_agent_v2",
+    }
+    for node_id, replacement_id in replacements.items():
+        manifest = registry.get(node_id).manifest
+        assert manifest.hidden is True
+        assert manifest.deprecated is True
+        assert manifest.replacement_id == replacement_id
+
+
 def test_chat_model_manifest_uses_provider_and_model_dropdowns() -> None:
     manifest = registry.get("ai_chat_model").manifest
     params = {param.name: param for param in manifest.params}

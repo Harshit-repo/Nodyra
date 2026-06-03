@@ -4,7 +4,7 @@ Live status of the components called out in
 [architecture-improvement-plan.md](architecture-improvement-plan.md). Updated as
 tasks land.
 
-> Reconciled against the code on 2026-06-02. Most of Phases 2–6 had shipped well
+> Reconciled against the code on 2026-06-03. Most of Phases 2–6 had shipped well
 > ahead of this doc (durable-queue dispatch, dead-letter, leader election, runner
 > heartbeats, pluggable + S3 artifacts, credential tests, unsafe-node policy);
 > the statuses below now reflect the wired code paths, not the original plan.
@@ -44,7 +44,7 @@ SKIP LOCKED` lease path against a real backend (see operational gaps below).
 | Task | Area | Status |
 | --- | --- | --- |
 | 7 | Runner leases + heartbeats (server-side lease, agent-side heartbeat) | Shipped (`runner_heartbeat_loop` in lifespan; `remote_dispatch` writes `last_seen_at` + marks runners offline past `runner_offline_after_seconds` and requeues their runs; queue `lease`/`requeue_expired_leases`) |
-| 8 | Webhook ingress role | Scaffolded (`webhook_role` config exists; `routers/webhooks.py` does not branch on it) |
+| 8 | Webhook ingress role | Shipped (`WEBHOOK_ROLE=disabled` leaves editor capture mounted but does not mount production `/webhook/{path}` or provider-managed `/provider-webhook/{subscription_id}` ingress) |
 | 9 | Scheduler leader election | Shipped (`services/leader_election.py`; `scheduler_role=leader` runs the scheduler/retention loops only while holding the DB advisory lock) |
 
 ## Phase 4 — artifacts

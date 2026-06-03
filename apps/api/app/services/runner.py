@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -29,6 +29,8 @@ from app.models import (
     NodeRun,
     PinnedData,
     Run,
+    RunApproval,
+    RunEvent,
     RunQueueEntry,
     Workflow,
     WorkflowVersion,
@@ -43,6 +45,7 @@ from app.services.credentials import resolve_credential_refs
 from app.services.events import broker
 from app.services.graph_utils import (
     first_trigger_node,
+    forward_descendants,
     resolve_trigger_targets,
     targets_have_trigger,
 )
@@ -54,6 +57,7 @@ from app.services.remote_dispatch import (
     dispatcher,
 )
 from app.services.runtime_pool import pool as runtime_pool
+from noodle.ai_runtime import AgentActionRequest
 from noodle.context import artifact_store, call_chain, workflow_caller
 from noodle.engine import DEFAULT_NODE_TIMEOUTS, execute
 from noodle.models import WorkflowGraph
@@ -73,6 +77,95 @@ from noodle.serialization import (
 logger = logging.getLogger(__name__)
 
 _active_runs: dict[str, asyncio.Task[None]] = {}
+
+AGENT_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "agent_action_requested",
+        "agent_tool_started",
+        "agent_tool_approval_required",
+        "agent_tool_auto_approved",
+        "agent_tool_finished",
+        "agent_action_completed",
+        "agent_tool_approval_decided",
+    }
+)
+GUARDRAIL_EVENT_TYPES: frozenset[str] = frozenset(
+    {"guardrail_blocked", "guardrail_redacted"}
+)
+
+
+def _approval_key(event: dict[str, Any]) -> str:
+    """Stable key for idempotent approval rows across local/remote streams."""
+    raw = "|".join(
+        [
+            str(event.get("agent_node_id") or event.get("node_id") or ""),
+            str(event.get("step") or 0),
+            str(event.get("tool_call_id") or ""),
+            str(event.get("tool_name") or ""),
+        ]
+    )
+    return raw[:240]
+
+
+async def _upsert_run_approval(
+    session: AsyncSession,
+    *,
+    run_id: str,
+    event: dict[str, Any],
+    event_ts: datetime,
+) -> None:
+    """Create/update the operator approval record represented by an agent event."""
+    event_type = str(event.get("type") or "")
+    if event_type not in {"agent_tool_approval_required", "agent_tool_auto_approved"}:
+        return
+
+    key = _approval_key(event)
+    approval = await session.scalar(
+        select(RunApproval).where(
+            RunApproval.run_id == run_id,
+            RunApproval.approval_key == key,
+        )
+    )
+    arguments = event.get("arguments")
+    if not isinstance(arguments, dict):
+        arguments = {}
+    status = "approved" if event_type == "agent_tool_auto_approved" else "pending"
+    max_steps_raw = event.get("max_steps")
+    max_steps = int(max_steps_raw) if max_steps_raw is not None else None
+    reason = (
+        "Auto-approved by AI Agent setting."
+        if event_type == "agent_tool_auto_approved"
+        else ""
+    )
+
+    if approval is None:
+        approval = RunApproval(
+            run_id=run_id,
+            approval_key=key,
+            status=status,
+            node_id=event.get("node_id"),
+            agent_node_id=event.get("agent_node_id"),
+            step=int(event.get("step") or 0),
+            max_steps=max_steps,
+            tool_call_id=str(event.get("tool_call_id") or ""),
+            tool_name=str(event.get("tool_name") or ""),
+            arguments=arguments,
+            message=str(event.get("message") or ""),
+            requested_at=event_ts,
+            resolved_at=event_ts if status == "approved" else None,
+            resolved_by="auto" if status == "approved" else None,
+            reason=reason,
+        )
+        session.add(approval)
+        return
+
+    approval.arguments = arguments
+    approval.message = str(event.get("message") or approval.message or "")
+    if approval.status == "pending" and status == "approved":
+        approval.status = "approved"
+        approval.resolved_at = event_ts
+        approval.resolved_by = "auto"
+        approval.reason = reason
 
 
 def _engine_default_timeouts() -> dict[str, float]:
@@ -119,6 +212,35 @@ def _cap_output(value: Any, cap: int | None = None) -> Any:
     if isinstance(value, dict):
         return {port: _maybe_truncate(v, cap) for port, v in value.items()}
     return _maybe_truncate(value, cap)
+
+
+def _contains_unrestorable_object(value: Any) -> bool:
+    if isinstance(value, dict):
+        if (
+            value.get("__noodle_typed__") is True
+            and value.get("type") == "object"
+            and value.get("restorable") is False
+        ):
+            return True
+        return any(_contains_unrestorable_object(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_unrestorable_object(item) for item in value)
+    return False
+
+
+def _graph_node_types(graph: dict) -> dict[str, str]:
+    nodes = graph.get("nodes") if isinstance(graph, dict) else []
+    out: dict[str, str] = {}
+    if not isinstance(nodes, list):
+        return out
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_id = node.get("id")
+        node_type = node.get("type")
+        if isinstance(node_id, str) and isinstance(node_type, str):
+            out[node_id] = node_type
+    return out
 
 
 def _extract_webhook_response(
@@ -531,7 +653,7 @@ async def start_run(
             existing = await session.scalar(
                 select(Run.id)
                 .where(Run.workflow_id == workflow_id)
-                .where(Run.status.in_(("running", "queued")))
+                .where(Run.status.in_(("running", "queued", "waiting")))
                 .limit(1)
             )
             if existing is not None:
@@ -618,6 +740,142 @@ async def start_run(
     return run_id
 
 
+async def resume_waiting_run_from_approval(run_id: str, approval_id: str) -> bool:
+    """Requeue a waiting run using the stored approved agent action request."""
+    async with SessionLocal() as session:
+        approval = await session.scalar(
+            select(RunApproval).where(
+                RunApproval.run_id == run_id,
+                RunApproval.id == approval_id,
+            )
+        )
+        run = await session.get(Run, run_id)
+        if (
+            approval is None
+            or run is None
+            or approval.status != "approved"
+            or run.status != "waiting"
+            or not isinstance(approval.resume_state, dict)
+        ):
+            return False
+
+        agent_node_id = str(
+            approval.resume_state.get("agent_node_id")
+            or approval.agent_node_id
+            or approval.node_id
+            or ""
+        )
+        request_state = approval.resume_state.get("request")
+        if not agent_node_id or not isinstance(request_state, dict):
+            return False
+
+        request = AgentActionRequest.model_validate(request_state)
+        approved_ids = set(request.approved_tool_call_ids or [])
+        approved_ids.add(approval.tool_call_id)
+        request.approved_tool_call_ids = sorted(approved_ids)
+
+        workflow = await session.scalar(
+            select(Workflow)
+            .where(Workflow.id == run.workflow_id)
+            .options(selectinload(Workflow.versions))
+        )
+        if workflow is None or not workflow.versions:
+            return False
+
+        graph_dict: dict | None = None
+        if run.workflow_version_id:
+            version_row = await session.scalar(
+                select(WorkflowVersion).where(
+                    WorkflowVersion.id == run.workflow_version_id
+                )
+            )
+            if version_row is not None:
+                graph_dict = version_row.graph
+        if not graph_dict:
+            graph_dict = workflow.draft_graph or workflow.versions[-1].graph
+        if not graph_dict:
+            return False
+
+        cache: dict[str, dict] = {}
+        skipped_cache_nodes: list[dict[str, Any]] = []
+        node_types = _graph_node_types(graph_dict)
+        node_runs = (
+            await session.scalars(
+                select(NodeRun).where(
+                    NodeRun.run_id == run_id,
+                    NodeRun.status == "success",
+                )
+            )
+        ).all()
+        for node_run in node_runs:
+            if node_run.node_id == agent_node_id:
+                continue
+            output = node_run.output
+            if not isinstance(output, dict):
+                continue
+            if _contains_unrestorable_object(output):
+                skipped_cache_nodes.append(
+                    {
+                        "node_id": node_run.node_id,
+                        "node_type": node_types.get(node_run.node_id, ""),
+                        "reason": "unrestorable_output",
+                        "output_ports": sorted(str(port) for port in output.keys()),
+                    }
+                )
+                continue
+            cache[node_run.node_id] = output
+
+        resume_targets = sorted(forward_descendants(graph_dict, {agent_node_id}))
+        replay_seed = {
+            "cache": cache,
+            "targets": resume_targets,
+            "skipped_cache_nodes": skipped_cache_nodes,
+            "agent_action_resume": {
+                agent_node_id: request.model_dump(mode="json"),
+            },
+        }
+        max_sequence = await session.scalar(
+            select(func.max(RunEvent.sequence)).where(RunEvent.run_id == run_id)
+        )
+        resume_event = {
+            "type": "agent_resume_prepared",
+            "approval_id": approval.id,
+            "approval_key": approval.approval_key,
+            "agent_node_id": agent_node_id,
+            "tool_call_id": approval.tool_call_id,
+            "tool_name": approval.tool_name,
+            "cached_node_ids": sorted(cache.keys()),
+            "skipped_cache_nodes": skipped_cache_nodes,
+            "targets": resume_targets,
+        }
+        session.add(
+            RunEvent(
+                run_id=run_id,
+                event_type="agent_resume_prepared",
+                sequence=int(max_sequence or 0) + 1,
+                ts=datetime.now(UTC),
+                node_id=approval.node_id,
+                agent_node_id=agent_node_id,
+                payload=resume_event,
+            )
+        )
+        entry = await run_queue.resume_waiting(
+            session,
+            run_id=run_id,
+            replay_seed=replay_seed,
+        )
+        if entry is None:
+            return False
+        run.status = "queued"
+        run.finished_at = None
+        await session.commit()
+
+    broker.publish(run_id, resume_event)
+    if settings.run_synchronously:
+        await _execute_queued_entry(run_id)
+    return True
+
+
 async def cancel_run(run_id: str) -> str | None:
     """Cancel an active run, or mark a stale running record as cancelled.
 
@@ -643,7 +901,7 @@ async def cancel_run(run_id: str) -> str | None:
         run = await session.get(Run, run_id)
         if run is None:
             return None
-        if run.status in ("running", "queued"):
+        if run.status in ("running", "queued", "waiting"):
             run.status = "cancelled"
             run.finished_at = datetime.now(UTC)
             await run_queue.cancel(session, run_id=run_id)
@@ -700,13 +958,17 @@ async def _execute_run(
     *,
     prefer_draft: bool = False,
     runner_pool_id: str | None = None,
+    agent_action_resume: dict[str, AgentActionRequest] | None = None,
 ) -> None:
     node_events: dict[str, dict] = {}
+    run_events: list[dict[str, Any]] = []
+    run_event_sequence = 0
     artifact_refs: list[dict] = []
     secret_values: list[str] = []
     prefer_draft_token = _prefer_draft_graphs.set(prefer_draft)
 
     async def on_event(event: dict) -> None:
+        nonlocal run_event_sequence
         clean = dict(event)
         if "outputs" in clean:
             clean["outputs"] = serialize_value(clean["outputs"])
@@ -720,6 +982,40 @@ async def _execute_run(
         broker.publish(run_id, clean)
         if clean.get("type") == "node_finished":
             node_events[clean["node_id"]] = clean
+            debug = clean.get("debug")
+            guardrail_events = (
+                debug.get("guardrail_events") if isinstance(debug, dict) else None
+            )
+            if isinstance(guardrail_events, list):
+                for raw_guardrail_event in guardrail_events:
+                    if not isinstance(raw_guardrail_event, dict):
+                        continue
+                    event_type = str(raw_guardrail_event.get("type") or "")
+                    if event_type not in GUARDRAIL_EVENT_TYPES:
+                        continue
+                    payload = {
+                        **raw_guardrail_event,
+                        "node_id": clean.get("node_id"),
+                        "node_status": clean.get("status"),
+                    }
+                    run_event_sequence += 1
+                    run_events.append(
+                        {
+                            "sequence": run_event_sequence,
+                            "ts": datetime.now(UTC),
+                            "event": payload,
+                        }
+                    )
+                    broker.publish(run_id, payload)
+        if clean.get("type") in AGENT_EVENT_TYPES:
+            run_event_sequence += 1
+            run_events.append(
+                {
+                    "sequence": run_event_sequence,
+                    "ts": datetime.now(UTC),
+                    "event": clean,
+                }
+            )
 
     broker.publish(run_id, {"type": "run_started", "run_id": run_id})
     status = "success"
@@ -822,6 +1118,15 @@ async def _execute_run(
                             targets,
                             workflow_modules,
                             on_event,
+                            pause_on_approval=True,
+                            agent_action_resume=(
+                                {
+                                    node_id: request.model_dump(mode="json")
+                                    for node_id, request in agent_action_resume.items()
+                                }
+                                if agent_action_resume
+                                else None
+                            ),
                         )
                     except _QueuedError as queued_exc:
                         # No runner capacity right now. Reset both ledgers
@@ -859,6 +1164,15 @@ async def _execute_run(
                         sub_workflow_caller=_call_sub_workflow,
                         workflow_modules=workflow_modules,
                         run_timeout=run_timeout,
+                        pause_on_approval=True,
+                        agent_action_resume=(
+                            {
+                                node_id: request.model_dump(mode="json")
+                                for node_id, request in agent_action_resume.items()
+                            }
+                            if agent_action_resume
+                            else None
+                        ),
                     )
             finally:
                 workflow_caller.reset(caller_token)
@@ -916,6 +1230,8 @@ async def _execute_run(
                         targets=targets,
                         on_event=on_event,
                         default_timeouts=_engine_default_timeouts(),
+                        pause_on_approval=True,
+                        agent_action_resume=agent_action_resume,
                     )
                 status = str(result.status)
             finally:
@@ -950,7 +1266,7 @@ async def _execute_run(
         run = await session.get(Run, run_id)
         if run is not None:
             run.status = status
-            run.finished_at = datetime.now(UTC)
+            run.finished_at = None if status == "waiting" else datetime.now(UTC)
             webhook_response = _extract_webhook_response(graph_dict, node_events)
             if webhook_response is not None:
                 run.webhook_response = webhook_response
@@ -969,10 +1285,50 @@ async def _execute_run(
                         duration_ms=event.get("duration_ms"),
                     )
                 )
+            for item in run_events:
+                event = item["event"]
+                event_ts = item["ts"]
+                session.add(
+                    RunEvent(
+                        run_id=run_id,
+                        event_type=str(event.get("type") or ""),
+                        sequence=int(item["sequence"]),
+                        ts=event_ts,
+                        node_id=event.get("node_id"),
+                        agent_node_id=event.get("agent_node_id"),
+                        payload=_cap_output(event, output_cap),
+                    )
+                )
+                await _upsert_run_approval(
+                    session,
+                    run_id=run_id,
+                    event=event,
+                    event_ts=event_ts,
+                )
+            for event in node_events.values():
+                debug = event.get("debug")
+                if not isinstance(debug, dict):
+                    continue
+                resume_state = debug.get("agent_approval_state")
+                if not isinstance(resume_state, dict):
+                    continue
+                approval_key = str(resume_state.get("approval_key") or "")
+                if not approval_key:
+                    continue
+                approval = await session.scalar(
+                    select(RunApproval).where(
+                        RunApproval.run_id == run_id,
+                        RunApproval.approval_key == approval_key,
+                    )
+                )
+                if approval is not None:
+                    approval.resume_state = resume_state
             # Mirror the run outcome onto the durable queue entry so the
             # queue is the single source of truth for orchestration state.
             if status == "success":
                 await run_queue.complete(session, run_id=run_id)
+            elif status == "waiting":
+                await run_queue.wait_for_approval(session, run_id=run_id)
             elif status == "cancelled":
                 await run_queue.cancel(session, run_id=run_id)
             else:
@@ -989,9 +1345,7 @@ async def _execute_run(
     if status == "error":
         await _dispatch_error_handlers(run_id, node_events, secret_values)
 
-    broker.publish(
-        run_id, {"type": "run_finished", "run_id": run_id, "status": status}
-    )
+    broker.publish(run_id, {"type": "run_finished", "run_id": run_id, "status": status})
     _prefer_draft_graphs.reset(prefer_draft_token)
 
 
@@ -1072,17 +1426,28 @@ async def _execute_queued_entry(run_id: str) -> None:
     if replay_seed:
         seed_cache = replay_seed.get("cache")
         seed_targets = replay_seed.get("targets")
+        seed_agent_resume = replay_seed.get("agent_action_resume")
         if isinstance(seed_cache, dict) and seed_cache:
             merged: dict = dict(cache or {})
             merged.update(seed_cache)
             cache = merged
         if isinstance(seed_targets, list) and seed_targets:
             targets = list(seed_targets)
+        agent_action_resume = None
+        if isinstance(seed_agent_resume, dict):
+            agent_action_resume = {
+                str(node_id): AgentActionRequest.model_validate(request)
+                for node_id, request in seed_agent_resume.items()
+                if isinstance(request, dict)
+            }
+    else:
+        agent_action_resume = None
 
     await _execute_run(
         run_id, workflow_id, graph_dict, targets, cache,
         prefer_draft=(mode in ("manual", "test")),
         runner_pool_id=runner_pool_id,
+        agent_action_resume=agent_action_resume,
     )
 
 

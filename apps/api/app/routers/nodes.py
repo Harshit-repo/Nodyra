@@ -10,6 +10,7 @@ from app.db import get_session
 from app.models import CodeModule
 from noodle.models import NodeManifest
 from noodle.sdk import registry
+from noodle_nodes.integrations_v2.dynamic_options import call_loader, list_loader_ids
 
 router = APIRouter(prefix="/nodes", tags=["nodes"])
 
@@ -122,13 +123,17 @@ async def get_node_source(
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, f"Unknown node type '{node_type}'"
         ) from None
-    try:
-        raw = inspect.getsource(node_def.func)
-    except (OSError, TypeError) as exc:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            f"Source unavailable for '{node_type}': {exc}",
-        ) from exc
+    generated_source = getattr(node_def.func, "__noodle_source__", None)
+    if isinstance(generated_source, str) and generated_source.strip():
+        raw = textwrap.dedent(generated_source)
+    else:
+        try:
+            raw = inspect.getsource(node_def.func)
+        except (OSError, TypeError) as exc:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                f"Source unavailable for '{node_type}': {exc}",
+            ) from exc
     return {
         "node_type": node_type,
         "name": node_def.manifest.name,
@@ -139,4 +144,46 @@ async def get_node_source(
         "source": raw,
         "fork_source": _strip_decorators(raw),
     }
+
+
+@router.get("/dynamic-options/{loader_id}")
+async def get_dynamic_options(
+    loader_id: str,
+    credentials: str | None = Query(default=None, description="JSON-encoded credential dict"),
+    spreadsheet_id: str | None = Query(default=None),
+    sheet_name: str | None = Query(default=None),
+) -> dict:
+    """Return dynamic option choices for a node parameter dropdown.
+
+    The ``loader_id`` matches a registered :func:`register_loader` entry.
+    Query parameters are forwarded to the loader as keyword arguments.
+    Credential values must be decrypted by the caller before passing — this
+    endpoint accepts a pre-resolved JSON string for ``credentials``.
+    """
+    if loader_id not in list_loader_ids():
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"Unknown dynamic option loader '{loader_id}'",
+        )
+    import json
+
+    kwargs: dict = {}
+    if credentials:
+        try:
+            kwargs["credentials"] = json.loads(credentials)
+        except json.JSONDecodeError:
+            kwargs["credentials"] = credentials
+    if spreadsheet_id is not None:
+        kwargs["spreadsheet_id"] = spreadsheet_id
+    if sheet_name is not None:
+        kwargs["sheet_name"] = sheet_name
+
+    try:
+        options = call_loader(loader_id, **kwargs)
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Dynamic options loader '{loader_id}' failed: {exc}",
+        ) from exc
+    return {"loader_id": loader_id, "options": options}
 

@@ -164,6 +164,8 @@ class RunnerAgent:
                     artifacts_upload_url=self._cfg.artifact_upload_url,
                     artifacts_runner_token=self._cfg.token,
                     call_workflow=broker,
+                    pause_on_approval=bool(msg.get("pause_on_approval")),
+                    agent_action_resume=msg.get("agent_action_resume") or {},
                 )
             except asyncio.CancelledError:
                 logger.info("run %s cancelled", run_id)

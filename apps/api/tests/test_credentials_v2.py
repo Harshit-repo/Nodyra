@@ -1,4 +1,8 @@
+from urllib.parse import parse_qs, urlparse
+
 from httpx import AsyncClient
+
+from app.config import settings
 
 
 class FakeResponse:
@@ -289,8 +293,326 @@ async def test_list_credential_test_handlers_returns_registered_services(
     assert isinstance(services, list)
     assert services == sorted(services)  # stable ordering
     # A few known testers should be present.
-    for expected in ("slack_bot", "github", "openai", "smtp"):
+    for expected in ("slack_bot", "github", "openai", "openrouter", "qdrant", "smtp"):
         assert expected in services
+
+
+async def test_credential_type_test_services_have_handlers(client: AsyncClient) -> None:
+    services = set((await client.get("/credentials/test-handlers")).json())
+    specs = (await client.get("/credentials/types")).json()
+    missing = [
+        spec["id"]
+        for spec in specs
+        if spec.get("test_service") and spec["test_service"] not in services
+    ]
+    assert missing == []
+
+
+async def test_list_credential_types_returns_backend_owned_specs(
+    client: AsyncClient,
+) -> None:
+    resp = await client.get("/credentials/types")
+    assert resp.status_code == 200
+    specs = resp.json()
+    by_id = {spec["id"]: spec for spec in specs}
+
+    for expected in (
+        "openai",
+        "anthropic",
+        "slack_bot",
+        "github",
+        "github_oauth2",
+        "slack_oauth2",
+        "google_sheets_oauth2",
+        "microsoft_outlook_oauth2",
+    ):
+        assert expected in by_id
+
+    openai = by_id["openai"]
+    assert openai["auth_method"] == "api_key"
+    assert openai["fields"][0]["key"] == "api_key"
+    assert openai["fields"][0]["secret"] is True
+    assert openai["test_service"] == "openai"
+
+    google = by_id["google_sheets_oauth2"]
+    assert google["auth_method"] == "oauth2"
+    assert google["oauth"]["auth_url"].startswith("https://accounts.google.com/")
+    assert "https://www.googleapis.com/auth/spreadsheets" in google["oauth"]["scopes"]
+    assert google["fields"] == []
+
+    microsoft = by_id["microsoft_outlook_oauth2"]
+    assert microsoft["auth_method"] == "oauth2"
+    assert "offline_access" in microsoft["default_scopes"]
+    assert microsoft["oauth"]["token_url"].endswith("/oauth2/v2.0/token")
+
+
+async def test_oauth_credential_connection_uses_declared_test_service(
+    client: AsyncClient,
+    monkeypatch,
+) -> None:
+    calls: list[dict] = []
+
+    async def fake_request(method: str, url: str, **kwargs):
+        calls.append({"method": method, "url": url, "kwargs": kwargs})
+        return {"ok": True, "message": "Connected", "details": {"status_code": 200}}
+
+    monkeypatch.setattr("app.services.credential_tests._request", fake_request)
+    credential = (
+        await client.post(
+            "/credentials",
+            json={
+                "name": "Outlook",
+                "type": "microsoft_outlook_oauth2",
+                "scope": "global",
+                "data": {
+                    "access_token": "outlook-access-token",
+                    "refresh_token": "outlook-refresh-token",
+                },
+            },
+        )
+    ).json()
+
+    response = (await client.post(f"/credentials/{credential['id']}/test", json={})).json()
+
+    assert response["ok"] is True
+    assert response["service"] == "microsoft_outlook"
+    assert calls == [
+        {
+            "method": "GET",
+            "url": "https://graph.microsoft.com/v1.0/me",
+            "kwargs": {
+                "headers": {"Authorization": "Bearer outlook-access-token"},
+            },
+        }
+    ]
+    assert "outlook-access-token" not in str(response)
+
+
+async def test_oauth_start_and_callback_create_encrypted_credential(
+    client: AsyncClient,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "google_oauth_client_id", "google-client")
+    monkeypatch.setattr(settings, "google_oauth_client_secret", "google-secret")
+    calls: list[dict] = []
+
+    async def fake_post_token_form(url: str, data: dict[str, str]) -> dict:
+        calls.append({"url": url, "data": data})
+        return {
+            "access_token": "google-access-token",
+            "refresh_token": "google-refresh-token",
+            "expires_in": 3600,
+            "scope": "https://www.googleapis.com/auth/spreadsheets",
+            "token_type": "Bearer",
+        }
+
+    monkeypatch.setattr("app.services.oauth._post_token_form", fake_post_token_form)
+
+    started = (
+        await client.post(
+            "/credentials/oauth/start",
+            json={
+                "credential_type": "google_sheets_oauth2",
+                "name": "Sheets OAuth",
+            },
+        )
+    ).json()
+
+    parsed = urlparse(started["authorization_url"])
+    query = parse_qs(parsed.query)
+    assert parsed.netloc == "accounts.google.com"
+    assert query["client_id"] == ["google-client"]
+    assert query["redirect_uri"] == ["http://test/credentials/oauth/callback"]
+    assert query["state"] == [started["state"]]
+    assert query["access_type"] == ["offline"]
+    assert "https://www.googleapis.com/auth/spreadsheets" in query["scope"][0]
+
+    callback = await client.get(
+        "/credentials/oauth/callback",
+        params={"code": "provider-code", "state": started["state"]},
+    )
+    assert callback.status_code == 200
+    assert callback.headers["content-type"].startswith("text/html")
+    html = callback.text
+    assert "noodle_oauth_success" in html
+    assert "Sheets OAuth" in html
+    assert "google-access-token" not in html
+    assert calls == [
+        {
+            "url": "https://oauth2.googleapis.com/token",
+            "data": {
+                "grant_type": "authorization_code",
+                "code": "provider-code",
+                "redirect_uri": "http://test/credentials/oauth/callback",
+                "client_id": "google-client",
+                "client_secret": "google-secret",
+                "scope": "https://www.googleapis.com/auth/spreadsheets",
+            },
+        }
+    ]
+
+
+async def test_oauth_start_reports_missing_provider_client_config(
+    client: AsyncClient,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "microsoft_oauth_client_id", "")
+    monkeypatch.setattr(settings, "microsoft_oauth_client_secret", "")
+
+    response = await client.post(
+        "/credentials/oauth/start",
+        json={
+            "credential_type": "microsoft_outlook_oauth2",
+            "name": "Outlook",
+        },
+    )
+
+    assert response.status_code == 503
+    assert "MICROSOFT_OAUTH_CLIENT_ID" in response.text
+
+
+async def test_oauth_refresh_updates_stored_token(
+    client: AsyncClient,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "google_oauth_client_id", "google-client")
+    monkeypatch.setattr(settings, "google_oauth_client_secret", "google-secret")
+    calls: list[dict] = []
+
+    async def fake_post_token_form(url: str, data: dict[str, str]) -> dict:
+        calls.append({"url": url, "data": data})
+        return {
+            "access_token": "fresh-access-token",
+            "expires_in": 3600,
+            "token_type": "Bearer",
+        }
+
+    monkeypatch.setattr("app.services.oauth._post_token_form", fake_post_token_form)
+    credential = (
+        await client.post(
+            "/credentials",
+            json={
+                "name": "Sheets",
+                "type": "google_sheets_oauth2",
+                "scope": "global",
+                "data": {
+                    "access_token": "expired-access-token",
+                    "refresh_token": "refresh-token",
+                    "expires_at": "2000-01-01T00:00:00Z",
+                    "scope": "https://www.googleapis.com/auth/spreadsheets",
+                    "token_type": "Bearer",
+                },
+            },
+        )
+    ).json()
+
+    refreshed = (
+        await client.post(f"/credentials/{credential['id']}/refresh")
+    ).json()
+
+    assert refreshed["keys"] == [
+        "access_token",
+        "expires_at",
+        "refresh_token",
+        "scope",
+        "token_type",
+    ]
+    assert "fresh-access-token" not in str(refreshed)
+    assert calls[0]["data"]["grant_type"] == "refresh_token"
+    assert calls[0]["data"]["refresh_token"] == "refresh-token"
+    assert calls[0]["data"]["client_secret"] == "google-secret"
+
+
+async def test_expired_oauth_credential_refreshes_before_workflow_run(
+    client: AsyncClient,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "google_oauth_client_id", "google-client")
+    monkeypatch.setattr(settings, "google_oauth_client_secret", "google-secret")
+    token_calls: list[dict] = []
+    request_calls: list[dict] = []
+
+    async def fake_post_token_form(url: str, data: dict[str, str]) -> dict:
+        token_calls.append({"url": url, "data": data})
+        return {
+            "access_token": "runtime-fresh-access",
+            "expires_in": 3600,
+            "token_type": "Bearer",
+        }
+
+    def fake_request(method: str, url: str, **kwargs):
+        request_calls.append({"method": method, "url": url, "kwargs": kwargs})
+        return FakeResponse()
+
+    monkeypatch.setattr("app.services.oauth._post_token_form", fake_post_token_form)
+    monkeypatch.setattr("requests.request", fake_request)
+
+    workflow_id = (await client.post("/workflows", json={"name": "Refresh run"})).json()[
+        "id"
+    ]
+    credential = (
+        await client.post(
+            "/credentials",
+            json={
+                "name": "Sheets",
+                "type": "google_sheets_oauth2",
+                "scope": "workflow",
+                "workflow_id": workflow_id,
+                "data": {
+                    "access_token": "runtime-expired-access",
+                    "refresh_token": "runtime-refresh-token",
+                    "expires_at": "2000-01-01T00:00:00Z",
+                    "scope": "https://www.googleapis.com/auth/spreadsheets",
+                    "token_type": "Bearer",
+                },
+            },
+        )
+    ).json()
+    graph = {
+        "nodes": [
+            {
+                "id": "t",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 0, "y": 0},
+            },
+            {
+                "id": "sheets",
+                "type": "google_sheets_read",
+                "params": {
+                    "spreadsheet_id": "spreadsheet-id",
+                    "range_name": "Sheet1!A1:B2",
+                    "access_token": {
+                        "__noodle_credential__": True,
+                        "id": credential["id"],
+                        "key": "access_token",
+                    },
+                },
+                "position": {"x": 250, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e",
+                "source": "t",
+                "source_output": "main",
+                "target": "sheets",
+                "target_input": "input",
+            }
+        ],
+    }
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
+
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
+    run = (await client.get(f"/runs/{run_id}")).json()
+
+    assert run["status"] == "success"
+    assert token_calls[0]["data"]["refresh_token"] == "runtime-refresh-token"
+    assert request_calls[0]["kwargs"]["headers"]["Authorization"] == (
+        "Bearer runtime-fresh-access"
+    )
+    assert "runtime-expired-access" not in str(run)
+    assert "runtime-fresh-access" not in str(run)
 
 
 async def test_credential_spec_carries_test_service_metadata() -> None:

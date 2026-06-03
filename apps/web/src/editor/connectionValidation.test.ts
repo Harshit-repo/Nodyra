@@ -113,4 +113,34 @@ describe("DatasetRef connection validation", () => {
     expect(result.ok).toBe(false);
     expect(result.message).toContain("endpoint is missing");
   });
+
+  it("accepts matching AI supplier connections", () => {
+    const source = manifest("openai_model", "any", "ai_language_model");
+    const target = manifest("ai_agent", "ai_language_model", "any");
+
+    const result = checkConnectionKinds(source, "main", target, "input");
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects ordinary data wired into AI supplier inputs", () => {
+    const source = manifest("http_request", "any", "main");
+    const target = manifest("ai_agent", "ai_language_model", "any");
+
+    const result = checkConnectionKinds(source, "main", target, "input");
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("AI language model");
+  });
+
+  it("rejects mismatched AI supplier kinds", () => {
+    const source = manifest("memory", "any", "ai_memory");
+    const target = manifest("ai_agent", "ai_tool", "any");
+
+    const result = checkConnectionKinds(source, "main", target, "input");
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("AI memory");
+    expect(result.message).toContain("AI tool");
+  });
 });

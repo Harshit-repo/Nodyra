@@ -16,6 +16,18 @@ function portKind(port: PortSpec | undefined): PortDataKind {
   return port?.data_kind ?? "any";
 }
 
+const AI_PORT_KINDS = new Set<PortDataKind>([
+  "ai_language_model",
+  "ai_embedding_model",
+  "ai_memory",
+  "ai_tool",
+  "ai_output_parser",
+  "ai_retriever",
+  "ai_vector_store",
+  "ai_document_loader",
+  "ai_guardrail",
+]);
+
 export function findInputPort(manifest: NodeManifest, name: string | null | undefined): PortSpec | undefined {
   const wanted = name ?? "input";
   return manifest.inputs.find((port) => port.name === wanted) ?? manifest.inputs[0];
@@ -31,6 +43,16 @@ function kindLabel(kind: PortDataKind): string {
   if (kind === "artifact") return "artifact";
   if (kind === "file") return "file";
   if (kind === "control") return "control";
+  if (kind === "main") return "main data";
+  if (kind === "ai_language_model") return "AI language model";
+  if (kind === "ai_embedding_model") return "AI embedding model";
+  if (kind === "ai_memory") return "AI memory";
+  if (kind === "ai_tool") return "AI tool";
+  if (kind === "ai_output_parser") return "AI output parser";
+  if (kind === "ai_retriever") return "AI retriever";
+  if (kind === "ai_vector_store") return "AI vector store";
+  if (kind === "ai_document_loader") return "AI document loader";
+  if (kind === "ai_guardrail") return "AI guardrail";
   return "any data";
 }
 
@@ -42,6 +64,25 @@ export function checkConnectionKinds(
 ): ConnectionCheck {
   const sourceKind = portKind(findOutputPort(source, sourceHandle));
   const targetKind = portKind(findInputPort(target, targetHandle));
+
+  if (sourceKind === targetKind) {
+    return {
+      ok: true,
+      severity: "ok",
+      message:
+        sourceKind === "dataset"
+          ? "DatasetRef connection: schema + preview stay artifact-backed downstream."
+          : "Compatible port kinds.",
+    };
+  }
+
+  if (AI_PORT_KINDS.has(sourceKind) || AI_PORT_KINDS.has(targetKind)) {
+    return {
+      ok: false,
+      severity: "error",
+      message: `Port kind mismatch: ${kindLabel(sourceKind)} cannot connect to ${kindLabel(targetKind)}.`,
+    };
+  }
 
   if (sourceKind === "dataset" && targetKind === "dataset") {
     return {
@@ -73,7 +114,12 @@ export function checkConnectionKinds(
     };
   }
 
-  if (sourceKind === "any" || targetKind === "any" || sourceKind === targetKind) {
+  if (
+    sourceKind === "any" ||
+    targetKind === "any" ||
+    sourceKind === "main" ||
+    targetKind === "main"
+  ) {
     return { ok: true, severity: "ok", message: "Compatible port kinds." };
   }
 

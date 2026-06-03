@@ -129,7 +129,7 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
           const value = params[spec.name];
           const displayLabel =
             webhookParamLabel(manifest.id, spec.name, params) ??
-            formatParamLabel(spec.name);
+            (spec.display_name || formatParamLabel(spec.name));
 
           const isWebhookAuthType =
             manifest.id === "webhook_trigger" && spec.name === "auth_type";

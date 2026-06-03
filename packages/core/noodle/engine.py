@@ -23,11 +23,20 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
+from noodle.ai_runtime import (
+    AgentActionRequest,
+    AgentActionResponse,
+    AgentApprovalRequired,
+    AgentStepEvent,
+    ToolAdapter,
+    ToolResult,
+)
 from noodle.context import current_node_id, node_debug
 from noodle.expr import build_context, evaluate
 from noodle.models import (
     NodeRunResult,
     NodeStatus,
+    PortSpec,
     RunResult,
     RunStatus,
     WorkflowGraph,
@@ -98,6 +107,7 @@ def _get_process_pool(max_workers: int = 4) -> concurrent.futures.ProcessPoolExe
 # and any node may still set its own ``timeout_seconds``.
 DEFAULT_NODE_TIMEOUTS: dict[str, float] = {
     "http_request": 45.0,
+    "ai_agent_v2": 300.0,
 }
 
 # Per-node log capture. Writes to stdout/stderr are diverted into this
@@ -144,6 +154,140 @@ def _install_capture() -> None:
 
 class GraphError(Exception):
     """Raised when a workflow graph is structurally invalid (e.g. has a cycle)."""
+
+
+AI_PORT_KINDS: frozenset[str] = frozenset(
+    {
+        "ai_language_model",
+        "ai_embedding_model",
+        "ai_memory",
+        "ai_tool",
+        "ai_output_parser",
+        "ai_retriever",
+        "ai_vector_store",
+        "ai_document_loader",
+        "ai_guardrail",
+    }
+)
+
+
+def _port_kind(port: PortSpec | None) -> str:
+    return str(getattr(port, "data_kind", "any") or "any")
+
+
+def _find_port(
+    ports: list[PortSpec],
+    name: str | None,
+    default_name: str,
+) -> PortSpec | None:
+    wanted = name or default_name
+    return next((port for port in ports if port.name == wanted), None) or (
+        ports[0] if ports else None
+    )
+
+
+def _kind_label(kind: str) -> str:
+    labels = {
+        "any": "any data",
+        "main": "main data",
+        "control": "control",
+        "dataset": "DatasetRef",
+        "artifact": "ArtifactRef",
+        "file": "FileRef",
+        "ai_language_model": "AI language model",
+        "ai_embedding_model": "AI embedding model",
+        "ai_memory": "AI memory",
+        "ai_tool": "AI tool",
+        "ai_output_parser": "AI output parser",
+        "ai_retriever": "AI retriever",
+        "ai_vector_store": "AI vector store",
+        "ai_document_loader": "AI document loader",
+        "ai_guardrail": "AI guardrail",
+    }
+    return labels.get(kind, kind)
+
+
+def _connection_kind_error(source_kind: str, target_kind: str) -> str | None:
+    if source_kind == target_kind:
+        return None
+
+    if source_kind in AI_PORT_KINDS or target_kind in AI_PORT_KINDS:
+        return (
+            f"{_kind_label(source_kind)} cannot connect to "
+            f"{_kind_label(target_kind)}"
+        )
+
+    # DatasetRef ports are strict: they may only connect to a port that
+    # explicitly accepts them ("dataset") or to the permissive "any" escape
+    # hatch (where _auto_expand_dataset_inputs handles runtime expansion).
+    if source_kind == "dataset":
+        if target_kind in {"dataset", "any"}:
+            return None
+        return (
+            f"{_kind_label(source_kind)} cannot connect to "
+            f"{_kind_label(target_kind)}"
+        )
+    if target_kind == "dataset":
+        if source_kind in {"dataset", "any"}:
+            return None
+        return (
+            f"{_kind_label(source_kind)} cannot connect to "
+            f"{_kind_label(target_kind)}"
+        )
+
+    # `main` is the explicit form of ordinary item/data flow; `any` remains the
+    # permissive escape hatch for legacy and generic nodes.
+    if source_kind in {"any", "main"} or target_kind in {"any", "main"}:
+        return None
+
+    return (
+        f"{_kind_label(source_kind)} cannot connect to "
+        f"{_kind_label(target_kind)}"
+    )
+
+
+def _validate_connection_kinds(
+    graph: WorkflowGraph,
+    registry: NodeRegistry,
+    needed: set[str] | None = None,
+) -> None:
+    nodes_by_id = {node.id: node for node in graph.nodes}
+    for edge in graph.edges:
+        if needed is not None and (
+            edge.source not in needed or edge.target not in needed
+        ):
+            continue
+        source_node = nodes_by_id.get(edge.source)
+        target_node = nodes_by_id.get(edge.target)
+        if source_node is None or target_node is None:
+            continue
+        try:
+            source_def = registry.get(source_node.type)
+            target_def = registry.get(target_node.type)
+        except KeyError:
+            # Preserve existing unknown-node behavior: execution reports the
+            # missing node as a node error instead of failing graph validation.
+            continue
+
+        source_port = _find_port(
+            source_def.manifest.outputs,
+            edge.source_output,
+            "main",
+        )
+        target_port = _find_port(
+            target_def.manifest.inputs,
+            edge.target_input,
+            "input",
+        )
+        source_kind = _port_kind(source_port)
+        target_kind = _port_kind(target_port)
+        error = _connection_kind_error(source_kind, target_kind)
+        if error:
+            raise GraphError(
+                "Port kind mismatch on edge "
+                f"{edge.source}.{edge.source_output} -> "
+                f"{edge.target}.{edge.target_input}: {error}."
+            )
 
 
 def _predecessors(graph: WorkflowGraph) -> dict[str, set[str]]:
@@ -385,6 +529,214 @@ def _node_timeout(
     return default_timeouts.get(node_type)
 
 
+def _collect_tool_adapters(value: Any) -> list[ToolAdapter]:
+    """Collect ToolAdapter instances from a wired agent input value."""
+    if isinstance(value, ToolAdapter):
+        return [value]
+    if isinstance(value, (list, tuple, set, frozenset)):
+        tools: list[ToolAdapter] = []
+        for item in value:
+            tools.extend(_collect_tool_adapters(item))
+        return tools
+    if isinstance(value, dict):
+        tools: list[ToolAdapter] = []
+        for key in ("tool", "tools"):
+            if key in value:
+                tools.extend(_collect_tool_adapters(value[key]))
+        return tools
+    return []
+
+
+def _tool_index(tool_values: Iterable[Any]) -> dict[str, ToolAdapter]:
+    index: dict[str, ToolAdapter] = {}
+    for value in tool_values:
+        for tool in _collect_tool_adapters(value):
+            name = str(tool.schema.name or "").strip()
+            if not name:
+                continue
+            if name in index and index[name] is not tool:
+                raise ValueError(f"duplicate AI tool name: {name}")
+            index[name] = tool
+    return index
+
+
+def _tool_content(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, default=str)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _agent_approval_key(agent_node_id: str, step: int, call_name: str, call_id: str) -> str:
+    raw = "|".join([agent_node_id, str(step), call_id, call_name])
+    return raw[:240]
+
+
+async def _dispatch_agent_action_request(
+    request: AgentActionRequest,
+    *,
+    agent_node_id: str,
+    tool_values: Iterable[Any],
+    emit: EventCallback,
+    pause_on_approval: bool = False,
+) -> AgentActionResponse:
+    max_steps = max(1, int(request.max_steps or 1))
+    step = max(0, int(request.step or 0))
+    if step >= max_steps:
+        raise RuntimeError(f"agent reached max_steps={max_steps}")
+
+    tools = _tool_index(tool_values)
+    await emit(
+        {
+            **AgentStepEvent(
+                type="agent_action_requested",
+                agent_node_id=agent_node_id,
+                step=step,
+                max_steps=max_steps,
+            ).model_dump(exclude_none=True),
+            "tool_calls": [
+                call.model_dump(exclude_none=True) for call in request.tool_calls
+            ],
+        }
+    )
+
+    results: list[ToolResult] = []
+    for call in request.tool_calls:
+        started = time.time()
+        await emit(
+            {
+                **AgentStepEvent(
+                    type="agent_tool_started",
+                    agent_node_id=agent_node_id,
+                    step=step,
+                    max_steps=max_steps,
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                ).model_dump(exclude_none=True),
+                "arguments": call.arguments,
+            }
+        )
+
+        tool = tools.get(call.name)
+        approval_key = _agent_approval_key(agent_node_id, step, call.name, call.id)
+        approved_call_ids = set(request.approved_tool_call_ids or [])
+        if tool is None:
+            result = ToolResult(
+                tool_call_id=call.id,
+                name=call.name,
+                content=f"Unknown tool: {call.name}",
+                is_error=True,
+            )
+        elif (
+            tool.side_effecting
+            and not request.allow_side_effects
+            and call.id not in approved_call_ids
+        ):
+            message = f"Tool {call.name!r} requires approval before running."
+            await emit(
+                {
+                    **AgentStepEvent(
+                        type="agent_tool_approval_required",
+                        agent_node_id=agent_node_id,
+                        step=step,
+                        max_steps=max_steps,
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                        approval_key=approval_key,
+                        status="blocked",
+                        message=message,
+                    ).model_dump(exclude_none=True),
+                    "arguments": call.arguments,
+                }
+            )
+            if pause_on_approval:
+                raise AgentApprovalRequired(
+                    request=request,
+                    tool_call=call,
+                    approval_key=approval_key,
+                    message=message,
+                )
+            result = ToolResult(
+                tool_call_id=call.id,
+                name=call.name,
+                content=message,
+                is_error=True,
+            )
+        else:
+            if tool.side_effecting and request.allow_side_effects:
+                await emit(
+                    {
+                        **AgentStepEvent(
+                            type="agent_tool_auto_approved",
+                            agent_node_id=agent_node_id,
+                            step=step,
+                            max_steps=max_steps,
+                            tool_call_id=call.id,
+                            tool_name=call.name,
+                            approval_key=approval_key,
+                            status="approved",
+                            message="Side-effecting tool auto-approved by agent setting.",
+                        ).model_dump(exclude_none=True),
+                        "arguments": call.arguments,
+                    }
+                )
+            try:
+                content = await tool.invoke_async(dict(call.arguments))
+                result = ToolResult(
+                    tool_call_id=call.id,
+                    name=call.name,
+                    content=_tool_content(content),
+                )
+            except Exception as exc:  # noqa: BLE001 - tool failures go back to the model
+                result = ToolResult(
+                    tool_call_id=call.id,
+                    name=call.name,
+                    content=f"{type(exc).__name__}: {exc}",
+                    is_error=True,
+                )
+
+        duration_ms = int((time.time() - started) * 1000)
+        await emit(
+            {
+                **AgentStepEvent(
+                    type="agent_tool_finished",
+                    agent_node_id=agent_node_id,
+                    step=step,
+                    max_steps=max_steps,
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                    status="error" if result.is_error else "success",
+                ).model_dump(exclude_none=True),
+                "tool_result": result.model_dump(),
+                "duration_ms": duration_ms,
+            }
+        )
+        results.append(result)
+
+    next_step = step + 1
+    response = AgentActionResponse(
+        tool_results=results,
+        messages_so_far=list(request.messages_so_far),
+        step=next_step,
+        max_steps=max_steps,
+    )
+    await emit(
+        {
+            **AgentStepEvent(
+                type="agent_action_completed",
+                agent_node_id=agent_node_id,
+                step=next_step,
+                max_steps=max_steps,
+                status="success",
+            ).model_dump(exclude_none=True),
+            "tool_results": [result.model_dump() for result in results],
+        }
+    )
+    return response
+
+
 async def execute(
     graph: WorkflowGraph,
     registry: NodeRegistry,
@@ -394,13 +746,17 @@ async def execute(
     on_event: EventCallback | None = None,
     default_timeouts: dict[str, float] | None = None,
     max_node_output_bytes: int | None = None,
+    pause_on_approval: bool = False,
+    agent_action_resume: dict[str, AgentActionRequest] | None = None,
 ) -> RunResult:
     """Run a workflow graph and return per-node results."""
     _install_capture()
     default_timeouts = DEFAULT_NODE_TIMEOUTS if default_timeouts is None else default_timeouts
     cache = cache or {}
+    agent_action_resume = agent_action_resume or {}
     target_set = set(targets) if targets is not None else None
     needed = _needed_nodes(graph, target_set, cache)
+    _validate_connection_kinds(graph, registry, needed)
     levels = _topo_levels(graph)
     nodes_by_id = {n.id: n for n in graph.nodes}
 
@@ -577,51 +933,76 @@ async def execute(
         debug_token = node_debug.set(debug)
         node_token = current_node_id.set(nid)
         if node_def.accepts_var_keyword or not node_def.param_names:
-            call_kwargs = kwargs
+            base_call_kwargs = dict(kwargs)
         else:
-            call_kwargs = {
+            base_call_kwargs = {
                 k: v for k, v in kwargs.items() if k in node_def.param_names
             }
+
+        async def invoke_node(current_kwargs: dict[str, Any]) -> Any:
+            global _process_pool
+            if node_def.is_async:
+                if timeout is not None:
+                    return await asyncio.wait_for(
+                        node_def.func(**current_kwargs), timeout
+                    )
+                return await node_def.func(**current_kwargs)
+            if graph_node.type in PROCESS_ISOLATED_NODE_TYPES:
+                loop = asyncio.get_event_loop()
+                fn_with_kwargs = functools.partial(node_def.func, **current_kwargs)
+                fut = loop.run_in_executor(_get_process_pool(), fn_with_kwargs)
+                try:
+                    return await asyncio.wait_for(fut, timeout)
+                except TimeoutError:
+                    if _process_pool is not None:
+                        _process_pool.shutdown(wait=False, cancel_futures=True)
+                        _process_pool = None
+                    raise
+                except concurrent.futures.process.BrokenProcessPool as exc:
+                    # Child died (segfault / OOM / unpicklable arg). Recycle
+                    # the pool so the next attempt gets a fresh one and
+                    # re-raise as a normal ValueError so the node fails cleanly.
+                    if _process_pool is not None:
+                        _process_pool.shutdown(wait=False, cancel_futures=True)
+                        _process_pool = None
+                    raise ValueError(
+                        "code node crashed: subprocess died (possible "
+                        "out-of-memory, segfault, or unpicklable value)"
+                    ) from exc
+            if timeout is not None:
+                return await asyncio.wait_for(
+                    asyncio.to_thread(node_def.func, **current_kwargs), timeout
+                )
+            return node_def.func(**current_kwargs)
+
+        async def resolve_agent_actions(raw: Any, current_kwargs: dict[str, Any]) -> Any:
+            next_raw = raw
+            call_kwargs = current_kwargs
+            while isinstance(next_raw, AgentActionRequest):
+                response = await _dispatch_agent_action_request(
+                    next_raw,
+                    agent_node_id=nid,
+                    tool_values=call_kwargs.values(),
+                    emit=emit,
+                    pause_on_approval=pause_on_approval,
+                )
+                if not (
+                    node_def.accepts_var_keyword or "agent_resume" in node_def.param_names
+                ):
+                    return response
+                call_kwargs = dict(call_kwargs)
+                call_kwargs["agent_resume"] = response.as_resume_input()
+                next_raw = await invoke_node(call_kwargs)
+            return next_raw
+
         try:
             for attempt in range(attempts):
                 try:
-                    if node_def.is_async:
-                        if timeout is not None:
-                            raw = await asyncio.wait_for(
-                                node_def.func(**call_kwargs), timeout
-                            )
-                        else:
-                            raw = await node_def.func(**call_kwargs)
-                    elif graph_node.type in PROCESS_ISOLATED_NODE_TYPES:
-                        loop = asyncio.get_event_loop()
-                        fn_with_kwargs = functools.partial(node_def.func, **call_kwargs)
-                        fut = loop.run_in_executor(_get_process_pool(), fn_with_kwargs)
-                        try:
-                            raw = await asyncio.wait_for(fut, timeout)
-                        except (asyncio.TimeoutError, TimeoutError):
-                            global _process_pool
-                            if _process_pool is not None:
-                                _process_pool.shutdown(wait=False, cancel_futures=True)
-                                _process_pool = None
-                            raise
-                        except concurrent.futures.process.BrokenProcessPool as exc:
-                            # Child died (segfault / OOM / unpicklable arg).
-                            # Recycle the pool so the next attempt gets a fresh
-                            # one and re-raise as a normal ValueError so the
-                            # node fails cleanly instead of poisoning the run.
-                            if _process_pool is not None:
-                                _process_pool.shutdown(wait=False, cancel_futures=True)
-                                _process_pool = None
-                            raise ValueError(
-                                "code node crashed: subprocess died (possible "
-                                "out-of-memory, segfault, or unpicklable value)"
-                            ) from exc
-                    elif timeout is not None:
-                        raw = await asyncio.wait_for(
-                            asyncio.to_thread(node_def.func, **call_kwargs), timeout
-                        )
-                    else:
-                        raw = node_def.func(**call_kwargs)
+                    call_kwargs = dict(base_call_kwargs)
+                    raw = agent_action_resume.get(nid)
+                    if raw is None:
+                        raw = await invoke_node(call_kwargs)
+                    raw = await resolve_agent_actions(raw, call_kwargs)
                     outputs = _normalize_outputs(raw, output_names, graph_node.type)
                     if graph_node.type in AUTO_PROMOTE_NODE_TYPES:
                         outputs = _auto_promote_outputs(outputs)
@@ -637,6 +1018,9 @@ async def execute(
                                 f"{max_node_output_bytes} bytes"
                             )
                     caught = None
+                    break
+                except AgentApprovalRequired as exc:
+                    caught = exc
                     break
                 except Exception as exc:  # noqa: BLE001
                     caught = exc
@@ -658,6 +1042,29 @@ async def execute(
                     node_id=nid, status=NodeStatus.success, outputs=outputs,
                     logs=logs, debug=debug,
                     started_at=started, finished_at=time.time(),
+                    node_type_version=node_def.manifest.version,
+                )
+            )
+            return
+
+        if isinstance(caught, AgentApprovalRequired):
+            run_status = RunStatus.waiting
+            debug["agent_approval_state"] = {
+                "agent_node_id": nid,
+                "approval_key": caught.approval_key,
+                "tool_call_id": caught.tool_call.id,
+                "tool_name": caught.tool_call.name,
+                "request": caught.request.model_dump(mode="json"),
+            }
+            await finish(
+                NodeRunResult(
+                    node_id=nid,
+                    status=NodeStatus.waiting,
+                    error=caught.message,
+                    logs=logs,
+                    debug=debug,
+                    started_at=started,
+                    finished_at=time.time(),
                     node_type_version=node_def.manifest.version,
                 )
             )

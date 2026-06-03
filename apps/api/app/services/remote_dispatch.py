@@ -123,6 +123,8 @@ class RemoteDispatcher:
         targets: list[str] | None,
         workflow_modules: list[dict],
         on_event: EventCallback,
+        pause_on_approval: bool = False,
+        agent_action_resume: dict | None = None,
     ) -> str:
         """Dispatch a run to the pool. Returns the final run status string."""
         async with SessionLocal() as session:
@@ -133,15 +135,42 @@ class RemoteDispatcher:
 
         if provider == "agent":
             return await self._assign_agent_run(
-                run_id, pool_id, env_payload, graph, cache, targets, workflow_modules, on_event
+                run_id,
+                pool_id,
+                env_payload,
+                graph,
+                cache,
+                targets,
+                workflow_modules,
+                on_event,
+                pause_on_approval=pause_on_approval,
+                agent_action_resume=agent_action_resume,
             )
         if provider == "docker":
             return await self._assign_docker_run(
-                run_id, pool_id, env_payload, graph, cache, targets, workflow_modules, on_event
+                run_id,
+                pool_id,
+                env_payload,
+                graph,
+                cache,
+                targets,
+                workflow_modules,
+                on_event,
+                pause_on_approval=pause_on_approval,
+                agent_action_resume=agent_action_resume,
             )
         if provider == "kubernetes":
             return await self._assign_k8s_run(
-                run_id, pool_id, env_payload, graph, cache, targets, workflow_modules, on_event
+                run_id,
+                pool_id,
+                env_payload,
+                graph,
+                cache,
+                targets,
+                workflow_modules,
+                on_event,
+                pause_on_approval=pause_on_approval,
+                agent_action_resume=agent_action_resume,
             )
         raise ValueError(f"unknown runner pool provider '{provider}'")
 
@@ -352,6 +381,8 @@ class RemoteDispatcher:
         targets: list[str] | None,
         workflow_modules: list[dict],
         on_event: EventCallback,
+        pause_on_approval: bool = False,
+        agent_action_resume: dict | None = None,
     ) -> str:
         conn = await self._pick_agent(pool_id)
         if conn is None:
@@ -384,6 +415,8 @@ class RemoteDispatcher:
             "cache": cache or {},
             "targets": targets or [],
             "workflow_modules": workflow_modules,
+            "pause_on_approval": pause_on_approval,
+            "agent_action_resume": agent_action_resume or {},
         })
 
         try:
@@ -573,6 +606,8 @@ class RemoteDispatcher:
         targets: list[str] | None,
         workflow_modules: list[dict],
         on_event: EventCallback,
+        pause_on_approval: bool = False,
+        agent_action_resume: dict | None = None,
     ) -> str:
         try:
             import docker  # type: ignore[import-untyped]  # noqa: PLC0415
@@ -612,6 +647,8 @@ class RemoteDispatcher:
             "cache": cache or {},
             "targets": targets or [],
             "workflow_modules": workflow_modules,
+            "pause_on_approval": pause_on_approval,
+            "agent_action_resume": agent_action_resume or {},
         }) + "\n"
 
         node_events: dict[str, dict] = {}
@@ -659,8 +696,20 @@ class RemoteDispatcher:
                     if etype == "ready":
                         # Send the run message now that the runtime is ready.
                         await loop.run_in_executor(None, sock._sock.sendall, run_msg.encode())
-                    elif etype in ("node_started", "node_finished", "run_error",
-                                   "run_cancelled", "module_error"):
+                    elif etype in (
+                        "node_started",
+                        "node_finished",
+                        "agent_action_requested",
+                        "agent_tool_started",
+                        "agent_tool_approval_required",
+                        "agent_tool_auto_approved",
+                        "agent_tool_finished",
+                        "agent_action_completed",
+                        "agent_tool_approval_decided",
+                        "run_error",
+                        "run_cancelled",
+                        "module_error",
+                    ):
                         await on_event(event)
                         if etype == "node_finished":
                             nid = event.get("node_id")
@@ -734,6 +783,8 @@ class RemoteDispatcher:
         targets: list[str] | None,
         workflow_modules: list[dict],
         on_event: EventCallback,
+        pause_on_approval: bool = False,
+        agent_action_resume: dict | None = None,
     ) -> str:
         """Create a K8s Job whose pod connects back as a single-run agent."""
         try:
@@ -827,6 +878,8 @@ class RemoteDispatcher:
             "cache": cache or {},
             "targets": targets or [],
             "workflow_modules": workflow_modules,
+            "pause_on_approval": pause_on_approval,
+            "agent_action_resume": agent_action_resume or {},
         }
 
         try:

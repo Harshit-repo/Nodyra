@@ -1,0 +1,195 @@
+import json
+
+import pytest
+
+from noodle.context import node_debug
+from noodle_nodes.integrations_v2 import ProviderError, ProviderTransport, RetryPolicy
+from noodle_nodes.integrations_v2.providers.google import GoogleTransport
+from noodle_nodes.integrations_v2.providers.microsoft import MicrosoftGraphTransport
+
+
+class FakeResponse:
+    def __init__(
+        self,
+        status_code: int,
+        payload,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self._payload = payload
+        self.headers = headers or {}
+        self.text = payload if isinstance(payload, str) else json.dumps(payload)
+        self.content = self.text.encode()
+
+    def json(self):
+        if isinstance(self._payload, str):
+            raise ValueError("not json")
+        return self._payload
+
+
+def test_transport_retries_rate_limit_and_returns_json(monkeypatch) -> None:
+    responses = [
+        FakeResponse(429, {"error": {"code": "rateLimit", "message": "slow down"}}),
+        FakeResponse(200, {"ok": True}),
+    ]
+    calls: list[dict] = []
+
+    def fake_request(method: str, url: str, **kwargs):
+        calls.append({"method": method, "url": url, "kwargs": kwargs})
+        return responses.pop(0)
+
+    monkeypatch.setattr("requests.request", fake_request)
+    transport = ProviderTransport(
+        provider="demo",
+        base_url="https://api.example/v1",
+        retry_policy=RetryPolicy(max_attempts=2, backoff_seconds=0),
+    )
+
+    debug: dict = {}
+    token = node_debug.set(debug)
+    try:
+        result = transport.request(
+            "GET",
+            "/things?api_key=secret",
+            operation="list_things",
+        )
+    finally:
+        node_debug.reset(token)
+
+    assert result == {"ok": True}
+    assert [call["url"] for call in calls] == [
+        "https://api.example/v1/things?api_key=secret",
+        "https://api.example/v1/things?api_key=secret",
+    ]
+    events = debug["provider_requests"]
+    assert len(events) == 2
+    assert events[0] == {
+        "provider": "demo",
+        "operation": "list_things",
+        "method": "GET",
+        "url": "https://api.example/v1/things",
+        "attempt": 1,
+        "max_attempts": 2,
+        "latency_ms": events[0]["latency_ms"],
+        "outcome": "retry_scheduled",
+        "retryable": True,
+        "retry_scheduled": True,
+        "status_code": 429,
+        "error_code": "rateLimit",
+    }
+    assert events[1] == {
+        "provider": "demo",
+        "operation": "list_things",
+        "method": "GET",
+        "url": "https://api.example/v1/things",
+        "attempt": 2,
+        "max_attempts": 2,
+        "latency_ms": events[1]["latency_ms"],
+        "outcome": "success",
+        "retryable": False,
+        "retry_scheduled": False,
+        "status_code": 200,
+    }
+    assert isinstance(events[0]["latency_ms"], int)
+    assert isinstance(events[1]["latency_ms"], int)
+    assert "secret" not in json.dumps(events).lower()
+
+
+def test_transport_error_is_structured_and_does_not_include_headers(monkeypatch) -> None:
+    def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
+        return FakeResponse(
+            401,
+            {
+                "error": {
+                    "code": "InvalidAuthenticationToken",
+                    "message": "Access token is invalid",
+                }
+            },
+            headers={"x-ms-request-id": "request-123"},
+        )
+
+    monkeypatch.setattr("requests.request", fake_request)
+    transport = ProviderTransport(
+        provider="microsoft_graph",
+        base_url="https://graph.microsoft.com/v1.0",
+        default_headers={"Authorization": "Bearer secret-token"},
+        retry_policy=RetryPolicy(max_attempts=1),
+    )
+
+    with pytest.raises(ProviderError) as raised:
+        transport.request("GET", "/me/messages", operation="list_messages")
+
+    error = raised.value
+    assert error.provider == "microsoft_graph"
+    assert error.operation == "list_messages"
+    assert error.status_code == 401
+    assert error.code == "InvalidAuthenticationToken"
+    assert error.message == "Access token is invalid"
+    assert error.retryable is False
+    assert error.request_id == "request-123"
+    assert "secret-token" not in str(error.to_dict())
+
+
+def test_exhausted_retryable_error_remains_marked_retryable(monkeypatch) -> None:
+    def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
+        return FakeResponse(503, {"error": "temporarily_unavailable"})
+
+    monkeypatch.setattr("requests.request", fake_request)
+    transport = ProviderTransport(
+        provider="demo",
+        base_url="https://api.example",
+        retry_policy=RetryPolicy(max_attempts=1),
+    )
+
+    with pytest.raises(ProviderError) as raised:
+        transport.request("GET", "/status", operation="status")
+
+    assert raised.value.status_code == 503
+    assert raised.value.retryable is True
+
+
+def test_google_transport_adds_bearer_and_api_key(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    def fake_request(method: str, url: str, **kwargs):
+        calls.append({"method": method, "url": url, "kwargs": kwargs})
+        return FakeResponse(200, {"values": [["A1"]]})
+
+    monkeypatch.setattr("requests.request", fake_request)
+    transport = GoogleTransport(
+        access_token="google-token",
+        api_key="google-api-key",
+        retry_policy=RetryPolicy(max_attempts=1),
+    )
+
+    result = transport.request(
+        "GET",
+        "/spreadsheets/sheet-id/values/Sheet1!A1",
+        operation="read_values",
+    )
+
+    assert result == {"values": [["A1"]]}
+    assert calls[0]["url"].startswith("https://sheets.googleapis.com/v4/")
+    assert calls[0]["kwargs"]["headers"]["Authorization"] == "Bearer google-token"
+    assert calls[0]["kwargs"]["params"]["key"] == "google-api-key"
+
+
+def test_microsoft_graph_transport_sets_base_url_and_bearer(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    def fake_request(method: str, url: str, **kwargs):
+        calls.append({"method": method, "url": url, "kwargs": kwargs})
+        return FakeResponse(200, {"value": []})
+
+    monkeypatch.setattr("requests.request", fake_request)
+    transport = MicrosoftGraphTransport(
+        access_token="graph-token",
+        retry_policy=RetryPolicy(max_attempts=1),
+    )
+
+    result = transport.request("GET", "/me/messages", operation="list_messages")
+
+    assert result == {"value": []}
+    assert calls[0]["url"] == "https://graph.microsoft.com/v1.0/me/messages"
+    assert calls[0]["kwargs"]["headers"]["Authorization"] == "Bearer graph-token"

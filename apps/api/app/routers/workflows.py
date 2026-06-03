@@ -5,11 +5,20 @@ from sqlalchemy.orm import aliased, selectinload
 
 import noodle_nodes  # noqa: F401 - registers built-in nodes
 from app.db import get_session
-from app.models import Environment, Run, User, Workflow, WorkflowVersion
+from app.models import (
+    Environment,
+    ProviderTriggerSubscription,
+    Run,
+    User,
+    Workflow,
+    WorkflowVersion,
+)
 from app.schemas import (
     AiWorkflowDraftRequest,
     AiWorkflowDraftResponse,
     PageResponse,
+    ProviderTriggerStatusCounts,
+    ProviderTriggerSubscriptionInfo,
     WorkflowCreate,
     WorkflowDetail,
     WorkflowPublishRequest,
@@ -21,6 +30,7 @@ from app.schemas import (
 from app.security import optional_current_user, require_permission
 from app.services.ai_builder import build_workflow_draft
 from app.services.audit import log_audit
+from app.services.provider_triggers import sync_workflow_provider_triggers
 from noodle.models import WorkflowGraph
 from noodle.sdk import registry as node_registry
 
@@ -126,7 +136,56 @@ async def _latest_runs(
     return {run.workflow_id: run for run in rows}
 
 
-def _summary_from(workflow: Workflow, latest_run: Run | None) -> WorkflowSummary:
+def _empty_provider_trigger_counts() -> dict[str, int]:
+    return {
+        "total": 0,
+        "active": 0,
+        "activating": 0,
+        "error": 0,
+        "deleted": 0,
+    }
+
+
+async def _provider_trigger_counts(
+    session: AsyncSession,
+    workflow_ids: list[str],
+) -> dict[str, ProviderTriggerStatusCounts]:
+    if not workflow_ids:
+        return {}
+    raw: dict[str, dict[str, int]] = {
+        workflow_id: _empty_provider_trigger_counts() for workflow_id in workflow_ids
+    }
+    rows = (
+        await session.execute(
+            select(
+                ProviderTriggerSubscription.workflow_id,
+                ProviderTriggerSubscription.status,
+                func.count(),
+            )
+            .where(ProviderTriggerSubscription.workflow_id.in_(workflow_ids))
+            .group_by(
+                ProviderTriggerSubscription.workflow_id,
+                ProviderTriggerSubscription.status,
+            )
+        )
+    ).all()
+    for workflow_id, row_status, count in rows:
+        counts = raw.setdefault(str(workflow_id), _empty_provider_trigger_counts())
+        status_key = str(row_status or "")
+        counts["total"] += int(count)
+        if status_key in counts:
+            counts[status_key] += int(count)
+    return {
+        workflow_id: ProviderTriggerStatusCounts(**counts)
+        for workflow_id, counts in raw.items()
+    }
+
+
+def _summary_from(
+    workflow: Workflow,
+    latest_run: Run | None,
+    provider_trigger_counts: ProviderTriggerStatusCounts | None = None,
+) -> WorkflowSummary:
     graph = _draft_graph(workflow)
     return WorkflowSummary(
         id=workflow.id,
@@ -142,16 +201,21 @@ def _summary_from(workflow: Workflow, latest_run: Run | None) -> WorkflowSummary
         last_run_status=latest_run.status if latest_run is not None else None,
         last_run_started_at=latest_run.started_at if latest_run is not None else None,
         last_run_finished_at=latest_run.finished_at if latest_run is not None else None,
+        provider_trigger_counts=(
+            provider_trigger_counts or ProviderTriggerStatusCounts()
+        ),
         updated_at=workflow.updated_at,
     )
 
 
 async def _summary(session: AsyncSession, workflow: Workflow) -> WorkflowSummary:
     latest_run = await _latest_run(session, workflow.id)
-    return _summary_from(workflow, latest_run)
+    counts = await _provider_trigger_counts(session, [workflow.id])
+    return _summary_from(workflow, latest_run, counts.get(workflow.id))
 
 
-def _detail(workflow: Workflow) -> WorkflowDetail:
+async def _detail(session: AsyncSession, workflow: Workflow) -> WorkflowDetail:
+    counts = await _provider_trigger_counts(session, [workflow.id])
     return WorkflowDetail(
         id=workflow.id,
         name=workflow.name,
@@ -164,6 +228,10 @@ def _detail(workflow: Workflow) -> WorkflowDetail:
         error_alerts=workflow.error_alerts or {},
         allow_concurrent=workflow.allow_concurrent,
         run_timeout_seconds=workflow.run_timeout_seconds,
+        provider_trigger_counts=counts.get(
+            workflow.id,
+            ProviderTriggerStatusCounts(),
+        ),
         graph=WorkflowGraph.model_validate(_draft_graph(workflow)),
         created_at=workflow.created_at,
         updated_at=workflow.updated_at,
@@ -186,7 +254,11 @@ async def list_workflows(
     )
     workflows = result.all()
     latest_by_wf = await _latest_runs(session, [w.id for w in workflows])
-    items = [_summary_from(w, latest_by_wf.get(w.id)) for w in workflows]
+    provider_counts = await _provider_trigger_counts(session, [w.id for w in workflows])
+    items = [
+        _summary_from(w, latest_by_wf.get(w.id), provider_counts.get(w.id))
+        for w in workflows
+    ]
     return PageResponse(items=items, total=count or 0, limit=limit, offset=offset)
 
 
@@ -213,12 +285,39 @@ async def create_workflow(
                     actor_id=actor.id if actor else None,
                     actor_email=actor.email if actor else None)
     await session.commit()
-    return _detail(await _load(session, workflow.id))
+    return await _detail(session, await _load(session, workflow.id))
 
 
 @router.get("/{workflow_id}", response_model=WorkflowDetail)
 async def get_workflow(workflow_id: str, session: AsyncSession = Depends(get_session)):
-    return _detail(await _load(session, workflow_id))
+    return await _detail(session, await _load(session, workflow_id))
+
+
+@router.get(
+    "/{workflow_id}/provider-triggers",
+    response_model=list[ProviderTriggerSubscriptionInfo],
+)
+async def list_provider_triggers(
+    workflow_id: str,
+    include_deleted: bool = Query(False),
+    session: AsyncSession = Depends(get_session),
+):
+    await _load(session, workflow_id)
+    query = select(ProviderTriggerSubscription).where(
+        ProviderTriggerSubscription.workflow_id == workflow_id
+    )
+    if not include_deleted:
+        query = query.where(ProviderTriggerSubscription.status != "deleted")
+    rows = (
+        await session.scalars(
+            query.order_by(
+                ProviderTriggerSubscription.status.asc(),
+                ProviderTriggerSubscription.updated_at.desc(),
+                ProviderTriggerSubscription.node_id.asc(),
+            )
+        )
+    ).all()
+    return list(rows)
 
 
 @router.get("/{workflow_id}/versions", response_model=list[WorkflowVersionInfo])
@@ -271,8 +370,15 @@ async def update_workflow(
     if body.graph is not None:
         _validate_node_types(body.graph)
         workflow.draft_graph = body.graph.model_dump()
+    if body.active is not None:
+        await sync_workflow_provider_triggers(
+            session,
+            workflow,
+            actor_id=actor.id if actor else None,
+            actor_email=actor.email if actor else None,
+        )
     await session.commit()
-    return _detail(await _load(session, workflow_id))
+    return await _detail(session, await _load(session, workflow_id))
 
 
 @router.patch(
@@ -284,11 +390,12 @@ async def patch_workflow(
     workflow_id: str,
     body: WorkflowUpdate,
     session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     """Partial-update alias for PUT — accepts the same body shape but only
     applies fields present in the request. Use this from the editor's
     autosave path so settings tweaks don't have to re-send the full graph."""
-    return await update_workflow(workflow_id, body, session)
+    return await update_workflow(workflow_id, body, session, actor)
 
 
 @router.get(
@@ -364,6 +471,13 @@ async def publish_workflow(
         actor_id=actor.id if actor else None,
         actor_email=actor.email if actor else None,
     )
+    if workflow.active:
+        await sync_workflow_provider_triggers(
+            session,
+            workflow,
+            actor_id=actor.id if actor else None,
+            actor_email=actor.email if actor else None,
+        )
     await session.commit()
     return WorkflowPublishResponse(
         workflow_id=workflow.id,

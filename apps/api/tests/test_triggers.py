@@ -1,10 +1,15 @@
+import hashlib
+import hmac
+import json
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from httpx import AsyncClient
 from sqlalchemy import select
 
-from app.models import ScheduleState
-from app.services import triggers
+from app.models import ProviderTriggerSubscription, ScheduleState
+from app.services import provider_triggers, triggers
+from noodle_nodes.integrations_v2.providers.github import triggers as github_triggers
 
 
 def _webhook_graph(path: str) -> dict:
@@ -32,6 +37,65 @@ def _webhook_graph(path: str) -> dict:
                 "target_input": "input",
             }
         ],
+    }
+
+
+def _github_trigger_graph() -> dict:
+    return {
+        "nodes": [
+            {
+                "id": "github",
+                "type": "github_repository_trigger_v2",
+                "params": {
+                    "credentials": {"token": "ghp_test"},
+                    "owner": "octocat",
+                    "repo": "hello-world",
+                    "events": "push",
+                    "webhook_secret": "secret",
+                },
+                "position": {"x": 0, "y": 0},
+            },
+            {
+                "id": "proc",
+                "type": "code",
+                "params": {"code": "output = input"},
+                "position": {"x": 260, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e1",
+                "source": "github",
+                "source_output": "main",
+                "target": "proc",
+                "target_input": "input",
+            }
+        ],
+    }
+
+
+class _FakeGithubTransport:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def request(self, method: str, path: str, **kwargs: Any) -> Any:
+        self.calls.append((method, path, kwargs))
+        if method == "POST":
+            return {"id": 9876}
+        return {"status_code": 204}
+
+
+def _github_headers(raw: bytes, *, delivery: str = "delivery-1") -> dict[str, str]:
+    signature = "sha256=" + hmac.new(
+        b"secret",
+        raw,
+        hashlib.sha256,
+    ).hexdigest()
+    return {
+        "Content-Type": "application/json",
+        "X-GitHub-Event": "push",
+        "X-GitHub-Delivery": delivery,
+        "X-Hub-Signature-256": signature,
     }
 
 
@@ -72,6 +136,156 @@ async def test_inactive_workflow_is_not_triggered(client: AsyncClient) -> None:
 
     response = (await client.post("/webhook/idle", json={})).json()
     assert response["runs"] == []
+
+
+async def test_github_provider_trigger_lifecycle_and_dispatch(
+    client: AsyncClient,
+    monkeypatch,
+) -> None:
+    transport = _FakeGithubTransport()
+    monkeypatch.setattr(github_triggers, "_transport", lambda _credentials: transport)
+
+    workflow_id = (
+        await client.post("/workflows", json={"name": "GitHub Hook"})
+    ).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}",
+        json={"graph": _github_trigger_graph(), "active": True},
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    async with provider_triggers.SessionLocal() as session:
+        subscription = (
+            await session.scalars(
+                select(ProviderTriggerSubscription).where(
+                    ProviderTriggerSubscription.workflow_id == workflow_id
+                )
+            )
+        ).one()
+        subscription_id = subscription.id
+        assert subscription.status == "active"
+        assert subscription.external_id == "9876"
+        assert subscription.callback_url.endswith(f"/provider-webhook/{subscription_id}")
+
+    assert transport.calls[0][0] == "POST"
+    assert transport.calls[0][1] == "/repos/octocat/hello-world/hooks"
+
+    provider_rows = (
+        await client.get(f"/workflows/{workflow_id}/provider-triggers")
+    ).json()
+    assert len(provider_rows) == 1
+    assert provider_rows[0]["status"] == "active"
+    assert provider_rows[0]["provider"] == "github"
+    assert provider_rows[0]["trigger_key"] == "github.repository.webhook"
+    assert provider_rows[0]["callback_url"].endswith(
+        f"/provider-webhook/{subscription_id}"
+    )
+    assert (
+        provider_rows[0]["config"]["provider_params"]["webhook_secret"]
+        == "[redacted]"
+    )
+    workflows = (await client.get("/workflows")).json()["items"]
+    summary = next(item for item in workflows if item["id"] == workflow_id)
+    assert summary["provider_trigger_counts"]["active"] == 1
+    assert summary["provider_trigger_counts"]["error"] == 0
+    audit_events = (await client.get("/audit")).json()["items"]
+    provider_audit = [
+        event
+        for event in audit_events
+        if event["target_type"] == "provider_trigger_subscription"
+    ]
+    assert any(
+        event["action"] == "activate" and event["target_id"] == subscription_id
+        for event in provider_audit
+    )
+    assert "secret" not in json.dumps(provider_audit).lower()
+
+    payload = {
+        "repository": {"full_name": "octocat/hello-world"},
+        "sender": {"login": "octocat"},
+    }
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    response = await client.post(
+        f"/provider-webhook/{subscription_id}",
+        content=raw,
+        headers=_github_headers(raw),
+    )
+    assert response.status_code == 202
+    run_ids = response.json()["runs"]
+    assert len(run_ids) == 1
+
+    run = (await client.get(f"/runs/{run_ids[0]}")).json()
+    assert run["status"] == "success"
+    assert run["trigger_type"] == "provider"
+    results = {node["node_id"]: node for node in run["node_runs"]}
+    output = results["proc"]["output"]["main"]
+    assert output["event"] == "push"
+    assert output["repository"]["full_name"] == "octocat/hello-world"
+    timeline = (await client.get(f"/runs/{run_ids[0]}/timeline")).json()
+    provider_events = [
+        event
+        for event in timeline["events"]
+        if event["type"] == "provider_trigger_received"
+    ]
+    assert provider_events
+    provider_data = provider_events[0]["data"]
+    assert provider_data["provider"] == "github"
+    assert provider_data["event"] == "push"
+    assert provider_data["repository"] == "octocat/hello-world"
+    assert provider_data["response_status"] == 202
+    assert isinstance(provider_data["latency_ms"], int)
+    assert "secret" not in json.dumps(provider_data).lower()
+
+    duplicate = await client.post(
+        f"/provider-webhook/{subscription_id}",
+        content=raw,
+        headers=_github_headers(raw),
+    )
+    assert duplicate.status_code == 200
+    assert duplicate.json()["runs"] == []
+    provider_rows = (
+        await client.get(f"/workflows/{workflow_id}/provider-triggers")
+    ).json()
+    last_delivery = provider_rows[0]["config"]["last_delivery"]
+    assert last_delivery["response_status"] == 200
+    assert isinstance(last_delivery["latency_ms"], int)
+    assert last_delivery["duplicate"] is True
+    assert last_delivery["event"] == "push"
+    assert last_delivery["repository"] == "octocat/hello-world"
+    assert "secret" not in json.dumps(last_delivery).lower()
+
+    await client.put(f"/workflows/{workflow_id}", json={"active": False})
+    async with provider_triggers.SessionLocal() as session:
+        subscription = await session.get(ProviderTriggerSubscription, subscription_id)
+        assert subscription is not None
+        assert subscription.status == "deleted"
+
+    assert (
+        await client.get(f"/workflows/{workflow_id}/provider-triggers")
+    ).json() == []
+    deleted_rows = (
+        await client.get(
+            f"/workflows/{workflow_id}/provider-triggers?include_deleted=true"
+        )
+    ).json()
+    assert deleted_rows[0]["status"] == "deleted"
+    workflows = (await client.get("/workflows")).json()["items"]
+    summary = next(item for item in workflows if item["id"] == workflow_id)
+    assert summary["provider_trigger_counts"]["active"] == 0
+    assert summary["provider_trigger_counts"]["deleted"] == 1
+    audit_events = (await client.get("/audit")).json()["items"]
+    provider_audit = [
+        event
+        for event in audit_events
+        if event["target_type"] == "provider_trigger_subscription"
+    ]
+    assert any(
+        event["action"] == "deactivate" and event["target_id"] == subscription_id
+        for event in provider_audit
+    )
+
+    assert transport.calls[-1][0] == "DELETE"
+    assert transport.calls[-1][1] == "/repos/octocat/hello-world/hooks/9876"
 
 
 async def test_schedule_tick_fires_when_due(client: AsyncClient) -> None:
