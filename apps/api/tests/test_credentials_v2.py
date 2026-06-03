@@ -253,6 +253,42 @@ async def test_llm_provider_connection_test_supports_openrouter(
     ]
 
 
+async def test_llm_provider_connection_test_ollama_without_api_key(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """An Ollama credential legitimately has a blank api_key — testing it must
+    probe the local Ollama tags endpoint, not fail with "Missing api_key"."""
+    calls: list[dict] = []
+
+    async def fake_request(method: str, url: str, **kwargs):
+        calls.append({"method": method, "url": url, "kwargs": kwargs})
+        return {"ok": True, "message": "Connected", "details": {"status_code": 200}}
+
+    monkeypatch.setattr("app.services.credential_tests._request", fake_request)
+    credential = (
+        await client.post(
+            "/credentials",
+            json={
+                "name": "Ollama",
+                "type": "llm_provider",
+                "scope": "global",
+                "data": {"provider": "ollama", "base_url": "http://localhost:11434"},
+            },
+        )
+    ).json()
+
+    response = (await client.post(f"/credentials/{credential['id']}/test", json={})).json()
+
+    assert response["ok"] is True
+    assert calls == [
+        {
+            "method": "GET",
+            "url": "http://localhost:11434/api/tags",
+            "kwargs": {},
+        }
+    ]
+
+
 async def test_credential_connection_test_respects_scope(
     client: AsyncClient,
 ) -> None:

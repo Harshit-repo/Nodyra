@@ -4,7 +4,13 @@ import { api } from "../api";
 import { categoryColor } from "../categories";
 import { NodeIcon } from "../NodeIcon";
 import { useToast } from "../ToastProvider";
-import type { Credential, NodeManifest, NodeSource, ParamSpec } from "../types";
+import type {
+  Credential,
+  CredentialParamSpec,
+  NodeManifest,
+  NodeSource,
+  ParamSpec,
+} from "../types";
 import { DataPanel } from "./DataPanel";
 import { TimezoneSelect } from "./fields/TimezoneSelect";
 import { useEditor } from "./store";
@@ -27,6 +33,40 @@ function isCredentialRef(value: unknown): value is CredentialRef {
 
 function makeCredentialRef(id: string, key: string): CredentialRef {
   return { __noodle_credential__: true, id, key };
+}
+
+// Catch-all credential types accepted by any picker regardless of declared type.
+const GENERIC_CRED_TYPES = ["generic", "apiKey", "oauth2"];
+
+/** Decide whether a stored credential is eligible for a node param's picker.
+ *
+ *  A credential qualifies when its type lines up with the param's declared
+ *  credential type (or it is a generic catch-all) AND it carries the field(s)
+ *  the node will read.
+ *
+ *  Multi-field credentials — the single "Credentials" picker, `key === "*"` —
+ *  legitimately store only a *subset* of the declared fields: an Ollama
+ *  `llm_provider` credential has no `api_key`, a non-Azure one has no
+ *  `azure_endpoint`, and so on. Requiring every declared field hides every
+ *  partially-filled credential and surfaces it as "⚠ Missing", so a multi-field
+ *  credential matches when it carries *at least one* declared field. */
+export function credentialMatchesParam(
+  cred: Pick<Credential, "type" | "keys">,
+  meta: CredentialParamSpec | null | undefined,
+  targetKey: string,
+): boolean {
+  if (
+    meta?.type &&
+    cred.type !== meta.type &&
+    !GENERIC_CRED_TYPES.includes(cred.type)
+  ) {
+    return false;
+  }
+  if (meta?.multi) {
+    const fields = meta.fields?.length ? meta.fields : [meta.key];
+    return fields.some((field) => cred.keys.includes(field));
+  }
+  return cred.keys.includes(targetKey);
 }
 
 function credentialScopeLabel(cred: Credential): string {
@@ -688,19 +728,9 @@ function CredentialParamField({
 
   useEffect(load, []);
 
-  const matching = credentials.filter((cred) => {
-    if (
-      meta?.type &&
-      cred.type !== meta.type &&
-      !["generic", "apiKey", "oauth2"].includes(cred.type)
-    ) {
-      return false;
-    }
-    if (meta?.multi) {
-      return fields.every((field) => cred.keys.includes(field));
-    }
-    return cred.keys.includes(targetKey);
-  });
+  const matching = credentials.filter((cred) =>
+    credentialMatchesParam(cred, meta, targetKey),
+  );
 
   const selectedValue = selected ? `${selected.id}:${selected.key}` : "";
   const selectedCredential = selected
