@@ -2,7 +2,9 @@
 
 **Date:** 2026-06-03
 **Branch:** `feat/ndv-param-grouping`
-**Status:** Approved (brainstorm; direction B chosen + refined in the visual companion).
+**Status:** Sub-project A implemented + green (backend 201 passed; frontend
+vitest 19, tsc + vite build clean), committed on `feat/ndv-param-grouping`.
+Approach 1 (manifest-driven `group`) as designed. Sub-project B remains a backlog.
 
 ## Goal
 
