@@ -577,3 +577,10 @@ export interface RunBatchInfo {
   created_at: string;
   finished_at: string | null;
 }
+
+export interface ChatTurnResponse {
+  run_id: string | null;
+  reply: string;
+  session_id: string;
+  status: "success" | "error" | "timeout";
+}

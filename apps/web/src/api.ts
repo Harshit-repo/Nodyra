@@ -4,6 +4,7 @@ import type {
   ArtifactInfo,
   AiWorkflowDraftRequest,
   AiWorkflowDraftResponse,
+  ChatTurnResponse,
   Credential,
   CredentialOAuthStartResponse,
   CredentialTestResponse,
@@ -236,6 +237,15 @@ export const api = {
     request<{ run_id: string }>(`/workflows/${id}/run`, {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+  sendChatMessage: (
+    workflowId: string,
+    message: string,
+    sessionId: string,
+  ) =>
+    request<ChatTurnResponse>(`/workflows/${workflowId}/chat`, {
+      method: "POST",
+      body: JSON.stringify({ message, session_id: sessionId }),
     }),
   getRun: (runId: string) => request<RunInfo>(`/runs/${runId}`),
   listRunArtifacts: (runId: string) =>
