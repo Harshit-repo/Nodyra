@@ -1570,31 +1570,26 @@ export function webhookParamLabel(
   return WEBHOOK_LABEL_OVERRIDES[paramName] ?? null;
 }
 
-// Optional webhook options that live behind a collapsed "Advanced options"
-// disclosure in the NDV, so the default view stays focused on method/path/
-// auth/response basics. Their dependent fields (hmac_header, dedup_key, …) are
-// part of the same group.
-const WEBHOOK_ADVANCED_PARAMS = new Set([
-  "hmac_verification",
-  "hmac_header",
-  "hmac_algorithm",
-  "hmac_prefix",
-  "ip_allowlist",
-  "trust_proxy",
-  "dedup",
-  "dedup_key",
-  "raw_body",
-  "response_data",
-  "response_body",
-  "response_headers",
-]);
+// Generic optional-parameter grouping. A param's manifest `group` marks it as
+// an optional "Add option" field the inspector tucks behind a chip; params with
+// no group are core and always shown. Works for every node — webhook is just
+// the first heavy adopter.
+export function paramGroup(spec: ParamSpec): string | null {
+  return spec.group ? String(spec.group) : null;
+}
 
-export function webhookAdvancedParam(
-  manifestId: string,
-  paramName: string,
+// A group should auto-expand (rather than show as a chip) when a saved workflow
+// already holds a non-default value for any param in it — so existing configs
+// never hide their settings.
+export function groupActiveByValue(
+  specs: ParamSpec[],
+  params: Record<string, unknown>,
 ): boolean {
-  if (manifestId !== "webhook_trigger") return false;
-  return WEBHOOK_ADVANCED_PARAMS.has(paramName);
+  return specs.some((spec) => {
+    const value = params[spec.name];
+    if (value === undefined || value === null || value === "") return false;
+    return value !== spec.default;
+  });
 }
 
 export function webhookHiddenParam(

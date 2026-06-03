@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../api";
-import type { ArtifactInfo } from "../types";
+import type { ArtifactInfo, ParamSpec } from "../types";
 import { DataPanel } from "./DataPanel";
 import {
   ParamField,
   WebhookPanel,
   WEBHOOK_AUTH_TYPE_OPTIONS,
   formatParamLabel,
-  webhookAdvancedParam,
+  groupActiveByValue,
+  paramGroup,
   webhookCredentialSpec,
   webhookHiddenParam,
   webhookParamLabel,
@@ -30,11 +31,43 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
   const runOutputs = useEditor((s) => s.runOutputs);
   const edges = useEditor((s) => s.edges);
   const [showCode, setShowCode] = useState(false);
+  // Which optional groups the user has explicitly opened/closed this session.
+  // Reset when switching nodes so each node starts from its own value-derived
+  // state. `undefined` for a group means "decide from saved values".
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  useEffect(() => setOpenGroups({}), [nodeId]);
   if (!node) return null;
   const { manifest, params } = node.data;
 
   const setParam = (name: string, value: unknown) => {
     updateParams(node.id, { ...params, [name]: value });
+  };
+
+  // Optional-parameter grouping: split params into core (always shown) and
+  // groups surfaced as "Add option" chips. Group order follows first appearance
+  // in the manifest; value-based auto-expand uses the full group (incl. fields
+  // currently hidden by a dependent toggle).
+  const groupOrder: string[] = [];
+  const allByGroup = new Map<string, ParamSpec[]>();
+  for (const spec of manifest.params) {
+    const g = paramGroup(spec);
+    if (!g) continue;
+    if (!allByGroup.has(g)) {
+      allByGroup.set(g, []);
+      groupOrder.push(g);
+    }
+    allByGroup.get(g)!.push(spec);
+  }
+  const groupIsOpen = (g: string): boolean =>
+    openGroups[g] ?? groupActiveByValue(allByGroup.get(g) ?? [], params);
+  const addGroup = (g: string) =>
+    setOpenGroups((prev) => ({ ...prev, [g]: true }));
+  const removeGroup = (g: string) => {
+    // Clear the group's values back to default, then collapse it to a chip.
+    const cleared: Record<string, unknown> = { ...params };
+    for (const spec of allByGroup.get(g) ?? []) cleared[spec.name] = spec.default;
+    updateParams(node.id, cleared);
+    setOpenGroups((prev) => ({ ...prev, [g]: false }));
   };
 
   // Data flowing into this node from upstream outputs (for code drag-drop).
@@ -137,25 +170,50 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
         const visible = manifest.params.filter(
           (spec) => !webhookHiddenParam(manifest.id, spec.name, params),
         );
-        const core = visible.filter(
-          (spec) => !webhookAdvancedParam(manifest.id, spec.name),
-        );
-        const advanced = visible.filter((spec) =>
-          webhookAdvancedParam(manifest.id, spec.name),
-        );
+        const core = visible.filter((spec) => !paramGroup(spec));
+        const visibleByGroup = new Map<string, ParamSpec[]>();
+        for (const spec of visible) {
+          const g = paramGroup(spec);
+          if (!g) continue;
+          if (!visibleByGroup.has(g)) visibleByGroup.set(g, []);
+          visibleByGroup.get(g)!.push(spec);
+        }
+        const closedGroups = groupOrder.filter((g) => !groupIsOpen(g));
 
         return (
           <>
             {core.map(renderField)}
-            {advanced.length > 0 && (
-              <details className="ndv-advanced">
-                <summary>Advanced options</summary>
-                <p className="field-desc">
-                  Security, idempotency, raw-body capture and response shaping —
-                  all optional.
-                </p>
-                {advanced.map(renderField)}
-              </details>
+            {groupOrder
+              .filter((g) => groupIsOpen(g))
+              .map((g) => (
+                <div className="ndv-group" key={`grp:${node.id}:${g}`}>
+                  <div className="ndv-group-head">
+                    <span>{g}</span>
+                    <button
+                      type="button"
+                      className="ndv-group-remove"
+                      title={`Remove ${g}`}
+                      onClick={() => removeGroup(g)}
+                    >
+                      &times;
+                    </button>
+                  </div>
+                  {(visibleByGroup.get(g) ?? []).map(renderField)}
+                </div>
+              ))}
+            {closedGroups.length > 0 && (
+              <div className="ndv-add-options">
+                {closedGroups.map((g) => (
+                  <button
+                    type="button"
+                    className="ndv-add-chip"
+                    key={`chip:${node.id}:${g}`}
+                    onClick={() => addGroup(g)}
+                  >
+                    + {g}
+                  </button>
+                ))}
+              </div>
             )}
           </>
         );

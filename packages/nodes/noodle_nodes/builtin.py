@@ -105,6 +105,7 @@ def schedule_trigger(
 
 @node(name="Webhook", id="webhook_trigger", category="Triggers", icon="webhook",
       inputs=[], params={
+          # --- Core (always shown) ---
           "http_method": {"choices": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
           "path": {"placeholder": "my-webhook", "description": "Last segment of the URL."},
           "response_mode": {
@@ -116,24 +117,9 @@ def schedule_trigger(
               ),
           },
           "response_code": {"description": "HTTP status returned to the caller."},
-          # Immediate-ack shaping for On Received mode. Operates on the received
-          # request body; 'Custom' reveals response_body + response_headers.
-          "response_data": {
-              "choices": ["First Entry JSON", "All Entries", "No Body", "Custom"],
-              "description": (
-                  "Shape the immediate response (On Received mode). Blank = a "
-                  "default JSON ack with the run id."
-              ),
-          },
-          "response_body": {
-              "placeholder": "{{ $json.body }}",
-              "description": "Custom response body expression (response_data=Custom).",
-          },
-          "response_headers": {
-              "key_value": True,
-              "description": "Custom response headers (response_data=Custom).",
-          },
+          # --- Authentication (optional group) ---
           "auth_type": {
+              "group": "Authentication",
               "choices": ["none", "basic", "header", "query", "bearer", "jwt"],
               "description": (
                   "Authentication required for callers. 'none' accepts any "
@@ -143,54 +129,12 @@ def schedule_trigger(
               ),
           },
           "auth_jwt_header": {
+              "group": "Authentication",
               "placeholder": "Authorization",
               "description": "Header carrying the JWT (auth_type=jwt). Default Authorization.",
           },
-          # Signature verification (independent of auth_type). When 'on', the
-          # raw request body is HMAC-verified against a shared secret before the
-          # workflow runs — GitHub/Stripe/Slack style.
-          "hmac_verification": {"choices": ["off", "on"]},
-          "hmac_header": {
-              "placeholder": "X-Signature",
-              "description": "Header carrying the HMAC signature.",
-          },
-          "hmac_algorithm": {"choices": ["sha256", "sha1"]},
-          "hmac_prefix": {
-              "placeholder": "sha256=",
-              "description": "Optional prefix stripped from the signature header (e.g. 'sha256=').",
-          },
-          # IP allowlist (independent of auth_type). Non-empty → callers outside
-          # the listed CIDRs/IPs are rejected with 403 before any auth check.
-          "ip_allowlist": {
-              "placeholder": "203.0.113.0/24, 198.51.100.7",
-              "description": (
-                  "Comma/newline-separated CIDRs or IPs allowed to call this "
-                  "webhook. Blank = allow all."
-              ),
-          },
-          "trust_proxy": {
-              "choices": ["off", "on"],
-              "description": (
-                  "When 'on', honour the left-most X-Forwarded-For entry for the "
-                  "IP allowlist (set only behind a trusted proxy). Default 'off' "
-                  "uses the socket peer."
-              ),
-          },
-          # Idempotency. When 'on', a repeat dedup_key for this workflow is
-          # acknowledged (200) without starting a second run.
-          "dedup": {"choices": ["off", "on"]},
-          "dedup_key": {
-              "placeholder": "{{ $json.headers['x-delivery-id'] }}",
-              "description": (
-                  "Expression evaluated against the request to identify a unique "
-                  "delivery. A repeat value is acknowledged without re-running."
-              ),
-          },
-          # Raw body capture. When 'on', the exact request bytes are written as
-          # an artifact and exposed as a `raw_body` ref on the trigger output, so
-          # binary/multipart uploads reach the workflow without bloating the DB.
-          "raw_body": {"choices": ["off", "on"]},
           "auth_credentials": {
+              "group": "Authentication",
               # Default credential type for static manifest; the inspector
               # dynamically swaps this based on auth_type — Basic Auth uses
               # http_basic (username/password), Header Auth uses http_header
@@ -201,6 +145,74 @@ def schedule_trigger(
                   ["username", "password"],
               ),
               "description": "Stored credential used to authenticate inbound webhook calls.",
+          },
+          # --- Security (optional group, independent of auth_type) ---
+          # Signature verification: when 'on', the raw request body is
+          # HMAC-verified against a shared secret before the workflow runs.
+          "hmac_verification": {"group": "Security", "choices": ["off", "on"]},
+          "hmac_header": {
+              "group": "Security",
+              "placeholder": "X-Signature",
+              "description": "Header carrying the HMAC signature.",
+          },
+          "hmac_algorithm": {"group": "Security", "choices": ["sha256", "sha1"]},
+          "hmac_prefix": {
+              "group": "Security",
+              "placeholder": "sha256=",
+              "description": "Optional prefix stripped from the signature header (e.g. 'sha256=').",
+          },
+          # IP allowlist: non-empty → callers outside the listed CIDRs/IPs are
+          # rejected with 403 before any auth check.
+          "ip_allowlist": {
+              "group": "Security",
+              "placeholder": "203.0.113.0/24, 198.51.100.7",
+              "description": (
+                  "Comma/newline-separated CIDRs or IPs allowed to call this "
+                  "webhook. Blank = allow all."
+              ),
+          },
+          "trust_proxy": {
+              "group": "Security",
+              "choices": ["off", "on"],
+              "description": (
+                  "When 'on', honour the left-most X-Forwarded-For entry for the "
+                  "IP allowlist (set only behind a trusted proxy). Default 'off' "
+                  "uses the socket peer."
+              ),
+          },
+          # --- Idempotency (optional group) ---
+          "dedup": {"group": "Idempotency", "choices": ["off", "on"]},
+          "dedup_key": {
+              "group": "Idempotency",
+              "placeholder": "{{ $json.headers['x-delivery-id'] }}",
+              "description": (
+                  "Expression evaluated against the request to identify a unique "
+                  "delivery. A repeat value is acknowledged without re-running."
+              ),
+          },
+          # --- Body (optional group) ---
+          # Raw body capture: when 'on', the exact request bytes are written as
+          # an artifact and exposed as a `raw_body` ref on the trigger output, so
+          # binary/multipart uploads reach the workflow without bloating the DB.
+          "raw_body": {"group": "Body", "choices": ["off", "on"]},
+          # --- Response shaping (optional group; On Received mode) ---
+          "response_data": {
+              "group": "Response",
+              "choices": ["First Entry JSON", "All Entries", "No Body", "Custom"],
+              "description": (
+                  "Shape the immediate response (On Received mode). Blank = a "
+                  "default JSON ack with the run id."
+              ),
+          },
+          "response_body": {
+              "group": "Response",
+              "placeholder": "{{ $json.body }}",
+              "description": "Custom response body expression (response_data=Custom).",
+          },
+          "response_headers": {
+              "group": "Response",
+              "key_value": True,
+              "description": "Custom response headers (response_data=Custom).",
           },
       })
 def webhook_trigger(
@@ -781,9 +793,11 @@ def _http_backoff_seconds(attempt: int) -> float:
         "key_value": True,
     },
     "timeout_seconds": {
+        "group": "Options",
         "description": "Per-request timeout in seconds.",
     },
     "max_retries": {
+        "group": "Options",
         "description": (
             "Retries on a transient failure (429/5xx or a connection/timeout "
             "error) with exponential backoff. 0 = a single attempt."

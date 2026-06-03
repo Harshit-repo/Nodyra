@@ -191,6 +191,7 @@ def _build_manifest(
                 multiline=bool(meta.get("multiline", False)),
                 key_value=bool(meta.get("key_value", False)),
                 credential=credential,
+                group=meta.get("group") or None,
             )
         )
 
@@ -392,6 +393,7 @@ def _decorated_node_from_ast(
                 multiline=bool(meta.get("multiline", False)),
                 key_value=bool(meta.get("key_value", False)),
                 credential=credential,
+                group=meta.get("group") or None,
             )
         )
 

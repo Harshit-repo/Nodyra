@@ -60,6 +60,29 @@ def test_param_metadata_is_captured() -> None:
     assert spec.placeholder == "x or y"
 
 
+def test_param_group_is_captured() -> None:
+    """A param's optional `group` flows onto the manifest spec.
+
+    `group` marks an optional parameter that the inspector tucks behind an
+    "Add option" chip; ungrouped params are core and always shown.
+    """
+    reg = NodeRegistry()
+
+    @node(
+        name="Grouped",
+        params={
+            "timeout_seconds": {"group": "Options"},
+        },
+        registry=reg,
+    )
+    def grouped(input=None, timeout_seconds: int = 30, core: str = "x") -> str:
+        return core
+
+    params = {p.name: p for p in reg.get("grouped").manifest.params}
+    assert params["timeout_seconds"].group == "Options"
+    assert params["core"].group is None
+
+
 def test_credential_param_metadata_is_captured() -> None:
     reg = NodeRegistry()
 
