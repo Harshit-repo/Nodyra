@@ -423,6 +423,12 @@ class CredentialTestRequest(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
+class CredentialTestDraftRequest(BaseModel):
+    type: str
+    data: dict[str, str] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
 class CredentialTestResponse(BaseModel):
     ok: bool
     status: str

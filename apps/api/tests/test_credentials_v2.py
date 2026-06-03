@@ -289,6 +289,30 @@ async def test_llm_provider_connection_test_ollama_without_api_key(
     ]
 
 
+async def test_test_draft_runs_without_persisting(client: AsyncClient, monkeypatch) -> None:
+    calls: list[dict] = []
+
+    async def fake_request(method, url, **kwargs):
+        calls.append({"method": method, "url": url})
+        return {"ok": True, "message": "Connected", "details": {"status_code": 200}}
+
+    monkeypatch.setattr("app.services.credential_tests._request", fake_request)
+
+    before = (await client.get("/credentials")).json()
+    resp = await client.post(
+        "/credentials/test-draft",
+        json={
+            "type": "llm_provider",
+            "data": {"provider": "openrouter", "api_key": "sk-or-test"},
+            "context": {},
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    after = (await client.get("/credentials")).json()
+    assert len(after) == len(before)  # nothing persisted
+
+
 async def test_credential_connection_test_respects_scope(
     client: AsyncClient,
 ) -> None:

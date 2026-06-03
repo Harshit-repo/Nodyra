@@ -12,6 +12,7 @@ from app.schemas import (
     CredentialInfo,
     CredentialOAuthStartRequest,
     CredentialOAuthStartResponse,
+    CredentialTestDraftRequest,
     CredentialTestRequest,
     CredentialTestResponse,
     CredentialTypeInfo,
@@ -597,6 +598,26 @@ async def test_credential(
     cred.last_used_at = datetime.now(UTC)
     await session.commit()
     return result
+
+
+@router.post(
+    "/test-draft",
+    response_model=CredentialTestResponse,
+    dependencies=[Depends(require_permission("credential:test"))],
+)
+async def test_credential_draft(
+    body: CredentialTestDraftRequest,
+) -> CredentialTestResponse:
+    """Test in-progress credential values before they are saved.
+
+    Stateless: nothing is persisted. Used by the create-credential modals'
+    "Test connection" button.
+    """
+    type_spec = get_credential_type(body.type)
+    test_service = (
+        type_spec.test_service if type_spec and type_spec.test_service else body.type
+    )
+    return await test_credential_connection(test_service, body.data, body.context)
 
 
 @router.delete(
