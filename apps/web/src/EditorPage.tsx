@@ -5,6 +5,7 @@ import { Link, useParams } from "react-router-dom";
 import { api, type RunStreamHandle, subscribeToRunEvents } from "./api";
 import { AiDraftModal } from "./AiDraftModal";
 import { Canvas } from "./editor/Canvas";
+import { ChatPanel } from "./editor/ChatPanel";
 import { CommandPalette } from "./editor/CommandPalette";
 import { FunctionsPanel } from "./editor/FunctionsPanel";
 import { Inspector } from "./editor/Inspector";
@@ -90,6 +91,10 @@ function triggerTypes(graph: WorkflowGraph | null | undefined): string[] {
     .sort();
 }
 
+function chatTriggerNode(graph: WorkflowGraph | null | undefined) {
+  return graph?.nodes?.find((n) => n.type === "chat_trigger") ?? null;
+}
+
 function buildPublishSummary(
   baseGraph: WorkflowGraph | null | undefined,
   currentGraph: WorkflowGraph,
@@ -146,6 +151,7 @@ export function EditorPage() {
   const [showHistory, setShowHistory] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const { notify } = useToast();
   const wsRef = useRef<RunStreamHandle | null>(null);
   const webhookTimerRef = useRef<number | null>(null);
@@ -157,6 +163,7 @@ export function EditorPage() {
   const dirty = useEditor((s) => s.dirty);
   const nodeCount = useEditor((s) => s.nodes.length);
   const hasTrigger = useEditor((s) => pickEditorRunTrigger(s.nodes) !== null);
+  const hasChatTrigger = useEditor((s) => s.nodes.some((n) => n.data.manifest.id === "chat_trigger"));
   const selectedId = useEditor((s) => s.selectedId);
   const deleteNode = useEditor((s) => s.deleteNode);
   const duplicateNode = useEditor((s) => s.duplicateNode);
@@ -906,6 +913,16 @@ export function EditorPage() {
           >
             ƒ Functions
           </button>
+          {hasChatTrigger ? (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setChatOpen(true)}
+              title="Open chat panel"
+            >
+              Chat
+            </button>
+          ) : null}
           <button
             className="btn btn-icon"
             onClick={() => setShortcutsOpen(true)}
@@ -1244,6 +1261,23 @@ export function EditorPage() {
           </div>
         </div>
       )}
+
+      {chatOpen && workflow ? (
+        (() => {
+          const node = chatTriggerNode(toGraph());
+          const params = (node?.params ?? {}) as Record<string, string>;
+          return (
+            <ChatPanel
+              workflowId={workflow.id}
+              title={params.title ?? "Chat"}
+              placeholder={params.input_placeholder ?? "Type a message…"}
+              initialMessage={params.initial_message ?? ""}
+              onRun={(runId) => connectRunStream(runId)}
+              onClose={() => setChatOpen(false)}
+            />
+          );
+        })()
+      ) : null}
 
       {functionsOpen && id && (
         <FunctionsPanel

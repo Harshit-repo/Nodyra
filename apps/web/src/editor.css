@@ -4124,3 +4124,69 @@ th.sortable:hover { background:var(--bg-3); }
 .expr-autocomplete { position:absolute; z-index:200; background: var(--bg-2); border: 1px solid var(--border); border-radius:6px; max-height:200px; overflow:auto; list-style:none; margin:0; padding:4px; width:280px; }
 .expr-autocomplete li { padding:4px 8px; cursor:pointer; border-radius:4px; font-family:monospace; font-size:12px; }
 .expr-autocomplete li:hover, .expr-autocomplete li.active { background:var(--accent-muted); }
+
+/* ----- Chat panel -------------------------------------------------------- */
+.chat-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 340px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface, #fff);
+  border-left: 1px solid var(--border, #e2e8f0);
+  z-index: 20;
+}
+.chat-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  font-weight: 600;
+}
+.chat-panel-actions button {
+  margin-left: 6px;
+}
+.chat-panel-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat-bubble {
+  max-width: 80%;
+  padding: 6px 10px;
+  border-radius: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-bubble-user {
+  align-self: flex-end;
+  background: #2563eb;
+  color: #fff;
+}
+.chat-bubble-bot {
+  align-self: flex-start;
+  background: #f1f5f9;
+  color: #0f172a;
+}
+.chat-bubble-error {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.chat-typing {
+  opacity: 0.6;
+}
+.chat-panel-input {
+  display: flex;
+  gap: 6px;
+  padding: 10px;
+  border-top: 1px solid var(--border, #e2e8f0);
+}
+.chat-panel-input input {
+  flex: 1;
+}
