@@ -931,3 +931,15 @@ class RunDebugSnapshot(BaseModel):
     failed_node_id: str | None
     upstream_cache: dict[str, Any] = Field(default_factory=dict)
     node_errors: dict[str, str] = Field(default_factory=dict)
+
+
+class ChatTurnRequest(BaseModel):
+    message: str
+    session_id: str
+
+
+class ChatTurnResponse(BaseModel):
+    run_id: str | None
+    reply: str
+    session_id: str
+    status: str

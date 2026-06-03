@@ -76,3 +76,45 @@ async def test_run_chat_turn_without_chat_trigger_raises(client: AsyncClient) ->
 
     with pytest.raises(NoChatTriggerError):
         await run_chat_turn(workflow_id, "ping", "s", prefer_draft=True)
+
+
+@pytest.mark.asyncio
+async def test_chat_endpoint_returns_reply(client: AsyncClient) -> None:
+    workflow_id = (
+        await client.post("/workflows", json={"name": "EP"})
+    ).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": _chat_echo_graph()}
+    )
+
+    resp = await client.post(
+        f"/workflows/{workflow_id}/chat",
+        json={"message": "hello", "session_id": "s-9"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["reply"] == "hello"
+    assert body["session_id"] == "s-9"
+    assert body["status"] == "success"
+    assert body["run_id"]
+
+
+@pytest.mark.asyncio
+async def test_chat_endpoint_422_without_chat_trigger(client: AsyncClient) -> None:
+    workflow_id = (
+        await client.post("/workflows", json={"name": "EP2"})
+    ).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}",
+        json={"graph": {"nodes": [
+            {"id": "m", "type": "manual_trigger", "params": {},
+             "position": {"x": 0, "y": 0}}
+        ], "edges": []}},
+    )
+
+    resp = await client.post(
+        f"/workflows/{workflow_id}/chat",
+        json={"message": "x", "session_id": "s"},
+    )
+    assert resp.status_code == 422
