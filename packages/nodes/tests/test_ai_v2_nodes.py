@@ -929,3 +929,19 @@ def test_guardrail_passes_clean_response() -> None:
     guard = fn(blocked_terms='["bad"]')
     resp = ChatResponse(text="all good here")
     assert guard.check(resp).text == "all good here"
+
+
+# ---------------------------------------------------------------------------
+# _task_text / _session_id — Chat Trigger key recognition
+# ---------------------------------------------------------------------------
+
+
+from noodle_nodes.ai_v2.agents import _session_id, _task_text
+
+
+def test_task_text_reads_chat_input_key() -> None:
+    assert _task_text({"chatInput": "hello there"}, "") == "hello there"
+
+
+def test_session_id_reads_camelcase_session_key() -> None:
+    assert _session_id({"sessionId": "abc-123"}, "") == "abc-123"

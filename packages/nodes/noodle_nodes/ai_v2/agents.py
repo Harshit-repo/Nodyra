@@ -40,7 +40,7 @@ def _task_text(input_value: Any, prompt: str) -> str:
     if prompt.strip():
         return prompt.strip()
     if isinstance(input_value, dict):
-        for key in ("task", "prompt", "text", "input"):
+        for key in ("task", "prompt", "chatInput", "text", "input"):
             value = input_value.get(key)
             if value:
                 return _as_text(value).strip()
@@ -50,8 +50,10 @@ def _task_text(input_value: Any, prompt: str) -> str:
 def _session_id(input_value: Any, configured: str) -> str:
     if configured.strip():
         return configured.strip()
-    if isinstance(input_value, dict) and input_value.get("session_id"):
-        return str(input_value["session_id"])
+    if isinstance(input_value, dict):
+        for key in ("session_id", "sessionId"):
+            if input_value.get(key):
+                return str(input_value[key])
     return "default"
 
 
