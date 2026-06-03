@@ -2464,7 +2464,7 @@ Implementation notes:
   - dedupes real deliveries with `X-GitHub-Delivery`.
 - Added durable provider subscription storage:
   - `ProviderTriggerSubscription` ORM model;
-  - `0034_provider_trigger_subscriptions` Alembic migration;
+  - `0034_provider_triggers` Alembic migration;
   - stores workflow/version/node/provider linkage, external hook id, callback
     URL, status, expiry, last event timestamp, and redacted config metadata.
 - Added API lifecycle service

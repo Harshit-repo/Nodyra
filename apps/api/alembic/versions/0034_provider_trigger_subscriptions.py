@@ -1,6 +1,6 @@
 """provider trigger subscriptions
 
-Revision ID: 0034_provider_trigger_subscriptions
+Revision ID: 0034_provider_triggers
 Revises: 0033_run_approvals
 Create Date: 2026-06-03
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0034_provider_trigger_subscriptions"
+revision: str = "0034_provider_triggers"
 down_revision: str | None = "0033_run_approvals"
 branch_labels: str | None = None
 depends_on: str | None = None
