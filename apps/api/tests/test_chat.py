@@ -1,7 +1,7 @@
 import pytest
 from httpx import AsyncClient
 
-from app.services.chat_service import _extract_reply
+from app.services.chat_service import _extract_reply, _find_chat_trigger
 
 
 def test_extract_reply_prefers_answer_then_text_then_output() -> None:
@@ -14,6 +14,13 @@ def test_extract_reply_stringifies_when_no_text_field() -> None:
     assert _extract_reply({"count": 3}) == '{"count": 3}'
     assert _extract_reply("hi") == "hi"
     assert _extract_reply(None) == ""
+
+
+def test_find_chat_trigger_ignores_node_without_id() -> None:
+    assert _find_chat_trigger({"nodes": [{"type": "chat_trigger"}]}) is None
+    assert _find_chat_trigger(
+        {"nodes": [{"type": "chat_trigger", "id": "c1"}]}
+    ) == "c1"
 
 
 def _chat_echo_graph() -> dict:

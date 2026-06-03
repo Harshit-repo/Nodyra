@@ -50,7 +50,8 @@ def _extract_reply(value: object) -> str:
 def _find_chat_trigger(graph: dict) -> str | None:
     for node in graph.get("nodes", []):
         if node.get("type") == "chat_trigger":
-            return str(node.get("id"))
+            node_id = node.get("id")
+            return str(node_id) if node_id is not None else None
     return None
 
 
