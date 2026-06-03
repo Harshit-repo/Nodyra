@@ -25,6 +25,7 @@ from noodle_nodes.ai_v2 import document_loaders as document_loaders
 from noodle_nodes.ai_v2 import embeddings as embeddings
 from noodle_nodes.ai_v2 import guardrails as guardrails
 from noodle_nodes.ai_v2 import memory as memory
+from noodle_nodes.ai_v2 import model_options as model_options
 from noodle_nodes.ai_v2 import models as models
 from noodle_nodes.ai_v2 import output_parsers as output_parsers
 from noodle_nodes.ai_v2 import retrievers as retrievers
@@ -38,6 +39,7 @@ __all__ = [
     "agents",
     "guardrails",
     "memory",
+    "model_options",
     "models",
     "output_parsers",
     "retrievers",
