@@ -81,3 +81,62 @@ async def test_generated_node_source_endpoint_uses_stored_source(
     assert "execute_registered_operation" in source["source"]
     assert "google_sheets.values.append" in source["source"]
     assert source["fork_source"] == source["source"]
+
+
+async def test_dynamic_options_decrypts_credential_by_id(client: AsyncClient, monkeypatch) -> None:
+    import noodle_nodes.ai_v2.model_options as mo
+
+    captured: dict = {}
+
+    def fake_chat_models(provider, api_key, base_url):
+        captured["provider"] = provider
+        captured["api_key"] = api_key
+        return ["gpt-4.1-mini"]
+
+    monkeypatch.setattr(mo, "_chat_models_for", fake_chat_models)
+
+    cred = (
+        await client.post(
+            "/credentials",
+            json={
+                "name": "OpenAI",
+                "type": "llm_provider",
+                "scope": "global",
+                "data": {"provider": "openai", "api_key": "sk-secret"},
+            },
+        )
+    ).json()
+
+    resp = await client.get(
+        f"/nodes/dynamic-options/llm_models?credential_id={cred['id']}&provider=openai"
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["options"] == [
+        {"value": "gpt-4.1-mini", "label": "gpt-4.1-mini", "description": ""}
+    ]
+    assert captured["api_key"] == "sk-secret"  # decrypted server-side
+
+
+async def test_dynamic_options_rejects_out_of_scope_credential(client: AsyncClient) -> None:
+    wf = (await client.post("/workflows", json={"name": "Flow"})).json()["id"]
+    cred = (
+        await client.post(
+            "/credentials",
+            json={
+                "name": "Scoped",
+                "type": "llm_provider",
+                "scope": "workflow",
+                "workflow_id": wf,
+                "data": {"provider": "openai", "api_key": "sk"},
+            },
+        )
+    ).json()
+    # No workflow_id in the query → credential is not visible → 403.
+    resp = await client.get(f"/nodes/dynamic-options/llm_models?credential_id={cred['id']}")
+    assert resp.status_code == 403
+
+
+async def test_dynamic_options_unknown_loader_404(client: AsyncClient) -> None:
+    resp = await client.get("/nodes/dynamic-options/nope")
+    assert resp.status_code == 404

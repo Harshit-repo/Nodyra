@@ -2,12 +2,15 @@ import ast
 import inspect
 import textwrap
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
 from app.db import get_session
-from app.models import CodeModule
+from app.models import CodeModule, Credential
+from app.routers.credentials import _scope_rank
+from app.security import require_permission
+from app.services.crypto import decrypt_credential
 from noodle.models import NodeManifest
 from noodle.sdk import registry
 from noodle_nodes.integrations_v2.dynamic_options import call_loader, list_loader_ids
@@ -146,40 +149,59 @@ async def get_node_source(
     }
 
 
-@router.get("/dynamic-options/{loader_id}")
+@router.get(
+    "/dynamic-options/{loader_id}",
+    dependencies=[Depends(require_permission("credential:read"))],
+)
 async def get_dynamic_options(
     loader_id: str,
-    credentials: str | None = Query(default=None, description="JSON-encoded credential dict"),
-    spreadsheet_id: str | None = Query(default=None),
-    sheet_name: str | None = Query(default=None),
+    request: Request,
+    credential_id: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Return dynamic option choices for a node parameter dropdown.
 
-    The ``loader_id`` matches a registered :func:`register_loader` entry.
-    Query parameters are forwarded to the loader as keyword arguments.
-    Credential values must be decrypted by the caller before passing — this
-    endpoint accepts a pre-resolved JSON string for ``credentials``.
+    ``loader_id`` matches a registered :func:`register_loader` entry. All query
+    params are forwarded to the loader as keyword arguments. When
+    ``credential_id`` is supplied the credential is loaded, scope-checked, and
+    decrypted server-side, and the plaintext dict is passed to the loader as
+    ``credentials`` — secrets never travel in the query string.
     """
+    import asyncio
+
     if loader_id not in list_loader_ids():
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
             f"Unknown dynamic option loader '{loader_id}'",
         )
-    import json
 
-    kwargs: dict = {}
-    if credentials:
-        try:
-            kwargs["credentials"] = json.loads(credentials)
-        except json.JSONDecodeError:
-            kwargs["credentials"] = credentials
-    if spreadsheet_id is not None:
-        kwargs["spreadsheet_id"] = spreadsheet_id
-    if sheet_name is not None:
-        kwargs["sheet_name"] = sheet_name
+    kwargs: dict = {
+        key: value
+        for key, value in request.query_params.items()
+        if key != "credential_id"
+    }
+
+    if credential_id:
+        cred = await session.get(Credential, credential_id)
+        if cred is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Credential not found")
+        if (
+            _scope_rank(
+                cred,
+                kwargs.get("workflow_id"),
+                kwargs.get("environment_id"),
+                kwargs.get("runner_pool_id"),
+            )
+            < 0
+        ):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Credential is not visible for the supplied scope.",
+            )
+        kwargs["credentials"] = decrypt_credential(cred.encrypted_data, cred.encrypted_dek)
 
     try:
-        options = call_loader(loader_id, **kwargs)
+        options = await asyncio.to_thread(call_loader, loader_id, **kwargs)
     except Exception as exc:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
