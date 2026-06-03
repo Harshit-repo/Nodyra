@@ -457,6 +457,7 @@ def gcs_list_objects(
             "multiline": True,
         },
         "content_type": {
+            "group": "Options",
             "placeholder": "application/json",
             "description": "MIME type.",
         },
