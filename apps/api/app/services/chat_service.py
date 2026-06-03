@@ -24,6 +24,10 @@ class NoChatTriggerError(Exception):
     """Workflow is missing (or has no) chat_trigger node."""
 
 
+class WorkflowNotFoundError(NoChatTriggerError):
+    """Workflow id does not exist."""
+
+
 @dataclass
 class ChatTurnResult:
     run_id: str | None
@@ -72,7 +76,7 @@ async def run_chat_turn(
             )
         ).first()
         if workflow is None:
-            raise NoChatTriggerError("workflow not found")
+            raise WorkflowNotFoundError("workflow not found")
         graph: dict | None = None
         version_number = 1
         version_id: str | None = None

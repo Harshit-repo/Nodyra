@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.schemas import ChatTurnRequest, ChatTurnResponse
 from app.security import require_permission
-from app.services.chat_service import NoChatTriggerError, run_chat_turn
+from app.services.chat_service import NoChatTriggerError, WorkflowNotFoundError, run_chat_turn
 
 router = APIRouter(tags=["chat"])
 
@@ -17,8 +17,14 @@ async def chat_turn(workflow_id: str, body: ChatTurnRequest) -> ChatTurnResponse
         result = await run_chat_turn(
             workflow_id, body.message, body.session_id, prefer_draft=True
         )
+    except WorkflowNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
     except NoChatTriggerError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     return ChatTurnResponse(
         run_id=result.run_id,
         reply=result.reply,

@@ -118,3 +118,12 @@ async def test_chat_endpoint_422_without_chat_trigger(client: AsyncClient) -> No
         json={"message": "x", "session_id": "s"},
     )
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_chat_endpoint_404_for_missing_workflow(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/workflows/does-not-exist/chat",
+        json={"message": "x", "session_id": "s"},
+    )
+    assert resp.status_code == 404
