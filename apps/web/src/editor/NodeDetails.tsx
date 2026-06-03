@@ -74,6 +74,29 @@ export function credentialMatchesParam(
   return cred.keys.includes(targetKey);
 }
 
+/** Query params for a dynamic-options fetch: the selected credential's id plus
+ *  any provider/base_url/workflow context the loader uses, skipping empties. */
+export function buildLoadOptionsParams(
+  credential: { id: string } | null,
+  params: Record<string, unknown>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (credential?.id) out.credential_id = credential.id;
+  for (const key of ["provider", "base_url", "workflow_id"]) {
+    const value = params[key];
+    if (typeof value === "string" && value.trim()) out[key] = value.trim();
+  }
+  return out;
+}
+
+/** Combine fetched options with the current free-text value so a typed,
+ *  unlisted value is never lost and never duplicated. */
+export function mergeOptions(fetched: string[], current: string): string[] {
+  const list = [...fetched];
+  if (current && !list.includes(current)) list.unshift(current);
+  return list;
+}
+
 function credentialScopeLabel(cred: Credential): string {
   if (cred.scope === "workflow" && cred.workflow_id) {
     return `workflow ${cred.workflow_id.slice(0, 8)}`;
@@ -1436,6 +1459,85 @@ function ExpressionEditorModal({
   );
 }
 
+/** Editable combobox for params with a `load_options` loader. Lazy-fetches the
+ *  provider's catalogue once a credential (named in `depends_on`) is present,
+ *  falls back to the curated `choices`, and always allows free-text entry via a
+ *  native datalist. */
+function LoadOptionsField({
+  spec,
+  value,
+  onChange,
+  params,
+}: {
+  spec: ParamSpec;
+  value: unknown;
+  onChange: (v: unknown) => void;
+  params: Record<string, unknown>;
+}) {
+  const current = String(value ?? "");
+  const credential = (() => {
+    for (const dep of spec.depends_on ?? []) {
+      const v = params[dep];
+      if (isCredentialRef(v)) return v;
+    }
+    return null;
+  })();
+  const curated = (spec.choices ?? []).map(String);
+  const [fetched, setFetched] = useState<string[]>(curated);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+  const listId = `opts-${spec.name}`;
+
+  function fetchOptions(): void {
+    if (!spec.load_options) return;
+    setLoading(true);
+    setErr("");
+    api
+      .dynamicOptions(spec.load_options, buildLoadOptionsParams(credential, params))
+      .then((res) => setFetched(res.options.map((o) => o.value)))
+      .catch(() => setErr("Couldn't load list — type a value or retry."))
+      .finally(() => setLoading(false));
+  }
+
+  // Auto-fetch once a credential is present (and when it changes).
+  const credentialId = credential?.id;
+  useEffect(() => {
+    if (credentialId) fetchOptions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [credentialId]);
+
+  const options = mergeOptions(fetched, current);
+
+  return (
+    <div className="load-options-field">
+      <div className="load-options-row">
+        <input
+          className="field-input"
+          list={listId}
+          placeholder={spec.placeholder || "Select or type a value"}
+          value={current}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <datalist id={listId}>
+          {options.map((opt) => (
+            <option key={opt} value={opt} />
+          ))}
+        </datalist>
+        <button
+          type="button"
+          className="btn btn-sm btn-ghost"
+          title="Refresh list"
+          disabled={loading}
+          onClick={() => fetchOptions()}
+        >
+          {loading ? "…" : "↻"}
+        </button>
+      </div>
+      {err && <p className="field-desc">{err}</p>}
+    </div>
+  );
+}
+
 export function ParamField({
   spec,
   value,
@@ -1457,6 +1559,16 @@ export function ParamField({
         value={value}
         onChange={onChange}
         credentialContext={credentialContext}
+      />
+    );
+  }
+  if (spec.load_options) {
+    return (
+      <LoadOptionsField
+        spec={spec}
+        value={value}
+        onChange={onChange}
+        params={credentialContext ?? {}}
       />
     );
   }
