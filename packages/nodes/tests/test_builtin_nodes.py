@@ -258,6 +258,21 @@ async def test_stop_and_error_fails_workflow_with_message() -> None:
     assert "forced failure" in result.nodes["stop"].error
 
 
+def test_chat_trigger_is_registered_as_trigger() -> None:
+    manifests = {m.id: m for m in registry.manifests()}
+    chat = manifests["chat_trigger"]
+    assert chat.category == "Triggers"
+    assert chat.role == "trigger"
+    assert chat.inputs == []
+    assert [o.name for o in chat.outputs] == ["main"]
+
+
+def test_chat_trigger_returns_chat_payload_shape() -> None:
+    from noodle_nodes.builtin import chat_trigger
+
+    assert chat_trigger() == {"chatInput": "", "sessionId": ""}
+
+
 def test_error_trigger_normalizes_error_payload() -> None:
     result = registry.get("error_trigger").func(
         error={"message": "boom", "node_id": "n1", "workflow_id": "w1", "run_id": "r1"}

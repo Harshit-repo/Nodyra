@@ -285,6 +285,31 @@ def error_trigger(error: dict | None = None) -> dict:
     }
 
 
+@node(name="Chat Trigger", id="chat_trigger", category="Triggers", icon="chat",
+      role="trigger", inputs=[], outputs=["main"],
+      param_groups={"Options": ["initial_message", "input_placeholder", "title"]},
+      params={
+          "initial_message": {
+              "widget": "textarea", "group": "Options",
+              "description": "Assistant greeting shown when the chat panel opens.",
+          },
+          "input_placeholder": {
+              "group": "Options", "placeholder": "Type a message…",
+              "description": "Placeholder text for the chat message box.",
+          },
+          "title": {
+              "group": "Options", "placeholder": "Chat",
+              "description": "Header label for the chat panel.",
+          },
+      })
+def chat_trigger(initial_message: str = "", input_placeholder: str = "",
+                 title: str = "") -> dict:
+    """Conversational entry point. When a chat turn runs, the chat service seeds
+    this node's output with the user's message and session id; on a plain manual
+    run it returns the empty shape so the graph stays runnable."""
+    return {"chatInput": "", "sessionId": ""}
+
+
 # ==========================================================================
 # Logic — branching and merging
 # ==========================================================================
