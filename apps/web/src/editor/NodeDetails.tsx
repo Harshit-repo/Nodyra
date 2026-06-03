@@ -2301,7 +2301,8 @@ export function NodeDetails({
   const pinned = useEditor((s) => s.pinned[nodeId]);
   const setPinnedFor = useEditor((s) => s.setPinnedFor);
 
-  const [showCode, setShowCode] = useState(false);
+  const [mode, setMode] = useState<"inspector" | "python">("inspector");
+  useEffect(() => setMode("inspector"), [nodeId]);
 
   async function pin(): Promise<void> {
     if (!workflowId || runOutput === undefined) return;
@@ -2372,23 +2373,42 @@ export function NodeDetails({
           {manifest.description && (
             <p className="inspector-desc">{manifest.description}</p>
           )}
-          <button
-            className="btn btn-sm btn-ghost node-code-toggle"
-            onClick={() => setShowCode((v) => !v)}
+          <div
+            className="ndv-mode-toggle"
+            role="tablist"
+            aria-label="Inspector or Python"
           >
-            {showCode ? "Hide code" : "</> Show code"}
-          </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "inspector"}
+              className={mode === "inspector" ? "active" : ""}
+              onClick={() => setMode("inspector")}
+            >
+              Inspector
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "python"}
+              className={mode === "python" ? "active" : ""}
+              onClick={() => setMode("python")}
+            >
+              Python
+            </button>
+          </div>
         </div>
       )}
 
-      {showCode && (
+      {mode === "python" ? (
         <NodeCodePanel
           nodeId={node.id}
           manifest={manifest}
           inputData={hasIncomingInputs ? incomingInputs : undefined}
-          onClose={() => setShowCode(false)}
+          onClose={() => setMode("inspector")}
         />
-      )}
+      ) : (
+        <>
 
       <div className="inspector-section">
         <div className="inspector-section-head">Parameters</div>
@@ -2537,6 +2557,8 @@ export function NodeDetails({
           path={String(params.path ?? "noodle")}
           nodeId={node.id}
         />
+      )}
+        </>
       )}
     </>
   );

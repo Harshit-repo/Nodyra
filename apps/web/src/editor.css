@@ -1676,6 +1676,9 @@ body.is-resizing-vertical {
   background: var(--accent);
   color: #fff;
 }
+.inspector-node .ndv-mode-toggle {
+  margin: 12px 0 0;
+}
 
 /* Optional-parameter groups + "Add option" chips (n8n-style). An added group
    renders as a titled block with a remove (×); unopened groups are chips. */
@@ -3915,8 +3918,7 @@ body.is-resizing {
 .report-metrics { display: flex; flex-wrap: wrap; gap: 10px; }
 .report-metric { display: flex; flex-direction: column; min-width: 70px; }
 
-/* ---- Node code (Show the code) panel ---- */
-.node-code-toggle { margin-top: 8px; align-self: flex-start; }
+/* ---- Node code (Python panel) ---- */
 .node-code-section { display: flex; flex-direction: column; gap: 6px; }
 .node-code-section .inspector-section-head { display: flex; align-items: center; justify-content: space-between; }
 .node-code-editor {
