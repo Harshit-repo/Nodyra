@@ -83,6 +83,30 @@ def test_param_group_is_captured() -> None:
     assert params["core"].group is None
 
 
+def test_param_groups_arg_assigns_groups() -> None:
+    """`param_groups={"Options": [...]}` tags those params in one declaration.
+
+    A convenience for nodes with many optional params; per-param `group` still
+    wins if both are set.
+    """
+    reg = NodeRegistry()
+
+    @node(
+        name="Bulk",
+        param_groups={"Options": ["temperature", "max_tokens"]},
+        registry=reg,
+    )
+    def bulk(
+        input=None, model: str = "x", temperature: float = 0.7, max_tokens: int = 256
+    ) -> str:
+        return model
+
+    params = {p.name: p for p in reg.get("bulk").manifest.params}
+    assert params["temperature"].group == "Options"
+    assert params["max_tokens"].group == "Options"
+    assert params["model"].group is None
+
+
 def test_credential_param_metadata_is_captured() -> None:
     reg = NodeRegistry()
 

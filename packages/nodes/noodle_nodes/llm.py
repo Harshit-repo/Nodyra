@@ -704,6 +704,7 @@ async def _execute_tool(tool: dict[str, Any], arguments: dict[str, Any]) -> Any:
 @node(
     name="AI Prompt Template",
     id="ai_prompt_template",
+    param_groups={"Options": ["strict_undefined"]},
     category=AI_CATEGORY,
     icon="braces",
     params={
@@ -740,6 +741,15 @@ def ai_prompt_template(
 @node(
     name="AI Chat Model",
     id="ai_chat_model",
+    param_groups={
+        "Options": [
+            "temperature",
+            "max_tokens",
+            "response_format",
+            "timeout_seconds",
+            "include_raw",
+        ]
+    },
     category=AI_CATEGORY,
     icon="ai",
     outputs=["model"],
@@ -796,6 +806,17 @@ def ai_chat_model(
 @node(
     name="AI Chat",
     id="ai_chat",
+    param_groups={
+        "Options": [
+            "system",
+            "messages_json",
+            "temperature",
+            "max_tokens",
+            "response_format",
+            "timeout_seconds",
+            "include_raw",
+        ]
+    },
     category=AI_CATEGORY,
     icon="ai",
     params={
@@ -873,6 +894,7 @@ def ai_chat(
 @node(
     name="AI Structured Output",
     id="ai_structured_output",
+    param_groups={"Options": ["system", "temperature", "max_tokens", "timeout_seconds"]},
     category=AI_CATEGORY,
     icon="braces",
     params={
@@ -951,6 +973,7 @@ def ai_structured_output(
 @node(
     name="AI Text Chunker",
     id="ai_text_chunk",
+    param_groups={"Options": ["chunk_size", "overlap", "metadata_json"]},
     category=AI_CATEGORY,
     icon="list",
     params={
@@ -1004,6 +1027,9 @@ def ai_text_chunk(
 @node(
     name="AI Batch Embeddings",
     id="ai_batch_embeddings",
+    param_groups={
+        "Options": ["output_field", "input_type", "batch_size", "max_rows", "timeout_seconds"]
+    },
     category=AI_CATEGORY,
     icon="brand:openai",
     params={
@@ -1077,6 +1103,16 @@ def ai_batch_embeddings(
 @node(
     name="AI Map Dataset",
     id="ai_dataset_map",
+    param_groups={
+        "Options": [
+            "system",
+            "output_column",
+            "max_rows",
+            "temperature",
+            "max_tokens",
+            "timeout_seconds",
+        ]
+    },
     category=AI_CATEGORY,
     icon="sparkles",
     input_kinds={"input": "dataset"},
@@ -1147,6 +1183,16 @@ def ai_dataset_map(
 @node(
     name="AI Vector Retriever",
     id="ai_vector_retriever",
+    param_groups={
+        "Options": [
+            "embedding_provider",
+            "embedding_model",
+            "namespace",
+            "top_k",
+            "include_metadata",
+            "timeout_seconds",
+        ]
+    },
     category=AI_CATEGORY,
     icon="brand:pinecone",
     params={
@@ -1229,6 +1275,9 @@ def ai_vector_retriever(
 @node(
     name="AI RAG Answer",
     id="ai_rag_answer",
+    param_groups={
+        "Options": ["max_context_chars", "system", "temperature", "max_tokens", "timeout_seconds"]
+    },
     category=AI_CATEGORY,
     icon="sparkles",
     params={
@@ -1327,6 +1376,7 @@ def ai_rag_answer(
 @node(
     name="AI Simple Memory",
     id="ai_memory_buffer",
+    param_groups={"Options": ["input_role", "max_messages"]},
     category=AI_CATEGORY,
     icon="database",
     outputs=["memory"],
@@ -1376,6 +1426,7 @@ def ai_memory_buffer(
 @node(
     name="AI Tool",
     id="ai_tool",
+    param_groups={"Options": ["parameters_schema_json", "url", "method", "workflow_id"]},
     category=AI_CATEGORY,
     icon="code",
     params={
@@ -1452,6 +1503,17 @@ def ai_tool_box(
 @node(
     name="AI Agent",
     id="ai_agent",
+    param_groups={
+        "Options": [
+            "fallback_model",
+            "system",
+            "max_steps",
+            "memory_max_messages",
+            "allow_side_effects",
+            "temperature",
+            "timeout_seconds",
+        ]
+    },
     category=AI_CATEGORY,
     icon="ai",
     inputs=["input", "model", "memory", "tools"],
@@ -1593,6 +1655,7 @@ async def ai_agent(
 @node(
     name="AI Moderation Guard",
     id="ai_moderation_guard",
+    param_groups={"Options": ["model"]},
     category=AI_CATEGORY,
     icon="alert",
     outputs=["safe", "flagged"],
@@ -1640,6 +1703,7 @@ def ai_moderation_guard(
 @node(
     name="AI Vision Analyze",
     id="ai_vision_analyze",
+    param_groups={"Options": ["mime_type", "timeout_seconds"]},
     category=AI_CATEGORY,
     icon="eye",
     params={
@@ -1712,6 +1776,7 @@ def ai_vision_analyze(
 @node(
     name="AI Image Generate",
     id="ai_image_generate",
+    param_groups={"Options": ["model", "size", "filename"]},
     category=AI_CATEGORY,
     icon="sparkles",
     output_kinds={"main": "artifact"},
