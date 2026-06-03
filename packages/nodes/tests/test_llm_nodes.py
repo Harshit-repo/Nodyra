@@ -326,3 +326,11 @@ def test_tool_box_merges_unique_tools() -> None:
 
     assert out["count"] == 2
     assert [tool["name"] for tool in out["tools"]] == ["search", "summarize"]
+
+
+def test_ai_chat_model_param_uses_dynamic_loader() -> None:
+    manifest = registry.get("ai_chat").manifest
+    model = next(p for p in manifest.params if p.name == "model")
+    assert model.load_options == "llm_models"
+    assert "credentials" in model.depends_on
+    assert model.choices  # curated fallback preserved

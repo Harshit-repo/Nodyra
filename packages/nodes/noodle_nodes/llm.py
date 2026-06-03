@@ -769,6 +769,8 @@ def ai_prompt_template(
             "choices": CHAT_MODEL_CHOICES,
             "placeholder": "gpt-4.1-mini",
             "description": "Model/deployment id. OpenRouter models use provider/model ids.",
+            "load_options": "llm_models",
+            "depends_on": ["credentials"],
         },
         "temperature": {"description": "Sampling temperature for connected calls."},
         "max_tokens": {"description": "Optional response token limit."},
@@ -843,7 +845,12 @@ def ai_chat_model(
             "choices": CHAT_PROVIDER_CHOICES,
             "description": "LLM provider API shape.",
         },
-        "model": {"choices": CHAT_MODEL_CHOICES, "placeholder": "gpt-4.1-mini"},
+        "model": {
+            "choices": CHAT_MODEL_CHOICES,
+            "placeholder": "gpt-4.1-mini",
+            "load_options": "llm_models",
+            "depends_on": ["credentials"],
+        },
         "system": {"multiline": True},
         "prompt": {"multiline": True, "description": "User prompt. Blank uses input."},
         "messages_json": {
@@ -912,7 +919,12 @@ def ai_chat(
         "provider": {
             "choices": CHAT_PROVIDER_CHOICES,
         },
-        "model": {"choices": CHAT_MODEL_CHOICES, "placeholder": "gpt-4.1-mini"},
+        "model": {
+            "choices": CHAT_MODEL_CHOICES,
+            "placeholder": "gpt-4.1-mini",
+            "load_options": "llm_models",
+            "depends_on": ["credentials"],
+        },
         "system": {"multiline": True},
         "prompt": {"multiline": True, "description": "Extraction prompt. Blank uses input."},
         "schema_json": {
@@ -1045,7 +1057,12 @@ def ai_text_chunk(
             "description": "OpenAI/OpenAI-compatible/Cohere/Ollama credential.",
         },
         "provider": {"choices": EMBEDDING_PROVIDER_CHOICES},
-        "model": {"choices": EMBEDDING_MODEL_CHOICES, "placeholder": "text-embedding-3-small"},
+        "model": {
+            "choices": EMBEDDING_MODEL_CHOICES,
+            "placeholder": "text-embedding-3-small",
+            "load_options": "embedding_models",
+            "depends_on": ["credentials"],
+        },
         "text_field": {"placeholder": "text"},
         "output_field": {"placeholder": "embedding"},
         "input_type": {
@@ -1132,7 +1149,12 @@ def ai_batch_embeddings(
         "provider": {
             "choices": CHAT_PROVIDER_CHOICES,
         },
-        "model": {"choices": CHAT_MODEL_CHOICES, "placeholder": "gpt-4.1-mini"},
+        "model": {
+            "choices": CHAT_MODEL_CHOICES,
+            "placeholder": "gpt-4.1-mini",
+            "load_options": "llm_models",
+            "depends_on": ["credentials"],
+        },
         "system": {"multiline": True},
         "prompt_template": {
             "multiline": True,
@@ -1216,6 +1238,8 @@ def ai_dataset_map(
         "embedding_model": {
             "choices": EMBEDDING_MODEL_CHOICES,
             "placeholder": "text-embedding-3-small",
+            "load_options": "embedding_models",
+            "depends_on": ["embedding_credentials"],
         },
         "namespace": {"placeholder": "default"},
         "top_k": {"description": "Number of matches to return."},
@@ -1295,7 +1319,12 @@ def ai_vector_retriever(
         "provider": {
             "choices": CHAT_PROVIDER_CHOICES,
         },
-        "model": {"choices": CHAT_MODEL_CHOICES, "placeholder": "gpt-4.1-mini"},
+        "model": {
+            "choices": CHAT_MODEL_CHOICES,
+            "placeholder": "gpt-4.1-mini",
+            "load_options": "llm_models",
+            "depends_on": ["credentials"],
+        },
         "question": {"multiline": True, "description": "Question. Blank uses input.query."},
         "context_field": {"placeholder": "text"},
         "max_context_chars": {"description": "Total context character budget."},
@@ -1548,6 +1577,8 @@ def ai_tool_box(
             "choices": CHAT_MODEL_CHOICES,
             "placeholder": "gpt-4.1-mini",
             "description": "Used only when no AI Chat Model is connected to the model port.",
+            "load_options": "llm_models",
+            "depends_on": ["credentials"],
         },
         "system": {"multiline": True},
         "task": {"multiline": True, "description": "Agent task. Blank uses input.task/input."},
@@ -1726,7 +1757,12 @@ def ai_moderation_guard(
             **cred_multi("llm_provider", "Vision provider credential", ["api_key", "base_url"]),
             "description": "OpenAI-compatible vision credential.",
         },
-        "model": {"choices": VISION_MODEL_CHOICES, "placeholder": "gpt-4.1-mini"},
+        "model": {
+            "choices": VISION_MODEL_CHOICES,
+            "placeholder": "gpt-4.1-mini",
+            "load_options": "llm_models",
+            "depends_on": ["credentials"],
+        },
         "prompt": {"multiline": True},
         "image_url": {"description": "Public image URL. Used when image_base64 is blank."},
         "image_base64": {

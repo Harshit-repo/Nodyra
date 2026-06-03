@@ -103,6 +103,8 @@ AZURE_API_VERSIONS = [
             "choices": OPENAI_MODEL_CHOICES,
             "placeholder": "gpt-4.1-mini",
             "description": "Model ID.",
+            "load_options": "llm_models",
+            "depends_on": ["credentials"],
         },
         "temperature": {
             "description": "Sampling temperature (0–2).",
@@ -186,6 +188,8 @@ def ai_chat_model_openai(
             "choices": ANTHROPIC_MODEL_CHOICES,
             "placeholder": "claude-3-5-haiku-latest",
             "description": "Anthropic Claude model ID.",
+            "load_options": "llm_models",
+            "depends_on": ["credentials"],
         },
         "temperature": {
             "description": "Sampling temperature (0–1).",
@@ -261,6 +265,8 @@ def ai_chat_model_anthropic(
         "model": {
             "placeholder": "gpt-4o-mini",
             "description": "Deployment/model name on Azure.",
+            "load_options": "llm_models",
+            "depends_on": ["credentials"],
         },
         "temperature": {
             "description": "Sampling temperature (0–2).",
