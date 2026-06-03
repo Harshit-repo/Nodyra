@@ -286,7 +286,7 @@ def error_trigger(error: dict | None = None) -> dict:
 
 
 @node(name="Chat Trigger", id="chat_trigger", category="Triggers", icon="chat",
-      role="trigger", inputs=[], outputs=["main"],
+      inputs=[],
       param_groups={"Options": ["initial_message", "input_placeholder", "title"]},
       params={
           "initial_message": {

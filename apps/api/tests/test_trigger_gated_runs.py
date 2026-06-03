@@ -419,3 +419,9 @@ async def test_run_this_step_on_node_with_trigger_upstream_succeeds(
         json={"targets": ["m_out"]},
     )
     assert response.status_code == 202
+
+
+def test_chat_trigger_is_recognized_trigger_type() -> None:
+    from app.services.graph_utils import is_trigger_type
+
+    assert is_trigger_type("chat_trigger") is True

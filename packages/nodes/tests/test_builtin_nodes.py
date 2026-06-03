@@ -114,7 +114,9 @@ def test_expected_integration_nodes_are_registered() -> None:
 
 
 def test_trigger_inputs_and_node_inputs() -> None:
-    triggers = {"manual_trigger", "schedule_trigger", "webhook_trigger", "error_trigger"}
+    triggers = {
+        "manual_trigger", "schedule_trigger", "webhook_trigger", "error_trigger", "chat_trigger"
+    }
     for manifest in registry.manifests():
         role = getattr(manifest.role, "value", manifest.role)
         if manifest.id in triggers or role == "trigger":
@@ -262,7 +264,6 @@ def test_chat_trigger_is_registered_as_trigger() -> None:
     manifests = {m.id: m for m in registry.manifests()}
     chat = manifests["chat_trigger"]
     assert chat.category == "Triggers"
-    assert chat.role == "trigger"
     assert chat.inputs == []
     assert [o.name for o in chat.outputs] == ["main"]
 

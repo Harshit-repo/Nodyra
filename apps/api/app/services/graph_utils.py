@@ -15,6 +15,7 @@ TRIGGER_TYPES: tuple[str, ...] = (
     "manual_trigger",
     "webhook_trigger",
     "schedule_trigger",
+    "chat_trigger",
 )
 
 
