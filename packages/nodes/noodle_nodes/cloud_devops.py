@@ -78,6 +78,7 @@ _AWS_CREDENTIALS_PARAM = {
             "multiline": True,
         },
         "invocation_type": {
+            "group": "Options",
             "choices": ["RequestResponse", "Event", "DryRun"],
             "description": "Synchronous, fire-and-forget, or validate-only.",
         },
@@ -152,6 +153,7 @@ def aws_lambda_invoke(
             "multiline": True,
         },
         "delay_seconds": {
+            "group": "Options",
             "description": "Delay before the message is delivered (0-900).",
         },
         "credentials": _AWS_CREDENTIALS_PARAM,
@@ -209,12 +211,15 @@ def aws_sqs_send(
             "description": "Full SQS queue URL.",
         },
         "max_messages": {
+            "group": "Options",
             "description": "Up to 10 messages per call.",
         },
         "wait_time_seconds": {
+            "group": "Options",
             "description": "Long-poll wait (0-20).",
         },
         "delete_after_receive": {
+            "group": "Options",
             "description": "Auto-delete received messages from the queue.",
         },
         "credentials": _AWS_CREDENTIALS_PARAM,
@@ -280,6 +285,7 @@ def aws_sqs_receive(
             "description": "Topic ARN to publish to.",
         },
         "subject": {
+            "group": "Options",
             "description": "Optional subject line (used by email subscribers).",
         },
         "message": {
@@ -340,7 +346,7 @@ def aws_sns_publish(
             "placeholder": "1.2.3.4",
             "description": "Hostname or IP of the SSH server.",
         },
-        "port": {"description": "SSH port (default 22)."},
+        "port": {"group": "Options", "description": "SSH port (default 22)."},
         "credentials": {
             **cred_multi(
                 "ssh",
@@ -357,6 +363,7 @@ def aws_sns_publish(
             "multiline": True,
         },
         "timeout_seconds": {
+            "group": "Options",
             "description": "Connection + command timeout.",
         },
     },
@@ -446,10 +453,12 @@ def ssh_execute(
             "description": "Target directory (will be created).",
         },
         "branch": {
+            "group": "Options",
             "placeholder": "main",
             "description": "Optional branch to clone.",
         },
         "depth": {
+            "group": "Options",
             "description": "Shallow clone depth (0 = full history).",
         },
     },
@@ -508,10 +517,12 @@ async def git_clone(
             "description": "Existing repo directory to pull into.",
         },
         "remote": {
+            "group": "Options",
             "placeholder": "origin",
             "description": "Optional remote name.",
         },
         "branch": {
+            "group": "Options",
             "description": "Optional branch to pull.",
         },
     },

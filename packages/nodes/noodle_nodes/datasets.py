@@ -269,10 +269,12 @@ register_materializer(materialize_dataset)
             "multiline": True,
         },
         "delimiter": {
+            "group": "Options",
             "placeholder": ",",
             "description": "Field delimiter (default ,).",
         },
         "has_header": {
+            "group": "Options",
             "description": "First row is the header row.",
         },
     },
@@ -347,10 +349,12 @@ def csv_parse(
             "description": "Filename for the exported CSV artifact.",
         },
         "delimiter": {
+            "group": "Options",
             "placeholder": ",",
             "description": "Field delimiter (default ,).",
         },
         "include_header": {
+            "group": "Options",
             "description": "Write a header row.",
         },
     },

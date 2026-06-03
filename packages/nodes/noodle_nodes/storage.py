@@ -82,16 +82,19 @@ def _coerce_json(value: Any, *, default: Any = None) -> Any:
             "description": "Operation to perform.",
         },
         "filter_json": {
+            "group": "Options",
             "placeholder": '{"status": "open"}',
             "description": "Filter / query document as JSON.",
             "multiline": True,
         },
         "data_json": {
+            "group": "Options",
             "placeholder": '{"$set": {"status": "closed"}}',
             "description": "Update or insert document as JSON.",
             "multiline": True,
         },
         "limit": {
+            "group": "Options",
             "description": "Max results for 'find' (0 = no limit).",
         },
     },
@@ -182,6 +185,7 @@ def mongodb_query(
         },
         "key": {"description": "Key (or channel for publish)."},
         "value": {
+            "group": "Options",
             "description": (
                 "Value for set/publish/lpush. Falls back to the wired input "
                 "if blank."
@@ -189,6 +193,7 @@ def mongodb_query(
             "multiline": True,
         },
         "ttl_seconds": {
+            "group": "Options",
             "description": "TTL for 'set' or value for 'expire'.",
         },
     },
@@ -326,6 +331,7 @@ def elasticsearch_search(
             "multiline": True,
         },
         "content_type": {
+            "group": "Options",
             "placeholder": "application/json",
             "description": "MIME type to set on the uploaded object.",
         },
@@ -379,10 +385,12 @@ def gcs_upload(
     params={
         "bucket": {"description": "GCS bucket name."},
         "prefix": {
+            "group": "Options",
             "placeholder": "reports/",
             "description": "Optional object name prefix.",
         },
         "max_results": {
+            "group": "Options",
             "description": "Max objects to return (0 = default).",
         },
     },

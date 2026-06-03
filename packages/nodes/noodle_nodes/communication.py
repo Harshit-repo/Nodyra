@@ -60,10 +60,12 @@ def _expect_ok(response: requests.Response, service: str) -> dict:
             "multiline": True,
         },
         "parse_mode": {
+            "group": "Options",
             "choices": ["", "Markdown", "MarkdownV2", "HTML"],
             "description": "Optional rich-text format. Leave blank for plain text.",
         },
         "disable_notification": {
+            "group": "Options",
             "description": "Send silently — no sound or vibration for recipients.",
         },
     },
@@ -114,6 +116,7 @@ def telegram_send_message(
             ),
         },
         "title": {
+            "group": "Options",
             "placeholder": "Build succeeded",
             "description": "Optional card title.",
         },
@@ -125,6 +128,7 @@ def telegram_send_message(
             "multiline": True,
         },
         "theme_color": {
+            "group": "Options",
             "placeholder": "0078d4",
             "description": "Optional hex colour (no #) for the card accent.",
         },
@@ -189,6 +193,7 @@ def teams_send_webhook(
             "multiline": True,
         },
         "content_type": {
+            "group": "Options",
             "choices": ["text/plain", "text/html"],
             "description": "MIME type of the body.",
         },
@@ -315,6 +320,7 @@ def twilio_send_sms(
             "description": "Pushover app token + user/group key.",
         },
         "title": {
+            "group": "Options",
             "placeholder": "Optional title",
             "description": "Notification title (optional).",
         },
@@ -326,6 +332,7 @@ def twilio_send_sms(
             "multiline": True,
         },
         "priority": {
+            "group": "Options",
             "choices": ["-2", "-1", "0", "1", "2"],
             "description": (
                 "-2 silent, -1 quiet, 0 normal (default), 1 high, "

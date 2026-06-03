@@ -205,6 +205,7 @@ def markdown_to_html(input: Any = None, text: str = "") -> str:
             "description": "CSS selector. Returns a list of matched element text.",
         },
         "attribute": {
+            "group": "Options",
             "placeholder": "href",
             "description": (
                 "Optional element attribute to return instead of text "

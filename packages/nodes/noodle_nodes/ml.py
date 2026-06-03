@@ -293,12 +293,13 @@ _REGRESSOR_ALGOS = [
         },
         "algorithm": {"choices": _CLASSIFIER_ALGOS},
         "test_size": {
+            "group": "Options",
             "description": "Fraction of rows held out to score the model "
             "(0.0–0.9).",
         },
-        "scale": {"description": "Standardize features before training."},
-        "random_state": {"description": "Seed for a reproducible split."},
-        "max_iter": {"description": "Max iterations for logistic regression."},
+        "scale": {"group": "Options", "description": "Standardize features before training."},
+        "random_state": {"group": "Options", "description": "Seed for a reproducible split."},
+        "max_iter": {"group": "Options", "description": "Max iterations for logistic regression."},
     },
 )
 def train_classifier(
@@ -406,11 +407,12 @@ def train_classifier(
         },
         "algorithm": {"choices": _REGRESSOR_ALGOS},
         "test_size": {
+            "group": "Options",
             "description": "Fraction of rows held out to score the model "
             "(0.0–0.9).",
         },
-        "scale": {"description": "Standardize features before training."},
-        "random_state": {"description": "Seed for a reproducible split."},
+        "scale": {"group": "Options", "description": "Standardize features before training."},
+        "random_state": {"group": "Options", "description": "Seed for a reproducible split."},
     },
 )
 def train_regressor(
@@ -648,7 +650,7 @@ def evaluate_model(
     params={
         "target_column": {"description": "Target column used to score features."},
         "k": {"description": "Number of top features to keep."},
-        "task": {"choices": ["auto", "classification", "regression"]},
+        "task": {"group": "Options", "choices": ["auto", "classification", "regression"]},
     },
 )
 def select_features(
@@ -965,10 +967,12 @@ def _score_frame(pipeline, task: str, frame, features: list[str], target: str) -
             "model's training target.",
         },
         "metric": {
+            "group": "Options",
             "description": "Primary metric to watch.",
             "choices": ["auto", "accuracy", "f1", "r2", "rmse", "mae"],
         },
         "threshold": {
+            "group": "Options",
             "description": "Raise an alert when the metric crosses this bound "
             "(below for higher-is-better metrics, above for error metrics). "
             "Blank disables the threshold check.",

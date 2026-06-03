@@ -84,8 +84,13 @@ def manual_trigger(data: dict | None = None) -> dict:
       inputs=[], params={
           "interval": {"choices": ["minutes", "hours", "days"]},
           "every": {"description": "Run once per this many intervals."},
-          "cron": {"placeholder": "0 9 * * 1-5", "description": "Optional cron expression."},
+          "cron": {
+              "group": "Options",
+              "placeholder": "0 9 * * 1-5",
+              "description": "Optional cron expression.",
+          },
           "tz": {
+              "group": "Options",
               "placeholder": "UTC",
               "description": (
                   "Timezone for the cron expression — IANA name like "
@@ -870,7 +875,7 @@ def http_request(input: Any = None, url: str = "", method: str = "GET",
     "query": {"multiline": True, "description": "GraphQL query or mutation."},
     "variables": {"description": "GraphQL variables object.", "key_value": True},
     "headers": {"description": "Request headers.", "key_value": True},
-    "timeout_seconds": {"description": "Per-request timeout in seconds."},
+    "timeout_seconds": {"group": "Options", "description": "Per-request timeout in seconds."},
 })
 def graphql_request(
     input: Any = None,
@@ -916,8 +921,11 @@ def graphql_request(
     category="Transform",
     icon="webhook",
     params={
-        "status_code": {"description": "HTTP status code for the webhook response."},
-        "headers": {"description": "Response headers.", "key_value": True},
+        "status_code": {
+            "group": "Options",
+            "description": "HTTP status code for the webhook response.",
+        },
+        "headers": {"group": "Options", "description": "Response headers.", "key_value": True},
         "body_field": {
             "placeholder": "payload",
             "description": (
@@ -956,7 +964,7 @@ def _b64url_decode(payload: str) -> bytes:
 @node(name="JWT", id="jwt", category="Transform", icon="key", params={
     "operation": {"choices": ["sign", "verify", "decode"]},
     "secret": {"description": "HMAC secret for sign/verify. Not required for decode."},
-    "algorithm": {"choices": ["HS256", "HS384", "HS512"]},
+    "algorithm": {"group": "Options", "choices": ["HS256", "HS384", "HS512"]},
 })
 def jwt_node(
     input: Any = None,
