@@ -127,3 +127,88 @@ async def test_chat_endpoint_404_for_missing_workflow(client: AsyncClient) -> No
         json={"message": "x", "session_id": "s"},
     )
     assert resp.status_code == 404
+
+
+def _chat_error_graph() -> dict:
+    # Chat Trigger -> code node that always raises -> run ends in error.
+    return {
+        "nodes": [
+            {"id": "chat", "type": "chat_trigger", "params": {},
+             "position": {"x": 0, "y": 0}},
+            {"id": "boom", "type": "code",
+             "params": {"code": "raise ValueError('boom')"},
+             "position": {"x": 250, "y": 0}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "chat", "source_output": "main",
+             "target": "boom", "target_input": "input"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_run_chat_turn_failed_run_returns_error_status(client: AsyncClient) -> None:
+    from app.services.chat_service import run_chat_turn
+
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Boom"})
+    ).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": _chat_error_graph()}
+    )
+
+    result = await run_chat_turn(workflow_id, "hi", "s-err", prefer_draft=True)
+
+    assert result.status == "error"
+    assert result.run_id  # the run exists and is observable
+    assert result.session_id == "s-err"
+
+
+@pytest.mark.asyncio
+async def test_chat_endpoint_error_run_returns_error_status(client: AsyncClient) -> None:
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Boom2"})
+    ).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": _chat_error_graph()}
+    )
+
+    resp = await client.post(
+        f"/workflows/{workflow_id}/chat",
+        json={"message": "hi", "session_id": "s"},
+    )
+    # The HTTP call succeeds (200); the body reports the run failed.
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_run_chat_turn_threads_session_across_turns(client: AsyncClient) -> None:
+    # Lightweight session-propagation check: the chat_trigger's sessionId reaches
+    # the downstream node on every turn for the same session id. (Full agent
+    # memory persistence with a model stub is a separate, heavier test.)
+    from app.services.chat_service import run_chat_turn
+
+    graph = {
+        "nodes": [
+            {"id": "chat", "type": "chat_trigger", "params": {},
+             "position": {"x": 0, "y": 0}},
+            {"id": "echo", "type": "code",
+             "params": {"code": "output = {'answer': input['sessionId']}"},
+             "position": {"x": 250, "y": 0}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "chat", "source_output": "main",
+             "target": "echo", "target_input": "input"},
+        ],
+    }
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Threaded"})
+    ).json()["id"]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
+
+    first = await run_chat_turn(workflow_id, "one", "sess-keep", prefer_draft=True)
+    second = await run_chat_turn(workflow_id, "two", "sess-keep", prefer_draft=True)
+
+    assert first.reply == "sess-keep"
+    assert second.reply == "sess-keep"

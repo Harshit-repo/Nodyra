@@ -16,6 +16,7 @@ interface ChatPanelProps {
   initialMessage: string;
   onRun: (runId: string) => void;
   onClose: () => void;
+  onViewRun?: (runId: string) => void;
 }
 
 function newSessionId(): string {
@@ -32,6 +33,7 @@ export function ChatPanel({
   initialMessage,
   onRun,
   onClose,
+  onViewRun,
 }: ChatPanelProps) {
   const [sessionId, setSessionId] = useState<string>(newSessionId);
   const [messages, setMessages] = useState<ChatMessage[]>(
@@ -95,6 +97,15 @@ export function ChatPanel({
             }`}
           >
             {msg.text}
+            {msg.error && msg.runId && onViewRun ? (
+              <button
+                type="button"
+                className="chat-view-run"
+                onClick={() => onViewRun(msg.runId!)}
+              >
+                View run
+              </button>
+            ) : null}
           </div>
         ))}
         {sending ? (

@@ -20,11 +20,15 @@ from app.services.runner import start_run
 from app.services.triggers import _await_run_terminal, _last_node_output
 
 
-class NoChatTriggerError(Exception):
-    """Workflow is missing (or has no) chat_trigger node."""
+class ChatError(Exception):
+    """Base for chat-turn failures."""
 
 
-class WorkflowNotFoundError(NoChatTriggerError):
+class NoChatTriggerError(ChatError):
+    """Workflow has no chat_trigger node (or has no graph)."""
+
+
+class WorkflowNotFoundError(ChatError):
     """Workflow id does not exist."""
 
 

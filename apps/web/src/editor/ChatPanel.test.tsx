@@ -66,4 +66,35 @@ describe("ChatPanel", () => {
 
     expect(sent[0]).not.toBe(sent[1]);
   });
+
+  it("shows a View run link on an errored turn and calls onViewRun", async () => {
+    vi.spyOn(api, "sendChatMessage").mockResolvedValue({
+      run_id: "rX",
+      reply: "It failed",
+      session_id: "s1",
+      status: "error",
+    });
+    const onViewRun = vi.fn();
+
+    render(
+      <ChatPanel
+        workflowId="wf1"
+        title="Chat"
+        placeholder="Type…"
+        initialMessage=""
+        onRun={() => {}}
+        onClose={() => {}}
+        onViewRun={onViewRun}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Type…"), {
+      target: { value: "go" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    const link = await screen.findByRole("button", { name: /view run/i });
+    fireEvent.click(link);
+    expect(onViewRun).toHaveBeenCalledWith("rX");
+  });
 });

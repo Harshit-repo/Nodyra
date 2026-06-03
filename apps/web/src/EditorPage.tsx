@@ -1274,6 +1274,7 @@ export function EditorPage() {
               initialMessage={params.initial_message ?? ""}
               onRun={(runId) => connectRunStream(runId)}
               onClose={() => setChatOpen(false)}
+              onViewRun={(runId) => viewRun(runId)}
             />
           );
         })()

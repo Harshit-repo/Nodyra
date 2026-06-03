@@ -4190,3 +4190,13 @@ th.sortable:hover { background:var(--bg-3); }
 .chat-panel-input input {
   flex: 1;
 }
+.chat-view-run {
+  margin-top: 4px;
+  font-size: 12px;
+  text-decoration: underline;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+}
