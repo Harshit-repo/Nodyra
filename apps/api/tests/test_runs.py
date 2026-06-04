@@ -1242,3 +1242,27 @@ async def test_debug_snapshot_404_for_unknown_run(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
+
+
+async def test_run_blocked_when_node_package_missing(client: AsyncClient) -> None:
+    env = (await client.post(
+        "/environments", json={"name": "bare", "packages": []}
+    )).json()
+    wf = (await client.post("/workflows", json={"name": "needs-duckdb"})).json()
+    graph = {
+        "nodes": [
+            {"id": "t", "type": "manual_trigger", "params": {},
+             "position": {"x": 0, "y": 0}},
+            {"id": "q", "type": "duckdb_sql", "params": {},
+             "position": {"x": 1, "y": 0}},
+        ],
+        "edges": [{"id": "e", "source": "t", "source_output": "main",
+                   "target": "q", "target_input": "input"}],
+    }
+    await client.put(
+        f"/workflows/{wf['id']}",
+        json={"environment_id": env["id"], "graph": graph},
+    )
+    resp = await client.post(f"/workflows/{wf['id']}/run")
+    assert resp.status_code == 400
+    assert "duckdb" in resp.json()["detail"].lower()

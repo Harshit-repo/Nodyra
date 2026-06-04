@@ -50,6 +50,7 @@ from app.services.graph_utils import (
     targets_have_trigger,
 )
 from app.services.live_settings import get_live_settings
+from app.services.package_preflight import find_missing_packages, format_missing
 from app.services.redaction import load_secret_values, redact_value
 from app.services.remote_dispatch import (
     _QueuedError,
@@ -647,6 +648,20 @@ async def start_run(
                     runner_pool_id = env_obj.runner_pool_id
         if wf_obj is None:
             wf_obj = await session.get(Workflow, workflow_id)
+
+        # Preflight: block the run if a node needs a package the env lacks.
+        preflight_env = None
+        if wf_obj and wf_obj.environment_id:
+            preflight_env = await session.get(Environment, wf_obj.environment_id)
+        if preflight_env is None:
+            preflight_env = await session.scalar(
+                select(Environment).where(Environment.is_global.is_(True))
+            )
+        if preflight_env is not None:
+            missing = find_missing_packages(graph, list(preflight_env.packages))
+            if missing:
+                raise ValueError(format_missing(missing))
+
         if wf_obj is not None and wf_obj.allow_concurrent is False:
             # Single-flight gate — return 409 (via RuntimeError surfaced by
             # the router) when another run is already running or queued.
