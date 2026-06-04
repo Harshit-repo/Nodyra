@@ -163,7 +163,9 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const { inputs } = manifest;
   const sideInputs = inputs.filter((port) => !isAgentBottomInput(manifest.id, port.name));
   const bottomInputs = inputs.filter((port) => isAgentBottomInput(manifest.id, port.name));
-  const outputNames = outputsOverride ?? manifest.outputs.map((o) => o.name);
+  const outputNames = data.toolMode
+    ? ["tool"]
+    : outputsOverride ?? manifest.outputs.map((o) => o.name);
   const runStatus = useEditor((s) => s.runStatus[id]);
   const runMeta = useEditor((s) => s.runMeta[id]);
   const running = useEditor((s) => s.running);
@@ -778,17 +780,24 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
 
         {outputNames.map((name, i) => {
           const spec = manifest.outputs.find((o) => o.name === name);
+          const isToolPort = Boolean(data.toolMode) && name === "tool";
           return (
             <Handle
               key={`out-${name}`}
               type="source"
               position={Position.Right}
               id={name}
-              title={`${name}: ${portKindLabel(spec?.data_kind)}`}
-              className={portHandleClass(manifest.id, name, spec?.data_kind)}
+              title={isToolPort ? "tool: AI tool" : `${name}: ${portKindLabel(spec?.data_kind)}`}
+              className={
+                isToolPort
+                  ? "handle-ai-tools"
+                  : portHandleClass(manifest.id, name, spec?.data_kind)
+              }
               style={{
                 top: portTop(i, outputNames.length),
-                background: semanticPortColor(manifest.id, name, spec?.data_kind, color),
+                background: isToolPort
+                  ? PORT_KIND_COLOR.ai_tool
+                  : semanticPortColor(manifest.id, name, spec?.data_kind, color),
               }}
             />
           );
@@ -796,7 +805,9 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
 
         {outputNames.map((name, i) => {
           const spec = manifest.outputs.find((o) => o.name === name);
-          const shouldShow = outputNames.length > 1 || spec?.data_kind === "dataset";
+          const isToolPort = Boolean(data.toolMode) && name === "tool";
+          const shouldShow =
+            outputNames.length > 1 || spec?.data_kind === "dataset" || isToolPort;
           if (!shouldShow) return null;
           return (
             <span
@@ -804,7 +815,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
               className={`port-tag${spec?.data_kind === "dataset" ? " port-tag-dataset" : ""}`}
               style={{ top: portTop(i, outputNames.length) }}
             >
-              {spec?.data_kind === "dataset" ? `${name} · DatasetRef` : name}
+              {isToolPort ? "tool" : spec?.data_kind === "dataset" ? `${name} · DatasetRef` : name}
             </span>
           );
         })}
