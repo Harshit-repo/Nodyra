@@ -2546,6 +2546,112 @@ export function NodeCodePanel({
   );
 }
 
+/**
+ * "Use as tool" section: an animated on/off toggle that turns a normal node
+ * into a tool an AI Agent can call. When on, the node's main input/output is
+ * replaced by a single `tool` port (see NodeCard) and each parameter gains a
+ * Fixed/From-AI control. Rendered identically in the right inspector and the
+ * NDV modal so the two never drift.
+ */
+export function ToolModeSection({ nodeId }: { nodeId: string }) {
+  const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
+  const updateNodeSettings = useEditor((s) => s.updateNodeSettings);
+  if (!node || !node.data.manifest.usable_as_tool) return null;
+  const { manifest } = node.data;
+  const on = Boolean(node.data.toolMode);
+  return (
+    <div className="inspector-section tool-mode-section">
+      <label className="field-toggle tool-mode-toggle">
+        <input
+          type="checkbox"
+          checked={on}
+          onChange={(e) => updateNodeSettings(nodeId, { toolMode: e.target.checked })}
+        />
+        <span className="field-toggle-track" />
+        <span className="field-toggle-label">Use as tool</span>
+      </label>
+      <p className="field-desc">
+        Expose this node as a tool an AI Agent can call. Its{" "}
+        <strong>tool</strong> output replaces the normal input/output — the
+        Agent decides when to invoke it and supplies any "From AI" arguments.
+      </p>
+      {on && (
+        <>
+          <div className="field">
+            <div className="field-label">
+              <span className="field-name">Tool name</span>
+            </div>
+            <input
+              className="field-input"
+              value={node.data.toolName ?? ""}
+              placeholder={manifest.id}
+              onChange={(e) => updateNodeSettings(nodeId, { toolName: e.target.value })}
+            />
+          </div>
+          <div className="field">
+            <div className="field-label">
+              <span className="field-name">Tool description</span>
+            </div>
+            <textarea
+              className="field-input"
+              rows={2}
+              value={node.data.toolDescription ?? ""}
+              placeholder={manifest.description || manifest.name}
+              onChange={(e) =>
+                updateNodeSettings(nodeId, { toolDescription: e.target.value })
+              }
+            />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Per-parameter Fixed/From-AI segmented control, shown only in tool mode for
+ * non-credential params. "From AI" stores a `$fromAI(...)` expression the
+ * engine resolves at tool-call time. Returns null when not applicable.
+ */
+export function FromAiParamControl({
+  nodeId,
+  spec,
+  value,
+  onSetParam,
+}: {
+  nodeId: string;
+  spec: ParamSpec;
+  value: unknown;
+  onSetParam: (name: string, value: unknown) => void;
+}) {
+  const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
+  if (!node?.data.toolMode || spec.type === "credential") return null;
+  const fromAi = isFromAiExpr(value);
+  return (
+    <div className="from-ai-toggle" role="group" aria-label="Parameter source">
+      <button
+        type="button"
+        className={fromAi ? "" : "active"}
+        onClick={() => onSetParam(spec.name, spec.default ?? "")}
+      >
+        Fixed
+      </button>
+      <button
+        type="button"
+        className={fromAi ? "active" : ""}
+        onClick={() =>
+          onSetParam(
+            spec.name,
+            fromAiExpr(spec.name, spec.description || "", paramArgType(spec.type)),
+          )
+        }
+      >
+        From AI
+      </button>
+    </div>
+  );
+}
+
 export function NodeDetails({
   nodeId,
   showHeader = true,
@@ -2555,7 +2661,6 @@ export function NodeDetails({
 }) {
   const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
   const updateParams = useEditor((s) => s.updateParams);
-  const updateNodeSettings = useEditor((s) => s.updateNodeSettings);
   const runStatus = useEditor((s) => s.runStatus[nodeId]);
   const runOutput = useEditor((s) => s.runOutputs[nodeId]);
   const runMeta = useEditor((s) => s.runMeta[nodeId]);
@@ -2674,55 +2779,7 @@ export function NodeDetails({
       ) : (
         <>
 
-      {manifest.usable_as_tool && (
-        <div className="inspector-section tool-mode-section">
-          <label className="tool-mode-toggle">
-            <input
-              type="checkbox"
-              checked={Boolean(node.data.toolMode)}
-              onChange={(e) =>
-                updateNodeSettings(node.id, { toolMode: e.target.checked })
-              }
-            />
-            <span>Use as tool</span>
-          </label>
-          <p className="field-desc">
-            Expose this node as a tool an AI Agent can call. Connect its{" "}
-            <strong>tool</strong> output to the Agent's tool port.
-          </p>
-          {node.data.toolMode && (
-            <>
-              <div className="field">
-                <div className="field-label">
-                  <span className="field-name">Tool name</span>
-                </div>
-                <input
-                  className="field-input"
-                  value={node.data.toolName ?? ""}
-                  placeholder={manifest.id}
-                  onChange={(e) =>
-                    updateNodeSettings(node.id, { toolName: e.target.value })
-                  }
-                />
-              </div>
-              <div className="field">
-                <div className="field-label">
-                  <span className="field-name">Tool description</span>
-                </div>
-                <textarea
-                  className="field-input"
-                  rows={2}
-                  value={node.data.toolDescription ?? ""}
-                  placeholder={manifest.description || manifest.name}
-                  onChange={(e) =>
-                    updateNodeSettings(node.id, { toolDescription: e.target.value })
-                  }
-                />
-              </div>
-            </>
-          )}
-        </div>
-      )}
+      <ToolModeSection nodeId={node.id} />
 
       <div className="inspector-section">
         <div className="inspector-section-head">Parameters</div>
@@ -2765,33 +2822,12 @@ export function NodeDetails({
                   {fx && <span className="fx-badge" title="Contains expression">fx</span>}
                   {spec.required && <span className="field-req">required</span>}
                 </div>
-                {node.data.toolMode && renderSpec.type !== "credential" && (
-                  <div className="from-ai-toggle" role="group" aria-label="Parameter source">
-                    <button
-                      type="button"
-                      className={isFromAiExpr(value) ? "" : "active"}
-                      onClick={() => setParam(spec.name, spec.default ?? "")}
-                    >
-                      Fixed
-                    </button>
-                    <button
-                      type="button"
-                      className={isFromAiExpr(value) ? "active" : ""}
-                      onClick={() =>
-                        setParam(
-                          spec.name,
-                          fromAiExpr(
-                            spec.name,
-                            spec.description || "",
-                            paramArgType(spec.type),
-                          ),
-                        )
-                      }
-                    >
-                      From AI
-                    </button>
-                  </div>
-                )}
+                <FromAiParamControl
+                  nodeId={node.id}
+                  spec={renderSpec}
+                  value={value}
+                  onSetParam={setParam}
+                />
                 {spec.description && (
                   <p className="field-desc">{spec.description}</p>
                 )}

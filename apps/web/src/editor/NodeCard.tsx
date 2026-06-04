@@ -1,5 +1,5 @@
 import { Key, Lock, Warning } from "@phosphor-icons/react";
-import { Handle, type NodeProps, Position } from "@xyflow/react";
+import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
 
@@ -161,11 +161,26 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const isAgentV2 = manifest.id === "ai_agent_v2";
   const color = categoryColor(manifest.category);
   const { inputs } = manifest;
-  const sideInputs = inputs.filter((port) => !isAgentBottomInput(manifest.id, port.name));
-  const bottomInputs = inputs.filter((port) => isAgentBottomInput(manifest.id, port.name));
+  // In tool mode the node is invoked by the Agent, not wired from upstream, so
+  // it exposes only its `tool` output — hide every incoming port.
+  const sideInputs = data.toolMode
+    ? []
+    : inputs.filter((port) => !isAgentBottomInput(manifest.id, port.name));
+  const bottomInputs = data.toolMode
+    ? []
+    : inputs.filter((port) => isAgentBottomInput(manifest.id, port.name));
   const outputNames = data.toolMode
     ? ["tool"]
     : outputsOverride ?? manifest.outputs.map((o) => o.name);
+  // Toggling tool mode (and editing switch/code outputs) changes which handles
+  // exist. React Flow caches handle bounds per node, so without an explicit
+  // re-measure the new `tool` handle isn't registered and a connection can't be
+  // started from it. Re-measure whenever the handle set changes.
+  const updateNodeInternals = useUpdateNodeInternals();
+  const handleSignature = `${data.toolMode ? "tool" : "normal"}|${sideInputs.length}|${bottomInputs.length}|${outputNames.join(",")}`;
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [id, handleSignature, updateNodeInternals]);
   const runStatus = useEditor((s) => s.runStatus[id]);
   const runMeta = useEditor((s) => s.runMeta[id]);
   const running = useEditor((s) => s.running);

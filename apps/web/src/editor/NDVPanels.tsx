@@ -14,7 +14,10 @@ import {
   webhookHiddenParam,
   webhookParamLabel,
   NodeCodePanel,
+  ToolModeSection,
+  FromAiParamControl,
 } from "./NodeDetails";
+import { isFromAiExpr } from "./toolParam";
 import { useEditor } from "./store";
 import { asArtifactRef, artifactDownloadUrl, artifactSummary, formatBytes } from "./artifactValues";
 
@@ -116,6 +119,7 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
         />
       ) : (
       <>
+      <ToolModeSection nodeId={node.id} />
       <p className="expr-hint field-desc">
         Use <code>{"{{ $json.field }}"}</code> or{" "}
         <code>{'{{ $node["nodeId"].main.field }}'}</code> in string fields to
@@ -148,10 +152,18 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
                 <span className="field-name">{displayLabel}</span>
                 {spec.required && <span className="field-req">required</span>}
               </div>
+              <FromAiParamControl
+                nodeId={node.id}
+                spec={renderSpec}
+                value={value}
+                onSetParam={setParam}
+              />
               {spec.description && (
                 <p className="field-desc">{spec.description}</p>
               )}
-              {isWebhookAuthType ? (
+              {isFromAiExpr(value) ? (
+                <p className="from-ai-note">↯ The model supplies this argument.</p>
+              ) : isWebhookAuthType ? (
                 <select
                   className="field-input"
                   value={String(value ?? "none")}

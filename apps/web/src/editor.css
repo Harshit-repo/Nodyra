@@ -4588,12 +4588,12 @@ th.sortable:hover { background:var(--bg-3); }
 .chat-send:disabled { opacity: 0.4; cursor: default; }
 
 /* ----- Tool mode (Use as tool) ------------------------------------------ */
-.tool-mode-section .tool-mode-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+/* The toggle reuses the animated .field-toggle switch; this just promotes the
+   label so the section reads as a primary control. */
+.tool-mode-section .tool-mode-toggle .field-toggle-label {
   font-weight: 600;
-  cursor: pointer;
+  font-size: 13px;
+  color: var(--ink-1);
 }
 .from-ai-toggle {
   display: inline-flex;

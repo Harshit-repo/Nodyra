@@ -11,6 +11,7 @@ import {
 import { create } from "zustand";
 
 import { validateConnection, type ConnectionCheck } from "./connectionValidation";
+import { isFromAiExpr } from "./toolParam";
 import type {
   NodeManifest,
   NodeRunDebug,
@@ -881,10 +882,30 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
   updateNodeSettings: (id, patch) => {
     const state = get();
+    // Turning tool mode OFF reverts every "From AI" param back to Fixed:
+    // a $fromAI() expression only resolves while the Agent drives the node, so
+    // it would be dead config on a normally-wired node. Reset to spec defaults.
+    const revertFromAi = patch.toolMode === false;
     set({
-      nodes: state.nodes.map((n) =>
-        n.id === id ? { ...n, data: { ...n.data, ...patch } } : n,
-      ),
+      nodes: state.nodes.map((n) => {
+        if (n.id !== id) return n;
+        let params = n.data.params;
+        if (revertFromAi) {
+          const defaults = new Map(
+            n.data.manifest.params.map((spec) => [spec.name, spec.default]),
+          );
+          let changed = false;
+          const next: Record<string, unknown> = { ...params };
+          for (const [key, value] of Object.entries(params)) {
+            if (isFromAiExpr(value)) {
+              next[key] = defaults.has(key) ? defaults.get(key) ?? "" : "";
+              changed = true;
+            }
+          }
+          if (changed) params = next;
+        }
+        return { ...n, data: { ...n.data, ...patch, params } };
+      }),
       dirty: true,
       _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
       _future: [],

@@ -1,16 +1,24 @@
 import { describe, expect, it } from "vitest";
 
-import type { NodeManifest, PortSpec, WorkflowGraph } from "../types";
+import type { NodeManifest, ParamSpec, PortSpec, WorkflowGraph } from "../types";
 import { useEditor } from "./store";
 
 function port(name: string, data_kind: PortSpec["data_kind"] = "any"): PortSpec {
   return { name, description: "", data_kind };
 }
 
+function param(name: string, def: unknown): ParamSpec {
+  return {
+    name, type: "string", required: false, default: def, description: "",
+    placeholder: "", choices: null, multiline: false, key_value: false,
+  };
+}
+
 function manifest(id: string): NodeManifest {
   return {
     id, name: id, category: "Core", version: "1", description: "", icon: null,
-    inputs: [port("input")], outputs: [port("main")], params: [],
+    inputs: [port("input")], outputs: [port("main")],
+    params: [param("url", "https://default"), param("method", "GET")],
   };
 }
 
@@ -54,5 +62,30 @@ describe("store tool-mode round-trip", () => {
     const node = useEditor.getState().toGraph().nodes[0];
     expect(node.tool_mode).toBe(true);
     expect(node.tool_name).toBe("fetch");
+  });
+
+  it("toggling tool mode OFF reverts From-AI params to their defaults", () => {
+    useEditor.getState().setManifests([manifest("http_request")]);
+    useEditor.getState().loadGraph({
+      ...GRAPH,
+      nodes: [
+        {
+          ...GRAPH.nodes[0],
+          tool_mode: true,
+          params: {
+            url: "{{ $fromAI('url', 'target', 'string') }}",
+            method: "POST",
+          },
+        },
+      ],
+    });
+
+    useEditor.getState().updateNodeSettings("n1", { toolMode: false });
+
+    const node = useEditor.getState().toGraph().nodes[0];
+    expect(node.tool_mode).toBe(false);
+    // From-AI param reverts to its spec default; a plain param is untouched.
+    expect(node.params.url).toBe("https://default");
+    expect(node.params.method).toBe("POST");
   });
 });
