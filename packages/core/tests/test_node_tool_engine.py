@@ -8,7 +8,6 @@ tool-mode node's real function runs with the AI-supplied argument.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 from noodle.ai_runtime import (
     AgentActionRequest,
