@@ -95,3 +95,27 @@ async def test_put_packages_replaces_list_and_dedups(client: AsyncClient) -> Non
     # blank dropped; duplicate canonical name collapsed (last specifier wins)
     assert body["packages"] == ["pandas==2.1", "duckdb"]
     assert body["status"] == "pending"
+
+
+async def test_package_usage_maps_packages_to_nodes(client: AsyncClient) -> None:
+    glob = (await client.post("/environments", json={"name": "shared"})).json()
+    wf = (await client.post("/workflows", json={"name": "uses-duckdb"})).json()
+    graph = {
+        "nodes": [
+            {"id": "n1", "type": "duckdb_sql", "label": "My Query",
+             "params": {}, "position": {"x": 0, "y": 0}},
+        ],
+        "edges": [],
+    }
+    await client.put(
+        f"/workflows/{wf['id']}",
+        json={"environment_id": glob["id"], "graph": graph},
+    )
+    resp = await client.get(f"/environments/{glob['id']}/package-usage")
+    assert resp.status_code == 200
+    usage = {u["package"]: u["used_by"] for u in resp.json()["packages"]}
+    assert "duckdb" in usage
+    assert any(
+        e["workflow_id"] == wf["id"] and e["node_id"] == "n1"
+        for e in usage["duckdb"]
+    )

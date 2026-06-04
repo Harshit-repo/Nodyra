@@ -1,17 +1,23 @@
+import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.db import get_session
-from app.models import Environment, RunnerPool, User
+from app.models import Environment, RunnerPool, User, Workflow
 from app.schemas import (
     EnvironmentCreate,
     EnvironmentInfo,
     EnvironmentUpdate,
     PackageListRequest,
     PackageRequest,
+    PackageUsageEntry,
+    PackageUsageInfo,
+    PackageUsagePackage,
 )
 from noodle.packages import canonical_package_name
+from noodle.sdk import registry as node_registry
 from app.security import optional_current_user, require_permission
 from app.services.audit import log_audit
 from app.services.venv import build_environment
@@ -205,6 +211,62 @@ async def add_package(
         await session.refresh(env)
         background.add_task(build_environment, env.id)
     return _to_info(env, await _pool_name(session, env.runner_pool_id))
+
+
+def _node_requirements_by_type() -> dict[str, list[str]]:
+    return {m.id: m.requirements for m in node_registry.manifests() if m.requirements}
+
+
+@router.get("/{env_id}/package-usage", response_model=PackageUsageInfo)
+async def package_usage(
+    env_id: str, session: AsyncSession = Depends(get_session)
+):
+    """Map each required package (canonical name) to the workflow nodes needing it.
+
+    Scans every workflow bound to this env (plus null-env workflows when this is
+    the global env), reading each workflow's draft graph (falling back to its
+    latest published version's graph).
+    """
+    env = await _load(session, env_id)
+    reqs_by_type = _node_requirements_by_type()
+
+    stmt = select(Workflow).options(selectinload(Workflow.versions))
+    if env.is_global:
+        stmt = stmt.where(
+            (Workflow.environment_id == env_id) | (Workflow.environment_id.is_(None))
+        )
+    else:
+        stmt = stmt.where(Workflow.environment_id == env_id)
+    workflows = (await session.scalars(stmt)).all()
+
+    usage: dict[str, list[PackageUsageEntry]] = {}
+    for wf in workflows:
+        graph = wf.draft_graph
+        if graph is None and wf.versions:
+            graph = wf.versions[-1].graph
+        nodes = (graph or {}).get("nodes") or []
+        for n in nodes:
+            if not isinstance(n, dict):
+                continue
+            reqs = reqs_by_type.get(n.get("type"))
+            if not reqs:
+                continue
+            label = n.get("label") or n.get("type") or n.get("id") or ""
+            for req in reqs:
+                key = canonical_package_name(req)
+                usage.setdefault(key, []).append(
+                    PackageUsageEntry(
+                        workflow_id=wf.id,
+                        workflow_name=wf.name,
+                        node_id=str(n.get("id") or ""),
+                        node_label=str(label),
+                    )
+                )
+    return PackageUsageInfo(
+        packages=[
+            PackageUsagePackage(package=k, used_by=v) for k, v in sorted(usage.items())
+        ]
+    )
 
 
 @router.put(

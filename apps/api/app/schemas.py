@@ -149,6 +149,22 @@ class PackageListRequest(BaseModel):
     packages: list[str] = Field(default_factory=list)
 
 
+class PackageUsageEntry(BaseModel):
+    workflow_id: str
+    workflow_name: str
+    node_id: str
+    node_label: str
+
+
+class PackageUsagePackage(BaseModel):
+    package: str  # canonical name
+    used_by: list[PackageUsageEntry]
+
+
+class PackageUsageInfo(BaseModel):
+    packages: list[PackageUsagePackage]
+
+
 class EnvironmentInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
