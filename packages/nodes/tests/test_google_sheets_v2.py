@@ -22,8 +22,10 @@ def test_google_sheets_v2_nodes_are_registered() -> None:
 
     read = manifests["google_sheets_read_v2"]
     append = manifests["google_sheets_append_v2"]
-    assert read.name == "Google Sheets Read V2"
-    assert append.name == "Google Sheets Append V2"
+    assert read.name == "Google Sheets Read"
+    assert append.name == "Google Sheets Append"
+    assert read.icon == "brand:googlesheets"
+    assert append.icon == "brand:googlesheets"
     assert read.category == "Integrations"
 
     append_params = {param.name: param for param in append.params}

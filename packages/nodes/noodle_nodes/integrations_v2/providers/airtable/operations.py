@@ -32,12 +32,12 @@ def _credentials_param() -> OperationParamSpec:
 
 AIRTABLE_LIST_RECORDS_SPEC = OperationSpec(
     node_id="airtable_list_records_v2",
-    name="Airtable List Records V2",
+    name="Airtable List Records",
     provider="airtable",
     resource="records",
     operation="list",
     description="List Airtable records using the v2 provider transport.",
-    icon="table",
+    icon="brand:airtable",
     params=(
         _credentials_param(),
         OperationParamSpec(name="base_id", required=True, placeholder="app..."),
@@ -61,12 +61,12 @@ AIRTABLE_LIST_RECORDS_SPEC = OperationSpec(
 
 AIRTABLE_CREATE_RECORD_SPEC = OperationSpec(
     node_id="airtable_create_record_v2",
-    name="Airtable Create Record V2",
+    name="Airtable Create Record",
     provider="airtable",
     resource="record",
     operation="create",
     description="Create an Airtable record using the v2 provider transport.",
-    icon="table",
+    icon="brand:airtable",
     params=(
         _credentials_param(),
         OperationParamSpec(name="base_id", required=True, placeholder="app..."),

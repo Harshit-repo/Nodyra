@@ -20,6 +20,10 @@ def test_github_v2_nodes_are_registered() -> None:
     get_repo = manifests["github_get_repo_v2"]
     create_issue = manifests["github_create_issue_v2"]
 
+    assert get_repo.name == "GitHub Get Repository"
+    assert create_issue.name == "GitHub Create Issue"
+    assert get_repo.icon == "brand:github"
+    assert create_issue.icon == "brand:github"
     assert get_repo.category == "Integrations"
     assert create_issue.category == "Integrations"
     params = {param.name: param for param in create_issue.params}

@@ -19,7 +19,8 @@ def test_slack_v2_node_is_registered() -> None:
     manifests = {manifest.id: manifest for manifest in registry.manifests()}
     manifest = manifests["slack_send_message_v2"]
 
-    assert manifest.name == "Slack Send Message V2"
+    assert manifest.name == "Slack Send Message"
+    assert manifest.icon == "brand:slack"
     assert manifest.category == "Integrations"
     params = {param.name: param for param in manifest.params}
     assert params["credentials"].credential is not None

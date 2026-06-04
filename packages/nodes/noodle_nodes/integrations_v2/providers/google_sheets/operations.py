@@ -36,12 +36,12 @@ def _credentials_param() -> OperationParamSpec:
 
 GOOGLE_SHEETS_READ_SPEC = OperationSpec(
     node_id="google_sheets_read_v2",
-    name="Google Sheets Read V2",
+    name="Google Sheets Read",
     provider="google_sheets",
     resource="values",
     operation="read",
     description="Read values from a Google Sheet using the v2 provider transport.",
-    icon="sheet",
+    icon="brand:googlesheets",
     params=(
         _credentials_param(),
         OperationParamSpec(
@@ -60,12 +60,12 @@ GOOGLE_SHEETS_READ_SPEC = OperationSpec(
 
 GOOGLE_SHEETS_APPEND_SPEC = OperationSpec(
     node_id="google_sheets_append_v2",
-    name="Google Sheets Append V2",
+    name="Google Sheets Append",
     provider="google_sheets",
     resource="values",
     operation="append",
     description="Append rows to a Google Sheet using the v2 provider transport.",
-    icon="sheet",
+    icon="brand:googlesheets",
     params=(
         _credentials_param(),
         OperationParamSpec(
@@ -95,12 +95,12 @@ GOOGLE_SHEETS_APPEND_SPEC = OperationSpec(
 
 GOOGLE_SHEETS_UPDATE_SPEC = OperationSpec(
     node_id="google_sheets_update_v2",
-    name="Google Sheets Update V2",
+    name="Google Sheets Update",
     provider="google_sheets",
     resource="values",
     operation="update",
     description="Update a range of cells in a Google Sheet.",
-    icon="sheet",
+    icon="brand:googlesheets",
     params=(
         _credentials_param(),
         OperationParamSpec(
@@ -130,12 +130,12 @@ GOOGLE_SHEETS_UPDATE_SPEC = OperationSpec(
 
 GOOGLE_SHEETS_CLEAR_SPEC = OperationSpec(
     node_id="google_sheets_clear_v2",
-    name="Google Sheets Clear V2",
+    name="Google Sheets Clear",
     provider="google_sheets",
     resource="values",
     operation="clear",
     description="Clear all values from a range in a Google Sheet.",
-    icon="sheet",
+    icon="brand:googlesheets",
     params=(
         _credentials_param(),
         OperationParamSpec(
@@ -153,12 +153,12 @@ GOOGLE_SHEETS_CLEAR_SPEC = OperationSpec(
 
 GOOGLE_SHEETS_GET_METADATA_SPEC = OperationSpec(
     node_id="google_sheets_get_metadata_v2",
-    name="Google Sheets Get Metadata V2",
+    name="Google Sheets Get Metadata",
     provider="google_sheets",
     resource="spreadsheet",
     operation="get_metadata",
     description="Get spreadsheet metadata including sheet names and properties.",
-    icon="sheet",
+    icon="brand:googlesheets",
     params=(
         _credentials_param(),
         OperationParamSpec(

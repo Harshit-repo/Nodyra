@@ -33,12 +33,12 @@ def _credentials_param() -> OperationParamSpec:
 
 SLACK_SEND_MESSAGE_SPEC = OperationSpec(
     node_id="slack_send_message_v2",
-    name="Slack Send Message V2",
+    name="Slack Send Message",
     provider="slack",
     resource="message",
     operation="send",
     description="Send a Slack message using the v2 provider transport.",
-    icon="message",
+    icon="brand:slack",
     params=(
         _credentials_param(),
         OperationParamSpec(

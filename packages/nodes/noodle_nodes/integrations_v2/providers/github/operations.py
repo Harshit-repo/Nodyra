@@ -33,12 +33,12 @@ def _credentials_param() -> OperationParamSpec:
 
 GITHUB_GET_REPO_SPEC = OperationSpec(
     node_id="github_get_repo_v2",
-    name="GitHub Get Repository V2",
+    name="GitHub Get Repository",
     provider="github",
     resource="repository",
     operation="get",
     description="Fetch GitHub repository metadata using the v2 provider transport.",
-    icon="github",
+    icon="brand:github",
     params=(
         _credentials_param(),
         OperationParamSpec(
@@ -53,12 +53,12 @@ GITHUB_GET_REPO_SPEC = OperationSpec(
 
 GITHUB_CREATE_ISSUE_SPEC = OperationSpec(
     node_id="github_create_issue_v2",
-    name="GitHub Create Issue V2",
+    name="GitHub Create Issue",
     provider="github",
     resource="issue",
     operation="create",
     description="Create a GitHub issue using the v2 provider transport.",
-    icon="github",
+    icon="brand:github",
     params=(
         _credentials_param(),
         OperationParamSpec(

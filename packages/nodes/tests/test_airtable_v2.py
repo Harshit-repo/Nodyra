@@ -19,6 +19,10 @@ def test_airtable_v2_nodes_are_registered() -> None:
     list_records = manifests["airtable_list_records_v2"]
     create_record = manifests["airtable_create_record_v2"]
 
+    assert list_records.name == "Airtable List Records"
+    assert create_record.name == "Airtable Create Record"
+    assert list_records.icon == "brand:airtable"
+    assert create_record.icon == "brand:airtable"
     assert list_records.category == "Integrations"
     assert create_record.category == "Integrations"
     params = {param.name: param for param in create_record.params}

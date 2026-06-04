@@ -49,6 +49,7 @@ import {
   WebhooksLogo,
   type Icon,
 } from "@phosphor-icons/react";
+import { useState } from "react";
 
 const ICON_MAP: Record<string, Icon> = {
   play: Play,
@@ -102,6 +103,51 @@ const ICON_MAP: Record<string, Icon> = {
   activity: ChartLineUp, // Activity not in this version; using ChartLineUp
 };
 
+const BRAND_FALLBACK_ICON_MAP: Record<string, Icon> = {
+  airtable: Table,
+  github: GithubLogo,
+  googlesheets: Table,
+  microsoftoutlook: Envelope,
+  notion: File,
+  slack: ChatCircle,
+  stripe: CreditCard,
+};
+
+function BrandNodeIcon({
+  slug,
+  size,
+  className,
+}: {
+  slug: string;
+  size: number;
+  className?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const IconComponent = BRAND_FALLBACK_ICON_MAP[slug.toLowerCase()] ?? CircleDashed;
+
+  if (failed) {
+    return (
+      <IconComponent
+        size={size}
+        weight="regular"
+        aria-hidden
+        className={className}
+      />
+    );
+  }
+
+  return (
+    <img
+      src={`https://cdn.simpleicons.org/${encodeURIComponent(slug)}`}
+      width={size}
+      height={size}
+      alt=""
+      className={`node-brand-icon${className ? ` ${className}` : ""}`}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 export function NodeIcon({
   name,
   size = 20,
@@ -113,23 +159,10 @@ export function NodeIcon({
 }) {
   // Real brand logos via SimpleIcons CDN. Convention: `brand:<slug>` where
   // <slug> matches https://simpleicons.org (e.g. brand:stripe, brand:openai).
-  // Falls back to the dot icon if the network request fails.
+  // Falls back to a local generic icon if the network request fails.
   if (typeof name === "string" && name.startsWith("brand:")) {
     const slug = name.slice("brand:".length);
-    return (
-      <img
-        src={`https://cdn.simpleicons.org/${encodeURIComponent(slug)}`}
-        width={size}
-        height={size}
-        alt=""
-        className={`node-brand-icon${className ? ` ${className}` : ""}`}
-        loading="lazy"
-        onError={(e) => {
-          // Hide the broken image so the node card doesn't show a torn-image glyph.
-          (e.currentTarget as HTMLImageElement).style.display = "none";
-        }}
-      />
-    );
+    return <BrandNodeIcon slug={slug} size={size} className={className} />;
   }
 
   const IconComponent = (name ? ICON_MAP[name] : undefined) ?? CircleDashed;

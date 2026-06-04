@@ -31,12 +31,12 @@ def _credentials_param() -> OperationParamSpec:
 
 STRIPE_CREATE_CUSTOMER_SPEC = OperationSpec(
     node_id="stripe_create_customer_v2",
-    name="Stripe Create Customer V2",
+    name="Stripe Create Customer",
     provider="stripe",
     resource="customer",
     operation="create",
     description="Create a Stripe customer using the v2 provider transport.",
-    icon="card",
+    icon="brand:stripe",
     params=(
         _credentials_param(),
         OperationParamSpec(

@@ -63,12 +63,12 @@ def _secret_param() -> OperationParamSpec:
 
 GITHUB_REPOSITORY_TRIGGER_SPEC = ProviderTriggerSpec(
     node_id="github_repository_trigger_v2",
-    name="GitHub Repository Trigger V2",
+    name="GitHub Repository Trigger",
     provider="github",
     resource="repository",
     event="webhook",
     description="Start a workflow from GitHub repository webhook events.",
-    icon="github",
+    icon="brand:github",
     params=(
         _credentials_param(),
         OperationParamSpec(

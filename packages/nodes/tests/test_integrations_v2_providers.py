@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import noodle_nodes.integrations_v2.providers.google_sheets  # noqa: F401
+from noodle.sdk import registry
 from noodle_nodes.integrations_v2.dynamic_options import call_loader
 from noodle_nodes.integrations_v2.providers.google_sheets.operations import (
     append_values,
@@ -244,6 +245,21 @@ class TestGoogleSheetsDynamicOptions:
 @pytest.fixture()
 def ms_creds():
     return {"access_token": "ms-test-token"}
+
+
+def test_outlook_v2_manifests_use_clean_names_and_brand_icons() -> None:
+    manifests = {manifest.id: manifest for manifest in registry.manifests()}
+
+    expected = {
+        "outlook_send_mail_v2": "Outlook Send Email",
+        "outlook_list_messages_v2": "Outlook List Messages",
+        "outlook_get_message_v2": "Outlook Get Message",
+        "outlook_list_calendar_events_v2": "Outlook List Calendar Events",
+    }
+    for node_id, name in expected.items():
+        manifest = manifests[node_id]
+        assert manifest.name == name
+        assert manifest.icon == "brand:microsoftoutlook"
 
 
 def _ms_mock_transport(return_value: Any):

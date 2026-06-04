@@ -16,7 +16,8 @@ def test_stripe_v2_node_is_registered() -> None:
     manifests = {manifest.id: manifest for manifest in registry.manifests()}
     manifest = manifests["stripe_create_customer_v2"]
 
-    assert manifest.name == "Stripe Create Customer V2"
+    assert manifest.name == "Stripe Create Customer"
+    assert manifest.icon == "brand:stripe"
     assert manifest.category == "Integrations"
     params = {param.name: param for param in manifest.params}
     assert params["credentials"].credential is not None

@@ -18,7 +18,8 @@ def test_notion_v2_node_is_registered() -> None:
     manifests = {manifest.id: manifest for manifest in registry.manifests()}
     manifest = manifests["notion_create_page_v2"]
 
-    assert manifest.name == "Notion Create Page V2"
+    assert manifest.name == "Notion Create Page"
+    assert manifest.icon == "brand:notion"
     assert manifest.category == "Integrations"
     params = {param.name: param for param in manifest.params}
     assert params["credentials"].credential is not None

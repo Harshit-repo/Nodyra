@@ -1,6 +1,6 @@
 import { Key, Lock, Warning } from "@phosphor-icons/react";
 import { Handle, type NodeProps, Position } from "@xyflow/react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
 
 import { categoryColor } from "../categories";
@@ -9,10 +9,28 @@ import { SdkModal } from "./SdkModal";
 import { type NoodleNode, useEditor } from "./store";
 
 const TILE = 72;
+const AGENT_CARD_HEIGHT = 150;
 const TOOLBAR_HIDE_DELAY_MS = 1000;
+
+const AGENT_INPUT_PORTS = [
+  { name: "input", label: "Chat Input" },
+  { name: "model", label: "Model" },
+  { name: "memory", label: "Memory" },
+  { name: "tool", label: "Tools" },
+  { name: "parser", label: "Parser" },
+  { name: "guardrail", label: "Guardrail" },
+] as const;
+
+const AGENT_OUTPUT_LABELS: Record<string, string> = {
+  main: "Response",
+};
 
 function portTop(index: number, count: number): number {
   return (TILE * (index + 1)) / (count + 1);
+}
+
+function agentPortTop(index: number, count: number): number {
+  return (AGENT_CARD_HEIGHT * (index + 1)) / (count + 1);
 }
 
 const PORT_KIND_COLOR: Record<string, string> = {
@@ -130,11 +148,17 @@ function isCredentialRef(value: unknown): boolean {
   );
 }
 
+function compactLabel(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.trim();
+}
+
 export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const [toolbarVisible, setToolbarVisible] = useState(false);
   const hideTimerRef = useRef<number | null>(null);
   const { manifest, disabled, outputsOverride } = data;
   const isWebhook = manifest.id === "webhook_trigger";
+  const isAgentV2 = manifest.id === "ai_agent_v2";
   const color = categoryColor(manifest.category);
   const { inputs } = manifest;
   const sideInputs = inputs.filter((port) => !isAgentBottomInput(manifest.id, port.name));
@@ -144,6 +168,24 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const runMeta = useEditor((s) => s.runMeta[id]);
   const running = useEditor((s) => s.running);
   const isPinned = useEditor((s) => Boolean(s.pinned[id]));
+  const agentModelLabel = useEditor((s) => {
+    if (!isAgentV2) return "";
+    const modelEdge = s.edges.find(
+      (edge) => edge.target === id && (edge.targetHandle ?? "input") === "model",
+    );
+    const sourceNode = modelEdge
+      ? s.nodes.find((node) => node.id === modelEdge.source)
+      : undefined;
+    const params = sourceNode?.data.params ?? {};
+    return (
+      compactLabel(params.model) ||
+      compactLabel(params.deployment) ||
+      compactLabel(params.model_name) ||
+      compactLabel(params.deployment_name) ||
+      sourceNode?.data.manifest.name ||
+      ""
+    );
+  });
   const credentialSpecs = manifest.params.filter((param) => param.credential);
   const hasInlineSecret = credentialSpecs.some((param) => {
     const value = data.params[param.name];
@@ -202,6 +244,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   if (hasInlineSecret) tileClass.push("inline-secret");
   if (runStatus) tileClass.push(`run-${runStatus}`);
   const nodeClass = ["node"];
+  if (isAgentV2) nodeClass.push("agent-node");
   if (toolbarVisible) nodeClass.push("is-toolbar-visible");
   if (bottomInputs.length > 0) nodeClass.push("has-bottom-inputs");
 
@@ -231,6 +274,310 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
     },
     [],
   );
+
+  const toolbar = (
+    <div
+      className="node-toolbar nodrag"
+      onMouseEnter={showToolbar}
+      onMouseLeave={scheduleToolbarHide}
+    >
+      <button
+        type="button"
+        title={
+          !canRunStep
+            ? "Connect a trigger upstream to run this node"
+            : isWebhook
+              ? "Listen for test event"
+              : isTrigger
+                ? "Run this trigger and its downstream nodes"
+                : "Run step using current upstream data"
+        }
+        onClick={(e) => {
+          stop(e);
+          if (isTrigger) runFromTrigger(id);
+          else runFromNode(id);
+        }}
+        disabled={running || !canRunStep}
+      >
+        ▶
+      </button>
+      <button
+        type="button"
+        title={
+          !canRunStep
+            ? "Connect a trigger upstream to run this node"
+            : isTrigger
+              ? "Run this trigger and its downstream nodes"
+              : "Run step fresh, recomputing upstream nodes"
+        }
+        onClick={(e) => {
+          stop(e);
+          if (isTrigger) runFromTrigger(id);
+          else runFromNode(id, { reuseUpstream: false });
+        }}
+        disabled={running || !canRunStep}
+      >
+        ↻
+      </button>
+      <button
+        type="button"
+        title="Open details"
+        onClick={(e) => {
+          stop(e);
+          openNdv(id);
+        }}
+      >
+        ⤢
+      </button>
+      {isChatTrigger && (
+        <button
+          type="button"
+          className="toolbar-chat"
+          title="Open chat"
+          onClick={(e) => {
+            stop(e);
+            openChat();
+          }}
+        >
+          💬
+        </button>
+      )}
+      <button
+        type="button"
+        className={`toolbar-disable${disabled ? " is-on" : ""}`}
+        title={disabled ? "Enable node" : "Disable node"}
+        onClick={(e) => {
+          stop(e);
+          toggleDisabled(id);
+        }}
+      >
+        {disabled ? "●" : "◐"}
+      </button>
+      <button
+        type="button"
+        className="toolbar-delete"
+        title="Delete node"
+        onClick={(e) => {
+          stop(e);
+          deleteNode(id);
+        }}
+      >
+        ×
+      </button>
+      {devMode && (
+        <button
+          type="button"
+          className="toolbar-sdk"
+          title="Python SDK snippet"
+          onClick={(e) => {
+            stop(e);
+            setSdkModalOpen(true);
+          }}
+        >
+          {"</>"}
+        </button>
+      )}
+    </div>
+  );
+
+  const credentialBadges = (
+    <div className="node-badges">
+      {hasMissingCredential && (
+        <span title="Missing stored credential">
+          <Key size={11} weight="bold" aria-hidden />
+        </span>
+      )}
+      {hasInlineSecret && (
+        <span title="Inline secret should be moved to a stored credential">
+          <Warning size={11} weight="bold" aria-hidden />
+        </span>
+      )}
+      {credentialSpecs.some((param) => isCredentialRef(data.params[param.name])) && (
+        <span title="Uses stored credential">
+          <Lock size={11} weight="bold" aria-hidden />
+        </span>
+      )}
+    </div>
+  );
+
+  if (isAgentV2) {
+    const inputByName = new Map(manifest.inputs.map((port) => [port.name, port]));
+    const agentInputs = AGENT_INPUT_PORTS.map((config) => {
+      const spec = inputByName.get(config.name);
+      return spec
+        ? {
+            ...config,
+            spec,
+            color: semanticPortColor(
+              manifest.id,
+              config.name,
+              spec.data_kind,
+              "#24d9a5",
+            ),
+          }
+        : null;
+    }).filter((item): item is NonNullable<typeof item> => Boolean(item));
+    const agentOutputs = outputNames.map((name) => {
+      const spec = manifest.outputs.find((port) => port.name === name);
+      const colorForOutput = semanticPortColor(
+        manifest.id,
+        name,
+        spec?.data_kind,
+        "#24d9a5",
+      );
+      return {
+        name,
+        spec,
+        label: AGENT_OUTPUT_LABELS[name] ?? name,
+        color: colorForOutput,
+      };
+    });
+    const agentCardClass = ["agent-node-card"];
+    if (selected) agentCardClass.push("selected");
+    if (disabled) agentCardClass.push("is-disabled");
+    if (isPinned) agentCardClass.push("is-pinned");
+    if (hasMissingCredential) agentCardClass.push("missing-credential");
+    if (hasInlineSecret) agentCardClass.push("inline-secret");
+    if (runStatus) agentCardClass.push(`run-${runStatus}`);
+
+    return (
+      <div
+        className={nodeClass.join(" ")}
+        style={{ "--cat": color } as CSSProperties}
+        onMouseEnter={showToolbar}
+        onMouseLeave={scheduleToolbarHide}
+      >
+        {toolbar}
+        {sdkModalOpen && (
+          <SdkModal
+            nodeId={id}
+            manifestId={manifest.id}
+            onClose={() => setSdkModalOpen(false)}
+          />
+        )}
+        <div
+          className={agentCardClass.join(" ")}
+          onDoubleClick={() => openNdv(id)}
+          title="Double-click to open details"
+        >
+          <div className="agent-node-glow" />
+          <div className="agent-node-face">
+            <NodeIcon name={manifest.icon} size={26} />
+          </div>
+          <div className="agent-node-title">{manifest.name}</div>
+          <div
+            className={`agent-model-pill${agentModelLabel ? "" : " is-empty"}`}
+            title={agentModelLabel || "Connect an AI Chat Model to the model port"}
+          >
+            <NodeIcon name="ai" size={16} />
+            <span>{agentModelLabel || "Connect model"}</span>
+          </div>
+
+          {runStatus && (
+            <span className={`node-status status-run-${runStatus}`}>
+              {runStatus === "running" ? (
+                <span className="node-spinner" />
+              ) : (
+                STATUS_GLYPH[runStatus] ?? ""
+              )}
+            </span>
+          )}
+          {disabled && <span className="node-disabled-pip">○</span>}
+          {credentialBadges}
+
+          {runMeta?.error && runStatus === "error" && (
+            <div
+              className="node-error-callout nodrag nopan"
+              title={runMeta.error}
+            >
+              {runMeta.error.length > 52
+                ? runMeta.error.slice(0, 49) + "…"
+                : runMeta.error}
+            </div>
+          )}
+
+          {agentInputs.map((item, i) => {
+            const top = agentPortTop(i, agentInputs.length);
+            return (
+              <Fragment key={`agent-in-${item.name}`}>
+                <div
+                  className="agent-port-row agent-port-row-left"
+                  style={
+                    {
+                      top,
+                      "--port-color": item.color,
+                    } as CSSProperties
+                  }
+                >
+                  <span className="agent-port-chip">{item.label}</span>
+                  <span className="agent-port-wire" />
+                </div>
+                <Handle
+                  type="target"
+                  position={Position.Left}
+                  id={item.name}
+                  title={`${item.name}: ${portKindLabel(item.spec.data_kind)}`}
+                  className={portHandleClass(
+                    manifest.id,
+                    item.name,
+                    item.spec.data_kind,
+                  )}
+                  style={{
+                    top,
+                    color: item.color,
+                    background: item.color,
+                  }}
+                />
+              </Fragment>
+            );
+          })}
+
+          {agentOutputs.map((item, i) => {
+            const top = agentPortTop(i, agentOutputs.length);
+            return (
+              <Fragment key={`agent-out-${item.name}`}>
+                <Handle
+                  type="source"
+                  position={Position.Right}
+                  id={item.name}
+                  title={`${item.name}: ${portKindLabel(item.spec?.data_kind)}`}
+                  className={portHandleClass(
+                    manifest.id,
+                    item.name,
+                    item.spec?.data_kind,
+                  )}
+                  style={{
+                    top,
+                    color: item.color,
+                    background: item.color,
+                  }}
+                />
+                <div
+                  className="agent-port-row agent-port-row-right"
+                  style={
+                    {
+                      top,
+                      "--port-color": item.color,
+                    } as CSSProperties
+                  }
+                >
+                  <span className="agent-port-wire" />
+                  <span className="agent-port-chip">{item.label}</span>
+                </div>
+              </Fragment>
+            );
+          })}
+        </div>
+        {runMeta?.durationMs != null && runStatus !== "running" && (
+          <div className="node-duration nodrag nopan">
+            {runMeta.durationMs < 1000
+              ? `${Math.round(runMeta.durationMs)}ms`
+              : `${(runMeta.durationMs / 1000).toFixed(1)}s`}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div

@@ -132,7 +132,7 @@ def _final_output(
 
 
 @node(
-    name="AI Agent v2",
+    name="Agent",
     id="ai_agent_v2",
     category=AI_CATEGORY,
     role="executable",

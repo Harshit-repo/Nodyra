@@ -1406,6 +1406,8 @@ kbd {
 }
 .node-brand-icon {
   display: inline-block;
+  position: relative;
+  z-index: 1;
   vertical-align: middle;
   object-fit: contain;
 }

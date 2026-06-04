@@ -33,12 +33,12 @@ def _credentials_param() -> OperationParamSpec:
 
 NOTION_CREATE_PAGE_SPEC = OperationSpec(
     node_id="notion_create_page_v2",
-    name="Notion Create Page V2",
+    name="Notion Create Page",
     provider="notion",
     resource="page",
     operation="create",
     description="Create a Notion page using the v2 provider transport.",
-    icon="page",
+    icon="brand:notion",
     params=(
         _credentials_param(),
         OperationParamSpec(

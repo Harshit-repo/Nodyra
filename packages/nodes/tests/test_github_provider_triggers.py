@@ -5,6 +5,7 @@ import hmac
 import json
 from typing import Any
 
+from noodle.sdk import registry
 from noodle_nodes.integrations_v2.providers.github import triggers as github_triggers
 from noodle_nodes.integrations_v2.specs import (
     ProviderTriggerActivationContext,
@@ -22,6 +23,13 @@ class FakeTransport:
         if method == "POST":
             return {"id": 12345}
         return {"status_code": 204}
+
+
+def test_github_trigger_manifest_uses_clean_name_and_brand_icon() -> None:
+    manifest = {m.id: m for m in registry.manifests()}["github_repository_trigger_v2"]
+
+    assert manifest.name == "GitHub Repository Trigger"
+    assert manifest.icon == "brand:github"
 
 
 def _signed_headers(raw_body: bytes, secret: str, event: str = "push") -> dict[str, str]:

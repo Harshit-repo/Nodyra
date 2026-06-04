@@ -45,12 +45,12 @@ def _credentials_param(extra_scopes: tuple[str, ...] = ()) -> OperationParamSpec
 
 OUTLOOK_SEND_MAIL_SPEC = OperationSpec(
     node_id="outlook_send_mail_v2",
-    name="Outlook Send Email V2",
+    name="Outlook Send Email",
     provider="microsoft_outlook",
     resource="message",
     operation="send",
     description="Send an email via Microsoft Outlook using the Graph API.",
-    icon="mail",
+    icon="brand:microsoftoutlook",
     params=(
         _credentials_param((MAIL_SEND_SCOPE,)),
         OperationParamSpec(
@@ -105,12 +105,12 @@ OUTLOOK_SEND_MAIL_SPEC = OperationSpec(
 
 OUTLOOK_LIST_MESSAGES_SPEC = OperationSpec(
     node_id="outlook_list_messages_v2",
-    name="Outlook List Messages V2",
+    name="Outlook List Messages",
     provider="microsoft_outlook",
     resource="message",
     operation="list",
     description="List email messages from a mailbox folder.",
-    icon="mail",
+    icon="brand:microsoftoutlook",
     params=(
         _credentials_param(),
         OperationParamSpec(
@@ -152,12 +152,12 @@ OUTLOOK_LIST_MESSAGES_SPEC = OperationSpec(
 
 OUTLOOK_GET_MESSAGE_SPEC = OperationSpec(
     node_id="outlook_get_message_v2",
-    name="Outlook Get Message V2",
+    name="Outlook Get Message",
     provider="microsoft_outlook",
     resource="message",
     operation="get",
     description="Get a single email message by its ID.",
-    icon="mail",
+    icon="brand:microsoftoutlook",
     params=(
         _credentials_param(),
         OperationParamSpec(
@@ -176,12 +176,12 @@ OUTLOOK_GET_MESSAGE_SPEC = OperationSpec(
 
 OUTLOOK_LIST_CALENDAR_EVENTS_SPEC = OperationSpec(
     node_id="outlook_list_calendar_events_v2",
-    name="Outlook List Calendar Events V2",
+    name="Outlook List Calendar Events",
     provider="microsoft_outlook",
     resource="calendar",
     operation="list_events",
     description="List calendar events from the default calendar.",
-    icon="calendar",
+    icon="brand:microsoftoutlook",
     params=(
         _credentials_param((CALENDAR_READ_SCOPE,)),
         OperationParamSpec(
