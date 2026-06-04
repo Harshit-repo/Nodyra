@@ -145,6 +145,10 @@ class PackageRequest(BaseModel):
     package: str = Field(min_length=1, max_length=200)
 
 
+class PackageListRequest(BaseModel):
+    packages: list[str] = Field(default_factory=list)
+
+
 class EnvironmentInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

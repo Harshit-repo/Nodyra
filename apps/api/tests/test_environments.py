@@ -82,3 +82,16 @@ async def test_environment_rejects_unknown_runner_pool(client: AsyncClient) -> N
         json={"name": "Bad", "runner_pool_id": "does-not-exist"},
     )
     assert resp.status_code == 422
+
+
+async def test_put_packages_replaces_list_and_dedups(client: AsyncClient) -> None:
+    env = (await client.post("/environments", json={"name": "pkgtest"})).json()
+    resp = await client.put(
+        f"/environments/{env['id']}/packages",
+        json={"packages": ["pandas", "pandas==2.1", "  ", "duckdb"]},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    # blank dropped; duplicate canonical name collapsed (last specifier wins)
+    assert body["packages"] == ["pandas==2.1", "duckdb"]
+    assert body["status"] == "pending"

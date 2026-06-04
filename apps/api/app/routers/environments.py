@@ -8,8 +8,10 @@ from app.schemas import (
     EnvironmentCreate,
     EnvironmentInfo,
     EnvironmentUpdate,
+    PackageListRequest,
     PackageRequest,
 )
+from noodle.packages import canonical_package_name
 from app.security import optional_current_user, require_permission
 from app.services.audit import log_audit
 from app.services.venv import build_environment
@@ -197,6 +199,38 @@ async def add_package(
     packages = list(env.packages)
     if body.package not in packages:
         packages.append(body.package)
+        env.packages = packages
+        env.status = "pending"
+        await session.commit()
+        await session.refresh(env)
+        background.add_task(build_environment, env.id)
+    return _to_info(env, await _pool_name(session, env.runner_pool_id))
+
+
+@router.put(
+    "/{env_id}/packages",
+    response_model=EnvironmentInfo,
+    dependencies=[Depends(require_permission("environment:write"))],
+)
+async def set_packages(
+    env_id: str,
+    body: PackageListRequest,
+    background: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+):
+    """Replace the env's full package list (dedup by canonical name, last wins).
+
+    Backs both the comma-separated add and the requirements.txt import on the
+    env page; the client computes the desired final list.
+    """
+    env = await _load(session, env_id)
+    deduped: dict[str, str] = {}
+    for raw in body.packages:
+        spec = raw.strip()
+        if spec:
+            deduped[canonical_package_name(spec)] = spec
+    packages = list(deduped.values())
+    if packages != list(env.packages):
         env.packages = packages
         env.status = "pending"
         await session.commit()
