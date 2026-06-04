@@ -137,7 +137,8 @@ def test_expected_integration_nodes_are_registered() -> None:
 
 def test_trigger_inputs_and_node_inputs() -> None:
     triggers = {
-        "manual_trigger", "schedule_trigger", "webhook_trigger", "error_trigger", "chat_trigger"
+        "manual_trigger", "schedule_trigger", "webhook_trigger", "api_endpoint",
+        "error_trigger", "chat_trigger",
     }
     for manifest in registry.manifests():
         role = getattr(manifest.role, "value", manifest.role)

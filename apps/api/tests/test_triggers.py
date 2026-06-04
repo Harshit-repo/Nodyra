@@ -138,6 +138,277 @@ async def test_inactive_workflow_is_not_triggered(client: AsyncClient) -> None:
     assert response["runs"] == []
 
 
+def test_match_webhook_path_exact_no_params() -> None:
+    # A flat template with no placeholders matches by exact equality and
+    # captures no params — existing webhooks are unchanged.
+    assert triggers._match_webhook_path("orders", "orders") == {}
+    assert triggers._match_webhook_path("orders", "invoices") is None
+
+
+def test_match_webhook_path_single_param() -> None:
+    assert triggers._match_webhook_path("products/{id}", "products/42") == {"id": "42"}
+    # Literal first segment must still match.
+    assert triggers._match_webhook_path("products/{id}", "users/42") is None
+
+
+def test_match_webhook_path_nested_params() -> None:
+    assert triggers._match_webhook_path(
+        "customers/{cid}/orders/{oid}", "customers/7/orders/A-1"
+    ) == {"cid": "7", "oid": "A-1"}
+
+
+def test_match_webhook_path_segment_count_mismatch() -> None:
+    # A param matches exactly one segment, so differing depths never match.
+    assert triggers._match_webhook_path("products/{id}", "products") is None
+    assert triggers._match_webhook_path("products/{id}", "products/42/reviews") is None
+
+
+def test_match_webhook_path_ignores_surrounding_slashes() -> None:
+    assert triggers._match_webhook_path("/products/{id}/", "products/42") == {"id": "42"}
+
+
+def test_match_api_route_single_param() -> None:
+    routes = [{"method": "GET", "path": "/{id}", "output": "read"}]
+    assert triggers._match_api_route("customers", routes, "GET", "customers/42") == (
+        "read",
+        {"id": "42"},
+    )
+
+
+def test_match_api_route_collection_vs_item() -> None:
+    routes = [
+        {"method": "GET", "path": "/", "output": "list"},
+        {"method": "GET", "path": "/{id}", "output": "read"},
+    ]
+    assert triggers._match_api_route("customers", routes, "GET", "customers") == (
+        "list",
+        {},
+    )
+    assert triggers._match_api_route("customers", routes, "GET", "customers/42") == (
+        "read",
+        {"id": "42"},
+    )
+
+
+def test_match_api_route_literal_beats_param_regardless_of_order() -> None:
+    # `/new` (all-literal) must win over `/{id}` even though it is listed last.
+    routes = [
+        {"method": "GET", "path": "/{id}", "output": "read"},
+        {"method": "GET", "path": "/new", "output": "new_form"},
+    ]
+    assert triggers._match_api_route("customers", routes, "GET", "customers/new") == (
+        "new_form",
+        {},
+    )
+
+
+def test_match_api_route_filters_by_method() -> None:
+    routes = [
+        {"method": "GET", "path": "/{id}", "output": "read"},
+        {"method": "DELETE", "path": "/{id}", "output": "remove"},
+    ]
+    assert triggers._match_api_route("items", routes, "DELETE", "items/9") == (
+        "remove",
+        {"id": "9"},
+    )
+    assert triggers._match_api_route("items", routes, "GET", "items/9") == (
+        "read",
+        {"id": "9"},
+    )
+
+
+def test_match_api_route_no_match_returns_none() -> None:
+    routes = [{"method": "GET", "path": "/{id}", "output": "read"}]
+    assert triggers._match_api_route("items", routes, "GET", "items/9/orders") is None
+    assert triggers._match_api_route("items", routes, "GET", "other/9") is None
+
+
+def _api_endpoint_graph(
+    base_path: str, routes: list[dict], response_mode: str | None = None
+) -> dict:
+    """API Endpoint node with one Code branch per route echoing $json.params."""
+    api_params: dict = {"base_path": base_path, "routes": routes}
+    if response_mode is not None:
+        api_params["response_mode"] = response_mode
+    nodes: list[dict] = [
+        {
+            "id": "api",
+            "type": "api_endpoint",
+            "params": api_params,
+            "outputs_override": [r["output"] for r in routes],
+            "position": {"x": 0, "y": 0},
+        }
+    ]
+    edges: list[dict] = []
+    for route in routes:
+        out = route["output"]
+        nodes.append(
+            {
+                "id": f"proc_{out}",
+                "type": "code",
+                "params": {"code": "output = input['params']"},
+                "position": {"x": 250, "y": 0},
+            }
+        )
+        edges.append(
+            {
+                "id": f"e_{out}",
+                "source": "api",
+                "source_output": out,
+                "target": f"proc_{out}",
+                "target_input": "input",
+            }
+        )
+    return {"nodes": nodes, "edges": edges}
+
+
+async def test_api_endpoint_routes_item_branch_with_params(
+    client: AsyncClient,
+) -> None:
+    routes = [
+        {"method": "GET", "path": "/", "output": "list"},
+        {"method": "GET", "path": "/{id}", "output": "read"},
+    ]
+    await _publish(client, "Customers API", _api_endpoint_graph("customers", routes))
+
+    body = (await client.get("/webhook/customers/42")).json()
+    assert len(body["runs"]) == 1
+
+    run = (await client.get(f"/runs/{body['runs'][0]}")).json()
+    assert run["status"] == "success"
+    results = {n["node_id"]: n for n in run["node_runs"]}
+    # The item branch ran with the captured id; the collection branch did not.
+    assert results["proc_read"]["output"]["main"] == {"id": "42"}
+    assert "proc_list" not in results or results["proc_list"].get("status") != "success"
+
+
+async def test_api_endpoint_routes_collection_branch(client: AsyncClient) -> None:
+    routes = [
+        {"method": "GET", "path": "/", "output": "list"},
+        {"method": "GET", "path": "/{id}", "output": "read"},
+    ]
+    await _publish(client, "Customers API", _api_endpoint_graph("customers", routes))
+
+    body = (await client.get("/webhook/customers")).json()
+    run = (await client.get(f"/runs/{body['runs'][0]}")).json()
+    results = {n["node_id"]: n for n in run["node_runs"]}
+    assert results["proc_list"]["output"]["main"] == {}
+    assert "proc_read" not in results or results["proc_read"].get("status") != "success"
+
+
+async def test_api_endpoint_last_node_returns_branch_output(
+    client: AsyncClient,
+) -> None:
+    routes = [{"method": "GET", "path": "/{id}", "output": "read"}]
+    await _publish(
+        client,
+        "Read API",
+        _api_endpoint_graph("widgets", routes, response_mode="Last Node"),
+    )
+
+    response = await client.get("/webhook/widgets/7")
+    assert response.json() == {"id": "7"}
+
+
+async def test_api_endpoint_post_routes_to_create_branch(
+    client: AsyncClient,
+) -> None:
+    routes = [
+        {"method": "GET", "path": "/{id}", "output": "read"},
+        {"method": "POST", "path": "/", "output": "create"},
+    ]
+    await _publish(client, "Orders API", _api_endpoint_graph("orders", routes))
+
+    body = (await client.post("/webhook/orders", json={"sku": "X"})).json()
+    run = (await client.get(f"/runs/{body['runs'][0]}")).json()
+    results = {n["node_id"]: n for n in run["node_runs"]}
+    assert results["proc_create"]["output"]["main"] == {}
+    assert "proc_read" not in results or results["proc_read"].get("status") != "success"
+
+
+async def test_api_endpoint_basic_auth_rejects_missing_credentials(
+    client: AsyncClient,
+) -> None:
+    routes = [{"method": "GET", "path": "/{id}", "output": "read"}]
+    graph = _api_endpoint_graph("secure", routes)
+    graph["nodes"][0]["params"].update(
+        {
+            "auth_type": "basic",
+            "auth_username": "alice",
+            "auth_password": "wonderland",
+        }
+    )
+    await _publish(client, "Secure API", graph)
+
+    response = await client.get("/webhook/secure/1")
+    assert response.status_code == 401
+
+
+def _param_webhook_graph(path: str, method: str = "GET") -> dict:
+    """Webhook whose downstream node echoes the captured path params."""
+    return {
+        "nodes": [
+            {
+                "id": "hook",
+                "type": "webhook_trigger",
+                "params": {"path": path, "http_method": method},
+                "position": {"x": 0, "y": 0},
+            },
+            {
+                "id": "proc",
+                "type": "code",
+                "params": {"code": "output = input['params']"},
+                "position": {"x": 250, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e1",
+                "source": "hook",
+                "source_output": "main",
+                "target": "proc",
+                "target_input": "input",
+            }
+        ],
+    }
+
+
+async def _publish(client: AsyncClient, name: str, graph: dict) -> str:
+    workflow_id = (await client.post("/workflows", json={"name": name})).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": graph, "active": True}
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+    return workflow_id
+
+
+async def test_webhook_path_param_routes_and_exposes_params(
+    client: AsyncClient,
+) -> None:
+    await _publish(client, "Products", _param_webhook_graph("products/{id}"))
+
+    response = await client.get("/webhook/products/42")
+    body = response.json()
+    assert len(body["runs"]) == 1
+
+    run = (await client.get(f"/runs/{body['runs'][0]}")).json()
+    assert run["status"] == "success"
+    results = {n["node_id"]: n for n in run["node_runs"]}
+    assert results["proc"]["output"]["main"] == {"id": "42"}
+
+
+async def test_webhook_method_must_match_node_method(client: AsyncClient) -> None:
+    # A GET-configured resource must not fire on a DELETE to the same path,
+    # so GET and DELETE workflows for /items/{id} stay independent.
+    await _publish(client, "Read item", _param_webhook_graph("items/{id}", "GET"))
+
+    delete_resp = (await client.delete("/webhook/items/9")).json()
+    assert delete_resp["runs"] == []
+
+    get_resp = (await client.get("/webhook/items/9")).json()
+    assert len(get_resp["runs"]) == 1
+
+
 async def test_github_provider_trigger_lifecycle_and_dispatch(
     client: AsyncClient,
     monkeypatch,

@@ -14,6 +14,7 @@ from noodle_nodes.integrations_v2.registry import is_registered_provider_trigger
 TRIGGER_TYPES: tuple[str, ...] = (
     "manual_trigger",
     "webhook_trigger",
+    "api_endpoint",
     "schedule_trigger",
     "chat_trigger",
 )

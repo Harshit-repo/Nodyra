@@ -111,7 +111,16 @@ def schedule_trigger(
       inputs=[], params={
           # --- Core (always shown) ---
           "http_method": {"choices": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
-          "path": {"placeholder": "my-webhook", "description": "Last segment of the URL."},
+          "path": {
+              "placeholder": "products/{id}",
+              "description": (
+                  "URL path for this webhook. Supports REST-style templates with "
+                  "{param} segments, e.g. 'products/{id}' or "
+                  "'customers/{id}/orders'. Captured values are exposed on the "
+                  "trigger output as $json.params (e.g. {{ $json.params.id }}). "
+                  "A plain path with no {param} matches that exact URL."
+              ),
+          },
           "response_mode": {
               "choices": ["On Received", "Last Node", "Respond Node"],
               "description": (
@@ -251,6 +260,80 @@ def webhook_trigger(
     Auth options: none, HTTP Basic (Authorization header), custom header,
     or a query-string token. Credentials should always come from the
     Credentials store rather than be pasted inline.
+    """
+    return {}
+
+
+@node(name="API Endpoint", id="api_endpoint", category="Triggers", icon="webhook",
+      inputs=[], outputs=["main"], params={
+          "base_path": {
+              "placeholder": "customers",
+              "description": (
+                  "Base path for this API. Routes below are matched under "
+                  "/webhook/<base_path>/… , e.g. base 'customers' + route "
+                  "'GET /{id}' serves GET /webhook/customers/42."
+              ),
+          },
+          "routes": {
+              "description": (
+                  "Route table: a list of {method, path, output} rows. Each row "
+                  "maps an HTTP method + sub-path template (e.g. 'GET /{id}', "
+                  "'POST /', 'GET /{id}/orders') to a named output branch. The "
+                  "single most-specific matching route fires; captured path "
+                  "params are exposed on the branch as $json.params."
+              ),
+          },
+          "response_mode": {
+              "choices": ["Last Node", "Respond Node"],
+              "description": (
+                  "How the matched branch responds: 'Last Node' returns the "
+                  "branch's final node output; 'Respond Node' returns whatever a "
+                  "Respond to Webhook node in the branch records."
+              ),
+          },
+          "response_code": {
+              "description": "Default HTTP status when a branch doesn't set one.",
+          },
+          # --- Authentication (optional group; same shape as the Webhook node) ---
+          "auth_type": {
+              "group": "Authentication",
+              "choices": ["none", "basic", "header", "query", "bearer", "jwt"],
+              "description": (
+                  "Authentication required for callers (same options as the "
+                  "Webhook node)."
+              ),
+          },
+          "auth_jwt_header": {
+              "group": "Authentication",
+              "placeholder": "Authorization",
+              "description": "Header carrying the JWT (auth_type=jwt). Default Authorization.",
+          },
+          "auth_credentials": {
+              "group": "Authentication",
+              **cred_multi(
+                  "http_basic",
+                  "HTTP Basic Auth credentials",
+                  ["username", "password"],
+              ),
+              "description": "Stored credential used to authenticate inbound API calls.",
+          },
+      })
+def api_endpoint(
+    base_path: str = "",
+    routes: list | None = None,
+    response_mode: str = "Last Node",
+    response_code: int = 200,
+    auth_type: str = "none",
+    auth_jwt_header: str = "Authorization",
+    auth_credentials: dict | None = None,
+) -> dict:
+    """Serve a REST-style API from a single workflow.
+
+    Define a base path and a table of routes; each route maps an HTTP method and
+    sub-path template to a named output branch. An inbound request fires the one
+    most-specific matching branch with the request payload (path params on
+    ``$json.params``); the branch's response goes back to the caller per
+    ``response_mode``. The node is a router, so exactly one branch runs.
     """
     return {}
 

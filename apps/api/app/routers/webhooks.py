@@ -189,9 +189,14 @@ async def clear_webhook(path: str) -> None:
     _captured.pop(path, None)
 
 
-@production_router.api_route("/webhook/{path}", methods=_METHODS)
+@production_router.api_route("/webhook/{path:path}", methods=_METHODS)
 async def trigger_webhook(path: str, request: Request) -> dict:
-    """Production webhook — dispatch a run of matching active workflows."""
+    """Production webhook — dispatch a run of matching active workflows.
+
+    ``{path:path}`` captures the full sub-path (slashes included) so resource
+    routes like ``/webhook/customers/42/orders`` reach a webhook node whose
+    ``path`` template is ``customers/{id}/orders``.
+    """
     payload, raw_body = await _payload(request)
     _record_capture(path, _redacted_payload(payload))
     result = await dispatch_webhook(

@@ -596,6 +596,83 @@ class WebhookDispatch:
     sync: dict | None = None
 
 
+def _path_segments(value: str) -> list[str]:
+    """Split a URL path into segments, ignoring surrounding slashes."""
+    trimmed = value.strip("/")
+    return trimmed.split("/") if trimmed else []
+
+
+def _match_webhook_path(template: str, path: str) -> dict[str, str] | None:
+    """Match a request ``path`` against a webhook ``path`` template.
+
+    Templates may contain ``{name}`` placeholders that each capture exactly one
+    path segment, e.g. ``products/{id}`` matches ``products/42`` and returns
+    ``{"id": "42"}``; ``customers/{cid}/orders/{oid}`` captures both. A template
+    with no placeholders matches by exact, segment-wise equality, so existing
+    flat webhooks behave exactly as before.
+
+    Returns the captured params on a match (``{}`` when the template has none),
+    or ``None`` when the path does not match. Surrounding slashes on either side
+    are ignored.
+    """
+    t_segs = _path_segments(template)
+    p_segs = _path_segments(path)
+    if len(t_segs) != len(p_segs):
+        return None
+    params: dict[str, str] = {}
+    for t_seg, p_seg in zip(t_segs, p_segs):
+        if len(t_seg) >= 2 and t_seg[0] == "{" and t_seg[-1] == "}":
+            name = t_seg[1:-1]
+            if not name:
+                return None
+            params[name] = p_seg
+        elif t_seg != p_seg:
+            return None
+    return params
+
+
+def _route_template(base_path: str, route_path: str) -> str:
+    """Join an API Endpoint node's base path with one route's sub-path."""
+    return f"{base_path.strip('/')}/{route_path.strip('/')}"
+
+
+def _match_api_route(
+    base_path: str,
+    routes: list[dict],
+    method: str,
+    path: str,
+) -> tuple[str, dict[str, str]] | None:
+    """Pick the best-matching route for an API Endpoint node.
+
+    ``routes`` is a list of ``{"method", "path", "output"}`` rows. A node acts
+    as a router, so exactly one branch fires: the most *specific* matching route
+    wins, where specificity is the number of literal (non-``{param}``) segments
+    in its full template. Ties are broken by row order (earlier wins). Method
+    must match the row's method (case-insensitive); a row with a blank method
+    matches any method.
+
+    Returns ``(output, params)`` for the winning route, or ``None`` if nothing
+    matches.
+    """
+    best: tuple[int, str, dict[str, str]] | None = None
+    for route in routes:
+        route_method = str(route.get("method") or "").upper()
+        if route_method and route_method != method.upper():
+            continue
+        template = _route_template(base_path, str(route.get("path") or ""))
+        params = _match_webhook_path(template, path)
+        if params is None:
+            continue
+        specificity = sum(
+            1 for seg in _path_segments(template) if not seg.startswith("{")
+        )
+        if best is None or specificity > best[0]:
+            best = (specificity, str(route.get("output") or ""), params)
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
 async def dispatch_webhook(
     path: str,
     request_payload: dict,
@@ -649,11 +726,36 @@ async def dispatch_webhook(
         if not graph:
             continue
         for node in graph.get("nodes", []):
-            if node.get("type") != "webhook_trigger":
-                continue
+            node_type = node.get("type")
             node_params = node.get("params") or {}
-            node_path = str(node_params.get("path", ""))
-            if node_path != path:
+            # Resolve which trigger output to seed and what path params it
+            # captured. `webhook_trigger` is a single endpoint; `api_endpoint`
+            # routes the request to one of its named branches.
+            if node_type == "webhook_trigger":
+                node_path = str(node_params.get("path", ""))
+                matched_params = _match_webhook_path(node_path, path)
+                if matched_params is None:
+                    continue
+                # Method-aware routing: when the node pins an HTTP method, only
+                # the matching request method fires it, so e.g. `GET /items/{id}`
+                # and `DELETE /items/{id}` can live in separate workflows. A node
+                # with no method set matches any method (back-compat).
+                node_method = str(node_params.get("http_method") or "").upper()
+                req_method = str(request_payload.get("method") or "").upper()
+                if node_method and req_method and node_method != req_method:
+                    continue
+                seed_output = "main"
+            elif node_type == "api_endpoint":
+                route_match = _match_api_route(
+                    str(node_params.get("base_path") or ""),
+                    node_params.get("routes") or [],
+                    str(request_payload.get("method") or ""),
+                    path,
+                )
+                if route_match is None:
+                    continue
+                seed_output, matched_params = route_match
+            else:
                 continue
             any_match = True
             # Perimeter first: IP allowlist gates before any auth work so an
@@ -687,7 +789,9 @@ async def dispatch_webhook(
             # artifact and expose the ref on the payload so binary/multipart
             # uploads reach the workflow without bloating the DB. Requires a
             # pre-generated run id so the artifact lives under runs/<run_id>/.
-            node_payload = request_payload
+            # Expose the captured path params (e.g. `{{ $json.params.id }}`).
+            # Built per node since each template captures different segments.
+            node_payload = {**request_payload, "params": matched_params}
             raw_ref: dict | None = None
             pre_run_id: str | None = None
             if (
@@ -701,7 +805,7 @@ async def dispatch_webhook(
                     raw_body, headers, pre_run_id, node["id"]
                 )
                 if raw_ref is not None:
-                    node_payload = {**request_payload, "raw_body": raw_ref}
+                    node_payload = {**node_payload, "raw_body": raw_ref}
                 else:
                     pre_run_id = None
             run_id = await start_run(
@@ -711,7 +815,7 @@ async def dispatch_webhook(
                 workflow_version_id=version_id,
                 mode="test" if prefer_draft else "production",
                 trigger_type="webhook",
-                cache={node["id"]: {"main": node_payload}},
+                cache={node["id"]: {seed_output: node_payload}},
                 trigger_node_id=node["id"],
                 deduplication_key=dedup_key,
                 run_id=pre_run_id,
