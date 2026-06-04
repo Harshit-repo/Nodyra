@@ -12,6 +12,7 @@ import type {
   Environment,
   NodeManifest,
   NodeSource,
+  PackageUsage,
   PinnedItem,
   CodeModule,
   CodeModuleFunctionPreview,
@@ -224,6 +225,13 @@ export const api = {
     ),
   rebuildEnvironment: (id: string) =>
     request<Environment>(`/environments/${id}/rebuild`, { method: "POST" }),
+  setPackages: (id: string, packages: string[]) =>
+    request<Environment>(`/environments/${id}/packages`, {
+      method: "PUT",
+      body: JSON.stringify({ packages }),
+    }),
+  packageUsage: (id: string) =>
+    request<PackageUsage>(`/environments/${id}/package-usage`),
 
   runWorkflow: (
     id: string,

@@ -80,6 +80,23 @@ export interface NodeManifest {
   inputs: PortSpec[];
   params: ParamSpec[];
   outputs: PortSpec[];
+  requirements?: string[];
+}
+
+export interface PackageUsageEntry {
+  workflow_id: string;
+  workflow_name: string;
+  node_id: string;
+  node_label: string;
+}
+
+export interface PackageUsagePackage {
+  package: string;
+  used_by: PackageUsageEntry[];
+}
+
+export interface PackageUsage {
+  packages: PackageUsagePackage[];
 }
 
 export interface GraphNode {
