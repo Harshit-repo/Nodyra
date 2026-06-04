@@ -76,6 +76,7 @@ export interface NodeManifest {
   hidden?: boolean;
   deprecated?: boolean;
   replacement_id?: string | null;
+  usable_as_tool?: boolean;
   inputs: PortSpec[];
   params: ParamSpec[];
   outputs: PortSpec[];
@@ -95,6 +96,9 @@ export interface GraphNode {
   retry_backoff: boolean;
   always_output_data: boolean;
   timeout_seconds: number | null;
+  tool_mode?: boolean;
+  tool_name?: string | null;
+  tool_description?: string;
 }
 
 export interface GraphEdge {

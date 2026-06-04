@@ -31,6 +31,9 @@ export interface NoodleNodeData {
   retryBackoff: boolean;
   alwaysOutputData: boolean;
   timeoutSeconds: number | null;
+  toolMode?: boolean;
+  toolName?: string | null;
+  toolDescription?: string;
   [key: string]: unknown;
 }
 
@@ -42,6 +45,9 @@ export interface NodeSettingsPatch {
   retryBackoff?: boolean;
   alwaysOutputData?: boolean;
   timeoutSeconds?: number | null;
+  toolMode?: boolean;
+  toolName?: string | null;
+  toolDescription?: string;
 }
 
 export interface NodeRunMeta {
@@ -404,6 +410,10 @@ export const useEditor = create<EditorStore>((set, get) => ({
           alwaysOutputData: Boolean(n.always_output_data),
           timeoutSeconds:
             typeof n.timeout_seconds === "number" ? n.timeout_seconds : null,
+          toolMode: Boolean(n.tool_mode),
+          toolName: typeof n.tool_name === "string" ? n.tool_name : null,
+          toolDescription:
+            typeof n.tool_description === "string" ? n.tool_description : "",
         },
       });
     }
@@ -447,6 +457,9 @@ export const useEditor = create<EditorStore>((set, get) => ({
           typeof n.data.timeoutSeconds === "number"
             ? n.data.timeoutSeconds
             : null,
+        tool_mode: Boolean(n.data.toolMode),
+        tool_name: n.data.toolName ?? null,
+        tool_description: n.data.toolDescription ?? "",
       })),
       edges: edges.map((e) => ({
         id: e.id,
