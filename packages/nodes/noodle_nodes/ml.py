@@ -278,6 +278,7 @@ _REGRESSOR_ALGOS = [
 
 @node(
     name="Train Classifier",
+    requirements=["scikit-learn", "joblib", "pandas"],
     id="train_classifier",
     category="Machine Learning",
     icon="cpu",
@@ -392,6 +393,7 @@ def train_classifier(
 
 @node(
     name="Train Regressor",
+    requirements=["scikit-learn", "joblib", "pandas"],
     id="train_regressor",
     category="Machine Learning",
     icon="cpu",
@@ -503,6 +505,7 @@ def train_regressor(
 
 @node(
     name="Predict",
+    requirements=["scikit-learn", "joblib", "pandas"],
     id="ml_predict",
     category="Machine Learning",
     icon="sparkles",
@@ -555,6 +558,7 @@ def ml_predict(
 
 @node(
     name="Evaluate Model",
+    requirements=["scikit-learn", "joblib", "pandas"],
     id="evaluate_model",
     category="Machine Learning",
     icon="gauge",
@@ -641,6 +645,7 @@ def evaluate_model(
 
 @node(
     name="Select Features",
+    requirements=["scikit-learn", "joblib", "pandas"],
     id="select_features",
     category="Machine Learning",
     icon="filter",
@@ -717,6 +722,7 @@ def select_features(
 
 @node(
     name="Save Model",
+    requirements=["scikit-learn", "joblib", "pandas"],
     id="save_model",
     category="Machine Learning",
     icon="save",
@@ -805,6 +811,7 @@ def _registry_entry_dir(name: str):
 
 @node(
     name="Register Model",
+    requirements=["scikit-learn", "joblib", "pandas"],
     id="register_model",
     category="Machine Learning",
     icon="archive",
@@ -854,6 +861,7 @@ def register_model(model: Any = None, name: str = "") -> dict[str, Any]:
 
 @node(
     name="Load Model",
+    requirements=["scikit-learn", "joblib", "pandas"],
     id="load_model",
     category="Machine Learning",
     icon="package",
@@ -950,6 +958,7 @@ def _score_frame(pipeline, task: str, frame, features: list[str], target: str) -
 
 @node(
     name="Monitor Model",
+    requirements=["scikit-learn", "joblib", "pandas"],
     id="monitor_model",
     category="Machine Learning",
     icon="activity",

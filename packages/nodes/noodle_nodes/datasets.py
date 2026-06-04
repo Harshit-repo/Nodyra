@@ -259,6 +259,7 @@ register_materializer(materialize_dataset)
 
 @node(
     name="CSV Parse",
+    requirements=["duckdb"],
     id="csv_parse",
     category="Data",
     icon="table",
@@ -338,6 +339,7 @@ def csv_parse(
 
 @node(
     name="CSV Write",
+    requirements=["duckdb"],
     id="csv_write",
     category="Data",
     icon="table",
@@ -394,6 +396,7 @@ def csv_write(
 
 @node(
     name="Records To Dataset",
+    requirements=["duckdb"],
     id="records_to_dataset",
     category="Data",
     icon="table",
@@ -419,6 +422,7 @@ def records_to_dataset_node(input: Any = None) -> dict[str, Any]:
 
 @node(
     name="Dataset Preview",
+    requirements=["duckdb"],
     id="dataset_preview",
     category="Data",
     icon="eye",
@@ -446,6 +450,7 @@ def dataset_preview(input: Any = None, limit: int = 100) -> dict[str, Any]:
 
 @node(
     name="Dataset To Records",
+    requirements=["duckdb"],
     id="dataset_to_records",
     category="Data",
     icon="list",
@@ -476,6 +481,7 @@ def dataset_to_records(
 
 @node(
     name="Dataset Select Columns",
+    requirements=["duckdb"],
     id="dataset_select",
     category="Data",
     icon="columns",
@@ -516,6 +522,7 @@ def dataset_select(input: Any = None, columns: str = "") -> dict[str, Any]:
 
 @node(
     name="Dataset Filter",
+    requirements=["duckdb"],
     id="dataset_filter",
     category="Data",
     icon="filter",
@@ -557,6 +564,7 @@ def dataset_filter(input: Any = None, where: str = "") -> dict[str, Any]:
 
 @node(
     name="Dataset Limit",
+    requirements=["duckdb"],
     id="dataset_limit",
     category="Data",
     icon="hash",
@@ -593,6 +601,7 @@ def dataset_limit(input: Any = None, limit: int = 100, offset: int = 0) -> dict[
 
 @node(
     name="DuckDB SQL",
+    requirements=["duckdb"],
     id="duckdb_sql",
     category="Data",
     icon="terminal",

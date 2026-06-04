@@ -632,6 +632,7 @@ def _svg_to_png(svg: str) -> bytes:
 
 @node(
     name="Chart To Image",
+    requirements=["cairosvg"],
     id="chart_to_image",
     category="Visualize",
     icon="image",
