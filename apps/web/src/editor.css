@@ -4586,3 +4586,37 @@ th.sortable:hover { background:var(--bg-3); }
 .chat-send:hover:not(:disabled) { filter: brightness(1.08); }
 .chat-send:active:not(:disabled) { transform: scale(0.94); }
 .chat-send:disabled { opacity: 0.4; cursor: default; }
+
+/* ----- Tool mode (Use as tool) ------------------------------------------ */
+.tool-mode-section .tool-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.from-ai-toggle {
+  display: inline-flex;
+  margin: 4px 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.from-ai-toggle button {
+  padding: 3px 10px;
+  font-size: 12px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  border: none;
+  cursor: pointer;
+}
+.from-ai-toggle button.active {
+  background: var(--accent);
+  color: #fff;
+}
+.from-ai-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--accent-2);
+  font-style: italic;
+}
