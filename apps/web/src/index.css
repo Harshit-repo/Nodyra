@@ -1634,6 +1634,32 @@ kbd {
   color: #4ade80;
 }
 
+.ndv-missing-pkgs {
+  border: 1px solid rgba(240, 116, 122, 0.4);
+  border-radius: var(--radius-sm);
+  background: rgba(240, 116, 122, 0.08);
+  padding: 9px 11px;
+  margin: 10px 0;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ndv-missing-pkgs p {
+  margin: 0;
+}
+.ndv-missing-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.node-missing-pkg {
+  margin-left: 5px;
+  color: #f0a23a;
+  cursor: help;
+}
+
 /* ---- credentials ---- */
 .credential-modal {
   width: min(900px, calc(100vw - 34px));

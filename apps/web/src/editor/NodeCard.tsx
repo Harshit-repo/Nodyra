@@ -5,6 +5,7 @@ import type { CSSProperties, MouseEvent } from "react";
 
 import { categoryColor } from "../categories";
 import { NodeIcon } from "../NodeIcon";
+import { missingFor } from "./missingPackages";
 import { SdkModal } from "./SdkModal";
 import { type NoodleNode, useEditor } from "./store";
 
@@ -185,6 +186,8 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const runMeta = useEditor((s) => s.runMeta[id]);
   const running = useEditor((s) => s.running);
   const isPinned = useEditor((s) => Boolean(s.pinned[id]));
+  const envPackages = useEditor((s) => s.envPackages);
+  const missingPkgs = missingFor(manifest.requirements ?? [], envPackages);
   const agentModelLabel = useEditor((s) => {
     if (!isAgentV2) return "";
     const modelEdge = s.edges.find(
@@ -835,7 +838,18 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
           );
         })}
       </div>
-      <div className="node-label">{manifest.name}</div>
+      <div className="node-label">
+        {manifest.name}
+        {missingPkgs.length > 0 && (
+          <span
+            className="node-missing-pkg"
+            title={`Missing package(s): ${missingPkgs.join(", ")}`}
+            aria-label="Missing required package"
+          >
+            ⚠
+          </span>
+        )}
+      </div>
       {runMeta?.durationMs != null && runStatus !== "running" && (
         <div className="node-duration nodrag nopan">
           {runMeta.durationMs < 1000

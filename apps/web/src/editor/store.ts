@@ -135,6 +135,22 @@ interface EditorStore {
   runMeta: Record<string, NodeRunMeta>;
   runError: string | null;
 
+  // Current run-environment context, mirrored from EditorPage so the NDV can
+  // warn when a node needs a package the workflow's env doesn't have.
+  envId: string | null;
+  envName: string | null;
+  envPackages: string[];
+  environmentsList: { id: string; name: string; packages: string[] }[];
+  applyEnvSwitch: ((id: string) => void) | null;
+  setEnvContext: (ctx: {
+    envId: string | null;
+    envName: string | null;
+    envPackages: string[];
+    environmentsList: { id: string; name: string; packages: string[] }[];
+  }) => void;
+  setEnvPackages: (packages: string[]) => void;
+  setApplyEnvSwitch: (fn: ((id: string) => void) | null) => void;
+
   setManifests: (manifests: NodeManifest[]) => void;
   loadGraph: (graph: WorkflowGraph, opts?: { dirty?: boolean }) => void;
   toGraph: () => WorkflowGraph;
@@ -372,6 +388,15 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
   devMode: false,
   clipboardNodeCount: 0,
+
+  envId: null,
+  envName: null,
+  envPackages: [],
+  environmentsList: [],
+  applyEnvSwitch: null,
+  setEnvContext: (ctx) => set(ctx),
+  setEnvPackages: (packages) => set({ envPackages: packages }),
+  setApplyEnvSwitch: (fn) => set({ applyEnvSwitch: fn }),
 
   setManifests: (manifests) =>
     set({

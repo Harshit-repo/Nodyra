@@ -19,6 +19,7 @@ import type {
 import { DataPanel } from "./DataPanel";
 import { TimezoneSelect } from "./fields/TimezoneSelect";
 import { fromAiExpr, isFromAiExpr, paramArgType } from "./toolParam";
+import { missingFor } from "./missingPackages";
 import { useEditor } from "./store";
 
 interface CredentialRef {
@@ -2669,8 +2670,15 @@ export function NodeDetails({
   const workflowId = useEditor((s) => s.workflowId);
   const pinned = useEditor((s) => s.pinned[nodeId]);
   const setPinnedFor = useEditor((s) => s.setPinnedFor);
+  const envId = useEditor((s) => s.envId);
+  const envName = useEditor((s) => s.envName);
+  const envPackages = useEditor((s) => s.envPackages);
+  const environmentsList = useEditor((s) => s.environmentsList);
+  const applyEnvSwitch = useEditor((s) => s.applyEnvSwitch);
+  const setEnvPackages = useEditor((s) => s.setEnvPackages);
 
   const [mode, setMode] = useState<"inspector" | "python">("inspector");
+  const [pkgBusy, setPkgBusy] = useState(false);
   useEffect(() => setMode("inspector"), [nodeId]);
 
   async function pin(): Promise<void> {
@@ -2707,6 +2715,24 @@ export function NodeDetails({
   const setParam = (name: string, value: unknown) => {
     updateParams(node.id, { ...params, [name]: value });
   };
+
+  // Packages this node needs that the workflow's env doesn't have.
+  const missingPkgs = missingFor(manifest.requirements ?? [], envPackages);
+  const satisfyingEnvs = environmentsList.filter(
+    (e) => e.id !== envId && missingFor(missingPkgs, e.packages).length === 0,
+  );
+
+  async function addMissingToEnv(): Promise<void> {
+    if (!envId || pkgBusy) return;
+    setPkgBusy(true);
+    try {
+      const updated = [...envPackages, ...missingPkgs];
+      await api.setPackages(envId, updated);
+      setEnvPackages(updated);
+    } finally {
+      setPkgBusy(false);
+    }
+  }
 
   // Compute the data flowing into this node from upstream node outputs.
   const incomingInputs: Record<string, unknown> = {};
@@ -2765,6 +2791,41 @@ export function NodeDetails({
             >
               Python
             </button>
+          </div>
+        </div>
+      )}
+
+      {missingPkgs.length > 0 && envId && (
+        <div className="ndv-missing-pkgs warn-text">
+          <p>
+            This node needs <strong>{missingPkgs.join(", ")}</strong>, not
+            installed in <strong>{envName ?? "this environment"}</strong>.
+          </p>
+          <div className="ndv-missing-actions">
+            <button
+              type="button"
+              className="btn btn-sm btn-primary"
+              disabled={pkgBusy}
+              onClick={() => void addMissingToEnv()}
+            >
+              {pkgBusy ? "Adding…" : `Add to ${envName ?? "env"}`}
+            </button>
+            {satisfyingEnvs.length > 0 && applyEnvSwitch && (
+              <select
+                className="field-input"
+                value=""
+                onChange={(e) =>
+                  e.target.value && applyEnvSwitch(e.target.value)
+                }
+              >
+                <option value="">Switch environment…</option>
+                {satisfyingEnvs.map((env) => (
+                  <option key={env.id} value={env.id}>
+                    {env.name}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
         </div>
       )}

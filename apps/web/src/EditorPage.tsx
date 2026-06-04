@@ -159,6 +159,8 @@ export function EditorPage() {
   const webhookTimerRef = useRef<number | null>(null);
 
   const setManifests = useEditor((s) => s.setManifests);
+  const setEnvContext = useEditor((s) => s.setEnvContext);
+  const setApplyEnvSwitch = useEditor((s) => s.setApplyEnvSwitch);
   const loadGraph = useEditor((s) => s.loadGraph);
   const toGraph = useEditor((s) => s.toGraph);
   const markClean = useEditor((s) => s.markClean);
@@ -232,6 +234,28 @@ export function EditorPage() {
       cancelled = true;
     };
   }, [id, setManifests, loadGraph, clearRun, closeNdv, setWorkflowId, setPinned]);
+
+  // Mirror the current run-environment context into the editor store so the
+  // NDV can flag nodes whose packages the env lacks (and offer fix actions).
+  useEffect(() => {
+    const list = environments.map((e) => ({
+      id: e.id,
+      name: e.name,
+      packages: e.packages,
+    }));
+    const current = environments.find((e) => e.id === environmentId) ?? null;
+    setEnvContext({
+      envId: current?.id ?? null,
+      envName: current?.name ?? null,
+      envPackages: current?.packages ?? [],
+      environmentsList: list,
+    });
+  }, [environmentId, environments, setEnvContext]);
+
+  useEffect(() => {
+    setApplyEnvSwitch((envId: string) => setEnvironmentId(envId));
+    return () => setApplyEnvSwitch(null);
+  }, [setApplyEnvSwitch]);
 
   // Task 20: Debug in editor. When ExecutionsPage links to
   // /workflows/<id>?debug_run=<run_id>, load that run's snapshot once the
