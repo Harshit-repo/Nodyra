@@ -157,6 +157,8 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const deleteNode = useEditor((s) => s.deleteNode);
   const toggleDisabled = useEditor((s) => s.toggleDisabled);
   const openNdv = useEditor((s) => s.openNdv);
+  const openChat = useEditor((s) => s.openChat);
+  const isChatTrigger = manifest.id === "chat_trigger";
   const runFromNode = useEditor((s) => s.runFromNode);
   const runFromTrigger = useEditor((s) => s.runFromTrigger);
   const isTrigger = manifest.category === "Triggers";
@@ -290,6 +292,19 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
         >
           ⤢
         </button>
+        {isChatTrigger && (
+          <button
+            type="button"
+            className="toolbar-chat"
+            title="Open chat"
+            onClick={(e) => {
+              stop(e);
+              openChat();
+            }}
+          >
+            💬
+          </button>
+        )}
         <button
           type="button"
           className={`toolbar-disable${disabled ? " is-on" : ""}`}
@@ -335,7 +350,11 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
         />
       )}
 
-      <div className={tileClass.join(" ")}>
+      <div
+        className={tileClass.join(" ")}
+        onDoubleClick={isChatTrigger ? () => openChat() : undefined}
+        title={isChatTrigger ? "Double-click to open chat" : undefined}
+      >
         <NodeIcon name={manifest.icon} size={26} />
 
         {runStatus && (

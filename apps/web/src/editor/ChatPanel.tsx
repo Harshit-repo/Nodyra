@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { ArrowCounterClockwise, PaperPlaneTilt, Sparkle, X } from "@phosphor-icons/react";
+import { useEffect, useRef, useState } from "react";
 
 import { api } from "../api";
 
@@ -26,6 +27,24 @@ function newSessionId(): string {
   return `sess-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+/** Render a bot reply: pretty-print JSON payloads (e.g. an unwired trigger's
+ *  raw output) as a code block, otherwise plain text. */
+function MessageBody({ text }: { text: string }) {
+  const trimmed = text.trim();
+  const looksJson =
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"));
+  if (looksJson) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      return <pre className="chat-json">{JSON.stringify(parsed, null, 2)}</pre>;
+    } catch {
+      /* not JSON after all — fall through to text */
+    }
+  }
+  return <span className="chat-text">{text}</span>;
+}
+
 export function ChatPanel({
   workflowId,
   title,
@@ -41,6 +60,13 @@ export function ChatPanel({
   );
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  // Keep the latest message in view as the conversation grows.
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, sending]);
 
   async function send(): Promise<void> {
     const text = input.trim();
@@ -75,54 +101,120 @@ export function ChatPanel({
     setMessages(initialMessage ? [{ role: "bot", text: initialMessage }] : []);
   }
 
+  const empty = messages.length === 0 && !sending;
+
   return (
     <div className="chat-panel">
-      <div className="chat-panel-header">
-        <span>{title || "Chat"}</span>
-        <div className="chat-panel-actions">
-          <button type="button" onClick={reset} aria-label="Reset chat">
-            Reset
-          </button>
-          <button type="button" onClick={onClose} aria-label="Close chat">
-            ✕
-          </button>
+      <header className="chat-head">
+        <span className="chat-head-badge" aria-hidden>
+          <Sparkle size={15} weight="fill" />
+        </span>
+        <div className="chat-head-titles">
+          <div className="chat-head-title">{title || "Chat"}</div>
+          <div className="chat-head-sub">
+            test chat · {sessionId.slice(0, 8)}
+          </div>
         </div>
-      </div>
-      <div className="chat-panel-messages">
+        <button
+          type="button"
+          className="chat-icon-btn"
+          onClick={reset}
+          title="Reset conversation"
+          aria-label="Reset chat"
+        >
+          <ArrowCounterClockwise size={15} weight="bold" />
+        </button>
+        <button
+          type="button"
+          className="chat-icon-btn"
+          onClick={onClose}
+          title="Close chat"
+          aria-label="Close chat"
+        >
+          <X size={15} weight="bold" />
+        </button>
+      </header>
+
+      <div className="chat-body" ref={bodyRef}>
+        {empty ? (
+          <div className="chat-empty">
+            <span className="chat-empty-mark" aria-hidden>
+              <Sparkle size={26} weight="duotone" />
+            </span>
+            <p className="chat-empty-title">Test your chat workflow</p>
+            <p className="chat-empty-hint">
+              Send a message — it runs the workflow from the Chat Trigger and
+              shows the final node's reply.
+            </p>
+          </div>
+        ) : null}
+
         {messages.map((msg, i) => (
-          <div
-            key={i}
-            className={`chat-bubble chat-bubble-${msg.role}${
-              msg.error ? " chat-bubble-error" : ""
-            }`}
-          >
-            {msg.text}
-            {msg.error && msg.runId && onViewRun ? (
-              <button
-                type="button"
-                className="chat-view-run"
-                onClick={() => onViewRun(msg.runId!)}
+          <div key={i} className={`chat-row chat-row-${msg.role}`}>
+            {msg.role === "bot" ? (
+              <span
+                className={`chat-avatar${msg.error ? " is-error" : ""}`}
+                aria-hidden
               >
-                View run
-              </button>
+                <Sparkle size={14} weight="fill" />
+              </span>
             ) : null}
+            <div
+              className={`chat-bubble chat-bubble-${msg.role}${
+                msg.error ? " chat-bubble-error" : ""
+              }`}
+            >
+              <MessageBody text={msg.text} />
+              {msg.error && msg.runId && onViewRun ? (
+                <button
+                  type="button"
+                  className="chat-view-run"
+                  onClick={() => onViewRun(msg.runId!)}
+                >
+                  View run →
+                </button>
+              ) : null}
+            </div>
           </div>
         ))}
+
         {sending ? (
-          <div className="chat-bubble chat-bubble-bot chat-typing">…</div>
+          <div className="chat-row chat-row-bot">
+            <span className="chat-avatar" aria-hidden>
+              <Sparkle size={14} weight="fill" />
+            </span>
+            <div className="chat-bubble chat-bubble-bot chat-typing" aria-label="Thinking">
+              <span />
+              <span />
+              <span />
+            </div>
+          </div>
         ) : null}
       </div>
-      <div className="chat-panel-input">
-        <input
+
+      <div className="chat-composer">
+        <textarea
+          className="chat-input"
           value={input}
-          placeholder={placeholder || "Type a message…"}
+          rows={1}
+          placeholder={placeholder || "Message your workflow…"}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") send();
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              send();
+            }
           }}
         />
-        <button type="button" onClick={send} disabled={sending} aria-label="Send">
-          Send
+        <button
+          type="button"
+          className="chat-send"
+          onClick={send}
+          disabled={sending || !input.trim()}
+          aria-label="Send"
+          title="Send (Enter)"
+        >
+          <PaperPlaneTilt size={16} weight="fill" />
         </button>
       </div>
     </div>

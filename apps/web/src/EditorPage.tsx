@@ -151,7 +151,9 @@ export function EditorPage() {
   const [showHistory, setShowHistory] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
-  const [chatOpen, setChatOpen] = useState(false);
+  const chatOpen = useEditor((s) => s.chatOpen);
+  const openChat = useEditor((s) => s.openChat);
+  const closeChat = useEditor((s) => s.closeChat);
   const { notify } = useToast();
   const wsRef = useRef<RunStreamHandle | null>(null);
   const webhookTimerRef = useRef<number | null>(null);
@@ -917,7 +919,7 @@ export function EditorPage() {
             <button
               type="button"
               className="btn"
-              onClick={() => setChatOpen(true)}
+              onClick={openChat}
               title="Open chat panel"
             >
               Chat
@@ -1273,7 +1275,7 @@ export function EditorPage() {
               placeholder={params.input_placeholder ?? "Type a message…"}
               initialMessage={params.initial_message ?? ""}
               onRun={(runId) => connectRunStream(runId)}
-              onClose={() => setChatOpen(false)}
+              onClose={closeChat}
               onViewRun={(runId) => viewRun(runId)}
             />
           );

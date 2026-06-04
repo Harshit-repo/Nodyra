@@ -151,6 +151,9 @@ interface EditorStore {
   ndvOpenId: string | null;
   openNdv: (id: string) => void;
   closeNdv: () => void;
+  chatOpen: boolean;
+  openChat: () => void;
+  closeChat: () => void;
 
   deleteNode: (id: string) => void;
   toggleDisabled: (id: string) => void;
@@ -347,6 +350,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
   dirty: false,
 
   ndvOpenId: null,
+  chatOpen: false,
   runHandler: null,
 
   runId: null,
@@ -832,6 +836,8 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
   openNdv: (id) => set({ ndvOpenId: id, selectedId: id }),
   closeNdv: () => set({ ndvOpenId: null }),
+  openChat: () => set({ chatOpen: true }),
+  closeChat: () => set({ chatOpen: false }),
 
   deleteNode: (id) => {
     const state = get();
