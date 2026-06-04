@@ -33,6 +33,7 @@ from noodle.ai_runtime import (
 )
 from noodle.context import current_node_id, node_debug
 from noodle.expr import build_context, evaluate
+from noodle.node_tool import TOOL_MODE_OUTPUT, build_node_tool_adapter
 from noodle.models import (
     NodeRunResult,
     NodeStatus,
@@ -280,6 +281,13 @@ def _validate_connection_kinds(
             "input",
         )
         source_kind = _port_kind(source_port)
+        # A tool-mode node exposes a single `tool` output of kind ai_tool,
+        # regardless of its normal (data-flow) manifest outputs.
+        if (
+            getattr(source_node, "tool_mode", False)
+            and edge.source_output == TOOL_MODE_OUTPUT
+        ):
+            source_kind = "ai_tool"
         target_kind = _port_kind(target_port)
         error = _connection_kind_error(source_kind, target_kind)
         if error:
@@ -858,6 +866,33 @@ async def execute(
                 NodeRunResult(
                     node_id=nid, status=NodeStatus.success, outputs=outputs,
                     started_at=started, finished_at=time.time(),
+                )
+            )
+            return
+
+        if getattr(graph_node, "tool_mode", False):
+            # Tool-mode node: don't run in the data flow. Emit a ToolAdapter on
+            # the `tool` output so it flows into the AI Agent's tool port; the
+            # node's function runs deferred when the agent invokes the tool.
+            try:
+                adapter = build_node_tool_adapter(node_def, graph_node)
+            except Exception as exc:  # noqa: BLE001 - surface a clean node error
+                run_status = RunStatus.error
+                await finish(
+                    NodeRunResult(
+                        node_id=nid, status=NodeStatus.error,
+                        error=f"{type(exc).__name__}: {exc}",
+                        started_at=started, finished_at=time.time(),
+                    )
+                )
+                return
+            tool_outputs = {TOOL_MODE_OUTPUT: adapter}
+            node_outputs[nid] = tool_outputs
+            await finish(
+                NodeRunResult(
+                    node_id=nid, status=NodeStatus.success, outputs=tool_outputs,
+                    started_at=started, finished_at=time.time(),
+                    node_type_version=node_def.manifest.version,
                 )
             )
             return
