@@ -3,8 +3,9 @@
 A node is a plain Python function with:
 
 * **input ports** — wired data connections. Function parameters whose names are
-  listed in ``@node(inputs=[...])`` are input ports (default ``["input"]``;
-  triggers pass ``inputs=[]``).
+  listed in ``@node(inputs=[...])`` are input ports (default ``["input"]`` for
+  data-flow ``role="executable"`` nodes; triggers, suppliers, tools, and output
+  parsers default to ``[]`` and connect through their own ports).
 * **config parameters** — every other function parameter. These are edited in
   the inspector, never wired.
 * **outputs** — declared with ``@node(outputs=[...])`` (default ``["main"]``);
@@ -424,7 +425,14 @@ def _decorated_node_from_ast(
         replacement_id = str(replacement_id)
     icon = kwargs.get("icon")
     inputs = kwargs.get("inputs")
-    inputs = ["input"] if inputs is None else list(inputs)
+    if inputs is None:
+        # Only data-flow ("executable") nodes get a default main input. Triggers,
+        # suppliers, tools, and output parsers connect to the engine or the AI
+        # Agent through their own ports and have no main input unless they
+        # declare one explicitly.
+        inputs = ["input"] if role == "executable" else []
+    else:
+        inputs = list(inputs)
     outputs = list(kwargs.get("outputs") or ["main"])
     input_kinds = kwargs.get("input_kinds") or {}
     output_kinds = kwargs.get("output_kinds") or {}
@@ -770,8 +778,9 @@ def node(
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Register a function as a Noodle node.
 
-    ``inputs`` lists the wired input ports (default ``["input"]``; pass ``[]``
-    for triggers). ``params`` maps a config parameter name to UI metadata, e.g.
+    ``inputs`` lists the wired input ports (default ``["input"]`` for data-flow
+    ``role="executable"`` nodes; triggers/suppliers/tools/output parsers default
+    to ``[]``). ``params`` maps a config parameter name to UI metadata, e.g.
     ``{"method": {"choices": ["GET", "POST"]}}``. ``outputs`` declares named
     output ports; a node with more than one output must return a dict keyed by
     those names (omit a key to leave that branch untaken).
@@ -801,7 +810,7 @@ def node(
             deprecated=deprecated,
             replacement_id=replacement_id,
             param_meta=param_meta,
-            inputs=["input"] if inputs is None else inputs,
+            inputs=(["input"] if role == "executable" else []) if inputs is None else inputs,
             outputs=outputs or ["main"],
             icon=icon,
             input_kinds=input_kinds,

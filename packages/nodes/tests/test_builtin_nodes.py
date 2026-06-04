@@ -31,6 +31,13 @@ def test_expected_builtins_are_registered() -> None:
     assert expected <= ids
 
 
+def test_executable_node_keeps_default_main_input() -> None:
+    # Regression guard: data-flow (executable) nodes still get the default
+    # "input" port when they don't declare inputs explicitly.
+    manifests = {m.id: m for m in registry.manifests()}
+    assert any(p.name == "input" for p in manifests["edit_fields"].inputs)
+
+
 def test_expected_integration_nodes_are_registered() -> None:
     ids = {m.id for m in registry.manifests()}
     expected = {

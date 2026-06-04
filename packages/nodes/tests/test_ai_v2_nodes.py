@@ -943,3 +943,26 @@ def test_task_text_reads_chat_input_key() -> None:
 
 def test_session_id_reads_camelcase_session_key() -> None:
     assert _session_id({"sessionId": "abc-123"}, "") == "abc-123"
+
+
+def test_ai_subnodes_have_no_phantom_main_input() -> None:
+    # Suppliers, tools, and output parsers plug into the AI Agent through their
+    # own ports; none should carry a default main "input" port (that would make
+    # them look like they need data from the trigger).
+    from noodle.sdk import registry
+
+    sub_roles = {"supplier", "tool", "output_parser"}
+    offenders = [
+        m.id
+        for m in registry.manifests()
+        if m.role in sub_roles and any(p.name == "input" for p in m.inputs)
+    ]
+    assert offenders == [], f"sub-nodes must not have a main input: {offenders}"
+
+
+def test_ai_chat_model_supplier_has_no_inputs() -> None:
+    from noodle.sdk import registry
+
+    by_id = {m.id: m for m in registry.manifests()}
+    assert [p.name for p in by_id["ai_chat_model_openai"].inputs] == []
+    assert [p.name for p in by_id["ai_chat_model_openai"].outputs] == ["model"]
