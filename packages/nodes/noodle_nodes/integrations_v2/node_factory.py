@@ -40,6 +40,11 @@ def _param_source(param: OperationParamSpec) -> str:
 
 
 def operation_manifest(spec: OperationSpec) -> NodeManifest:
+    usable_as_tool = (
+        spec.role == NodeRole.executable
+        if spec.usable_as_tool is None
+        else bool(spec.usable_as_tool)
+    )
     return NodeManifest(
         id=spec.node_id,
         name=spec.name,
@@ -48,6 +53,8 @@ def operation_manifest(spec: OperationSpec) -> NodeManifest:
         description=spec.description,
         icon=spec.icon,
         role=spec.role,
+        usable_as_tool=usable_as_tool,
+        tool_side_effecting=spec.tool_side_effecting,
         inputs=[
             PortSpec(
                 name="input",
@@ -63,6 +70,7 @@ def operation_manifest(spec: OperationSpec) -> NodeManifest:
                 data_kind=spec.output_kind,
             )
         ],
+        requirements=list(spec.requirements),
     )
 
 
@@ -131,6 +139,7 @@ def trigger_manifest(spec: ProviderTriggerSpec) -> NodeManifest:
                 data_kind=spec.output_kind,
             )
         ],
+        requirements=list(spec.requirements),
     )
 
 

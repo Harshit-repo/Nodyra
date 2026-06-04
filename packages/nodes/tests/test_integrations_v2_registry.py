@@ -20,11 +20,13 @@ from noodle_nodes.integrations_v2.specs import (
 
 def setup_function() -> None:
     unregister_operation("google_sheets_append_v2_test")
+    unregister_operation("google_sheets_read_v2_test")
     unregister_provider_trigger("github_repository_trigger_v2_test")
 
 
 def teardown_function() -> None:
     unregister_operation("google_sheets_append_v2_test")
+    unregister_operation("google_sheets_read_v2_test")
     unregister_provider_trigger("github_repository_trigger_v2_test")
 
 
@@ -86,6 +88,8 @@ def test_operation_spec_registers_manifest_and_callable() -> None:
     assert registry.get("google_sheets_append_v2_test") is node_def
     assert manifest.name == "Google Sheets Append V2"
     assert manifest.category == "Integrations"
+    assert manifest.usable_as_tool is True
+    assert manifest.tool_side_effecting is True
     assert manifest.inputs[0].data_kind == PortDataKind.main
     assert manifest.outputs[0].data_kind == PortDataKind.main
 
@@ -115,6 +119,32 @@ def test_operation_spec_registers_manifest_and_callable() -> None:
             "value_input_option": "RAW",
         }
     ]
+
+
+def test_operation_spec_can_mark_read_only_tool() -> None:
+    spec = OperationSpec(
+        node_id="google_sheets_read_v2_test",
+        name="Google Sheets Read V2",
+        provider="google_sheets",
+        resource="values",
+        operation="read",
+        description="Read rows from a Google Sheet.",
+        icon="sheet",
+        tool_side_effecting=False,
+        params=(
+            OperationParamSpec(name="spreadsheet_id", required=True),
+            OperationParamSpec(name="range_name", default="Sheet1!A:Z"),
+        ),
+    )
+
+    node_def = register_operation(
+        spec,
+        lambda **kwargs: kwargs,
+        node_registry=NodeRegistry(),
+    )
+
+    assert node_def.manifest.usable_as_tool is True
+    assert node_def.manifest.tool_side_effecting is False
 
 
 def test_registered_operation_can_execute_by_node_id() -> None:
@@ -168,6 +198,7 @@ def test_provider_trigger_spec_registers_manifest() -> None:
     manifest = node_def.manifest
     assert registry.get("github_repository_trigger_v2_test") is node_def
     assert manifest.role.value == "trigger"
+    assert manifest.usable_as_tool is False
     assert manifest.inputs == []
     assert manifest.outputs[0].data_kind == PortDataKind.main
     assert manifest.params[0].name == "owner"
@@ -186,3 +217,32 @@ def test_provider_trigger_source_is_explicit_python() -> None:
     assert "owner=None" in source
     assert "repo=None" in source
     assert "return {}" in source
+
+
+def test_operation_manifest_defaults_to_empty_requirements():
+    from noodle_nodes.integrations_v2.node_factory import operation_manifest
+    from noodle_nodes.integrations_v2.specs import OperationSpec
+
+    spec = OperationSpec(
+        node_id="acme.thing.do",
+        name="Acme Do",
+        provider="acme",
+        resource="thing",
+        operation="do",
+    )
+    assert operation_manifest(spec).requirements == []
+
+
+def test_operation_manifest_passes_requirements_through():
+    from noodle_nodes.integrations_v2.node_factory import operation_manifest
+    from noodle_nodes.integrations_v2.specs import OperationSpec
+
+    spec = OperationSpec(
+        node_id="acme.thing.do",
+        name="Acme Do",
+        provider="acme",
+        resource="thing",
+        operation="do",
+        requirements=("acme-sdk>=2",),
+    )
+    assert operation_manifest(spec).requirements == ["acme-sdk>=2"]

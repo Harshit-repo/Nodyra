@@ -68,9 +68,12 @@ class OperationSpec:
     description: str = ""
     icon: str | None = None
     role: NodeRole = NodeRole.executable
+    usable_as_tool: bool | None = None
+    tool_side_effecting: bool = True
     params: Sequence[OperationParamSpec] = field(default_factory=tuple)
     input_kind: PortDataKind = PortDataKind.main
     output_kind: PortDataKind = PortDataKind.main
+    requirements: Sequence[str] = field(default_factory=tuple)
 
     @property
     def operation_key(self) -> str:
@@ -167,6 +170,7 @@ class ProviderTriggerSpec:
     icon: str | None = None
     params: Sequence[OperationParamSpec] = field(default_factory=tuple)
     output_kind: PortDataKind = PortDataKind.main
+    requirements: Sequence[str] = field(default_factory=tuple)
     activate: ProviderTriggerActivate | None = None
     deactivate: ProviderTriggerDeactivate | None = None
     handle_event: ProviderTriggerHandleEvent | None = None
