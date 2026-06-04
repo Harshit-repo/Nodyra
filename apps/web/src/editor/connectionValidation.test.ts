@@ -144,3 +144,29 @@ describe("DatasetRef connection validation", () => {
     expect(result.message).toContain("AI tool");
   });
 });
+
+describe("tool-mode connection", () => {
+  const agent = manifest("ai_agent_v2", "ai_tool", "main");
+
+  function toolNode(id: string, on: boolean): NoodleNode {
+    const n = node(id, manifest("http_request", "any", "main"));
+    n.data.toolMode = on;
+    return n;
+  }
+
+  it("accepts a tool-mode node's `tool` output into an agent tool port", () => {
+    const nodes = [toolNode("t", true), node("a", agent)];
+    const check = validateConnection(nodes, {
+      source: "t", sourceHandle: "tool", target: "a", targetHandle: "input",
+    });
+    expect(check.ok).toBe(true);
+  });
+
+  it("rejects a non-tool-mode node's main output into an agent tool port", () => {
+    const nodes = [toolNode("t", false), node("a", agent)];
+    const check = validateConnection(nodes, {
+      source: "t", sourceHandle: "main", target: "a", targetHandle: "input",
+    });
+    expect(check.ok).toBe(false);
+  });
+});

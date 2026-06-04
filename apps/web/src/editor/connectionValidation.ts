@@ -61,8 +61,9 @@ export function checkConnectionKinds(
   sourceHandle: string | null | undefined,
   target: NodeManifest,
   targetHandle: string | null | undefined,
+  sourceKindOverride?: PortDataKind,
 ): ConnectionCheck {
-  const sourceKind = portKind(findOutputPort(source, sourceHandle));
+  const sourceKind = sourceKindOverride ?? portKind(findOutputPort(source, sourceHandle));
   const targetKind = portKind(findInputPort(target, targetHandle));
 
   if (sourceKind === targetKind) {
@@ -139,11 +140,17 @@ export function validateConnection(
   if (!sourceNode || !targetNode) {
     return { ok: false, severity: "error", message: "Connection endpoint is missing." };
   }
+  // A tool-mode node exposes a single `tool` output of kind ai_tool.
+  const sourceKindOverride: PortDataKind | undefined =
+    sourceNode.data.toolMode && connection.sourceHandle === "tool"
+      ? "ai_tool"
+      : undefined;
   return checkConnectionKinds(
     sourceNode.data.manifest,
     connection.sourceHandle,
     targetNode.data.manifest,
     connection.targetHandle,
+    sourceKindOverride,
   );
 }
 
