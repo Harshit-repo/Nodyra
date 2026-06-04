@@ -25,6 +25,7 @@ _ALIASES = (
     ("$input", "_input"),
     ("$node", "_node"),
     ("$now", "_now"),
+    ("$fromAI", "_from_ai"),
 )
 
 _SAFE_BUILTINS: dict[str, Any] = {
@@ -287,6 +288,47 @@ def build_context(
         "_node": {nid: _wrap(outs) for nid, outs in (node_outputs or {}).items()},
         "_now": datetime.now(UTC),
     }
+
+
+def from_ai_binding(
+    *,
+    collector: dict[str, dict[str, str]] | None = None,
+    ai_args: dict[str, Any] | None = None,
+):
+    """Build the ``$fromAI(name, description="", type="string", default=None)``
+    callable for the expression context.
+
+    * ``collector`` set → *schema-collection mode*: each call records the arg
+      and returns ``default`` (so the expression evaluates harmlessly while we
+      derive the tool's schema).
+    * ``ai_args`` set → *invoke mode*: each call returns the model-supplied
+      argument value (falling back to ``default``).
+
+    ``$fromAI`` must be called positionally — the expression validator does not
+    permit keyword arguments.
+    """
+
+    def _from_ai(
+        name: Any,
+        description: Any = "",
+        type: Any = "string",  # noqa: A002 - mirrors the $fromAI('name','desc','type') shape
+        default: Any = None,
+    ) -> Any:
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("$fromAI requires a non-empty name")
+        key = name.strip()
+        if collector is not None:
+            collector[key] = {
+                "name": key,
+                "description": str(description or ""),
+                "type": str(type or "string"),
+            }
+            return default
+        if ai_args is not None:
+            return ai_args.get(key, default)
+        return default
+
+    return _from_ai
 
 
 def _eval_one(expression: str, context: dict[str, Any]) -> Any:
