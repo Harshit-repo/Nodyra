@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, runnerPoolsApi } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { HomeHeader } from "./HomeHeader";
+import { PackageDrawer } from "./PackageDrawer";
 import type { Environment, RunnerPoolInfo, SystemSettings } from "./types";
 
 const DESCRIPTION_HELP =
@@ -509,8 +510,7 @@ function EnvCard({
   rssSoftBudget: number;
   pools: RunnerPoolInfo[];
 }) {
-  const [pkg, setPkg] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [showPackages, setShowPackages] = useState(false);
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -519,23 +519,6 @@ function EnvCard({
     env.worker_rss_estimate_bytes && env.worker_rss_estimate_bytes > 0
       ? env.worker_rss_estimate_bytes * effectiveWorkers
       : null;
-
-  async function add() {
-    if (!pkg.trim() || busy) return;
-    setBusy(true);
-    try {
-      await api.addPackage(env.id, pkg.trim());
-      setPkg("");
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function remove(name: string) {
-    await api.removePackage(env.id, name);
-    onChanged();
-  }
 
   async function rebuild() {
     await api.rebuildEnvironment(env.id);
@@ -575,10 +558,14 @@ function EnvCard({
           <span>Workers</span>
           <strong>{effectiveWorkers}</strong>
         </div>
-        <div>
+        <button
+          type="button"
+          className="env-health-tile-btn"
+          onClick={() => setShowPackages(true)}
+        >
           <span>Packages</span>
-          <strong>{env.packages.length}</strong>
-        </div>
+          <strong>{env.packages.length} ›</strong>
+        </button>
         <div>
           <span>Worker RAM</span>
           <strong>{formatBytes(env.worker_rss_estimate_bytes)}</strong>
@@ -589,33 +576,6 @@ function EnvCard({
         </div>
       </div>
       {env.description && <p className="env-description">{env.description}</p>}
-
-      <div className="env-packages">
-        {env.packages.length === 0 && (
-          <span className="muted">No extra packages</span>
-        )}
-        {env.packages.map((p) => (
-          <span className="pkg-chip" key={p}>
-            {p}
-            <button onClick={() => void remove(p)} aria-label={`remove ${p}`}>
-              ×
-            </button>
-          </span>
-        ))}
-      </div>
-
-      <div className="env-add">
-        <input
-          className="field-input"
-          placeholder="Add a package, e.g. pandas"
-          value={pkg}
-          onChange={(e) => setPkg(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && void add()}
-        />
-        <button className="btn btn-sm" onClick={() => void add()} disabled={busy}>
-          Add
-        </button>
-      </div>
 
       {env.status_detail && (env.status === "error" || env.status === "building") && (
         <pre className="env-log">{env.status_detail}</pre>
@@ -649,6 +609,13 @@ function EnvCard({
           workspaceCap={workspaceCap}
           rssSoftBudget={rssSoftBudget}
           pools={pools}
+        />
+      )}
+      {showPackages && (
+        <PackageDrawer
+          env={env}
+          onClose={() => setShowPackages(false)}
+          onChanged={onChanged}
         />
       )}
       {confirmDelete && (
