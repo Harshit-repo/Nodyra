@@ -38,6 +38,21 @@ def test_executable_node_keeps_default_main_input() -> None:
     assert any(p.name == "input" for p in manifests["edit_fields"].inputs)
 
 
+def test_usable_as_tool_defaults() -> None:
+    manifests = {m.id: m for m in registry.manifests()}
+    # Action/integration nodes are tool-capable.
+    assert manifests["http_request"].usable_as_tool is True
+    assert manifests["edit_fields"].usable_as_tool is True
+    # Control-flow and code are excluded.
+    assert manifests["if"].usable_as_tool is False
+    assert manifests["switch"].usable_as_tool is False
+    assert manifests["code"].usable_as_tool is False
+    # Non-executable roles are never tool-capable.
+    assert manifests["manual_trigger"].usable_as_tool is False
+    assert manifests["chat_trigger"].usable_as_tool is False
+    assert manifests["ai_chat_model_openai"].usable_as_tool is False
+
+
 def test_expected_integration_nodes_are_registered() -> None:
     ids = {m.id for m in registry.manifests()}
     expected = {

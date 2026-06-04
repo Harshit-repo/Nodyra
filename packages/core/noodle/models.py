@@ -122,6 +122,8 @@ class NodeManifest(BaseModel):
     hidden: bool = False
     deprecated: bool = False
     replacement_id: str | None = None
+    usable_as_tool: bool = False
+    tool_side_effecting: bool = True
     inputs: list[PortSpec] = Field(default_factory=list)
     params: list[ParamSpec] = Field(default_factory=list)
     outputs: list[PortSpec] = Field(default_factory=list)
@@ -150,6 +152,11 @@ class GraphNode(BaseModel):
     retry_backoff: bool = False
     always_output_data: bool = False
     timeout_seconds: float | None = None
+    # Tool mode: when true the node does not run in the data flow; the engine
+    # emits a ToolAdapter on a `tool` output for an AI Agent to call.
+    tool_mode: bool = False
+    tool_name: str | None = None
+    tool_description: str = ""
 
 
 class Edge(BaseModel):

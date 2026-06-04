@@ -197,6 +197,24 @@ def _type_label(annotation: Any) -> str:
     return _TYPE_MAP.get(annotation, "string")
 
 
+# Executable nodes that should NOT be offered as agent tools (control flow,
+# raw code). Everything else with role "executable" is tool-capable by default.
+_NON_TOOL_NODE_IDS = frozenset({
+    "if", "switch", "merge", "loop_over_items", "filter",
+    "stop_and_error", "code",
+})
+
+
+def _default_usable_as_tool(node_id: str, role: str, category: str) -> bool:
+    # Triggers are role "executable" in this codebase (they key off
+    # TRIGGER_TYPES, not role), so exclude them by category too.
+    return (
+        role == "executable"
+        and category != "Triggers"
+        and node_id not in _NON_TOOL_NODE_IDS
+    )
+
+
 def _build_manifest(
     func: Callable[..., Any],
     *,
@@ -215,6 +233,8 @@ def _build_manifest(
     icon: str | None,
     input_kinds: dict[str, str] | None = None,
     output_kinds: dict[str, str] | None = None,
+    usable_as_tool: bool | None = None,
+    tool_side_effecting: bool = True,
 ) -> NodeManifest:
     hints = get_type_hints(func)
     signature = inspect.signature(func)
@@ -264,6 +284,12 @@ def _build_manifest(
         hidden=hidden,
         deprecated=deprecated,
         replacement_id=replacement_id,
+        usable_as_tool=(
+            _default_usable_as_tool(node_id, role, category)
+            if usable_as_tool is None
+            else bool(usable_as_tool)
+        ),
+        tool_side_effecting=tool_side_effecting,
         inputs=[
             PortSpec(name=n, data_kind=in_kinds.get(n, "any"))
             for n in inputs
@@ -474,8 +500,15 @@ def _decorated_node_from_ast(
             )
         )
 
+    user_node_id = f"user:{module_id}:{declared_id}"
+    usable_as_tool = kwargs.get("usable_as_tool")
+    usable_as_tool = (
+        _default_usable_as_tool(user_node_id, role, category)
+        if usable_as_tool is None
+        else bool(usable_as_tool)
+    )
     manifest = NodeManifest(
-        id=f"user:{module_id}:{declared_id}",
+        id=user_node_id,
         name=name,
         category=category,
         version=version,
@@ -485,6 +518,8 @@ def _decorated_node_from_ast(
         hidden=hidden,
         deprecated=deprecated,
         replacement_id=replacement_id,
+        usable_as_tool=usable_as_tool,
+        tool_side_effecting=bool(kwargs.get("tool_side_effecting", True)),
         inputs=[
             PortSpec(name=n, data_kind=input_kinds.get(n, "any")) for n in inputs
         ],
@@ -774,6 +809,8 @@ def node(
     output_kinds: dict[str, str] | None = None,
     icon: str | None = None,
     wires: dict[str, str] | None = None,
+    usable_as_tool: bool | None = None,
+    tool_side_effecting: bool = True,
     registry: NodeRegistry = registry,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Register a function as a Noodle node.
@@ -815,6 +852,8 @@ def node(
             icon=icon,
             input_kinds=input_kinds,
             output_kinds=output_kinds,
+            usable_as_tool=usable_as_tool,
+            tool_side_effecting=tool_side_effecting,
         )
         param_names, has_var_kw = _signature_info(func)
         node_def = NodeDef(
