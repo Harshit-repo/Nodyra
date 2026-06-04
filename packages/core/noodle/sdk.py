@@ -235,6 +235,7 @@ def _build_manifest(
     output_kinds: dict[str, str] | None = None,
     usable_as_tool: bool | None = None,
     tool_side_effecting: bool = True,
+    requirements: list[str] | None = None,
 ) -> NodeManifest:
     hints = get_type_hints(func)
     signature = inspect.signature(func)
@@ -299,6 +300,7 @@ def _build_manifest(
             PortSpec(name=o, data_kind=out_kinds.get(o, "any"))
             for o in outputs
         ],
+        requirements=list(requirements or []),
     )
 
 
@@ -811,6 +813,7 @@ def node(
     wires: dict[str, str] | None = None,
     usable_as_tool: bool | None = None,
     tool_side_effecting: bool = True,
+    requirements: list[str] | None = None,
     registry: NodeRegistry = registry,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Register a function as a Noodle node.
@@ -854,6 +857,7 @@ def node(
             output_kinds=output_kinds,
             usable_as_tool=usable_as_tool,
             tool_side_effecting=tool_side_effecting,
+            requirements=requirements,
         )
         param_names, has_var_kw = _signature_info(func)
         node_def = NodeDef(

@@ -460,3 +460,24 @@ def test_no_decorators_keeps_auto_behavior() -> None:
     assert [d.manifest.id for d in discovered] == ["user:mod:a", "user:mod:b"]
     assert all(not d.decorated for d in discovered)
 
+
+
+def test_node_decorator_carries_requirements():
+    reg = NodeRegistry()
+
+    @node(name="Heavy", id="heavy_x", requirements=["duckdb>=0.9"], registry=reg)
+    def heavy_x(input=None):
+        return input
+
+    manifest = reg.get("heavy_x").manifest
+    assert manifest.requirements == ["duckdb>=0.9"]
+
+
+def test_node_decorator_requirements_default_empty():
+    reg = NodeRegistry()
+
+    @node(name="Light", id="light_x", registry=reg)
+    def light_x(input=None):
+        return input
+
+    assert reg.get("light_x").manifest.requirements == []

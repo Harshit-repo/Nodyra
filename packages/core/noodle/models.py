@@ -127,6 +127,7 @@ class NodeManifest(BaseModel):
     inputs: list[PortSpec] = Field(default_factory=list)
     params: list[ParamSpec] = Field(default_factory=list)
     outputs: list[PortSpec] = Field(default_factory=list)
+    requirements: list[str] = Field(default_factory=list)
 
 
 class Position(BaseModel):
