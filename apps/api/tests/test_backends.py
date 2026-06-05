@@ -284,3 +284,99 @@ async def test_pixi_build_calls_pixi_install(tmp_path) -> None:
     assert str(fake_pixi) == cmd[0]
     assert "install" in cmd
     assert "--manifest-path" in cmd
+
+
+@pytest.mark.asyncio
+async def test_pixi_build_incremental_add_when_env_exists(tmp_path) -> None:
+    """When env already built and only new packages added, uses pixi add not install."""
+    import io
+    import tomllib
+    from app.services.backends.pixi import PixiBackend
+
+    env_dir = tmp_path / "env"
+    env_dir.mkdir()
+
+    # Existing pixi.toml with numpy already installed
+    toml_content = (
+        '[project]\nname = "noodle-env-test"\nchannels = ["conda-forge"]\n'
+        'platforms = ["linux-64"]\n\n[dependencies]\npython = "3.12.*"\nnumpy = "*"\n'
+    )
+    (env_dir / "pixi.toml").write_text(toml_content)
+
+    # Fake python binary so python_path().exists() returns True
+    python_bin = env_dir / ".pixi" / "envs" / "default" / "bin" / "python"
+    python_bin.parent.mkdir(parents=True)
+    python_bin.write_bytes(b"fake")
+
+    env = MagicMock()
+    env.id = "test"
+    env.python_version = "3.12"
+    env.packages = ["numpy", "pandas"]   # pandas is new
+    env.backend_config = {"channels": ["conda-forge"]}
+
+    calls: list[tuple] = []
+
+    async def mock_run(*args: str) -> tuple[int, str]:
+        calls.append(args)
+        return 0, "ok"
+
+    fake_pixi = tmp_path / "pixi"
+
+    with patch("app.services.backends.pixi._run", side_effect=mock_run):
+        with patch("app.services.backends.pixi.ensure_tool", return_value=fake_pixi):
+            with patch("app.services.backends.pixi.venv_dir", return_value=env_dir):
+                with patch("sys.platform", "linux"):
+                    b = PixiBackend()
+                    status, _ = await b.build(env)
+
+    assert status == "ready"
+    assert len(calls) == 1
+    cmd = calls[0]
+    assert "add" in cmd
+    assert "pandas" in cmd
+    assert "install" not in cmd
+
+
+@pytest.mark.asyncio
+async def test_pixi_build_full_rebuild_on_removal(tmp_path) -> None:
+    """When a package is removed, falls back to full pixi install."""
+    from app.services.backends.pixi import PixiBackend
+
+    env_dir = tmp_path / "env"
+    env_dir.mkdir()
+
+    toml_content = (
+        '[project]\nname = "noodle-env-test"\nchannels = ["conda-forge"]\n'
+        'platforms = ["linux-64"]\n\n[dependencies]\npython = "3.12.*"\n'
+        'numpy = "*"\npandas = "*"\n'
+    )
+    (env_dir / "pixi.toml").write_text(toml_content)
+
+    python_bin = env_dir / ".pixi" / "envs" / "default" / "bin" / "python"
+    python_bin.parent.mkdir(parents=True)
+    python_bin.write_bytes(b"fake")
+
+    env = MagicMock()
+    env.id = "test"
+    env.python_version = "3.12"
+    env.packages = ["numpy"]   # pandas removed
+    env.backend_config = {"channels": ["conda-forge"]}
+
+    calls: list[tuple] = []
+
+    async def mock_run(*args: str) -> tuple[int, str]:
+        calls.append(args)
+        return 0, "ok"
+
+    fake_pixi = tmp_path / "pixi"
+
+    with patch("app.services.backends.pixi._run", side_effect=mock_run):
+        with patch("app.services.backends.pixi.ensure_tool", return_value=fake_pixi):
+            with patch("app.services.backends.pixi.venv_dir", return_value=env_dir):
+                with patch("app.services.backends.pixi.local_noodle_packages", return_value=[]):
+                    with patch("sys.platform", "linux"):
+                        b = PixiBackend()
+                        status, _ = await b.build(env)
+
+    assert status == "ready"
+    assert any("install" in c for c in calls)
