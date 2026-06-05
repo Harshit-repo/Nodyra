@@ -37,6 +37,11 @@ export function PackageDrawer({
     return m;
   }, [usage]);
 
+  const channels = useMemo(
+    () => (env.backend_config?.channels as string[] | undefined) ?? [],
+    [env.backend_config],
+  );
+
   async function commit(packages: string[]) {
     setBusy(true);
     try {
@@ -114,6 +119,24 @@ export function PackageDrawer({
             ×
           </button>
         </header>
+
+        {(env.backend === "conda" || env.backend === "pixi") && (
+          <div className="package-drawer-section">
+            <div className="field-label">Channels</div>
+            <div className="channels-list">
+              {channels.length === 0 && <span className="muted">conda-forge (default)</span>}
+              {channels.map((c) => (
+                <div key={c} className="channel-row">{c}</div>
+              ))}
+            </div>
+            <p className="field-hint muted">
+              Edit channels by recreating the environment.{" "}
+              {env.backend === "pixi" && (
+                <span>Suffix packages with <code>@ pypi</code> to install from PyPI instead of conda.</span>
+              )}
+            </p>
+          </div>
+        )}
 
         <label className="field-label">Add packages</label>
         <div className="env-add">

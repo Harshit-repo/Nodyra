@@ -1620,6 +1620,14 @@ kbd {
   padding: 2px 7px;
   border-radius: 5px;
 }
+.env-backend-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: #fff;
+  padding: 1px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.04em;
+}
 .env-status {
   font-family: var(--font-mono);
   font-size: 10px;
@@ -1801,6 +1809,59 @@ kbd {
   font-size: 10.5px;
   color: var(--ink-3);
   margin: 5px 0 0;
+}
+.package-drawer-section {
+  padding: 10px 0 6px;
+  border-bottom: 1px solid var(--line-1);
+  margin-bottom: 8px;
+}
+.channels-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 4px 0 5px;
+}
+.channel-row {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  padding: 2px 8px;
+}
+.field-hint {
+  font-size: 10.5px;
+  margin: 3px 0 0;
+}
+.backend-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+.backend-tab {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1.5px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--ink-2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 120ms, background 120ms, color 120ms;
+}
+.backend-tab:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+.backend-tab--active {
+  border-color: var(--accent);
+  background: var(--accent-glow);
+  color: var(--accent);
+  font-weight: 600;
+}
+.backend-tab--disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .pkg-dropzone {
   position: relative;

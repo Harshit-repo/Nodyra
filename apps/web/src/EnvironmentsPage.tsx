@@ -6,6 +6,15 @@ import { HomeHeader } from "./HomeHeader";
 import { PackageDrawer } from "./PackageDrawer";
 import type { Environment, RunnerPoolInfo, SystemSettings } from "./types";
 
+const BACKEND_BADGE: Record<string, { label: string; color: string }> = {
+  venv:   { label: "venv",   color: "#22c55e" },
+  conda:  { label: "conda",  color: "#3b82f6" },
+  pixi:   { label: "pixi",   color: "#14b8a6" },
+  docker: { label: "docker", color: "#a855f7" },
+};
+
+type BackendTab = "venv" | "conda" | "pixi";
+
 const DESCRIPTION_HELP =
   "Optional notes for your team — what this environment is for, who owns it, gotchas. Shown in the env card.";
 
@@ -277,6 +286,9 @@ function CreateEnvModal({
   const [spawnMax, setSpawnMax] = useState(4);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [backendTab, setBackendTab] = useState<BackendTab>("venv");
+  const [channelInput, setChannelInput] = useState("conda-forge");
+  const [indexUrlInput, setIndexUrlInput] = useState("");
 
   async function submit() {
     if (!name.trim() || busy) return;
@@ -284,11 +296,21 @@ function CreateEnvModal({
     setError("");
     try {
       const pool = packPool(mode, fixedSize, elasticMin, elasticMax, spawnMax);
+      const channelList = channelInput.split(",").map((c) => c.trim()).filter(Boolean);
+      const indexUrlList = indexUrlInput.split(",").map((u) => u.trim()).filter(Boolean);
+      const backend_config =
+        backendTab === "conda" || backendTab === "pixi"
+          ? { channels: channelList }
+          : backendTab === "venv" && indexUrlList.length > 0
+          ? { index_urls: indexUrlList }
+          : {};
       await api.createEnvironment({
         name: name.trim(),
         python_version: python,
         description: description.trim(),
         runner_pool_id: poolId,
+        backend: backendTab,
+        backend_config,
         ...pool,
       });
       onCreated();
@@ -302,7 +324,22 @@ function CreateEnvModal({
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>New environment</h2>
-        <p className="muted">A custom Python venv your workflows can run in.</p>
+
+        <div className="backend-tabs">
+          {(["venv", "conda", "pixi"] as BackendTab[]).map((b) => (
+            <button
+              key={b}
+              type="button"
+              className={`backend-tab${backendTab === b ? " backend-tab--active" : ""}`}
+              onClick={() => setBackendTab(b)}
+            >
+              {b === "venv" ? "uv + venv" : b}
+            </button>
+          ))}
+          <button className="backend-tab backend-tab--disabled" disabled type="button" title="Docker — coming soon">
+            Docker
+          </button>
+        </div>
 
         <label className="field-label">Name</label>
         <input
@@ -335,6 +372,39 @@ function CreateEnvModal({
           value={description}
           onChange={(e) => setDescription(e.target.value)}
         />
+
+        {(backendTab === "conda" || backendTab === "pixi") && (
+          <>
+            <label className="field-label">
+              Channels <span className="muted">(comma-separated)</span>
+            </label>
+            <input
+              className="field-input"
+              placeholder="conda-forge, defaults"
+              value={channelInput}
+              onChange={(e) => setChannelInput(e.target.value)}
+            />
+            {backendTab === "pixi" && (
+              <p className="field-hint muted">
+                Suffix packages with <code>@ pypi</code> to install from PyPI.
+              </p>
+            )}
+          </>
+        )}
+
+        {backendTab === "venv" && (
+          <>
+            <label className="field-label">
+              Extra index URLs <span className="muted">(comma-separated, optional)</span>
+            </label>
+            <input
+              className="field-input"
+              placeholder="https://download.pytorch.org/whl/cu121"
+              value={indexUrlInput}
+              onChange={(e) => setIndexUrlInput(e.target.value)}
+            />
+          </>
+        )}
 
         <PoolSelect pools={pools} value={poolId} onChange={setPoolId} />
 
@@ -542,6 +612,14 @@ function EnvCard({
         <div className="env-title">
           <h3>{env.name}</h3>
           {env.is_global && <span className="env-global">global</span>}
+          {(() => {
+            const b = BACKEND_BADGE[env.backend] ?? { label: env.backend, color: "#6b7280" };
+            return (
+              <span className="env-backend-badge" style={{ background: b.color }}>
+                {b.label}
+              </span>
+            );
+          })()}
         </div>
         <span className={`env-status status-${env.status}`}>{env.status}</span>
       </div>

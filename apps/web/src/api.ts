@@ -193,6 +193,8 @@ export const api = {
     runner_pool_size?: number;
     runner_pool_max?: number | null;
     runner_pool_id?: string | null;
+    backend?: string;
+    backend_config?: Record<string, unknown>;
   }) =>
     request<Environment>("/environments", {
       method: "POST",
