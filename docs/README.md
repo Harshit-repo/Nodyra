@@ -11,6 +11,9 @@
   provider operation/trigger coverage and next provider targets.
 - [Production integration nodes plan](production-integration-nodes-plan.md) —
   phased roadmap for production-ready official provider node packs.
+- [Production AI/ML nodes plan](production-ai-ml-nodes-plan.md) — production
+  roadmap for fine-tuning, evals, synthetic data, RAG lifecycle, local training,
+  serving, monitoring, and model governance nodes.
 - [DatasetRef guide](datasetref.md) — table handles, records↔dataset conversion,
   DuckDB SQL, quick fixes, and common workflow patterns.
 - [n8n vs Noodle comparison](n8n-vs-noodle-comparison.md) — architecture,

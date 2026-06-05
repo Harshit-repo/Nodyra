@@ -1,7 +1,7 @@
 import { Panel } from "@xyflow/react";
 
 const ITEMS = [
-  { color: "#94a3b8", label: "Data" },
+  { color: "#94a3b8", label: "Data / Any" },
   { color: "#7c5cff", label: "DatasetRef" },
   { color: "#f97316", label: "Artifact" },
   { color: "#34d399", label: "File" },

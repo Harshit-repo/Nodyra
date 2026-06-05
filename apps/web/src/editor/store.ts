@@ -1003,7 +1003,14 @@ export const useEditor = create<EditorStore>((set, get) => ({
     // the new run replaces them, avoiding the full-blank flicker. Planned
     // nodes are marked running immediately so the canvas shows a spinner for
     // every node involved in this execution, not only the current node.
-    const nextStatus = { ...runStatus };
+    //
+    // For targeted runs (edge play button), clear the status of nodes NOT in
+    // the planned set so the canvas clearly shows only what's running.
+    const nextStatus = targetSet
+      ? Object.fromEntries(
+          Object.entries(runStatus).filter(([id]) => planned.has(id)),
+        )
+      : { ...runStatus };
     for (const id of planned) nextStatus[id] = "running";
     set({
       runId,

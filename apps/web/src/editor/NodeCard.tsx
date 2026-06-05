@@ -34,15 +34,18 @@ function agentPortTop(index: number, count: number): number {
   return (AGENT_CARD_HEIGHT * (index + 1)) / (count + 1);
 }
 
+// Generic data / control ports — same color regardless of which node they belong to
+const DATA_PORT_COLOR = "#94a3b8";
+
 const PORT_KIND_COLOR: Record<string, string> = {
   dataset: "#7c5cff",
-  artifact: "#f97316",   // orange  — was amber, clashed with ai_tool
-  file: "#34d399",       // emerald — was amber, clashed with artifact + ai_tool
-  control: "#94a3b8",
+  artifact: "#f97316",
+  file: "#34d399",
+  control: DATA_PORT_COLOR,
   ai_language_model: "#6ea8ff",
   ai_embedding_model: "#6ea8ff",
   ai_memory: "#57c98a",
-  ai_tool: "#f6b44b",   // amber/yellow — exclusive to AI tool ports
+  ai_tool: "#f6b44b",
   ai_output_parser: "#c084fc",
   ai_retriever: "#22d3ee",
   ai_vector_store: "#2dd4bf",
@@ -58,9 +61,9 @@ const AI_PORT_COLOR: Record<AiSemanticPort, string> = {
 };
 const AI_AGENT_BOTTOM_INPUTS = new Set(["model", "memory", "tools"]);
 
-function portColor(kind: string | undefined, fallback: string): string {
-  if (!kind || kind === "any") return fallback;
-  return PORT_KIND_COLOR[kind] ?? fallback;
+function portColor(kind: string | undefined): string {
+  if (!kind || kind === "any" || kind === "main") return DATA_PORT_COLOR;
+  return PORT_KIND_COLOR[kind] ?? DATA_PORT_COLOR;
 }
 
 function aiPortSemantic(
@@ -79,10 +82,9 @@ function semanticPortColor(
   manifestId: string,
   name: string,
   kind: string | undefined,
-  fallback: string,
 ): string {
   const semantic = aiPortSemantic(manifestId, name);
-  return semantic ? AI_PORT_COLOR[semantic] : portColor(kind, fallback);
+  return semantic ? AI_PORT_COLOR[semantic] : portColor(kind);
 }
 
 function portHandleClass(
@@ -434,7 +436,6 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
               manifest.id,
               config.name,
               spec.data_kind,
-              "#24d9a5",
             ),
           }
         : null;
@@ -445,7 +446,6 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
         manifest.id,
         name,
         spec?.data_kind,
-        "#24d9a5",
       );
       return {
         name,
@@ -778,7 +778,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
             className={portHandleClass(manifest.id, port.name, port.data_kind)}
             style={{
               top: portTop(i, sideInputs.length),
-              background: semanticPortColor(manifest.id, port.name, port.data_kind, color),
+              background: semanticPortColor(manifest.id, port.name, port.data_kind),
             }}
           />
         ))}
@@ -793,7 +793,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
             className={portHandleClass(manifest.id, port.name, port.data_kind)}
             style={{
               left: portLeft(i, bottomInputs.length),
-              background: semanticPortColor(manifest.id, port.name, port.data_kind, color),
+              background: semanticPortColor(manifest.id, port.name, port.data_kind),
             }}
           />
         ))}
@@ -817,7 +817,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
                 top: portTop(i, outputNames.length),
                 background: isToolPort
                   ? PORT_KIND_COLOR.ai_tool
-                  : semanticPortColor(manifest.id, name, spec?.data_kind, color),
+                  : semanticPortColor(manifest.id, name, spec?.data_kind),
               }}
             />
           );

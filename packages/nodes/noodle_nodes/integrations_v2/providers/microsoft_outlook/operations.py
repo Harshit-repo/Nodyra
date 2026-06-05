@@ -176,6 +176,38 @@ OUTLOOK_GET_MESSAGE_SPEC = OperationSpec(
     ),
 )
 
+OUTLOOK_LIST_MESSAGE_ATTACHMENTS_SPEC = OperationSpec(
+    node_id="outlook_list_message_attachments_v2",
+    name="Outlook List Message Attachments",
+    provider="microsoft_outlook",
+    resource="attachment",
+    operation="list",
+    description="List attachments for an Outlook message.",
+    icon="brand:microsoftoutlook",
+    tool_side_effecting=False,
+    params=(
+        _credentials_param(),
+        OperationParamSpec(name="message_id", required=True),
+        OperationParamSpec(name="limit", type="number", default=25, group="Options"),
+    ),
+)
+
+OUTLOOK_GET_MESSAGE_ATTACHMENT_SPEC = OperationSpec(
+    node_id="outlook_get_message_attachment_v2",
+    name="Outlook Get Message Attachment",
+    provider="microsoft_outlook",
+    resource="attachment",
+    operation="get",
+    description="Get attachment metadata and inline content when Graph returns it.",
+    icon="brand:microsoftoutlook",
+    tool_side_effecting=False,
+    params=(
+        _credentials_param(),
+        OperationParamSpec(name="message_id", required=True),
+        OperationParamSpec(name="attachment_id", required=True),
+    ),
+)
+
 OUTLOOK_LIST_CALENDAR_EVENTS_SPEC = OperationSpec(
     node_id="outlook_list_calendar_events_v2",
     name="Outlook List Calendar Events",
@@ -216,6 +248,175 @@ OUTLOOK_LIST_CALENDAR_EVENTS_SPEC = OperationSpec(
     ),
 )
 
+OUTLOOK_CREATE_DRAFT_SPEC = OperationSpec(
+    node_id="outlook_create_draft_v2",
+    name="Outlook Create Draft",
+    provider="microsoft_outlook",
+    resource="message",
+    operation="create_draft",
+    description="Create an email draft in Outlook.",
+    icon="brand:microsoftoutlook",
+    params=(
+        _credentials_param((MAIL_READWRITE_SCOPE,)),
+        OperationParamSpec(name="to", placeholder="recipient@example.com"),
+        OperationParamSpec(name="subject", placeholder="Draft subject"),
+        OperationParamSpec(name="body", multiline=True),
+        OperationParamSpec(
+            name="content_type",
+            default="HTML",
+            choices=("HTML", "Text"),
+            group="Options",
+        ),
+        OperationParamSpec(name="cc", group="Options"),
+        OperationParamSpec(name="bcc", group="Options"),
+        OperationParamSpec(name="reply_to", group="Options"),
+    ),
+)
+
+OUTLOOK_REPLY_MESSAGE_SPEC = OperationSpec(
+    node_id="outlook_reply_message_v2",
+    name="Outlook Reply To Message",
+    provider="microsoft_outlook",
+    resource="message",
+    operation="reply",
+    description="Reply to an Outlook message.",
+    icon="brand:microsoftoutlook",
+    params=(
+        _credentials_param((MAIL_SEND_SCOPE,)),
+        OperationParamSpec(name="message_id", required=True),
+        OperationParamSpec(name="comment", multiline=True, description="Blank uses input."),
+    ),
+)
+
+OUTLOOK_FORWARD_MESSAGE_SPEC = OperationSpec(
+    node_id="outlook_forward_message_v2",
+    name="Outlook Forward Message",
+    provider="microsoft_outlook",
+    resource="message",
+    operation="forward",
+    description="Forward an Outlook message to one or more recipients.",
+    icon="brand:microsoftoutlook",
+    params=(
+        _credentials_param((MAIL_SEND_SCOPE,)),
+        OperationParamSpec(name="message_id", required=True),
+        OperationParamSpec(name="to", required=True, placeholder="recipient@example.com"),
+        OperationParamSpec(name="comment", multiline=True, group="Options"),
+    ),
+)
+
+OUTLOOK_SEND_DRAFT_SPEC = OperationSpec(
+    node_id="outlook_send_draft_v2",
+    name="Outlook Send Draft",
+    provider="microsoft_outlook",
+    resource="message",
+    operation="send_draft",
+    description="Send an existing Outlook draft message.",
+    icon="brand:microsoftoutlook",
+    params=(
+        _credentials_param((MAIL_SEND_SCOPE,)),
+        OperationParamSpec(name="message_id", required=True),
+    ),
+)
+
+OUTLOOK_UPDATE_MESSAGE_SPEC = OperationSpec(
+    node_id="outlook_update_message_v2",
+    name="Outlook Update Message",
+    provider="microsoft_outlook",
+    resource="message",
+    operation="update",
+    description="Update mutable Outlook message fields such as read state or categories.",
+    icon="brand:microsoftoutlook",
+    params=(
+        _credentials_param((MAIL_READWRITE_SCOPE,)),
+        OperationParamSpec(name="message_id", required=True),
+        OperationParamSpec(name="is_read", type="boolean", default=None, group="Fields"),
+        OperationParamSpec(name="categories", type="array", group="Fields"),
+    ),
+)
+
+OUTLOOK_DELETE_MESSAGE_SPEC = OperationSpec(
+    node_id="outlook_delete_message_v2",
+    name="Outlook Delete Message",
+    provider="microsoft_outlook",
+    resource="message",
+    operation="delete",
+    description="Delete an Outlook message.",
+    icon="brand:microsoftoutlook",
+    params=(
+        _credentials_param((MAIL_READWRITE_SCOPE,)),
+        OperationParamSpec(name="message_id", required=True),
+    ),
+)
+
+OUTLOOK_CREATE_CALENDAR_EVENT_SPEC = OperationSpec(
+    node_id="outlook_create_calendar_event_v2",
+    name="Outlook Create Calendar Event",
+    provider="microsoft_outlook",
+    resource="calendar",
+    operation="create_event",
+    description="Create an event in the default Outlook calendar.",
+    icon="brand:microsoftoutlook",
+    params=(
+        _credentials_param((CALENDAR_READWRITE_SCOPE,)),
+        OperationParamSpec(name="subject", required=True, placeholder="Customer call"),
+        OperationParamSpec(name="start_datetime", required=True, placeholder="2024-01-01T10:00:00"),
+        OperationParamSpec(name="end_datetime", required=True, placeholder="2024-01-01T10:30:00"),
+        OperationParamSpec(name="time_zone", default="UTC", group="Options"),
+        OperationParamSpec(name="body", multiline=True, group="Options"),
+        OperationParamSpec(
+            name="content_type",
+            default="HTML",
+            choices=("HTML", "Text"),
+            group="Options",
+        ),
+        OperationParamSpec(name="location", group="Options"),
+        OperationParamSpec(name="attendees", type="array", group="Options"),
+        OperationParamSpec(name="is_all_day", type="boolean", default=False, group="Options"),
+    ),
+)
+
+OUTLOOK_UPDATE_CALENDAR_EVENT_SPEC = OperationSpec(
+    node_id="outlook_update_calendar_event_v2",
+    name="Outlook Update Calendar Event",
+    provider="microsoft_outlook",
+    resource="calendar",
+    operation="update_event",
+    description="Update an event in the default Outlook calendar.",
+    icon="brand:microsoftoutlook",
+    params=(
+        _credentials_param((CALENDAR_READWRITE_SCOPE,)),
+        OperationParamSpec(name="event_id", required=True),
+        OperationParamSpec(name="subject", group="Fields"),
+        OperationParamSpec(name="start_datetime", group="Fields"),
+        OperationParamSpec(name="end_datetime", group="Fields"),
+        OperationParamSpec(name="time_zone", default="UTC", group="Fields"),
+        OperationParamSpec(name="body", multiline=True, group="Fields"),
+        OperationParamSpec(
+            name="content_type",
+            default="HTML",
+            choices=("HTML", "Text"),
+            group="Fields",
+        ),
+        OperationParamSpec(name="location", group="Fields"),
+        OperationParamSpec(name="attendees", type="array", group="Fields"),
+        OperationParamSpec(name="is_all_day", type="boolean", default=None, group="Fields"),
+    ),
+)
+
+OUTLOOK_DELETE_CALENDAR_EVENT_SPEC = OperationSpec(
+    node_id="outlook_delete_calendar_event_v2",
+    name="Outlook Delete Calendar Event",
+    provider="microsoft_outlook",
+    resource="calendar",
+    operation="delete_event",
+    description="Delete an event from the default Outlook calendar.",
+    icon="brand:microsoftoutlook",
+    params=(
+        _credentials_param((CALENDAR_READWRITE_SCOPE,)),
+        OperationParamSpec(name="event_id", required=True),
+    ),
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -242,6 +443,94 @@ def _address_list(raw: str) -> list[dict]:
     ]
 
 
+def _string_list(raw: Any) -> list[str]:
+    if raw in (None, ""):
+        return []
+    if isinstance(raw, str):
+        return [part.strip() for part in raw.split(",") if part.strip()]
+    if isinstance(raw, (list, tuple, set)):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    return [str(raw).strip()]
+
+
+def _require(value: str, node_id: str, name: str) -> str:
+    clean = str(value or "").strip()
+    if not clean:
+        raise ValueError(f"{node_id}: '{name}' is required")
+    return clean
+
+
+def _text_from_input(input_value: Any) -> str:
+    if input_value is None:
+        return ""
+    if isinstance(input_value, str):
+        return input_value
+    return str(input_value)
+
+
+def _message_payload(
+    *,
+    to: str = "",
+    subject: str = "",
+    body: str = "",
+    content_type: str = "HTML",
+    cc: str = "",
+    bcc: str = "",
+    reply_to: str = "",
+) -> dict[str, Any]:
+    message: dict[str, Any] = {
+        "subject": subject,
+        "body": {"contentType": content_type, "content": body},
+    }
+    if to:
+        message["toRecipients"] = _address_list(to)
+    if cc:
+        message["ccRecipients"] = _address_list(cc)
+    if bcc:
+        message["bccRecipients"] = _address_list(bcc)
+    if reply_to:
+        message["replyTo"] = _address_list(reply_to)
+    return message
+
+
+def _attendee_list(raw: Any) -> list[dict[str, Any]]:
+    return [
+        {"emailAddress": {"address": address}, "type": "required"}
+        for address in _string_list(raw)
+    ]
+
+
+def _event_payload(
+    *,
+    subject: str = "",
+    start_datetime: str = "",
+    end_datetime: str = "",
+    time_zone: str = "UTC",
+    body: str = "",
+    content_type: str = "HTML",
+    location: str = "",
+    attendees: Any = None,
+    is_all_day: bool | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    if subject:
+        payload["subject"] = subject
+    if body:
+        payload["body"] = {"contentType": content_type, "content": body}
+    if start_datetime:
+        payload["start"] = {"dateTime": start_datetime, "timeZone": time_zone or "UTC"}
+    if end_datetime:
+        payload["end"] = {"dateTime": end_datetime, "timeZone": time_zone or "UTC"}
+    if location:
+        payload["location"] = {"displayName": location}
+    attendee_payload = _attendee_list(attendees)
+    if attendee_payload:
+        payload["attendees"] = attendee_payload
+    if is_all_day is not None:
+        payload["isAllDay"] = bool(is_all_day)
+    return payload
+
+
 # ---------------------------------------------------------------------------
 # Executors
 # ---------------------------------------------------------------------------
@@ -266,17 +555,15 @@ def send_mail(
     if not subject:
         raise ValueError("outlook_send_mail_v2: 'subject' is required")
 
-    message: dict[str, Any] = {
-        "subject": subject,
-        "body": {"contentType": content_type, "content": body},
-        "toRecipients": _address_list(to),
-    }
-    if cc:
-        message["ccRecipients"] = _address_list(cc)
-    if bcc:
-        message["bccRecipients"] = _address_list(bcc)
-    if reply_to:
-        message["replyTo"] = _address_list(reply_to)
+    message = _message_payload(
+        to=to,
+        subject=subject,
+        body=body,
+        content_type=content_type,
+        cc=cc,
+        bcc=bcc,
+        reply_to=reply_to,
+    )
 
     return _transport(credentials).request(
         "POST",
@@ -342,6 +629,42 @@ def get_message(
     )
 
 
+def list_message_attachments(
+    *,
+    input: Any = None,  # noqa: ARG001
+    credentials: dict | None = None,
+    message_id: str = "",
+    limit: int = 25,
+) -> Any:
+    message = _require(message_id, "outlook_list_message_attachments_v2", "message_id")
+    return _transport(credentials).request(
+        "GET",
+        f"/me/messages/{message}/attachments",
+        operation="list_message_attachments",
+        params={"$top": max(1, min(100, int(limit or 25)))},
+    )
+
+
+def get_message_attachment(
+    *,
+    input: Any = None,  # noqa: ARG001
+    credentials: dict | None = None,
+    message_id: str = "",
+    attachment_id: str = "",
+) -> Any:
+    message = _require(message_id, "outlook_get_message_attachment_v2", "message_id")
+    attachment = _require(
+        attachment_id,
+        "outlook_get_message_attachment_v2",
+        "attachment_id",
+    )
+    return _transport(credentials).request(
+        "GET",
+        f"/me/messages/{message}/attachments/{attachment}",
+        operation="get_message_attachment",
+    )
+
+
 def list_calendar_events(
     *,
     input: Any = None,  # noqa: ARG001
@@ -374,7 +697,223 @@ def list_calendar_events(
     )
 
 
+def create_draft(
+    *,
+    input: Any = None,  # noqa: ARG001
+    credentials: dict | None = None,
+    to: str = "",
+    subject: str = "",
+    body: str = "",
+    content_type: str = "HTML",
+    cc: str = "",
+    bcc: str = "",
+    reply_to: str = "",
+) -> Any:
+    return _transport(credentials).request(
+        "POST",
+        "/me/messages",
+        operation="create_draft",
+        json_body=_message_payload(
+            to=to,
+            subject=subject,
+            body=body,
+            content_type=content_type,
+            cc=cc,
+            bcc=bcc,
+            reply_to=reply_to,
+        ),
+    )
+
+
+def reply_message(
+    *,
+    input: Any = None,
+    credentials: dict | None = None,
+    message_id: str = "",
+    comment: str = "",
+) -> Any:
+    message = _require(message_id, "outlook_reply_message_v2", "message_id")
+    body = comment or _text_from_input(input)
+    if not body:
+        raise ValueError("outlook_reply_message_v2: 'comment' is required")
+    return _transport(credentials).request(
+        "POST",
+        f"/me/messages/{message}/reply",
+        operation="reply_message",
+        json_body={"comment": body},
+    )
+
+
+def forward_message(
+    *,
+    input: Any = None,  # noqa: ARG001
+    credentials: dict | None = None,
+    message_id: str = "",
+    to: str = "",
+    comment: str = "",
+) -> Any:
+    message = _require(message_id, "outlook_forward_message_v2", "message_id")
+    recipients = _address_list(_require(to, "outlook_forward_message_v2", "to"))
+    return _transport(credentials).request(
+        "POST",
+        f"/me/messages/{message}/forward",
+        operation="forward_message",
+        json_body={"comment": comment, "toRecipients": recipients},
+    )
+
+
+def send_draft(
+    *,
+    input: Any = None,  # noqa: ARG001
+    credentials: dict | None = None,
+    message_id: str = "",
+) -> Any:
+    message = _require(message_id, "outlook_send_draft_v2", "message_id")
+    return _transport(credentials).request(
+        "POST",
+        f"/me/messages/{message}/send",
+        operation="send_draft",
+        json_body={},
+    )
+
+
+def update_message(
+    *,
+    input: Any = None,  # noqa: ARG001
+    credentials: dict | None = None,
+    message_id: str = "",
+    is_read: bool | None = None,
+    categories: list[str] | str | None = None,
+) -> Any:
+    message = _require(message_id, "outlook_update_message_v2", "message_id")
+    payload: dict[str, Any] = {}
+    if is_read is not None:
+        payload["isRead"] = bool(is_read)
+    category_values = _string_list(categories)
+    if category_values:
+        payload["categories"] = category_values
+    if not payload:
+        raise ValueError("outlook_update_message_v2: at least one field is required")
+    return _transport(credentials).request(
+        "PATCH",
+        f"/me/messages/{message}",
+        operation="update_message",
+        json_body=payload,
+    )
+
+
+def delete_message(
+    *,
+    input: Any = None,  # noqa: ARG001
+    credentials: dict | None = None,
+    message_id: str = "",
+) -> Any:
+    message = _require(message_id, "outlook_delete_message_v2", "message_id")
+    return _transport(credentials).request(
+        "DELETE",
+        f"/me/messages/{message}",
+        operation="delete_message",
+    )
+
+
+def create_calendar_event(
+    *,
+    input: Any = None,  # noqa: ARG001
+    credentials: dict | None = None,
+    subject: str = "",
+    start_datetime: str = "",
+    end_datetime: str = "",
+    time_zone: str = "UTC",
+    body: str = "",
+    content_type: str = "HTML",
+    location: str = "",
+    attendees: list[str] | str | None = None,
+    is_all_day: bool = False,
+) -> Any:
+    _require(subject, "outlook_create_calendar_event_v2", "subject")
+    _require(start_datetime, "outlook_create_calendar_event_v2", "start_datetime")
+    _require(end_datetime, "outlook_create_calendar_event_v2", "end_datetime")
+    return _transport(credentials).request(
+        "POST",
+        "/me/events",
+        operation="create_calendar_event",
+        json_body=_event_payload(
+            subject=subject,
+            start_datetime=start_datetime,
+            end_datetime=end_datetime,
+            time_zone=time_zone,
+            body=body,
+            content_type=content_type,
+            location=location,
+            attendees=attendees,
+            is_all_day=is_all_day,
+        ),
+    )
+
+
+def update_calendar_event(
+    *,
+    input: Any = None,  # noqa: ARG001
+    credentials: dict | None = None,
+    event_id: str = "",
+    subject: str = "",
+    start_datetime: str = "",
+    end_datetime: str = "",
+    time_zone: str = "UTC",
+    body: str = "",
+    content_type: str = "HTML",
+    location: str = "",
+    attendees: list[str] | str | None = None,
+    is_all_day: bool | None = None,
+) -> Any:
+    event = _require(event_id, "outlook_update_calendar_event_v2", "event_id")
+    payload = _event_payload(
+        subject=subject,
+        start_datetime=start_datetime,
+        end_datetime=end_datetime,
+        time_zone=time_zone,
+        body=body,
+        content_type=content_type,
+        location=location,
+        attendees=attendees,
+        is_all_day=is_all_day,
+    )
+    if not payload:
+        raise ValueError("outlook_update_calendar_event_v2: at least one field is required")
+    return _transport(credentials).request(
+        "PATCH",
+        f"/me/events/{event}",
+        operation="update_calendar_event",
+        json_body=payload,
+    )
+
+
+def delete_calendar_event(
+    *,
+    input: Any = None,  # noqa: ARG001
+    credentials: dict | None = None,
+    event_id: str = "",
+) -> Any:
+    event = _require(event_id, "outlook_delete_calendar_event_v2", "event_id")
+    return _transport(credentials).request(
+        "DELETE",
+        f"/me/events/{event}",
+        operation="delete_calendar_event",
+    )
+
+
 register_operation(OUTLOOK_SEND_MAIL_SPEC, send_mail)
 register_operation(OUTLOOK_LIST_MESSAGES_SPEC, list_messages)
 register_operation(OUTLOOK_GET_MESSAGE_SPEC, get_message)
+register_operation(OUTLOOK_LIST_MESSAGE_ATTACHMENTS_SPEC, list_message_attachments)
+register_operation(OUTLOOK_GET_MESSAGE_ATTACHMENT_SPEC, get_message_attachment)
 register_operation(OUTLOOK_LIST_CALENDAR_EVENTS_SPEC, list_calendar_events)
+register_operation(OUTLOOK_CREATE_DRAFT_SPEC, create_draft)
+register_operation(OUTLOOK_REPLY_MESSAGE_SPEC, reply_message)
+register_operation(OUTLOOK_FORWARD_MESSAGE_SPEC, forward_message)
+register_operation(OUTLOOK_SEND_DRAFT_SPEC, send_draft)
+register_operation(OUTLOOK_UPDATE_MESSAGE_SPEC, update_message)
+register_operation(OUTLOOK_DELETE_MESSAGE_SPEC, delete_message)
+register_operation(OUTLOOK_CREATE_CALENDAR_EVENT_SPEC, create_calendar_event)
+register_operation(OUTLOOK_UPDATE_CALENDAR_EVENT_SPEC, update_calendar_event)
+register_operation(OUTLOOK_DELETE_CALENDAR_EVENT_SPEC, delete_calendar_event)

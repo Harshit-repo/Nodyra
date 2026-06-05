@@ -13,13 +13,20 @@ async def test_list_nodes_returns_manifests(client: AsyncClient) -> None:
         "http_request",
         "google_sheets_read_v2",
         "google_sheets_append_v2",
+        "google_sheets_upsert_row_v2",
         "github_get_repo_v2",
         "github_create_issue_v2",
+        "github_put_file_contents_v2",
         "slack_send_message_v2",
+        "slack_open_direct_message_v2",
         "stripe_create_customer_v2",
+        "stripe_create_subscription_v2",
         "airtable_list_records_v2",
         "airtable_create_record_v2",
+        "airtable_batch_update_records_v2",
         "notion_create_page_v2",
+        "notion_search_v2",
+        "outlook_get_message_attachment_v2",
     } <= ids
 
     if_manifest = next(m for m in manifests if m["id"] == "if")

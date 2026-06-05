@@ -5,6 +5,17 @@ import {
   ReactFlow,
   useReactFlow,
 } from "@xyflow/react";
+import {
+  ArrowClockwise,
+  ArrowCounterClockwise,
+  ArrowsOut,
+  ClipboardText,
+  Copy,
+  Minus,
+  Play,
+  Plus,
+  TreeStructure,
+} from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DragEvent } from "react";
 import type { Connection, Edge } from "@xyflow/react";
@@ -128,7 +139,7 @@ function CanvasControls() {
         aria-label="Zoom out"
         onClick={() => void zoomOut({ duration: 160 })}
       >
-        −
+        <Minus size={14} weight="bold" />
       </button>
       <button
         type="button"
@@ -136,7 +147,7 @@ function CanvasControls() {
         aria-label="Zoom in"
         onClick={() => void zoomIn({ duration: 160 })}
       >
-        +
+        <Plus size={14} weight="bold" />
       </button>
       <button
         type="button"
@@ -144,7 +155,7 @@ function CanvasControls() {
         aria-label="Fit view"
         onClick={() => void fitView({ padding: 0.22, duration: 220 })}
       >
-        ⤢
+        <ArrowsOut size={14} weight="bold" />
       </button>
       <button
         type="button"
@@ -159,7 +170,7 @@ function CanvasControls() {
         }}
         disabled={nodes.length < 2}
       >
-        ⇥
+        <TreeStructure size={14} weight="bold" />
       </button>
       <span className="canvas-control-sep" />
       <button
@@ -172,7 +183,7 @@ function CanvasControls() {
           if (result.nodeCount > 0) notify(copiedLabel(result.nodeCount), "success");
         }}
       >
-        ⧉
+        <Copy size={14} weight="bold" />
       </button>
       <button
         type="button"
@@ -184,7 +195,7 @@ function CanvasControls() {
           if (result.nodeCount > 0) notify(pastedLabel(result.nodeCount), "success");
         }}
       >
-        ⎘
+        <ClipboardText size={14} weight="bold" />
       </button>
       <span className="canvas-control-sep" />
       <button
@@ -194,7 +205,7 @@ function CanvasControls() {
         disabled={!canUndo}
         onClick={() => undo()}
       >
-        ↶
+        <ArrowCounterClockwise size={14} weight="bold" />
       </button>
       <button
         type="button"
@@ -203,7 +214,7 @@ function CanvasControls() {
         disabled={!canRedo}
         onClick={() => redo()}
       >
-        ↷
+        <ArrowClockwise size={14} weight="bold" />
       </button>
       <span className="canvas-control-sep" />
       <button
@@ -214,7 +225,7 @@ function CanvasControls() {
         onClick={() => void runHandler?.()}
         disabled={running || !runHandler || !hasTrigger}
       >
-        ▶
+        <Play size={14} weight="fill" />
       </button>
     </div>
   );
@@ -365,7 +376,9 @@ export function Canvas() {
           pannable
           zoomable
           nodeComponent={MiniMapNoodleNode}
-          maskColor="rgba(8,11,16,0.78)"
+          bgColor="#0b0e14"
+          maskColor="rgba(11,14,20,0.72)"
+          nodeStrokeWidth={0}
         />
         <PortLegend />
         <CanvasControls />

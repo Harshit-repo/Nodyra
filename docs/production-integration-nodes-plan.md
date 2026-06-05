@@ -32,6 +32,9 @@ Already in place:
   Stripe, Airtable, and Notion.
 - generic HTTP, GraphQL, webhook, schedule, manual, error, and API endpoint
   trigger nodes.
+- node-as-tool mode in the engine and editor: executable action nodes can emit
+  an `ai_tool` output, and `$fromAI(...)` parameter expressions define the
+  arguments an AI Agent supplies at call time.
 
 Known gaps:
 
@@ -45,6 +48,39 @@ Known gaps:
   production packs yet.
 - dynamic provider resource loaders are incomplete for several existing v2
   providers.
+- many pre-v2 wrapper nodes are tool-capable through the SDK default, but their
+  `tool_side_effecting` metadata still needs provider-by-provider review.
+- provider packs need tool-mode examples that show which params should stay
+  fixed as credentials/resource ids and which params are safe to mark
+  `From AI`.
+
+## Tool-Mode Review Update
+
+Node-as-tool mode changes the rollout priority. Every provider operation now
+has two user-facing modes:
+
+- normal workflow node;
+- AI Agent tool with fixed params plus `$fromAI(...)` model-supplied params.
+
+This makes metadata quality more important than before. New provider work must
+include:
+
+- strong parameter names and descriptions because they become AI tool schema
+  text;
+- explicit `tool_side_effecting=False` for read-only operations;
+- conservative side-effect approval for writes, sends, deletes, clears,
+  refunds, payments, and external state changes;
+- tests proving generated v2 operations expose the right tool flags;
+- examples that keep credentials, workspace ids, channel ids, account ids, and
+  other sensitive routing params fixed rather than AI-supplied.
+
+Immediate implementation focus after this review:
+
+1. finish provider-depth slices for the current v2 packs;
+2. add missing dynamic options for the deeper operation packs;
+3. add trigger reliability for Slack, Stripe, Microsoft Graph, and Google watch
+   channels;
+4. run a legacy wrapper tool-safety pass for existing non-v2 integrations.
 
 ## Production Definition
 
@@ -1181,22 +1217,152 @@ Goal: make integration-heavy production deployments observable and controllable.
 
 ## Suggested Implementation Order
 
-1. Phase 0 foundation cleanup.
-2. Phase 1D Slack and 1E Stripe because they have shallow v2 coverage and high
+1. Tool-mode safety audit for current v2 providers and high-risk legacy
+   wrappers.
+2. Phase 0 foundation cleanup.
+3. Phase 1D Slack and 1E Stripe because they have shallow v2 coverage and high
    workflow value.
-3. Phase 1C GitHub because the trigger framework already has a GitHub path.
-4. Phase 1A Google Sheets and 1B Outlook because they exercise OAuth,
+4. Phase 1C GitHub because the trigger framework already has a GitHub path.
+5. Phase 1A Google Sheets and 1B Outlook because they exercise OAuth,
    pagination, dynamic options, and expiring subscriptions.
-5. Phase 2 provider trigger renewal/recovery.
-6. Phase 3 Google Drive, Gmail, OneDrive, and Teams.
-7. Phase 4 Jira, Linear, HubSpot, and Salesforce.
-8. Phase 5 Shopify, PayPal, Xero, and QuickBooks.
-9. Phase 6 communication wrapper migrations.
-10. Phase 7 data/storage/devops migrations.
-11. Phase 8 security/admin providers.
-12. Phase 9 long-tail provider generator and expansion.
-13. Phase 10 templates and migration cleanup.
-14. Phase 11 operational hardening.
+6. Phase 2 provider trigger renewal/recovery.
+7. Phase 3 Google Drive, Gmail, OneDrive, and Teams.
+8. Phase 4 Jira, Linear, HubSpot, and Salesforce.
+9. Phase 5 Shopify, PayPal, Xero, and QuickBooks.
+10. Phase 6 communication wrapper migrations.
+11. Phase 7 data/storage/devops migrations.
+12. Phase 8 security/admin providers.
+13. Phase 9 long-tail provider generator and expansion.
+14. Phase 10 templates and migration cleanup.
+15. Phase 11 operational hardening.
+
+## Implemented Slice - Slack V2 Depth
+
+The first tool-mode-driven provider-depth slice adds:
+
+- `slack_list_channels_v2` - read-only, useful for fixed channel discovery and
+  AI-assisted routing.
+- `slack_list_users_v2` - read-only, useful for user lookup and mention
+  workflows.
+- `slack_update_message_v2` - side-effecting, updates bot-owned messages.
+- `slack_delete_message_v2` - side-effecting, deletes bot-owned messages.
+- `slack_add_reaction_v2` - side-effecting, reacts to a message.
+
+These nodes are generated v2 operation nodes, so they are usable as AI tools by
+default. The two list operations are non-side-effecting; update/delete/reaction
+operations remain side-effecting and should use the approval gate when called by
+an agent.
+
+Follow-up operation nodes added in the same Phase 1 operation pass:
+
+- `slack_reply_in_thread_v2` - side-effecting, posts a threaded reply with an
+  explicit `thread_ts`.
+- `slack_open_direct_message_v2` - side-effecting, opens or resumes a direct
+  message conversation.
+
+Deferred Slack work:
+
+- file upload, after deciding the artifact/file upload contract;
+- signed Slack Events trigger;
+- slash command trigger;
+- richer dynamic option loaders for channel/user pickers.
+
+## Implemented Slice - Production Core V2 Provider Depth
+
+The next provider-depth slice adds production-core operations across the
+existing v2 providers, with node-as-tool metadata verified for every new node.
+All read/list/get/search/lookup operations are non-side-effecting tools; writes,
+sends, deletes, refunds, payment creation, workflow dispatch, and external
+state changes remain side-effecting tools.
+
+Stripe nodes added:
+
+- `stripe_get_customer_v2`;
+- `stripe_list_customers_v2`;
+- `stripe_update_customer_v2`;
+- `stripe_create_checkout_session_v2`;
+- `stripe_create_payment_intent_v2`;
+- `stripe_get_payment_intent_v2`;
+- `stripe_list_payment_intents_v2`;
+- `stripe_create_refund_v2`;
+- `stripe_list_products_v2`;
+- `stripe_list_prices_v2`;
+- `stripe_create_invoice_v2`;
+- `stripe_list_invoices_v2`;
+- `stripe_create_subscription_v2`;
+- `stripe_list_subscriptions_v2`;
+- `stripe_cancel_subscription_v2`.
+
+GitHub nodes added:
+
+- `github_list_issues_v2`;
+- `github_get_issue_v2`;
+- `github_update_issue_v2`;
+- `github_create_issue_comment_v2`;
+- `github_list_issue_comments_v2`;
+- `github_list_pull_requests_v2`;
+- `github_get_pull_request_v2`;
+- `github_create_pull_request_v2`;
+- `github_merge_pull_request_v2`;
+- `github_get_file_contents_v2`;
+- `github_put_file_contents_v2`;
+- `github_workflow_dispatch_v2`;
+- `github_create_release_v2`.
+
+Google Sheets nodes added:
+
+- `google_sheets_create_spreadsheet_v2`;
+- `google_sheets_batch_update_values_v2`;
+- `google_sheets_add_sheet_v2`;
+- `google_sheets_rename_sheet_v2`;
+- `google_sheets_delete_sheet_v2`;
+- `google_sheets_lookup_rows_v2`;
+- `google_sheets_upsert_row_v2`.
+
+Microsoft Outlook nodes added:
+
+- `outlook_create_draft_v2`;
+- `outlook_reply_message_v2`;
+- `outlook_forward_message_v2`;
+- `outlook_send_draft_v2`;
+- `outlook_update_message_v2`;
+- `outlook_delete_message_v2`;
+- `outlook_list_message_attachments_v2`;
+- `outlook_get_message_attachment_v2`;
+- `outlook_create_calendar_event_v2`;
+- `outlook_update_calendar_event_v2`;
+- `outlook_delete_calendar_event_v2`.
+
+Airtable nodes added:
+
+- `airtable_get_record_v2`;
+- `airtable_update_record_v2`;
+- `airtable_delete_record_v2`;
+- `airtable_batch_create_records_v2`;
+- `airtable_batch_update_records_v2`;
+- `airtable_upsert_records_v2`.
+
+Notion nodes added:
+
+- `notion_get_page_v2`;
+- `notion_update_page_v2`;
+- `notion_archive_page_v2`;
+- `notion_query_database_v2`;
+- `notion_get_database_v2`;
+- `notion_search_v2`;
+- `notion_list_block_children_v2`;
+- `notion_append_block_children_v2`.
+
+Deferred production-hardening work after this slice:
+
+- Stripe idempotency-key parameters for create/refund/payment operations;
+- Stripe signed webhook triggers;
+- Outlook artifact-backed attachment downloads and Graph subscription renewal;
+- Google watch-channel triggers and broader spreadsheet dynamic options;
+- Airtable bases/tables/views/fields option loaders;
+- Notion database/page/property option loaders and practical property helpers;
+- provider-specific examples showing which fields should be fixed versus
+  supplied by `$fromAI(...)`.
 
 ## First Three Milestones
 
@@ -1221,12 +1387,15 @@ Scope:
 - Slack v2 depth;
 - Stripe v2 depth;
 - GitHub v2 depth;
+- Google Sheets and Outlook v2 depth;
+- Airtable and Notion v2 depth;
 - Airtable and Notion dynamic options.
 
 Exit criteria:
 
-- Slack, Stripe, and GitHub support common production workflows without legacy
-  wrappers.
+- Slack, Stripe, GitHub, Google Sheets, Outlook, Airtable, and Notion support
+  common production workflows without legacy wrappers for the covered
+  operations.
 - Existing templates use v2 nodes only for those providers.
 
 ### Milestone C - Subscription-Trigger Reliability

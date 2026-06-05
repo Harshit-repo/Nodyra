@@ -18,10 +18,21 @@ from noodle_nodes.integrations_v2.providers.google_sheets.operations import (
     update_values,
 )
 from noodle_nodes.integrations_v2.providers.microsoft_outlook.operations import (
+    create_calendar_event,
+    create_draft,
+    delete_calendar_event,
+    delete_message,
+    forward_message,
     get_message,
+    get_message_attachment,
     list_calendar_events,
+    list_message_attachments,
     list_messages,
+    reply_message,
+    send_draft,
     send_mail,
+    update_calendar_event,
+    update_message,
 )
 
 # ---------------------------------------------------------------------------
@@ -271,20 +282,34 @@ def test_outlook_v2_manifests_use_clean_names_and_brand_icons() -> None:
     manifests = {manifest.id: manifest for manifest in registry.manifests()}
 
     expected = {
-        "outlook_send_mail_v2": "Outlook Send Email",
-        "outlook_list_messages_v2": "Outlook List Messages",
-        "outlook_get_message_v2": "Outlook Get Message",
-        "outlook_list_calendar_events_v2": "Outlook List Calendar Events",
+        "outlook_send_mail_v2": ("Outlook Send Email", True),
+        "outlook_list_messages_v2": ("Outlook List Messages", False),
+        "outlook_get_message_v2": ("Outlook Get Message", False),
+        "outlook_list_message_attachments_v2": (
+            "Outlook List Message Attachments",
+            False,
+        ),
+        "outlook_get_message_attachment_v2": (
+            "Outlook Get Message Attachment",
+            False,
+        ),
+        "outlook_list_calendar_events_v2": ("Outlook List Calendar Events", False),
+        "outlook_create_draft_v2": ("Outlook Create Draft", True),
+        "outlook_reply_message_v2": ("Outlook Reply To Message", True),
+        "outlook_forward_message_v2": ("Outlook Forward Message", True),
+        "outlook_send_draft_v2": ("Outlook Send Draft", True),
+        "outlook_update_message_v2": ("Outlook Update Message", True),
+        "outlook_delete_message_v2": ("Outlook Delete Message", True),
+        "outlook_create_calendar_event_v2": ("Outlook Create Calendar Event", True),
+        "outlook_update_calendar_event_v2": ("Outlook Update Calendar Event", True),
+        "outlook_delete_calendar_event_v2": ("Outlook Delete Calendar Event", True),
     }
-    for node_id, name in expected.items():
+    for node_id, (name, side_effecting) in expected.items():
         manifest = manifests[node_id]
         assert manifest.name == name
         assert manifest.icon == "brand:microsoftoutlook"
         assert manifest.usable_as_tool is True
-    assert manifests["outlook_send_mail_v2"].tool_side_effecting is True
-    assert manifests["outlook_list_messages_v2"].tool_side_effecting is False
-    assert manifests["outlook_get_message_v2"].tool_side_effecting is False
-    assert manifests["outlook_list_calendar_events_v2"].tool_side_effecting is False
+        assert manifest.tool_side_effecting is side_effecting
 
 
 def _ms_mock_transport(return_value: Any):
@@ -399,6 +424,34 @@ class TestOutlookGetMessage:
         assert path == "/me/messages/abc123"
         assert result["id"] == "abc"
 
+    def test_attachment_nodes(self, ms_creds):
+        with patch(
+            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+        ) as mock_t:
+            t = _ms_mock_transport({"value": []})
+            mock_t.return_value = t
+            list_message_attachments(credentials=ms_creds, message_id="abc123", limit=200)
+            get_message_attachment(
+                credentials=ms_creds,
+                message_id="abc123",
+                attachment_id="att123",
+            )
+        assert t.request.call_args_list[0].args == (
+            "GET",
+            "/me/messages/abc123/attachments",
+        )
+        assert t.request.call_args_list[0].kwargs == {
+            "operation": "list_message_attachments",
+            "params": {"$top": 100},
+        }
+        assert t.request.call_args_list[1].args == (
+            "GET",
+            "/me/messages/abc123/attachments/att123",
+        )
+        assert t.request.call_args_list[1].kwargs == {
+            "operation": "get_message_attachment"
+        }
+
 
 class TestOutlookCalendar:
     def test_calls_events_endpoint(self, ms_creds):
@@ -425,3 +478,124 @@ class TestOutlookCalendar:
         params = t.request.call_args[1]["params"]
         assert "$filter" in params
         assert "2024-01-01" in params["$filter"]
+
+
+class TestOutlookMessageActions:
+    def test_create_draft_posts_message(self, ms_creds):
+        with patch(
+            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+        ) as mock_t:
+            t = _ms_mock_transport({"id": "draft1"})
+            mock_t.return_value = t
+            create_draft(
+                credentials=ms_creds,
+                to="a@b.com",
+                subject="Draft",
+                body="Body",
+            )
+        t.request.assert_called_once_with(
+            "POST",
+            "/me/messages",
+            operation="create_draft",
+            json_body={
+                "subject": "Draft",
+                "body": {"contentType": "HTML", "content": "Body"},
+                "toRecipients": [{"emailAddress": {"address": "a@b.com"}}],
+            },
+        )
+
+    def test_reply_forward_send_and_delete_message(self, ms_creds):
+        with patch(
+            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+        ) as mock_t:
+            t = _ms_mock_transport({})
+            mock_t.return_value = t
+            reply_message(credentials=ms_creds, message_id="msg1", comment="Thanks")
+            forward_message(
+                credentials=ms_creds,
+                message_id="msg1",
+                to="lead@example.com",
+                comment="FYI",
+            )
+            send_draft(credentials=ms_creds, message_id="draft1")
+            delete_message(credentials=ms_creds, message_id="msg2")
+
+        assert t.request.call_args_list[0].args == ("POST", "/me/messages/msg1/reply")
+        assert t.request.call_args_list[0].kwargs == {
+            "operation": "reply_message",
+            "json_body": {"comment": "Thanks"},
+        }
+        assert t.request.call_args_list[1].args == ("POST", "/me/messages/msg1/forward")
+        assert t.request.call_args_list[1].kwargs["json_body"]["toRecipients"] == [
+            {"emailAddress": {"address": "lead@example.com"}}
+        ]
+        assert t.request.call_args_list[2].args == ("POST", "/me/messages/draft1/send")
+        assert t.request.call_args_list[3].args == ("DELETE", "/me/messages/msg2")
+
+    def test_update_message_payload(self, ms_creds):
+        with patch(
+            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+        ) as mock_t:
+            t = _ms_mock_transport({"id": "msg1"})
+            mock_t.return_value = t
+            update_message(
+                credentials=ms_creds,
+                message_id="msg1",
+                is_read=True,
+                categories="Important, Customer",
+            )
+        t.request.assert_called_once_with(
+            "PATCH",
+            "/me/messages/msg1",
+            operation="update_message",
+            json_body={"isRead": True, "categories": ["Important", "Customer"]},
+        )
+
+
+class TestOutlookCalendarActions:
+    def test_create_update_and_delete_calendar_event(self, ms_creds):
+        with patch(
+            "noodle_nodes.integrations_v2.providers.microsoft_outlook.operations._transport"
+        ) as mock_t:
+            t = _ms_mock_transport({"id": "evt1"})
+            mock_t.return_value = t
+            create_calendar_event(
+                credentials=ms_creds,
+                subject="Call",
+                start_datetime="2024-01-01T10:00:00",
+                end_datetime="2024-01-01T10:30:00",
+                time_zone="Australia/Sydney",
+                location="Teams",
+                attendees=["a@b.com"],
+            )
+            update_calendar_event(
+                credentials=ms_creds,
+                event_id="evt1",
+                subject="Updated call",
+                is_all_day=False,
+            )
+            delete_calendar_event(credentials=ms_creds, event_id="evt1")
+
+        assert t.request.call_args_list[0].args == ("POST", "/me/events")
+        assert t.request.call_args_list[0].kwargs["json_body"] == {
+            "subject": "Call",
+            "start": {
+                "dateTime": "2024-01-01T10:00:00",
+                "timeZone": "Australia/Sydney",
+            },
+            "end": {
+                "dateTime": "2024-01-01T10:30:00",
+                "timeZone": "Australia/Sydney",
+            },
+            "location": {"displayName": "Teams"},
+            "attendees": [
+                {"emailAddress": {"address": "a@b.com"}, "type": "required"}
+            ],
+            "isAllDay": False,
+        }
+        assert t.request.call_args_list[1].args == ("PATCH", "/me/events/evt1")
+        assert t.request.call_args_list[1].kwargs == {
+            "operation": "update_calendar_event",
+            "json_body": {"subject": "Updated call", "isAllDay": False},
+        }
+        assert t.request.call_args_list[2].args == ("DELETE", "/me/events/evt1")

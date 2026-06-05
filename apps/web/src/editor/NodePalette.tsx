@@ -62,22 +62,28 @@ function rankMatch(node: NodeManifest, q: string): number {
   return 1000;
 }
 
-/** Split a node id like ``google_sheets_append`` into integration + operation.
- * Returns ``null`` when the id has no underscore (single-word node) or doesn't
- * look like an integration id. The integration name is taken from the manifest
- * category when it's a known integration category, otherwise we fall back to
- * the prefix-before-last-underscore.
- */
+const INTEGRATION_GROUP_LABELS: Array<[string, string]> = [
+  ["google_sheets_", "Google Sheets"],
+  ["microsoft_outlook_", "Microsoft Outlook"],
+  ["outlook_", "Microsoft Outlook"],
+  ["airtable_", "Airtable"],
+  ["github_", "GitHub"],
+  ["notion_", "Notion"],
+  ["slack_", "Slack"],
+  ["stripe_", "Stripe"],
+];
+
+function integrationLabelFor(nodeId: string): string | null {
+  for (const [prefix, label] of INTEGRATION_GROUP_LABELS) {
+    if (nodeId.startsWith(prefix)) return label;
+  }
+  return null;
+}
+
+/** Group official integration nodes by provider inside the Integrations section. */
 function integrationOf(node: NodeManifest): string | null {
-  // Heuristic: integrations live in non-generic categories and have ids of the
-  // form ``service_op`` (>= 2 underscores or 1 underscore with a long prefix).
-  const genericCats = new Set(["Triggers", "Core", "Flow", "Logic", "Utility"]);
-  if (genericCats.has(node.category)) return null;
-  const parts = node.id.split("_");
-  if (parts.length < 2) return null;
-  // Use the manifest category as the display name — it's typically the
-  // integration's brand (e.g. "Slack", "Google Sheets").
-  return node.category;
+  if (node.category !== "Integrations") return null;
+  return integrationLabelFor(node.id);
 }
 
 function recommendedIdsFor(manifest: NodeManifest | null): string[] {
@@ -187,6 +193,7 @@ function PaletteItem({
 const COLLAPSED_KEY = "noodle_palette_collapsed";
 const EXPANDED_GROUPS_KEY = "noodle_palette_expanded_groups";
 const COLLAPSED_QUICK_KEY = "noodle_palette_collapsed_quick";
+const DEFAULT_EXPANDED_GROUPS = ["Integrations"];
 
 export function NodePalette() {
   const manifests = useEditor((s) => s.manifests);
@@ -204,8 +211,9 @@ export function NodePalette() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(EXPANDED_GROUPS_KEY) ?? "[]") as unknown;
-      return new Set(Array.isArray(stored) ? stored.filter((x): x is string => typeof x === "string") : []);
-    } catch { return new Set(); }
+      const values = Array.isArray(stored) ? stored.filter((x): x is string => typeof x === "string") : [];
+      return new Set([...DEFAULT_EXPANDED_GROUPS, ...values]);
+    } catch { return new Set(DEFAULT_EXPANDED_GROUPS); }
   });
   const [collapsedQuick, setCollapsedQuick] = useState<Set<string>>(() => {
     try {
@@ -541,17 +549,10 @@ export function NodePalette() {
             const standalone: NodeManifest[] = [];
             for (const node of group.nodes) {
               const integration = integrationOf(node);
-              if (!integration || integration === group.category) {
-                // Integration tag equals category — don't double-print the
-                // label, just bucket by first id segment.
-                if (integration) {
-                  const prefix = node.id.split("_")[0];
-                  const arr = integrationBuckets.get(prefix) ?? [];
-                  arr.push(node);
-                  integrationBuckets.set(prefix, arr);
-                } else {
-                  standalone.push(node);
-                }
+              if (integration) {
+                const arr = integrationBuckets.get(integration) ?? [];
+                arr.push(node);
+                integrationBuckets.set(integration, arr);
               } else {
                 standalone.push(node);
               }

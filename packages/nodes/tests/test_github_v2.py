@@ -16,17 +16,33 @@ def _mock_transport(return_value: Any) -> MagicMock:
 
 def test_github_v2_nodes_are_registered() -> None:
     manifests = {manifest.id: manifest for manifest in registry.manifests()}
+    expected = {
+        "github_get_repo_v2": ("GitHub Get Repository", False),
+        "github_create_issue_v2": ("GitHub Create Issue", True),
+        "github_list_issues_v2": ("GitHub List Issues", False),
+        "github_get_issue_v2": ("GitHub Get Issue", False),
+        "github_update_issue_v2": ("GitHub Update Issue", True),
+        "github_create_issue_comment_v2": ("GitHub Create Issue Comment", True),
+        "github_list_issue_comments_v2": ("GitHub List Issue Comments", False),
+        "github_list_pull_requests_v2": ("GitHub List Pull Requests", False),
+        "github_get_pull_request_v2": ("GitHub Get Pull Request", False),
+        "github_create_pull_request_v2": ("GitHub Create Pull Request", True),
+        "github_merge_pull_request_v2": ("GitHub Merge Pull Request", True),
+        "github_get_file_contents_v2": ("GitHub Get File Contents", False),
+        "github_put_file_contents_v2": ("GitHub Create Or Update File", True),
+        "github_workflow_dispatch_v2": ("GitHub Dispatch Workflow", True),
+        "github_create_release_v2": ("GitHub Create Release", True),
+    }
 
-    get_repo = manifests["github_get_repo_v2"]
-    create_issue = manifests["github_create_issue_v2"]
+    for node_id, (name, side_effecting) in expected.items():
+        manifest = manifests[node_id]
+        assert manifest.name == name
+        assert manifest.icon == "brand:github"
+        assert manifest.category == "Integrations"
+        assert manifest.usable_as_tool is True
+        assert manifest.tool_side_effecting is side_effecting
 
-    assert get_repo.name == "GitHub Get Repository"
-    assert create_issue.name == "GitHub Create Issue"
-    assert get_repo.icon == "brand:github"
-    assert create_issue.icon == "brand:github"
-    assert get_repo.category == "Integrations"
-    assert create_issue.category == "Integrations"
-    params = {param.name: param for param in create_issue.params}
+    params = {param.name: param for param in manifests["github_create_issue_v2"].params}
     assert params["credentials"].credential is not None
     assert params["credentials"].credential.type == "github"
     assert params["credentials"].credential.multi is True
@@ -92,3 +108,242 @@ def test_github_create_issue_v2_requires_valid_repo_and_title() -> None:
 
     with pytest.raises(ValueError, match="title"):
         operations.create_issue(credentials={"token": "ghp-test"}, repo="octo/hello")
+
+
+def test_github_list_issues_v2_builds_filters(monkeypatch) -> None:
+    transport = _mock_transport([])
+    monkeypatch.setattr(operations, "_transport", lambda _credentials: transport)
+
+    registry.get("github_list_issues_v2").func(
+        input=None,
+        credentials={"token": "ghp-test"},
+        repo="octo/hello",
+        state="all",
+        labels=["bug", "urgent"],
+        assignee="octocat",
+        since="2024-01-01T00:00:00Z",
+        per_page=250,
+    )
+
+    transport.request.assert_called_once_with(
+        "GET",
+        "/repos/octo/hello/issues",
+        operation="list_issues",
+        params={
+            "state": "all",
+            "labels": "bug,urgent",
+            "assignee": "octocat",
+            "since": "2024-01-01T00:00:00Z",
+            "per_page": 100,
+        },
+    )
+
+
+def test_github_update_issue_v2_payload(monkeypatch) -> None:
+    transport = _mock_transport({"number": 7})
+    monkeypatch.setattr(operations, "_transport", lambda _credentials: transport)
+
+    registry.get("github_update_issue_v2").func(
+        input={"body": "Updated body"},
+        credentials={"token": "ghp-test"},
+        repo="octo/hello",
+        issue_number=7,
+        state="closed",
+        labels="done, shipped",
+        assignees=["octocat"],
+    )
+
+    transport.request.assert_called_once_with(
+        "PATCH",
+        "/repos/octo/hello/issues/7",
+        operation="update_issue",
+        json_body={
+            "body": "Updated body",
+            "state": "closed",
+            "labels": ["done", "shipped"],
+            "assignees": ["octocat"],
+        },
+    )
+
+
+def test_github_issue_comment_nodes(monkeypatch) -> None:
+    transport = _mock_transport({"id": 1})
+    monkeypatch.setattr(operations, "_transport", lambda _credentials: transport)
+
+    registry.get("github_create_issue_comment_v2").func(
+        input={"message": "from input"},
+        credentials={"token": "ghp-test"},
+        repo="octo/hello",
+        issue_number=3,
+    )
+    registry.get("github_list_issue_comments_v2").func(
+        input=None,
+        credentials={"token": "ghp-test"},
+        repo="octo/hello",
+        issue_number=3,
+        per_page=5,
+    )
+
+    assert transport.request.call_args_list[0].args == (
+        "POST",
+        "/repos/octo/hello/issues/3/comments",
+    )
+    assert transport.request.call_args_list[0].kwargs == {
+        "operation": "create_issue_comment",
+        "json_body": {"body": '{"message": "from input"}'},
+    }
+    assert transport.request.call_args_list[1].args == (
+        "GET",
+        "/repos/octo/hello/issues/3/comments",
+    )
+    assert transport.request.call_args_list[1].kwargs == {
+        "operation": "list_issue_comments",
+        "params": {"per_page": 5},
+    }
+
+
+def test_github_pr_contents_workflow_and_release_nodes(monkeypatch) -> None:
+    transport = _mock_transport({})
+    monkeypatch.setattr(operations, "_transport", lambda _credentials: transport)
+
+    registry.get("github_list_pull_requests_v2").func(
+        input=None,
+        credentials={"token": "ghp-test"},
+        repo="octo/hello",
+        state="all",
+        base="main",
+        per_page=2,
+    )
+    registry.get("github_get_file_contents_v2").func(
+        input=None,
+        credentials={"token": "ghp-test"},
+        repo="octo/hello",
+        path="docs/read me.md",
+        ref="main",
+    )
+    registry.get("github_workflow_dispatch_v2").func(
+        input={"inputs": {"env": "prod"}},
+        credentials={"token": "ghp-test"},
+        repo="octo/hello",
+        workflow_id="ci.yml",
+        ref="main",
+    )
+    registry.get("github_create_release_v2").func(
+        input=None,
+        credentials={"token": "ghp-test"},
+        repo="octo/hello",
+        tag_name="v1.0.0",
+        name="v1.0.0",
+        draft=True,
+    )
+
+    assert transport.request.call_args_list[0].args == ("GET", "/repos/octo/hello/pulls")
+    assert transport.request.call_args_list[0].kwargs["params"]["base"] == "main"
+    assert transport.request.call_args_list[1].args == (
+        "GET",
+        "/repos/octo/hello/contents/docs/read%20me.md",
+    )
+    assert transport.request.call_args_list[1].kwargs == {
+        "operation": "get_file_contents",
+        "params": {"ref": "main"},
+    }
+    assert transport.request.call_args_list[2].args == (
+        "POST",
+        "/repos/octo/hello/actions/workflows/ci.yml/dispatches",
+    )
+    assert transport.request.call_args_list[2].kwargs == {
+        "operation": "workflow_dispatch",
+        "json_body": {"ref": "main", "inputs": {"env": "prod"}},
+    }
+    assert transport.request.call_args_list[3].args == (
+        "POST",
+        "/repos/octo/hello/releases",
+    )
+    assert transport.request.call_args_list[3].kwargs == {
+        "operation": "create_release",
+        "json_body": {
+            "tag_name": "v1.0.0",
+            "name": "v1.0.0",
+            "draft": True,
+            "prerelease": False,
+            "generate_release_notes": False,
+        },
+    }
+
+
+def test_github_pull_request_mutation_nodes(monkeypatch) -> None:
+    transport = _mock_transport({})
+    monkeypatch.setattr(operations, "_transport", lambda _credentials: transport)
+
+    registry.get("github_get_pull_request_v2").func(
+        input=None,
+        credentials={"token": "ghp-test"},
+        repo="octo/hello",
+        pull_number=9,
+    )
+    registry.get("github_create_pull_request_v2").func(
+        input=None,
+        credentials={"token": "ghp-test"},
+        repo="octo/hello",
+        title="Add report",
+        head="feature/report",
+        base="main",
+        body="Ready",
+    )
+    registry.get("github_merge_pull_request_v2").func(
+        input=None,
+        credentials={"token": "ghp-test"},
+        repo="octo/hello",
+        pull_number=9,
+        merge_method="squash",
+    )
+
+    assert transport.request.call_args_list[0].args == ("GET", "/repos/octo/hello/pulls/9")
+    assert transport.request.call_args_list[1].args == ("POST", "/repos/octo/hello/pulls")
+    assert transport.request.call_args_list[1].kwargs == {
+        "operation": "create_pull_request",
+        "json_body": {
+            "title": "Add report",
+            "head": "feature/report",
+            "base": "main",
+            "body": "Ready",
+            "draft": False,
+            "maintainer_can_modify": True,
+        },
+    }
+    assert transport.request.call_args_list[2].args == (
+        "PUT",
+        "/repos/octo/hello/pulls/9/merge",
+    )
+    assert transport.request.call_args_list[2].kwargs == {
+        "operation": "merge_pull_request",
+        "json_body": {"merge_method": "squash"},
+    }
+
+
+def test_github_put_file_contents_v2_encodes_content(monkeypatch) -> None:
+    transport = _mock_transport({"content": {"sha": "next"}})
+    monkeypatch.setattr(operations, "_transport", lambda _credentials: transport)
+
+    registry.get("github_put_file_contents_v2").func(
+        input=None,
+        credentials={"token": "ghp-test"},
+        repo="octo/hello",
+        path="docs/report.md",
+        message="Update report",
+        content="hello",
+        branch="main",
+        sha="abc123",
+    )
+
+    transport.request.assert_called_once_with(
+        "PUT",
+        "/repos/octo/hello/contents/docs/report.md",
+        operation="put_file_contents",
+        json_body={
+            "message": "Update report",
+            "content": "aGVsbG8=",
+            "branch": "main",
+            "sha": "abc123",
+        },
+    )

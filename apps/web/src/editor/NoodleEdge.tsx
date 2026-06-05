@@ -5,6 +5,7 @@ import { useEditor } from "./store";
 
 export function NoodleEdge({
   id,
+  source,
   sourceX,
   sourceY,
   targetX,
@@ -46,9 +47,9 @@ export function NoodleEdge({
             <button
               type="button"
               className="noodle-edge-btn"
-              title="Run workflow"
+              title="Run up to this node"
               disabled={running || !runHandler}
-              onClick={() => void runHandler?.()}
+              onClick={() => void runHandler?.([source])}
             >
               <Play size={9} weight="fill" />
             </button>

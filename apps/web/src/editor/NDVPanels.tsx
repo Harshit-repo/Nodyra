@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../api";
+import { useToast } from "../ToastProvider";
 import type { ArtifactInfo, ParamSpec } from "../types";
 import { missingFor } from "./missingPackages";
 import { DataPanel } from "./DataPanel";
@@ -719,6 +720,7 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
   const setEnvPackages = useEditor((s) => s.setEnvPackages);
   const applyEnvSwitch = useEditor((s) => s.applyEnvSwitch);
   const [pkgBusy, setPkgBusy] = useState(false);
+  const { notify } = useToast();
 
   if (!node) {
     return (
@@ -740,6 +742,9 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
       const updated = [...envPackages, ...missingPkgs];
       await api.setPackages(envId, updated);
       setEnvPackages(updated);
+      notify(`Added ${missingPkgs.join(", ")} to ${envName ?? "environment"}.`, "success");
+    } catch {
+      notify("Failed to install packages — check the environment.", "error");
     } finally {
       setPkgBusy(false);
     }

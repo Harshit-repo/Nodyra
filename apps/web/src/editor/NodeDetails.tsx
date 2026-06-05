@@ -2960,6 +2960,7 @@ export function NodeDetails({
 
   const [mode, setMode] = useState<"inspector" | "python">("inspector");
   const [pkgBusy, setPkgBusy] = useState(false);
+  const { notify } = useToast();
   useEffect(() => setMode("inspector"), [nodeId]);
 
   async function pin(): Promise<void> {
@@ -3011,6 +3012,9 @@ export function NodeDetails({
       const updated = [...envPackages, ...missingPkgs];
       await api.setPackages(envId, updated);
       setEnvPackages(updated);
+      notify(`Added ${missingPkgs.join(", ")} to ${envName ?? "environment"}.`, "success");
+    } catch {
+      notify("Failed to install packages — check the environment.", "error");
     } finally {
       setPkgBusy(false);
     }

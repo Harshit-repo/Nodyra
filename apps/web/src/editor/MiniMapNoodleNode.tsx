@@ -11,22 +11,29 @@ const STICKY_COLORS: Record<string, string> = {
   purple: "#d8b4fe",
 };
 
+// Matches --surface (node card background) and --canvas
+const NODE_BG = "#10141c";
+
 export function MiniMapNoodleNode({ id, x, y, width, height, selected }: MiniMapNodeProps) {
   const node = useEditor((s) => s.nodes.find((n) => n.id === id)) as Node | undefined;
 
-  if (!node || node.type === "sticky") {
-    const fill = node
-      ? (STICKY_COLORS[(node.data as Record<string, unknown>).color as string] ?? STICKY_COLORS.yellow!)
-      : "#fef08a";
-    return <rect x={x} y={y} width={width} height={height} rx={3} fill={fill} />;
+  if (!node) return null;
+
+  if (node.type === "sticky") {
+    const fill =
+      STICKY_COLORS[(node.data as Record<string, unknown>).color as string] ??
+      STICKY_COLORS.yellow!;
+    return (
+      <rect x={x} y={y} width={width} height={height} rx={3} fill={fill} opacity={0.9} />
+    );
   }
 
   if (node.type === "group") {
     return (
       <rect
         x={x} y={y} width={width} height={height} rx={4}
-        fill="rgba(255,255,255,0.03)"
-        stroke="rgba(255,255,255,0.1)"
+        fill="rgba(255,255,255,0.02)"
+        stroke="rgba(255,255,255,0.08)"
         strokeWidth={1.5}
         strokeDasharray="4 2"
       />
@@ -35,14 +42,45 @@ export function MiniMapNoodleNode({ id, x, y, width, height, selected }: MiniMap
 
   const manifest = (node as NoodleNode).data.manifest;
   const color = categoryColor(manifest.category);
-  const rx = Math.min(Math.round(width * 0.22), 8);
+  const rx = Math.min(Math.round(width * 0.16), 10);
+
+  // Icon area: centered inset square, ~56% of tile dimensions
+  const pad = width * 0.22;
+  const iconX = x + pad;
+  const iconY = y + pad;
+  const iconW = width - pad * 2;
+  const iconH = height - pad * 2;
+  const iconRx = Math.min(iconW * 0.22, 5);
+
+  // Port dot radius
+  const portR = Math.max(1.8, width * 0.058);
 
   return (
-    <rect
-      x={x} y={y} width={width} height={height} rx={rx}
-      fill={color + "1e"}
-      stroke={selected ? "#6aa9ff" : color}
-      strokeWidth={selected ? 2.5 : 1.5}
-    />
+    <g>
+      {/* Node body — dark card matching --surface */}
+      <rect
+        x={x} y={y} width={width} height={height} rx={rx}
+        fill={NODE_BG}
+        stroke={selected ? "#6aa9ff" : color}
+        strokeWidth={selected ? 2.2 : 1.2}
+      />
+      {/* Subtle top highlight line */}
+      <rect
+        x={x + rx} y={y} width={width - rx * 2} height={1.5}
+        fill={color}
+        opacity={0.35}
+        rx={0}
+      />
+      {/* Icon area — colored rounded rect in center */}
+      <rect
+        x={iconX} y={iconY} width={iconW} height={iconH} rx={iconRx}
+        fill={color + "2e"}
+        stroke={color + "80"}
+        strokeWidth={0.8}
+      />
+      {/* Port dots on left and right edges */}
+      <circle cx={x} cy={y + height / 2} r={portR} fill={color} />
+      <circle cx={x + width} cy={y + height / 2} r={portR} fill={color} />
+    </g>
   );
 }
