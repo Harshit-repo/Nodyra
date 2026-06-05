@@ -19,6 +19,8 @@ def test_stripe_v2_node_is_registered() -> None:
     assert manifest.name == "Stripe Create Customer"
     assert manifest.icon == "brand:stripe"
     assert manifest.category == "Integrations"
+    assert manifest.usable_as_tool is True
+    assert manifest.tool_side_effecting is True
     params = {param.name: param for param in manifest.params}
     assert params["credentials"].credential is not None
     assert params["credentials"].credential.type == "stripe"

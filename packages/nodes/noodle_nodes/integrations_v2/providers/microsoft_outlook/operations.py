@@ -111,6 +111,7 @@ OUTLOOK_LIST_MESSAGES_SPEC = OperationSpec(
     operation="list",
     description="List email messages from a mailbox folder.",
     icon="brand:microsoftoutlook",
+    tool_side_effecting=False,
     params=(
         _credentials_param(),
         OperationParamSpec(
@@ -158,6 +159,7 @@ OUTLOOK_GET_MESSAGE_SPEC = OperationSpec(
     operation="get",
     description="Get a single email message by its ID.",
     icon="brand:microsoftoutlook",
+    tool_side_effecting=False,
     params=(
         _credentials_param(),
         OperationParamSpec(
@@ -182,6 +184,7 @@ OUTLOOK_LIST_CALENDAR_EVENTS_SPEC = OperationSpec(
     operation="list_events",
     description="List calendar events from the default calendar.",
     icon="brand:microsoftoutlook",
+    tool_side_effecting=False,
     params=(
         _credentials_param((CALENDAR_READ_SCOPE,)),
         OperationParamSpec(

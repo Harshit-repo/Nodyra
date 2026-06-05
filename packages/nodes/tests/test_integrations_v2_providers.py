@@ -40,6 +40,26 @@ def _mock_transport(return_value: Any):
     return m
 
 
+def test_google_sheets_v2_manifests_are_tool_compatible() -> None:
+    manifests = {manifest.id: manifest for manifest in registry.manifests()}
+
+    read_only = {
+        "google_sheets_read_v2",
+        "google_sheets_get_metadata_v2",
+    }
+    side_effecting = {
+        "google_sheets_append_v2",
+        "google_sheets_update_v2",
+        "google_sheets_clear_v2",
+    }
+    for node_id in read_only | side_effecting:
+        assert manifests[node_id].usable_as_tool is True
+    for node_id in read_only:
+        assert manifests[node_id].tool_side_effecting is False
+    for node_id in side_effecting:
+        assert manifests[node_id].tool_side_effecting is True
+
+
 class TestGoogleSheetsRead:
     def test_calls_correct_endpoint(self, gs_creds):
         with patch(
@@ -260,6 +280,11 @@ def test_outlook_v2_manifests_use_clean_names_and_brand_icons() -> None:
         manifest = manifests[node_id]
         assert manifest.name == name
         assert manifest.icon == "brand:microsoftoutlook"
+        assert manifest.usable_as_tool is True
+    assert manifests["outlook_send_mail_v2"].tool_side_effecting is True
+    assert manifests["outlook_list_messages_v2"].tool_side_effecting is False
+    assert manifests["outlook_get_message_v2"].tool_side_effecting is False
+    assert manifests["outlook_list_calendar_events_v2"].tool_side_effecting is False
 
 
 def _ms_mock_transport(return_value: Any):

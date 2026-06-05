@@ -14,12 +14,20 @@ contract, then implement the operation in Python using the shared transport.
 2. Define credentials with `CredentialSpec` inside an `OperationParamSpec`.
 3. Define an `OperationSpec` with stable `node_id`, provider, resource,
    operation, params, icon, and documentation URL when available.
-4. Implement an executor function with explicit Python parameters. The executor
+4. Set node-as-tool metadata deliberately:
+   - executable operation nodes are usable as AI tools by default;
+   - set `tool_side_effecting=False` for read-only list/get/search/metadata
+     operations;
+   - keep `tool_side_effecting=True` for create/update/delete/send/clear
+     operations so agent calls use the approval gate;
+   - set `usable_as_tool=False` only when an operation cannot safely be called
+     by an AI agent.
+5. Implement an executor function with explicit Python parameters. The executor
    should call `ProviderTransport` or a provider-specific transport subclass.
-5. Register the operation with `register_operation(SPEC, executor)`.
-6. Import the provider package from `packages/nodes/noodle_nodes/__init__.py`
+6. Register the operation with `register_operation(SPEC, executor)`.
+7. Import the provider package from `packages/nodes/noodle_nodes/__init__.py`
    so default startup registers the nodes.
-7. Add mocked provider tests. Do not require real network calls.
+8. Add mocked provider tests. Do not require real network calls.
 
 Minimal shape:
 
@@ -200,6 +208,8 @@ OAuth tokens.
 For each operation:
 
 - manifest registration and source generation;
+- node-as-tool manifest compatibility: `usable_as_tool` is true by default and
+  `tool_side_effecting` matches the operation's read/write behavior;
 - successful mocked provider call;
 - provider error shape;
 - credential redaction if any error/output could include credential-adjacent

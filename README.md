@@ -578,10 +578,13 @@ Planned or designed areas:
   trigger coverage.
 - `docs/status-matrix.md` tracks shipped/beta/scaffolded/planned architecture
   tasks.
+- `CONTRIBUTING.md` and `CONTRIBUTOR_LICENSE_AGREEMENT.md` describe the
+  contribution intake and CLA process.
 - `plan.md` contains milestone and slice history.
 - `HANDOFF.md` contains compact context for engineering handoff.
 
 ## License
 
 No license file is currently included. Add a license before distributing this
-repository outside your organization.
+repository outside your organization. Contributions are governed separately by
+the CLA process described in `CONTRIBUTING.md`.

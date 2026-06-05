@@ -25,6 +25,10 @@ def test_airtable_v2_nodes_are_registered() -> None:
     assert create_record.icon == "brand:airtable"
     assert list_records.category == "Integrations"
     assert create_record.category == "Integrations"
+    assert list_records.usable_as_tool is True
+    assert list_records.tool_side_effecting is False
+    assert create_record.usable_as_tool is True
+    assert create_record.tool_side_effecting is True
     params = {param.name: param for param in create_record.params}
     assert params["credentials"].credential is not None
     assert params["credentials"].credential.type == "airtable"

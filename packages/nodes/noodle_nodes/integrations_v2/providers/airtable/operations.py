@@ -38,6 +38,7 @@ AIRTABLE_LIST_RECORDS_SPEC = OperationSpec(
     operation="list",
     description="List Airtable records using the v2 provider transport.",
     icon="brand:airtable",
+    tool_side_effecting=False,
     params=(
         _credentials_param(),
         OperationParamSpec(name="base_id", required=True, placeholder="app..."),

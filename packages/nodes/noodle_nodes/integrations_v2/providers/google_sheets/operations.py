@@ -42,6 +42,7 @@ GOOGLE_SHEETS_READ_SPEC = OperationSpec(
     operation="read",
     description="Read values from a Google Sheet using the v2 provider transport.",
     icon="brand:googlesheets",
+    tool_side_effecting=False,
     params=(
         _credentials_param(),
         OperationParamSpec(
@@ -159,6 +160,7 @@ GOOGLE_SHEETS_GET_METADATA_SPEC = OperationSpec(
     operation="get_metadata",
     description="Get spreadsheet metadata including sheet names and properties.",
     icon="brand:googlesheets",
+    tool_side_effecting=False,
     params=(
         _credentials_param(),
         OperationParamSpec(

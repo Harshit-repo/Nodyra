@@ -21,6 +21,8 @@ def test_notion_v2_node_is_registered() -> None:
     assert manifest.name == "Notion Create Page"
     assert manifest.icon == "brand:notion"
     assert manifest.category == "Integrations"
+    assert manifest.usable_as_tool is True
+    assert manifest.tool_side_effecting is True
     params = {param.name: param for param in manifest.params}
     assert params["credentials"].credential is not None
     assert params["credentials"].credential.type == "notion"

@@ -39,6 +39,7 @@ GITHUB_GET_REPO_SPEC = OperationSpec(
     operation="get",
     description="Fetch GitHub repository metadata using the v2 provider transport.",
     icon="brand:github",
+    tool_side_effecting=False,
     params=(
         _credentials_param(),
         OperationParamSpec(
