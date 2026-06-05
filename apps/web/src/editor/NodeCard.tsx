@@ -36,13 +36,13 @@ function agentPortTop(index: number, count: number): number {
 
 const PORT_KIND_COLOR: Record<string, string> = {
   dataset: "#7c5cff",
-  artifact: "#f59e0b",
-  file: "#f59e0b",
+  artifact: "#f97316",   // orange  — was amber, clashed with ai_tool
+  file: "#34d399",       // emerald — was amber, clashed with artifact + ai_tool
   control: "#94a3b8",
   ai_language_model: "#6ea8ff",
   ai_embedding_model: "#6ea8ff",
   ai_memory: "#57c98a",
-  ai_tool: "#f6b44b",
+  ai_tool: "#f6b44b",   // amber/yellow — exclusive to AI tool ports
   ai_output_parser: "#c084fc",
   ai_retriever: "#22d3ee",
   ai_vector_store: "#2dd4bf",
@@ -835,7 +835,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
               className={`port-tag${spec?.data_kind === "dataset" ? " port-tag-dataset" : ""}`}
               style={{ top: portTop(i, outputNames.length) }}
             >
-              {isToolPort ? "tool" : spec?.data_kind === "dataset" ? `${name} · DatasetRef` : name}
+              {isToolPort ? "tool" : name}
             </span>
           );
         })}

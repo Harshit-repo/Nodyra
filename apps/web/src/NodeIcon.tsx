@@ -105,6 +105,11 @@ const ICON_MAP: Record<string, Icon> = {
 
 const BRAND_FALLBACK_ICON_MAP: Record<string, Icon> = {
   airtable: Table,
+  amazondynamodb: Stack,
+  amazons3: HardDrive,
+  amazonsns: ChatCircle,
+  amazonsqs: Stack,
+  awslambda: Cpu,
   github: GithubLogo,
   googlesheets: Table,
   microsoftoutlook: Envelope,

@@ -52,6 +52,9 @@ BRAND_NODE_IDS = {
     "azure_blob_upload": ("brand:microsoftazure", "Integrations"),
     "dynamodb_get_item": ("brand:amazondynamodb", "Integrations"),
     "dynamodb_put_item": ("brand:amazondynamodb", "Integrations"),
+    # AWS S3 (Integrations)
+    "s3_put_object": ("brand:amazons3", "Integrations"),
+    "s3_get_object": ("brand:amazons3", "Integrations"),
     # Cloud / DevOps (Integrations + System)
     "aws_lambda_invoke": ("brand:awslambda", "Integrations"),
     "aws_sqs_send": ("brand:amazonsqs", "Integrations"),

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { api } from "../api";
 import type { ArtifactInfo, ParamSpec } from "../types";
+import { missingFor } from "./missingPackages";
 import { DataPanel } from "./DataPanel";
 import {
   ParamField,
@@ -711,6 +712,13 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
   const workflowId = useEditor((s) => s.workflowId);
   const pinned = useEditor((s) => s.pinned[nodeId]);
   const setPinnedFor = useEditor((s) => s.setPinnedFor);
+  const envId = useEditor((s) => s.envId);
+  const envName = useEditor((s) => s.envName);
+  const envPackages = useEditor((s) => s.envPackages);
+  const environmentsList = useEditor((s) => s.environmentsList);
+  const setEnvPackages = useEditor((s) => s.setEnvPackages);
+  const applyEnvSwitch = useEditor((s) => s.applyEnvSwitch);
+  const [pkgBusy, setPkgBusy] = useState(false);
 
   if (!node) {
     return (
@@ -718,6 +726,23 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
         <p>This node is no longer in the workflow.</p>
       </div>
     );
+  }
+
+  const missingPkgs = missingFor(node.data.manifest.requirements ?? [], envPackages);
+  const satisfyingEnvs = environmentsList.filter(
+    (e) => e.id !== envId && missingFor(missingPkgs, e.packages).length === 0,
+  );
+
+  async function addMissingToEnv(): Promise<void> {
+    if (!envId || pkgBusy) return;
+    setPkgBusy(true);
+    try {
+      const updated = [...envPackages, ...missingPkgs];
+      await api.setPackages(envId, updated);
+      setEnvPackages(updated);
+    } finally {
+      setPkgBusy(false);
+    }
   }
 
   // Compute the data flowing into this node from upstream node outputs.
@@ -807,6 +832,38 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
       )}
 
       <section className="ndv-middle">
+        {missingPkgs.length > 0 && envId && (
+          <div className="ndv-missing-pkgs warn-text">
+            <p>
+              This node needs <strong>{missingPkgs.join(", ")}</strong>, not
+              installed in <strong>{envName ?? "this environment"}</strong>.
+            </p>
+            <div className="ndv-missing-actions">
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                disabled={pkgBusy}
+                onClick={() => void addMissingToEnv()}
+              >
+                {pkgBusy ? "Adding…" : `Add to ${envName ?? "env"}`}
+              </button>
+              {satisfyingEnvs.length > 0 && applyEnvSwitch && (
+                <select
+                  className="field-input"
+                  value=""
+                  onChange={(e) => e.target.value && applyEnvSwitch(e.target.value)}
+                >
+                  <option value="">Switch environment…</option>
+                  {satisfyingEnvs.map((env) => (
+                    <option key={env.id} value={env.id}>
+                      {env.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          </div>
+        )}
         <div className="ndv-tabs">
           <button
             type="button"

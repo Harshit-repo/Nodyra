@@ -9,16 +9,19 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DragEvent } from "react";
 import type { Connection, Edge } from "@xyflow/react";
 
-import { categoryColor } from "../categories";
 import { CANVAS_STARTERS } from "../workflowTemplates";
 import { useToast } from "../ToastProvider";
+import { MiniMapNoodleNode } from "./MiniMapNoodleNode";
 import { NodeCard } from "./NodeCard";
 import { NodeGroup } from "./NodeGroup";
+import { NoodleEdge } from "./NoodleEdge";
+import { PortLegend } from "./PortLegend";
 import { StickyNote } from "./StickyNote";
 import { datasetConnectionIssues, validateConnection, type ConnectionCheck } from "./connectionValidation";
-import { pickEditorRunTrigger, type NoodleNode, useEditor } from "./store";
+import { pickEditorRunTrigger, useEditor } from "./store";
 
 const nodeTypes = { noodle: NodeCard, sticky: StickyNote, group: NodeGroup };
+const edgeTypes = { default: NoodleEdge };
 
 function quickFixLabel(quickFixId: ConnectionCheck["quickFixId"]): string {
   switch (quickFixId) {
@@ -343,6 +346,7 @@ export function Canvas() {
         nodes={nodes}
         edges={labeledEdges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}
@@ -360,11 +364,10 @@ export function Canvas() {
         <MiniMap
           pannable
           zoomable
-          nodeColor={(node) =>
-            categoryColor((node as NoodleNode).data.manifest.category)
-          }
-          maskColor="rgba(8,11,16,0.74)"
+          nodeComponent={MiniMapNoodleNode}
+          maskColor="rgba(8,11,16,0.78)"
         />
+        <PortLegend />
         <CanvasControls />
         <DatasetConnectionHealth />
         {blockedConnection && (

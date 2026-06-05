@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { DotsThreeVertical, Rows, SquaresFour } from "@phosphor-icons/react";
 
 import { api } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -191,6 +192,14 @@ export function WorkflowsPage() {
   const [sort, setSort] = useState("updated");
   const [pendingDelete, setPendingDelete] = useState<WorkflowSummary | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [pendingRename, setPendingRename] = useState<WorkflowSummary | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"grid" | "list">(() => {
+    return (localStorage.getItem("noodle-wf-view") as "grid" | "list") ?? "grid";
+  });
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const [providerModalWorkflow, setProviderModalWorkflow] =
     useState<WorkflowSummary | null>(null);
   const [providerRows, setProviderRows] =
@@ -248,6 +257,52 @@ export function WorkflowsPage() {
     } finally {
       setDeleteBusy(false);
     }
+  }
+
+  async function duplicate(wf: WorkflowSummary): Promise<void> {
+    setOpenMenuId(null);
+    try {
+      const detail = await api.getWorkflow(wf.id);
+      const created = await api.createWorkflow(`Copy of ${wf.name}`);
+      await api.updateWorkflow(created.id, { graph: detail.graph });
+      notify(`"${wf.name}" duplicated.`, "success");
+      load();
+    } catch {
+      notify("Could not duplicate workflow.", "error");
+    }
+  }
+
+  async function commitRename(): Promise<void> {
+    if (!pendingRename || renameBusy) return;
+    setRenameBusy(true);
+    try {
+      await api.updateWorkflow(pendingRename.id, {
+        name: renameName.trim() || pendingRename.name,
+      });
+      notify("Workflow renamed.", "success");
+      setPendingRename(null);
+      load();
+    } catch {
+      notify("Could not rename workflow.", "error");
+    } finally {
+      setRenameBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!openMenuId) return;
+    function handleOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpenMenuId(null);
+      }
+    }
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [openMenuId]);
+
+  function setView(mode: "grid" | "list"): void {
+    setViewMode(mode);
+    localStorage.setItem("noodle-wf-view", mode);
   }
 
   async function openProviderStatus(
@@ -383,12 +438,32 @@ export function WorkflowsPage() {
         )}
 
         <div className="home-filters">
-          <input
-            className="field-input"
-            placeholder="Search workflows..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
+          <div className="home-search-row">
+            <input
+              className="field-input"
+              placeholder="Search workflows..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <div className="wf-view-toggle" role="group" aria-label="View mode">
+              <button
+                type="button"
+                title="Card view"
+                className={viewMode === "grid" ? "active" : ""}
+                onClick={() => setView("grid")}
+              >
+                <SquaresFour size={13} weight={viewMode === "grid" ? "fill" : "regular"} />
+              </button>
+              <button
+                type="button"
+                title="List view"
+                className={viewMode === "list" ? "active" : ""}
+                onClick={() => setView("list")}
+              >
+                <Rows size={13} weight={viewMode === "list" ? "fill" : "regular"} />
+              </button>
+            </div>
+          </div>
           <select
             className="field-input"
             value={statusFilter}
@@ -455,27 +530,20 @@ export function WorkflowsPage() {
         )}
 
         {workflows && workflows.length > 0 && (
-          <div className="wf-grid">
+          <div className={viewMode === "list" ? "wf-list" : "wf-grid"}>
             {visible.map((wf) => {
               const hookBadge = providerStatusBadge(providerCounts(wf));
+              const menuOpen = openMenuId === wf.id;
               return (
                 <article
                   key={wf.id}
-                  className="wf-card"
+                  className={`wf-card${viewMode === "list" ? " wf-card--row" : ""}`}
                   onClick={() => navigate(`/workflows/${wf.id}`)}
                 >
                   <div className="wf-card-top">
                     <span className={`wf-status ${wf.active ? "on" : "off"}`}>
                       {wf.active ? "active" : "inactive"}
                     </span>
-                    {wf.has_unpublished_changes && (
-                      <span className="wf-status draft">draft changes</span>
-                    )}
-                    {wf.last_run_status && (
-                      <span className={`wf-status run-${wf.last_run_status}`}>
-                        last {wf.last_run_status}
-                      </span>
-                    )}
                     {hookBadge && (
                       <button
                         type="button"
@@ -486,16 +554,6 @@ export function WorkflowsPage() {
                         {hookBadge.label}
                       </button>
                     )}
-                    <button
-                      className="wf-delete"
-                      title="Delete workflow"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setPendingDelete(wf);
-                      }}
-                    >
-                      ×
-                    </button>
                   </div>
                   <h3 className="wf-name">{wf.name}</h3>
                   <div className="wf-meta">
@@ -508,12 +566,85 @@ export function WorkflowsPage() {
                     <span>published v{wf.published_version}</span>
                     <span className="dot-sep" />
                     <span>{relativeTime(wf.updated_at)}</span>
+                    {wf.has_unpublished_changes && (
+                      <>
+                        <span className="dot-sep" />
+                        <span className="wf-meta-draft">draft</span>
+                      </>
+                    )}
+                    {wf.last_run_status && (
+                      <>
+                        <span className="dot-sep" />
+                        <span className={`wf-meta-run wf-meta-run-${wf.last_run_status}`}>
+                          {wf.last_run_status}
+                        </span>
+                      </>
+                    )}
                   </div>
                   {wf.last_run_started_at && (
                     <div className="wf-meta wf-run-meta">
                       Last run {relativeTime(wf.last_run_started_at)}
                     </div>
                   )}
+                  <div
+                    className="wf-menu-wrap"
+                    ref={menuOpen ? menuRef : null}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      className="wf-menu-btn"
+                      title="More options"
+                      aria-label="More options"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenMenuId(menuOpen ? null : wf.id);
+                      }}
+                    >
+                      <DotsThreeVertical size={16} weight="bold" />
+                    </button>
+                    {menuOpen && (
+                      <div className="wf-menu" role="menu">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => navigate(`/workflows/${wf.id}`)}
+                        >
+                          Open
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setOpenMenuId(null);
+                            setPendingRename(wf);
+                            setRenameName(wf.name);
+                          }}
+                        >
+                          Rename
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => void duplicate(wf)}
+                        >
+                          Duplicate
+                        </button>
+                        <div className="wf-menu-sep" />
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="danger"
+                          onClick={() => {
+                            setOpenMenuId(null);
+                            setPendingDelete(wf);
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </article>
               );
             })}
@@ -545,6 +676,39 @@ export function WorkflowsPage() {
           onCancel={() => setPendingDelete(null)}
           onConfirm={() => void remove(pendingDelete.id)}
         />
+      )}
+      {pendingRename && (
+        <div className="modal-overlay" onClick={() => setPendingRename(null)}>
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rename-workflow-title"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => { if (e.key === "Escape") setPendingRename(null); }}
+          >
+            <h2 id="rename-workflow-title">Rename workflow</h2>
+            <input
+              className="field-input"
+              autoFocus
+              value={renameName}
+              onChange={(e) => setRenameName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void commitRename()}
+            />
+            <div className="modal-actions">
+              <button className="btn btn-ghost" onClick={() => setPendingRename(null)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => void commitRename()}
+                disabled={renameBusy}
+              >
+                {renameBusy ? "Saving…" : "Rename"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {providerModalWorkflow && (
         <div className="modal-overlay" onClick={closeProviderStatus}>

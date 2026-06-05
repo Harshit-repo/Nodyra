@@ -496,7 +496,6 @@ textarea:focus-visible {
   border-radius: var(--radius);
   padding: 15px 17px;
   cursor: pointer;
-  overflow: hidden;
   transition:
     border-color 140ms ease,
     transform 140ms ease,
@@ -525,8 +524,8 @@ textarea:focus-visible {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  justify-content: space-between;
   align-items: center;
+  padding-right: 26px;
 }
 .wf-status {
   font-family: var(--font-mono);
@@ -611,6 +610,193 @@ textarea:focus-visible {
 .wf-run-meta {
   margin-top: 8px;
 }
+.wf-meta-draft {
+  color: #e0a83e;
+}
+.wf-meta-run-success {
+  color: #4ade80;
+}
+.wf-meta-run-error {
+  color: #f87171;
+}
+.wf-meta-run-running {
+  color: #60a5fa;
+}
+
+/* Three-dots context menu */
+.wf-menu-wrap {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 10;
+}
+.wf-menu-btn {
+  border: none;
+  background: transparent;
+  color: var(--ink-3);
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    background 120ms,
+    color 120ms;
+}
+.wf-card:hover .wf-menu-btn,
+.wf-menu-btn:focus-visible,
+.wf-menu-wrap:has(.wf-menu) .wf-menu-btn {
+  opacity: 1;
+}
+.wf-menu-btn:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--ink);
+  opacity: 1;
+}
+.wf-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  padding: 4px;
+  min-width: 148px;
+  z-index: 300;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  animation: menu-pop 120ms ease;
+}
+@keyframes menu-pop {
+  from { opacity: 0; transform: scale(0.93) translateY(-4px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+.wf-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  color: var(--ink);
+  font-size: 13px;
+  font-family: inherit;
+  padding: 6px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 100ms;
+}
+.wf-menu button:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+.wf-menu button.danger {
+  color: #ef8d6f;
+}
+.wf-menu button.danger:hover {
+  background: rgba(229, 102, 79, 0.15);
+}
+.wf-menu-sep {
+  height: 1px;
+  background: var(--line-2);
+  margin: 4px;
+}
+
+/* List / row view */
+.wf-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: fade-in 140ms ease;
+}
+.wf-grid {
+  animation: fade-in 140ms ease;
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.wf-card--row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-rows: 1fr;
+  align-items: center;
+  column-gap: 16px;
+  padding: 11px 44px 11px 16px;
+}
+.wf-card--row:hover {
+  transform: none;
+}
+.wf-card--row .wf-card-top {
+  grid-column: 1;
+  flex-wrap: nowrap;
+  gap: 4px;
+  padding-right: 0;
+}
+.wf-card--row .wf-name {
+  grid-column: 2;
+  margin: 0;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wf-card--row .wf-meta {
+  grid-column: 3;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.wf-card--row .wf-run-meta {
+  display: none;
+}
+.wf-card--row .wf-menu-wrap {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* View mode toggle — sits inline next to search */
+.home-search-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.home-search-row .field-input {
+  flex: 1;
+  min-width: 0;
+}
+.wf-view-toggle {
+  display: flex;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  padding: 2px;
+  flex-shrink: 0;
+  gap: 1px;
+}
+.wf-view-toggle button {
+  border: none;
+  background: none;
+  color: var(--ink-3);
+  border-radius: 4px;
+  padding: 3px 5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background 150ms ease,
+    color 150ms ease;
+}
+.wf-view-toggle button.active {
+  background: var(--accent-deep);
+  color: #fff;
+}
+.wf-view-toggle button:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ink);
+}
+
 .dot-sep {
   width: 3px;
   height: 3px;

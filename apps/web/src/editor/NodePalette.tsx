@@ -1,3 +1,4 @@
+﻿import { CaretDown, CaretLeft, CaretRight, MagnifyingGlass, Star, X } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CATEGORY_ORDER, categoryColor } from "../categories";
@@ -177,11 +178,15 @@ function PaletteItem({
           onToggleFavorite(node.id);
         }}
       >
-        {favorite ? "★" : "☆"}
+        <Star size={13} weight={favorite ? "fill" : "regular"} />
       </button>
     </div>
   );
 }
+
+const COLLAPSED_KEY = "noodle_palette_collapsed";
+const EXPANDED_GROUPS_KEY = "noodle_palette_expanded_groups";
+const COLLAPSED_QUICK_KEY = "noodle_palette_collapsed_quick";
 
 export function NodePalette() {
   const manifests = useEditor((s) => s.manifests);
@@ -193,7 +198,51 @@ export function NodePalette() {
     readStoredList(FAVORITES_KEY),
   );
   const [recent, setRecent] = useState<string[]>(() => readStoredList(RECENTS_KEY));
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem(COLLAPSED_KEY) === "1"; } catch { return false; }
+  });
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(EXPANDED_GROUPS_KEY) ?? "[]") as unknown;
+      return new Set(Array.isArray(stored) ? stored.filter((x): x is string => typeof x === "string") : []);
+    } catch { return new Set(); }
+  });
+  const [collapsedQuick, setCollapsedQuick] = useState<Set<string>>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(COLLAPSED_QUICK_KEY) ?? "[]") as unknown;
+      return new Set(Array.isArray(stored) ? stored.filter((x): x is string => typeof x === "string") : []);
+    } catch { return new Set(); }
+  });
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const chipsRef = useRef<HTMLDivElement | null>(null);
+
+  function toggleCollapsed(): void {
+    setCollapsed((v) => {
+      const next = !v;
+      try { localStorage.setItem(COLLAPSED_KEY, next ? "1" : "0"); } catch { /* */ }
+      return next;
+    });
+  }
+
+  function toggleGroup(category: string): void {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(category)) next.delete(category);
+      else next.add(category);
+      try { localStorage.setItem(EXPANDED_GROUPS_KEY, JSON.stringify([...next])); } catch { /* */ }
+      return next;
+    });
+  }
+
+  function toggleQuick(title: string): void {
+    setCollapsedQuick((prev) => {
+      const next = new Set(prev);
+      if (next.has(title)) next.delete(title);
+      else next.add(title);
+      try { localStorage.setItem(COLLAPSED_QUICK_KEY, JSON.stringify([...next])); } catch { /* */ }
+      return next;
+    });
+  }
 
   const visibleManifests = useMemo(
     () => manifests.filter((manifest) => !manifest.hidden),
@@ -222,6 +271,18 @@ export function NodePalette() {
     }
     window.addEventListener("noodle:focus-node-search", focusSearch);
     return () => window.removeEventListener("noodle:focus-node-search", focusSearch);
+  }, []);
+
+  useEffect(() => {
+    const el = chipsRef.current;
+    if (!el) return;
+    function onWheel(e: WheelEvent): void {
+      if (e.deltaX !== 0) return; // already horizontal (trackpad)
+      el!.scrollLeft += e.deltaY;
+      e.preventDefault();
+    }
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
   const categories = useMemo(() => {
@@ -340,21 +401,49 @@ export function NodePalette() {
     setRecent((items) => [id, ...items.filter((item) => item !== id)].slice(0, MAX_RECENTS));
   }
 
+  if (collapsed) {
+    return (
+      <aside className="palette palette--collapsed">
+        <button
+          type="button"
+          className="palette-collapse-btn"
+          aria-label="Expand node panel"
+          title="Expand node panel"
+          onClick={toggleCollapsed}
+        >
+          <CaretRight size={14} weight="bold" />
+        </button>
+      </aside>
+    );
+  }
+
   return (
     <aside className="palette">
       <div className="panel-head">
         <h2>Nodes</h2>
-        <span className="panel-count">
-          {query.trim()
-            ? `${matchedCount}/${visibleManifests.length}`
-            : visibleManifests.length}
-        </span>
+        <div className="panel-head-right">
+          <span className="panel-count">
+            {query.trim()
+              ? `${matchedCount}/${visibleManifests.length}`
+              : visibleManifests.length}
+          </span>
+          <button
+            type="button"
+            className="palette-collapse-btn"
+            aria-label="Collapse node panel"
+            title="Collapse node panel"
+            onClick={toggleCollapsed}
+          >
+            <CaretLeft size={14} weight="bold" />
+          </button>
+        </div>
       </div>
       <div className="palette-search-wrap">
+        <MagnifyingGlass className="palette-search-icon" size={13} weight="bold" />
         <input
           ref={searchRef}
           className="palette-search"
-          placeholder="Search nodes... (↑/↓ then Enter to insert)"
+          placeholder="Search nodes…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleSearchKeyDown}
@@ -366,11 +455,11 @@ export function NodePalette() {
             aria-label="Clear node search"
             onClick={() => setQuery("")}
           >
-            x
+            <X size={11} weight="bold" />
           </button>
         )}
       </div>
-      <div className="palette-chips" aria-label="Node categories">
+      <div ref={chipsRef} className="palette-chips" aria-label="Node categories">
         <button
           type="button"
           className={categoryFilter === "all" ? "active" : ""}
@@ -383,7 +472,16 @@ export function NodePalette() {
             type="button"
             key={category}
             className={categoryFilter === category ? "active" : ""}
-            onClick={() => setCategoryFilter(category)}
+            onClick={() => {
+              setCategoryFilter(category);
+              setExpandedGroups((prev) => {
+                if (prev.has(category)) return prev;
+                const next = new Set(prev);
+                next.add(category);
+                try { localStorage.setItem(EXPANDED_GROUPS_KEY, JSON.stringify([...next])); } catch { /* */ }
+                return next;
+              });
+            }}
           >
             <span
               className="cat-dot"
@@ -401,23 +499,38 @@ export function NodePalette() {
             { title: "Favorites", nodes: favoriteNodes },
           ]
             .filter((section) => section.nodes.length > 0)
-            .map((section) => (
-              <div className="palette-group palette-quick" key={section.title}>
-                <div className="palette-group-head">
-                  <span>{section.title}</span>
-                  <small>{section.nodes.length}</small>
+            .map((section) => {
+              const isQuickCollapsed = collapsedQuick.has(section.title);
+              return (
+                <div className="palette-group palette-quick" key={section.title}>
+                  <button
+                    type="button"
+                    className="palette-group-head palette-group-head--btn"
+                    onClick={() => toggleQuick(section.title)}
+                    aria-expanded={!isQuickCollapsed}
+                  >
+                    <span>{section.title}</span>
+                    <span className="palette-group-head-right">
+                      <small>{section.nodes.length}</small>
+                      <CaretDown
+                        size={10}
+                        weight="bold"
+                        className={`palette-group-caret${isQuickCollapsed ? " palette-group-caret--collapsed" : ""}`}
+                      />
+                    </span>
+                  </button>
+                  {!isQuickCollapsed && section.nodes.map((node) => (
+                    <PaletteItem
+                      key={`${section.title}-${node.id}`}
+                      node={node}
+                      favorite={favorites.includes(node.id)}
+                      onToggleFavorite={toggleFavorite}
+                      onUsed={recordRecent}
+                    />
+                  ))}
                 </div>
-                {section.nodes.map((node) => (
-                  <PaletteItem
-                    key={`${section.title}-${node.id}`}
-                    node={node}
-                    favorite={favorites.includes(node.id)}
-                    onToggleFavorite={toggleFavorite}
-                    onUsed={recordRecent}
-                  />
-                ))}
-              </div>
-            ))}
+              );
+            })}
         {groups.map((group) => {
           // Subgroup integration nodes by service inside the category — only
           // when browsing (no active query) and at least 2 nodes share an
@@ -463,9 +576,16 @@ export function NodePalette() {
             });
           }
           const renderNodes = subgroups.length > 0 ? null : group.nodes;
+          // When searching, always show results. When browsing, collapsed by default.
+          const isGroupCollapsed = !query.trim() && !expandedGroups.has(group.category);
           return (
             <div className="palette-group" key={group.category}>
-              <div className="palette-group-head">
+              <button
+                type="button"
+                className="palette-group-head palette-group-head--btn"
+                onClick={() => toggleGroup(group.category)}
+                aria-expanded={!isGroupCollapsed}
+              >
                 <span>
                   <span
                     className="cat-dot"
@@ -473,9 +593,16 @@ export function NodePalette() {
                   />
                   {group.category}
                 </span>
-                <small>{group.nodes.length}</small>
-              </div>
-              {renderNodes &&
+                <span className="palette-group-head-right">
+                  <small>{group.nodes.length}</small>
+                  <CaretDown
+                    size={10}
+                    weight="bold"
+                    className={`palette-group-caret${isGroupCollapsed ? " palette-group-caret--collapsed" : ""}`}
+                  />
+                </span>
+              </button>
+              {!isGroupCollapsed && renderNodes &&
                 renderNodes.map((node) => (
                   <PaletteItem
                     key={node.id}
@@ -486,7 +613,7 @@ export function NodePalette() {
                     onUsed={recordRecent}
                   />
                 ))}
-              {subgroups.map((sg, i) => (
+              {!isGroupCollapsed && subgroups.map((sg, i) => (
                 <div className="palette-subgroup" key={`${group.category}-sg-${i}`}>
                   {sg.label && (
                     <div className="palette-subgroup-head">{sg.label}</div>
@@ -507,7 +634,10 @@ export function NodePalette() {
           );
         })}
         {groups.length === 0 && (
-          <p className="palette-empty">No nodes match “{query}”.</p>
+          <div className="palette-empty">
+            <MagnifyingGlass size={22} weight="thin" />
+            <span>No nodes match<br /><strong>&ldquo;{query}&rdquo;</strong></span>
+          </div>
         )}
       </div>
     </aside>

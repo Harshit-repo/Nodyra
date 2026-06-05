@@ -677,7 +677,7 @@ def _boto3_s3_client(
         ]
     },
     category="Integrations",
-    icon="storage",
+    icon="brand:amazons3",
     params={
         "bucket": {"placeholder": "my-bucket"},
         "key": {"placeholder": "path/file.json"},
@@ -749,7 +749,7 @@ def s3_put_object(
         "Options": ["aws_access_key_id", "aws_secret_access_key", "region_name", "endpoint_url"]
     },
     category="Integrations",
-    icon="storage",
+    icon="brand:amazons3",
     params={
         "bucket": {"placeholder": "my-bucket"},
         "key": {"placeholder": "path/file.json"},
