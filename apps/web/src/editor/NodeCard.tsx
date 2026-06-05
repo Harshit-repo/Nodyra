@@ -828,8 +828,10 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
         {outputNames.map((name, i) => {
           const spec = manifest.outputs.find((o) => o.name === name);
           const isToolPort = Boolean(data.toolMode) && name === "tool";
+          const displayName = isToolPort ? "tool" : name;
           const shouldShow =
-            outputNames.length > 1 || spec?.data_kind === "dataset" || isToolPort;
+            displayName !== "main" &&
+            (outputNames.length > 1 || spec?.data_kind === "dataset" || isToolPort);
           if (!shouldShow) return null;
           return (
             <span
@@ -837,7 +839,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
               className={`port-tag${spec?.data_kind === "dataset" ? " port-tag-dataset" : ""}`}
               style={{ top: portTop(i, outputNames.length) }}
             >
-              {isToolPort ? "tool" : name}
+              {displayName}
             </span>
           );
         })}
