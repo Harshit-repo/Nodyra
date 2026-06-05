@@ -611,4 +611,5 @@ export interface ChatPublicConfig {
   title: string;
   placeholder: string;
   initial_message: string;
+  require_login: boolean;
 }

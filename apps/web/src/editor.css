@@ -4799,3 +4799,29 @@ th.sortable:hover { background:var(--bg-3); }
 
 /* ---- ChatTriggerPanel: public URL display in inspector ------------------- */
 .chat-trigger-panel .webhook-url { margin-top: 4px; }
+
+/* ---- ChatLoginGate: login overlay on require_login=true chat pages ------- */
+.chat-login-gate {
+  justify-content: center;
+}
+.chat-login-box {
+  background: var(--surface, #1a1a1a);
+  border: 1px solid var(--line, #333);
+  border-radius: 10px;
+  padding: 32px 28px;
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.chat-login-box h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  font-weight: 600;
+}
+.chat-login-box form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

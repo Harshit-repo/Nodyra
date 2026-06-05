@@ -2136,30 +2136,79 @@ function UrlRow({ url }: { url: string }) {
 
 export function ChatTriggerPanel({
   params,
+  onParamChange,
 }: {
   params: Record<string, unknown>;
+  onParamChange?: (key: string, value: unknown) => void;
 }) {
   const origin = window.location.origin;
   const workflowId = useEditor((s) => s.workflowId);
   if (!workflowId) return null;
-  const publicUrl = `${origin}/chat/${workflowId}`;
+
   const isPublic = Boolean(params.public_access);
+  const requireLogin = params.require_login !== false; // default true
+  const chatToken = typeof params.chat_token === "string" ? params.chat_token : "";
+
+  const baseUrl = `${origin}/chat/${workflowId}`;
+  const secretUrl = chatToken ? `${baseUrl}?token=${encodeURIComponent(chatToken)}` : "";
+
+  function generateToken(): void {
+    onParamChange?.("chat_token", crypto.randomUUID());
+  }
+
+  if (!isPublic) {
+    return (
+      <div className="inspector-section chat-trigger-panel">
+        <div className="inspector-section-head">Chat page</div>
+        <p className="field-desc">
+          Enable <strong>Public access</strong> in the Options above to get a
+          shareable chat URL.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="inspector-section chat-trigger-panel">
       <div className="inspector-section-head">Chat page</div>
-      {isPublic ? (
+      {requireLogin ? (
         <>
           <p className="field-desc">
-            Public access is <strong>on</strong>. Anyone with the link below
-            can chat with this workflow — no login required.
+            <strong>Login required.</strong> Only users signed into this Noodle
+            instance can use this chat page.
           </p>
-          <UrlRow url={publicUrl} />
+          <UrlRow url={baseUrl} />
+        </>
+      ) : secretUrl ? (
+        <>
+          <p className="field-desc">
+            <strong>Secret link.</strong> Anyone with this URL can chat — keep it
+            private. Regenerate to invalidate old links.
+          </p>
+          <UrlRow url={secretUrl} />
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            style={{ marginTop: 4 }}
+            onClick={generateToken}
+          >
+            Regenerate link
+          </button>
         </>
       ) : (
-        <p className="field-desc">
-          Enable <strong>Public access</strong> in the Options above to get
-          a shareable chat URL.
-        </p>
+        <>
+          <p className="field-desc">
+            <strong>Secret link mode.</strong> Generate a secret URL to share
+            with trusted users — no Noodle account required.
+          </p>
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={generateToken}
+          >
+            Generate secret link
+          </button>
+        </>
       )}
     </div>
   );
@@ -3089,6 +3138,7 @@ export function NodeDetails({
           <p className="muted">This node has no parameters.</p>
         )}
         {manifest.params
+          .filter((spec) => spec.widget !== "hidden")
           .filter((spec) => !webhookHiddenParam(manifest.id, spec.name, params))
           .map((spec) => {
             const value = params[spec.name];
@@ -3236,7 +3286,10 @@ export function NodeDetails({
       )}
 
       {manifest.id === "chat_trigger" && (
-        <ChatTriggerPanel params={params} />
+        <ChatTriggerPanel
+          params={params}
+          onParamChange={(key, value) => setParam(key, value)}
+        />
       )}
         </>
       )}

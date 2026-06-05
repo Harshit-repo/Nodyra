@@ -22,7 +22,8 @@ export default function App() {
   const location = useLocation();
   const [auth, setAuth] = useState<AuthState | null>(null);
 
-  // Public routes rendered before the auth gate.
+  // Chat pages are outside the auth gate: ChatPublicPage manages its own
+  // login check based on the workflow's require_login param.
   if (location.pathname.startsWith("/chat/")) {
     return (
       <Routes>

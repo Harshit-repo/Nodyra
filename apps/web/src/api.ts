@@ -262,10 +262,13 @@ export const api = {
     workflowId: string,
     message: string,
     sessionId: string,
+    token?: string,
   ) =>
-    request<ChatTurnResponse>(`/chat/p/${workflowId}`, {
-      method: "POST",
-      body: JSON.stringify({ message, session_id: sessionId }),
+    request<ChatTurnResponse>(
+      `/chat/p/${workflowId}${token ? `?token=${encodeURIComponent(token)}` : ""}`,
+      {
+        method: "POST",
+        body: JSON.stringify({ message, session_id: sessionId }),
     }),
   getRun: (runId: string) => request<RunInfo>(`/runs/${runId}`),
   listRunArtifacts: (runId: string) =>

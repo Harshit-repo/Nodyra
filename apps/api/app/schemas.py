@@ -976,3 +976,4 @@ class ChatPublicConfig(BaseModel):
     title: str
     placeholder: str
     initial_message: str
+    require_login: bool = True

@@ -1,18 +1,26 @@
-"""Public (unauthenticated) chat endpoints for the hosted chat page and widget.
+"""Hosted chat-page endpoints.
 
 Only workflows whose Chat Trigger has ``public_access = true`` are served here.
 Requests that don't match return 404 so private workflows are not discoverable.
+
+Access modes controlled by the ``require_login`` param on the chat_trigger node:
+  - ``require_login=True`` (default): visitor must supply a valid Noodle JWT.
+  - ``require_login=False`` with ``chat_token`` set: visitor must supply the
+    matching token as ``?token=<value>`` in the POST URL (secret-link mode).
+  - ``require_login=False`` with no ``chat_token``: open access (no auth check).
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db import SessionLocal
+from app.db import SessionLocal, get_session
 from app.models import Workflow
 from app.schemas import ChatPublicConfig, ChatTurnRequest, ChatTurnResponse
+from app.security import current_user
 from app.services.chat_service import NoChatTriggerError, WorkflowNotFoundError, run_chat_turn
 
 router = APIRouter(prefix="/chat/p", tags=["chat-public"])
@@ -59,17 +67,39 @@ async def get_public_chat_config(workflow_id: str) -> ChatPublicConfig:
         title=str(params.get("title") or ""),
         placeholder=str(params.get("input_placeholder") or ""),
         initial_message=str(params.get("initial_message") or ""),
+        require_login=bool(params.get("require_login", True)),
     )
 
 
 @router.post("/{workflow_id}", response_model=ChatTurnResponse)
-async def public_chat_turn(workflow_id: str, body: ChatTurnRequest) -> ChatTurnResponse:
+async def public_chat_turn(
+    workflow_id: str,
+    body: ChatTurnRequest,
+    token: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
+    session: AsyncSession = Depends(get_session),
+) -> ChatTurnResponse:
     graph = await _load_graph(workflow_id)
     if graph is None:
         raise _NOT_FOUND
     params = _chat_trigger_params(graph)
     if not params or not params.get("public_access"):
         raise _NOT_FOUND
+
+    require_login = bool(params.get("require_login", True))
+    chat_token = str(params.get("chat_token") or "")
+
+    if not require_login:
+        if chat_token:
+            if token != chat_token:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Invalid access token.",
+                )
+        # else: no token configured — open access
+    else:
+        await current_user(authorization=authorization, session=session)
+
     try:
         result = await run_chat_turn(
             workflow_id, body.message, body.session_id, prefer_draft=True

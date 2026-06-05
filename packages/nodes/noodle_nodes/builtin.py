@@ -371,7 +371,10 @@ def error_trigger(error: dict | None = None) -> dict:
 
 @node(name="Chat Trigger", id="chat_trigger", category="Triggers", icon="chat",
       inputs=[],
-      param_groups={"Options": ["initial_message", "input_placeholder", "title", "public_access"]},
+      param_groups={"Options": [
+          "initial_message", "input_placeholder", "title",
+          "public_access", "require_login",
+      ]},
       params={
           "initial_message": {
               "widget": "textarea", "group": "Options",
@@ -387,11 +390,19 @@ def error_trigger(error: dict | None = None) -> dict:
           },
           "public_access": {
               "type": "boolean", "group": "Options", "default": False,
-              "description": "Allow anyone with the link to chat without logging in.",
+              "description": "Enable the hosted chat page for this workflow.",
+          },
+          "require_login": {
+              "type": "boolean", "group": "Options", "default": True,
+              "description": "Require visitors to sign into this Noodle instance.",
+          },
+          "chat_token": {
+              "type": "string", "widget": "hidden", "default": "",
           },
       })
 def chat_trigger(initial_message: str = "", input_placeholder: str = "",
-                 title: str = "", public_access: bool = False) -> dict:
+                 title: str = "", public_access: bool = False,
+                 require_login: bool = True, chat_token: str = "") -> dict:
     """Conversational entry point. When a chat turn runs, the chat service seeds
     this node's output with the user's message and session id; on a plain manual
     run it returns the empty shape so the graph stays runnable."""
