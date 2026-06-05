@@ -5,7 +5,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from app.services.backends.base import _run, venv_dir
+from app.services.backends.base import _run, local_noodle_packages, venv_dir
 from app.services.backends.tools import ensure_tool
 
 
@@ -24,7 +24,19 @@ class CondaBackend:
             *channel_args,
             *list(env.packages),
         )
-        return ("ready" if code == 0 else "error"), log[-4000:]
+        if code != 0:
+            return "error", log[-4000:]
+
+        local_pkgs = local_noodle_packages()
+        if local_pkgs:
+            pip_code, pip_log = await _run(
+                str(self.python_path(env.id)), "-m", "pip", "install", *local_pkgs,
+            )
+            log = f"{log}\n{pip_log}"
+            if pip_code != 0:
+                return "error", log[-4000:]
+
+        return "ready", log[-4000:]
 
     def python_path(self, env_id: str) -> Path:
         base = venv_dir(env_id)

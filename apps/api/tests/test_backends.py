@@ -116,8 +116,9 @@ async def test_conda_build_calls_micromamba_with_channels(tmp_path) -> None:
     with patch("app.services.backends.conda._run", side_effect=mock_run):
         with patch("app.services.backends.conda.ensure_tool", return_value=fake_solver):
             with patch("app.services.backends.conda.venv_dir", return_value=tmp_path / "env"):
-                b = CondaBackend()
-                status, _ = await b.build(env)
+                with patch("app.services.backends.conda.local_noodle_packages", return_value=[]):
+                    b = CondaBackend()
+                    status, _ = await b.build(env)
 
     assert status == "ready"
     assert len(calls) == 1
@@ -273,8 +274,9 @@ async def test_pixi_build_calls_pixi_install(tmp_path) -> None:
     with patch("app.services.backends.pixi._run", side_effect=mock_run):
         with patch("app.services.backends.pixi.ensure_tool", return_value=fake_pixi):
             with patch("app.services.backends.pixi.venv_dir", return_value=tmp_path / "env"):
-                b = PixiBackend()
-                status, _ = await b.build(env)
+                with patch("app.services.backends.pixi.local_noodle_packages", return_value=[]):
+                    b = PixiBackend()
+                    status, _ = await b.build(env)
 
     assert status == "ready"
     assert len(calls) == 1

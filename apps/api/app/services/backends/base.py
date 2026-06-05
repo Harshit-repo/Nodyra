@@ -14,6 +14,25 @@ def venv_dir(env_id: str) -> Path:
     return Path(settings.envs_dir).resolve() / env_id
 
 
+def _workspace_root() -> Path | None:
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "packages").is_dir() and (parent / "pyproject.toml").is_file():
+            return parent
+    return None
+
+
+def local_noodle_packages() -> list[str]:
+    """Paths to packages/core, packages/nodes, packages/runtime in the monorepo."""
+    root = _workspace_root()
+    if root is None:
+        return []
+    return [
+        str(root / "packages" / name)
+        for name in ("core", "nodes", "runtime")
+        if (root / "packages" / name).is_dir()
+    ]
+
+
 async def _run(*args: str) -> tuple[int, str]:
     """Run a subprocess, return (returncode, combined stdout+stderr)."""
     proc = await asyncio.create_subprocess_exec(

@@ -3015,7 +3015,10 @@ export function NodeDetails({
       const updated = [...envPackages, ...missingPkgs];
       await api.setPackages(envId, updated);
       setEnvPackages(updated);
-      notify(`Added ${missingPkgs.join(", ")} to ${envName ?? "environment"}.`, "success");
+      notify(
+        `Installing ${missingPkgs.join(", ")} — environment is rebuilding, this may take a minute.`,
+        "success",
+      );
     } catch {
       notify("Failed to install packages — check the environment.", "error");
     } finally {

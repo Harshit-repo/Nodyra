@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from app.config import settings
-from app.services.backends.base import _run, venv_dir
+from app.services.backends.base import _run, local_noodle_packages, venv_dir
 
 
 def venv_python(env_id: str) -> Path:
@@ -32,23 +32,6 @@ class VenvBackend:
             shutil.rmtree(target)
 
 
-def _workspace_root() -> Path | None:
-    for parent in Path(__file__).resolve().parents:
-        if (parent / "packages").is_dir() and (parent / "pyproject.toml").is_file():
-            return parent
-    return None
-
-
-def _local_noodle_packages() -> list[str]:
-    root = _workspace_root()
-    if root is None:
-        return []
-    paths: list[str] = []
-    for name in ("core", "nodes", "runtime"):
-        candidate = root / "packages" / name
-        if candidate.is_dir():
-            paths.append(str(candidate))
-    return paths
 
 
 async def _do_build(
@@ -67,7 +50,7 @@ async def _do_build(
         if code != 0:
             return "error", log.strip()[-4000:]
 
-        to_install = [*_local_noodle_packages(), *packages]
+        to_install = [*local_noodle_packages(), *packages]
         if to_install:
             extra_index_args: list[str] = []
             for url in (index_urls or []):
