@@ -170,6 +170,58 @@ def test_parse_page_selection_list(store_ctx) -> None:
     assert _parse_page_selection("1,3,5", 5, 0) == [0, 2, 4]
 
 
+def test_pdf_generate_raises_without_template(store_ctx) -> None:
+    from noodle_nodes.document_intelligence import pdf_generate
+    with pytest.raises(ValueError, match="template is required"):
+        pdf_generate(input={}, template="")
+
+
+def test_pdf_generate_raises_missing_package(store_ctx, monkeypatch) -> None:
+    import builtins
+    real_import = builtins.__import__
+
+    def mock_import(name, *args, **kwargs):
+        if name in ("weasyprint", "jinja2"):
+            raise ImportError(f"No module named '{name}'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", mock_import)
+    from noodle_nodes.document_intelligence import pdf_generate
+    with pytest.raises(RuntimeError, match="weasyprint"):
+        pdf_generate(input={}, template="<h1>hi</h1>")
+
+
+def test_pdf_generate_returns_artifact(store_ctx) -> None:
+    pytest.importorskip("weasyprint")
+    pytest.importorskip("jinja2")
+    from noodle_nodes.document_intelligence import pdf_generate
+
+    result = pdf_generate(
+        input={"title": "Test Report", "body": "Hello world"},
+        template="<html><body><h1>{{ title }}</h1><p>{{ body }}</p></body></html>",
+        filename="test.pdf",
+    )
+    assert is_artifact_ref(result["artifact"])
+    assert result["artifact"]["content_type"] == "application/pdf"
+    assert result["size_bytes"] > 0
+
+
+def test_pdf_generate_renders_template_variables(store_ctx) -> None:
+    pytest.importorskip("weasyprint")
+    pytest.importorskip("jinja2")
+    from noodle.artifacts import read_bytes
+    from noodle_nodes.document_intelligence import pdf_generate
+
+    result = pdf_generate(
+        input={"name": "Alice"},
+        template="<html><body><p>Hello {{ name }}</p></body></html>",
+    )
+    # PDF is binary — just verify it's a non-empty valid artifact
+    assert is_artifact_ref(result["artifact"])
+    raw = read_bytes(result["artifact"])
+    assert raw[:4] == b"%PDF"
+
+
 def test_document_intelligence_importable_without_optional_packages() -> None:
     """Module must import cleanly even when no doc-processing packages are installed."""
     import importlib
