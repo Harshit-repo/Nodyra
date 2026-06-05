@@ -1916,23 +1916,25 @@ export function ParamField({
     const isCredField = spec.credential != null;
     return (
       <div className={`field-wrap${isExpr ? " field-wrap-expr" : ""}`}>
-        <input
-          className={`field-input${isExpr ? " field-input-expr" : ""}`}
-          type="text"
-          placeholder={spec.placeholder}
-          value={current}
-          onChange={(e) => onChange(e.target.value)}
-          {...drop}
-        />
-        <button
-          type="button"
-          className={`fx-toggle${isExpr ? " fx-toggle-on" : ""}`}
-          onClick={toggleFx}
-          title={isExpr ? "Switch to fixed value" : "Switch to expression"}
-          tabIndex={-1}
-        >
-          ƒx
-        </button>
+        <div className="field-input-row">
+          <input
+            className={`field-input${isExpr ? " field-input-expr" : ""}`}
+            type="text"
+            placeholder={spec.placeholder}
+            value={current}
+            onChange={(e) => onChange(e.target.value)}
+            {...drop}
+          />
+          <button
+            type="button"
+            className={`fx-toggle${isExpr ? " fx-toggle-on" : ""}`}
+            onClick={toggleFx}
+            title={isExpr ? "Switch to fixed value" : "Switch to expression"}
+            tabIndex={-1}
+          >
+            ƒx
+          </button>
+        </div>
         {!isCredField && (
           <div className="expr-tokens-hint">
             <span className="expr-tokens-label">tokens:</span>
@@ -3207,8 +3209,6 @@ export function NodeDetails({
         />
       ) : (
         <>
-
-      <ToolModeSection nodeId={node.id} />
 
       <div className="inspector-section">
         <div className="inspector-section-head">Parameters</div>

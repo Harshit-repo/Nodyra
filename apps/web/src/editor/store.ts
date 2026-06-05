@@ -35,6 +35,7 @@ export interface NoodleNodeData {
   toolMode?: boolean;
   toolName?: string | null;
   toolDescription?: string;
+  label?: string;
   [key: string]: unknown;
 }
 
@@ -49,6 +50,7 @@ export interface NodeSettingsPatch {
   toolMode?: boolean;
   toolName?: string | null;
   toolDescription?: string;
+  label?: string;
 }
 
 export interface NodeRunMeta {
@@ -461,6 +463,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
           toolName: typeof n.tool_name === "string" ? n.tool_name : null,
           toolDescription:
             typeof n.tool_description === "string" ? n.tool_description : "",
+          label: typeof n.label === "string" && n.label ? n.label : undefined,
         },
       });
     }
@@ -507,6 +510,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
         tool_mode: Boolean(n.data.toolMode),
         tool_name: n.data.toolName ?? null,
         tool_description: n.data.toolDescription ?? "",
+        label: n.data.label || undefined,
       })),
       edges: edges.map((e) => ({
         id: e.id,

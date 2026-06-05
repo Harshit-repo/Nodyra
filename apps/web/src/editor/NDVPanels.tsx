@@ -264,6 +264,7 @@ function SettingsTab({ nodeId }: { nodeId: string }) {
 
   return (
     <>
+      <ToolModeSection nodeId={nodeId} />
       <p className="field-desc">
         How this node behaves on failure and what flows downstream.
       </p>

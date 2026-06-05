@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { categoryColor } from "../categories";
 import { isBrandIconName, NodeIcon } from "../NodeIcon";
@@ -8,7 +8,11 @@ import { useEditor } from "./store";
 export function NodeDetailModal({ nodeId }: { nodeId: string }) {
   const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
   const closeNdv = useEditor((s) => s.closeNdv);
+  const updateNodeSettings = useEditor((s) => s.updateNodeSettings);
   const runFromNode = useEditor((s) => s.runFromNode);
+  const [editingName, setEditingName] = useState(false);
+  const [nameVal, setNameVal] = useState("");
+  const nameInputRef = useRef<HTMLInputElement>(null);
   const toggleDisabled = useEditor((s) => s.toggleDisabled);
   const deleteNode = useEditor((s) => s.deleteNode);
   const isTrigger = node?.data.manifest.category === "Triggers";
@@ -65,7 +69,32 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
               <NodeIcon name={manifest.icon} size={hasBrandIcon ? 30 : 20} />
             </span>
             <div>
-              <h3>{manifest.name}</h3>
+              {editingName ? (
+                <input
+                  ref={nameInputRef}
+                  className="ndv-name-input"
+                  value={nameVal}
+                  onChange={(e) => setNameVal(e.target.value)}
+                  onBlur={() => {
+                    const trimmed = nameVal.trim();
+                    updateNodeSettings(nodeId, { label: trimmed || undefined });
+                    setEditingName(false);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") nameInputRef.current?.blur();
+                    if (e.key === "Escape") { setNameVal(node.data.label || manifest.name); setEditingName(false); }
+                  }}
+                />
+              ) : (
+                <h3
+                  className="ndv-name-editable"
+                  title="Click to rename for this workflow"
+                  onClick={() => { setNameVal(node.data.label || manifest.name); setEditingName(true); }}
+                >
+                  {node.data.label || manifest.name}
+                  {node.data.label && <span className="ndv-label-changed" title={`Original: ${manifest.name}`}>✎</span>}
+                </h3>
+              )}
               <div className="ndv-meta">
                 <span className="mono-tag" style={{ color }}>
                   {manifest.category}

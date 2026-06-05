@@ -269,24 +269,27 @@ textarea:focus-visible {
 
 /* ---- inspector field with fx (expression) toggle ---- */
 .field-wrap {
+  display: block;
+}
+.field-input-row {
   position: relative;
   display: block;
 }
-.field-wrap .field-input {
+.field-input-row .field-input {
   padding-right: 34px;
 }
 .field-wrap-expr .field-input,
 .field-input-expr {
   font-family: var(--font-mono);
   font-size: 12px;
-  color: #ffd479;
-  background: rgba(255, 212, 121, 0.06);
-  border-color: rgba(255, 212, 121, 0.42);
+  color: #c4b5fd;
+  background: rgba(124, 58, 237, 0.07);
+  border-color: rgba(139, 92, 246, 0.4);
 }
 .field-wrap-expr .field-input:focus,
 .field-input-expr:focus {
-  border-color: rgba(255, 212, 121, 0.85);
-  box-shadow: 0 0 0 3px rgba(255, 212, 121, 0.18);
+  border-color: rgba(139, 92, 246, 0.85);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.18);
 }
 .fx-toggle {
   position: absolute;
@@ -319,9 +322,10 @@ textarea:focus-visible {
 }
 .fx-toggle-on,
 .fx-toggle-on:hover {
-  color: #06101e;
-  background: #ffd479;
-  border-color: rgba(255, 212, 121, 0.85);
+  color: #fff;
+  background: #7c3aed;
+  border-color: rgba(139, 92, 246, 0.9);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.5);
 }
 
 /* ---- utility ---- */

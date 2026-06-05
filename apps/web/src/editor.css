@@ -961,6 +961,44 @@
   color: var(--ink-2);
 }
 
+/* ---- canvas context menu ---- */
+.canvas-ctx-menu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+  padding: 4px;
+  min-width: 140px;
+  display: flex;
+  flex-direction: column;
+}
+.canvas-ctx-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.canvas-ctx-menu button:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.canvas-ctx-danger {
+  color: #f0747a !important;
+}
+.canvas-ctx-sep {
+  height: 1px;
+  background: var(--line-2);
+  margin: 3px 4px;
+}
+
 /* ---- canvas ---- */
 .canvas {
   flex: 1;
@@ -2603,6 +2641,36 @@ body.is-resizing {
 .ndv-title h3 {
   font-size: 17px;
   margin: 0;
+}
+.ndv-name-editable {
+  cursor: text;
+  border-radius: 4px;
+  padding: 1px 4px;
+  margin: 0 -4px;
+  transition: background 120ms;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.ndv-name-editable:hover {
+  background: var(--surface-2);
+}
+.ndv-label-changed {
+  font-size: 11px;
+  color: #a78bfa;
+  font-weight: 400;
+}
+.ndv-name-input {
+  font-size: 17px;
+  font-weight: 600;
+  background: var(--surface-2);
+  border: 1px solid rgba(139, 92, 246, 0.6);
+  border-radius: 4px;
+  color: var(--ink);
+  padding: 2px 6px;
+  outline: none;
+  width: 260px;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.18);
 }
 .ndv-meta {
   display: flex;

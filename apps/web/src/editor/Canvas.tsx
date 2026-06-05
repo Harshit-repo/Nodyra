@@ -241,6 +241,10 @@ export function Canvas() {
   const loadGraph = useEditor((s) => s.loadGraph);
   const setSelected = useEditor((s) => s.setSelected);
   const openNdv = useEditor((s) => s.openNdv);
+  const toggleDisabled = useEditor((s) => s.toggleDisabled);
+  const deleteNode = useEditor((s) => s.deleteNode);
+  const copySelection = useEditor((s) => s.copySelection);
+  const pasteSelection = useEditor((s) => s.pasteSelection);
   const autoLayout = useEditor((s) => s.autoLayout);
   const { fitView, screenToFlowPosition } = useReactFlow();
   const { notify } = useToast();
@@ -248,6 +252,9 @@ export function Canvas() {
     connection: Connection;
     check: ConnectionCheck;
   } | null>(null);
+
+  interface CtxMenu { x: number; y: number; nodeId?: string }
+  const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
 
   const onDrop = useCallback(
     (event: DragEvent) => {
@@ -318,6 +325,17 @@ export function Canvas() {
     return () => window.removeEventListener("keydown", onKey);
   }, [notify]);
 
+  const onNodeContextMenu = useCallback((e: React.MouseEvent, node: { id: string }) => {
+    e.preventDefault();
+    setSelected(node.id);
+    setCtxMenu({ x: e.clientX, y: e.clientY, nodeId: node.id });
+  }, [setSelected]);
+
+  const onPaneContextMenu = useCallback((e: React.MouseEvent | MouseEvent) => {
+    e.preventDefault();
+    setCtxMenu({ x: (e as React.MouseEvent).clientX, y: (e as React.MouseEvent).clientY });
+  }, []);
+
   const handleConnect = useCallback((connection: Connection) => {
     const check = onConnect(connection);
     if (check.ok) {
@@ -352,7 +370,7 @@ export function Canvas() {
   );
 
   return (
-    <div className="canvas" onDrop={onDrop} onDragOver={onDragOver}>
+    <div className="canvas" onDrop={onDrop} onDragOver={onDragOver} onClick={() => setCtxMenu(null)}>
       <ReactFlow
         nodes={nodes}
         edges={labeledEdges}
@@ -364,7 +382,11 @@ export function Canvas() {
         isValidConnection={isValidConnection}
         onNodeClick={(_, node) => setSelected(node.id)}
         onNodeDoubleClick={(_, node) => openNdv(node.id)}
-        onPaneClick={() => setSelected(null)}
+        onPaneClick={() => { setSelected(null); setCtxMenu(null); }}
+        onNodeContextMenu={onNodeContextMenu}
+        onPaneContextMenu={onPaneContextMenu}
+        selectionOnDrag
+        panOnDrag={[1, 2]}
         colorMode="dark"
         fitView
         minZoom={0.2}
@@ -411,6 +433,35 @@ export function Canvas() {
           </div>
         )}
       </ReactFlow>
+
+      {ctxMenu && (
+        <div
+          className="canvas-ctx-menu"
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {ctxMenu.nodeId ? (
+            <>
+              <button onClick={() => { openNdv(ctxMenu.nodeId!); setCtxMenu(null); }}>Open</button>
+              <button onClick={() => {
+                const r = copySelection();
+                if (r.nodeCount) { const p = pasteSelection(); if (p.nodeCount) notify(`Duplicated ${p.nodeCount} node(s).`, "success"); }
+                setCtxMenu(null);
+              }}>Duplicate</button>
+              <button onClick={() => { toggleDisabled(ctxMenu.nodeId!); setCtxMenu(null); }}>
+                {nodes.find((n) => n.id === ctxMenu.nodeId)?.data.disabled ? "Enable" : "Disable"}
+              </button>
+              <div className="canvas-ctx-sep" />
+              <button className="canvas-ctx-danger" onClick={() => { deleteNode(ctxMenu.nodeId!); setCtxMenu(null); }}>Delete</button>
+            </>
+          ) : (
+            <>
+              <button onClick={() => { const r = pasteSelection(); if (r.nodeCount) notify(`Pasted ${r.nodeCount} node(s).`, "success"); setCtxMenu(null); }}>Paste</button>
+              <button onClick={() => { void fitView({ padding: 0.22, duration: 220 }); setCtxMenu(null); }}>Fit view</button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

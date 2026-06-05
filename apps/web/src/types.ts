@@ -126,6 +126,7 @@ export interface GraphNode {
   tool_mode?: boolean;
   tool_name?: string | null;
   tool_description?: string;
+  label?: string;
 }
 
 export interface GraphEdge {
