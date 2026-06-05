@@ -23,6 +23,21 @@ def _value(data: dict[str, str], *keys: str) -> str:
     return ""
 
 
+def _normalize_api_base(url: str | None) -> str:
+    """Trim a trailing operation path so probe URLs land on the API base.
+
+    A common mistake is storing the full chat endpoint (e.g.
+    ``https://openrouter.ai/api/v1/chat/completions``) as ``base_url``;
+    appending ``/key`` or ``/models`` then 404s. Strip known suffixes first.
+    """
+    base = (url or "").strip().rstrip("/")
+    for suffix in ("/chat/completions", "/completions", "/responses"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    return base.rstrip("/")
+
+
 def _truthy(value: Any, default: bool = False) -> bool:
     if value is None:
         return default
@@ -142,7 +157,7 @@ async def _test_openrouter(data: dict[str, str], context: dict[str, Any]) -> dic
     api_key = _value(data, "api_key", "token")
     if not api_key:
         return {"ok": False, "message": "Missing api_key", "details": {}}
-    base_url = (_value(data, "base_url") or "https://openrouter.ai/api/v1").rstrip("/")
+    base_url = _normalize_api_base(_value(data, "base_url")) or "https://openrouter.ai/api/v1"
     return await _request(
         "GET",
         f"{base_url}/key",
@@ -168,18 +183,18 @@ async def _test_llm_provider(data: dict[str, str], context: dict[str, Any]) -> d
     provider = _value(data, "provider") or str(context.get("provider") or "openai")
     provider = provider.strip().lower()
     api_key = _value(data, "api_key", "token")
-    base_url = _value(data, "base_url")
+    base_url = _normalize_api_base(_value(data, "base_url"))
     if provider == "anthropic":
         return await _test_anthropic(data, context)
     if provider == "ollama":
-        url = (base_url or "http://localhost:11434").rstrip("/")
+        url = base_url or "http://localhost:11434"
         if url.endswith("/v1"):
             url = url[:-3]
         return await _request("GET", f"{url}/api/tags")
     if provider in {"openrouter", "open router", "open-router"}:
         if not api_key:
             return {"ok": False, "message": "Missing api_key", "details": {}}
-        url = (base_url or "https://openrouter.ai/api/v1").rstrip("/")
+        url = base_url or "https://openrouter.ai/api/v1"
         return await _request(
             "GET",
             f"{url}/key",
@@ -202,7 +217,7 @@ async def _test_llm_provider(data: dict[str, str], context: dict[str, Any]) -> d
         )
     if not api_key and provider != "ollama":
         return {"ok": False, "message": "Missing api_key", "details": {}}
-    url = f"{(base_url or 'https://api.openai.com/v1').rstrip('/')}/models"
+    url = f"{base_url or 'https://api.openai.com/v1'}/models"
     return await _request("GET", url, headers={"Authorization": f"Bearer {api_key}"})
 
 

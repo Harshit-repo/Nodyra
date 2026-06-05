@@ -966,3 +966,47 @@ def test_ai_chat_model_supplier_has_no_inputs() -> None:
     by_id = {m.id: m for m in registry.manifests()}
     assert [p.name for p in by_id["ai_chat_model_openai"].inputs] == []
     assert [p.name for p in by_id["ai_chat_model_openai"].outputs] == ["model"]
+
+
+class _FakeResponse:
+    """Minimal stand-in for requests.Response (only what the helper reads)."""
+
+    def __init__(self, status_code: int, text: str) -> None:
+        self.status_code = status_code
+        self.text = text
+
+
+def test_raise_if_tools_unsupported_gives_actionable_error() -> None:
+    from noodle_nodes.ai_v2.providers.openai import _raise_if_tools_unsupported
+
+    import pytest
+
+    resp = _FakeResponse(
+        404,
+        '{"error":{"message":"No endpoints found that support the provided '
+        "'tool_choice' value\",\"code\":404}}",
+    )
+    with pytest.raises(RuntimeError, match="does not support tool calling"):
+        _raise_if_tools_unsupported(
+            resp, service="openrouter", model="nvidia/nemo:free", has_tools=True
+        )
+
+
+def test_raise_if_tools_unsupported_ignored_without_tools() -> None:
+    from noodle_nodes.ai_v2.providers.openai import _raise_if_tools_unsupported
+
+    # No tools attached → not our concern; let the normal error path handle it.
+    resp = _FakeResponse(404, '{"error":"tool_choice unsupported"}')
+    _raise_if_tools_unsupported(
+        resp, service="openrouter", model="x", has_tools=False
+    )
+
+
+def test_raise_if_tools_unsupported_ignores_unrelated_errors() -> None:
+    from noodle_nodes.ai_v2.providers.openai import _raise_if_tools_unsupported
+
+    # A 401 about the api key is not a tool-capability problem.
+    resp = _FakeResponse(401, '{"error":"invalid api key"}')
+    _raise_if_tools_unsupported(
+        resp, service="openrouter", model="x", has_tools=True
+    )

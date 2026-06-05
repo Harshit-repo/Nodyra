@@ -53,15 +53,31 @@ def _auth_header(api_key: str) -> dict[str, str] | None:
     return {"Authorization": f"Bearer {api_key}"} if api_key else None
 
 
+def normalize_api_base(url: str | None) -> str:
+    """Strip a trailing operation path so we can append ``/models`` etc.
+
+    Users (and some credential defaults) paste the full chat endpoint, e.g.
+    ``https://openrouter.ai/api/v1/chat/completions``. Appending ``/models`` to
+    that yields a 404. Trim known operation suffixes back to the API base.
+    """
+    base = (url or "").strip().rstrip("/")
+    for suffix in ("/chat/completions", "/completions", "/responses"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    return base.rstrip("/")
+
+
 def _chat_models_for(provider: str, api_key: str, base_url: str) -> list[str]:
+    base = normalize_api_base(base_url)
     if provider == "ollama":
-        url = (base_url or "http://localhost:11434").rstrip("/")
+        url = base or "http://localhost:11434"
         if url.endswith("/v1"):
             url = url[:-3]
         data = _fetch_json("GET", f"{url}/api/tags")
         return [m["name"] for m in data.get("models", []) if m.get("name")]
     if provider == "openrouter":
-        url = (base_url or "https://openrouter.ai/api/v1").rstrip("/")
+        url = base or "https://openrouter.ai/api/v1"
         data = _fetch_json("GET", f"{url}/models", headers=_auth_header(api_key))
         return [m["id"] for m in data.get("data", []) if m.get("id")]
     if provider == "anthropic":
@@ -72,7 +88,7 @@ def _chat_models_for(provider: str, api_key: str, base_url: str) -> list[str]:
         )
         return [m["id"] for m in data.get("data", []) if m.get("id")]
     # openai, openai_compatible, azure_openai → OpenAI-compatible /models
-    url = (base_url or "https://api.openai.com/v1").rstrip("/")
+    url = base or "https://api.openai.com/v1"
     data = _fetch_json("GET", f"{url}/models", headers=_auth_header(api_key))
     return [m["id"] for m in data.get("data", []) if m.get("id")]
 

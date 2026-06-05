@@ -62,6 +62,30 @@ def _with_chat_completions(base_url: str) -> str:
     return f"{base}/chat/completions"
 
 
+def _raise_if_tools_unsupported(
+    response: requests.Response, *, service: str, model: str, has_tools: bool
+) -> None:
+    """Turn a provider's "this model can't do tools" rejection into guidance.
+
+    OpenRouter/OpenAI answer a tool-bearing request to a non-tool model with a
+    400/404 mentioning ``tool_choice``/``tools``/``function``. The raw body is
+    opaque, so when we attached tools and the failure is tool-related, raise a
+    message that tells the user exactly what to change.
+    """
+    if not has_tools or response.status_code < 400:
+        return
+    body = response.text[:800]
+    lowered = body.lower()
+    if "tool" not in lowered and "function" not in lowered:
+        return
+    raise RuntimeError(
+        f"Model '{model}' ({service}) does not support tool calling, but this "
+        f"Agent has tool(s) attached. Pick a tool-capable model — e.g. "
+        f"openai/gpt-4o-mini, anthropic/claude-3.7-sonnet, or google/gemini-2.5-flash "
+        f"on OpenRouter — or disconnect the tool node(s). Provider said: {body}"
+    )
+
+
 def _expect_json(response: requests.Response, service: str) -> dict[str, Any]:
     if response.status_code >= 400:
         body = response.text[:800]
@@ -297,6 +321,9 @@ class OpenAIChatAdapter(ChatModelAdapter):
             json=payload,
             timeout=max(1, min(300, effective_timeout)),
         )
+        _raise_if_tools_unsupported(
+            resp, service=provider, model=model, has_tools=bool(request.tools)
+        )
         body = _expect_json(resp, provider)
         return _with_cost_estimate(
             _normalize_response(body, provider),
@@ -421,6 +448,12 @@ class AzureOpenAIChatAdapter(ChatModelAdapter):
             headers={"api-key": self._api_key, "Content-Type": "application/json"},
             json=payload,
             timeout=timeout,
+        )
+        _raise_if_tools_unsupported(
+            resp,
+            service="azure_openai",
+            model=self._deployment,
+            has_tools=bool(request.tools),
         )
         body = _expect_json(resp, "azure_openai")
         return _with_cost_estimate(

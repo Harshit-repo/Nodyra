@@ -16,6 +16,34 @@ def test_openrouter_models_parses_data_ids(monkeypatch):
     ]
 
 
+def test_full_chat_endpoint_base_url_is_normalized(monkeypatch):
+    # A base_url that already includes /chat/completions must not produce
+    # .../chat/completions/models — it should hit the API base.
+    seen = {}
+
+    def fake_fetch(method, url, **kw):
+        seen["url"] = url
+        return {"data": [{"id": "openai/gpt-4o-mini"}]}
+
+    monkeypatch.setattr(mo, "_fetch_json", fake_fetch)
+    out = mo.llm_models(
+        credentials={
+            "provider": "openrouter",
+            "api_key": "sk-or",
+            "base_url": "https://openrouter.ai/api/v1/chat/completions",
+        }
+    )
+    assert seen["url"] == "https://openrouter.ai/api/v1/models"
+    assert [o["value"] for o in out] == ["openai/gpt-4o-mini"]
+
+
+def test_normalize_api_base_trims_known_suffixes():
+    assert mo.normalize_api_base("https://x/v1/chat/completions") == "https://x/v1"
+    assert mo.normalize_api_base("https://x/v1/") == "https://x/v1"
+    assert mo.normalize_api_base("") == ""
+    assert mo.normalize_api_base(None) == ""
+
+
 def test_ollama_models_use_tags_endpoint(monkeypatch):
     def fake_fetch(method, url, **kw):
         assert url == "http://localhost:11434/api/tags"
