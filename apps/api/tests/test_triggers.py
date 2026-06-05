@@ -1240,8 +1240,13 @@ async def test_webhook_last_node_error_returns_500(client: AsyncClient) -> None:
     assert resp.status_code == 500
 
 
-async def test_wait_for_webhook_result_times_out() -> None:
-    """The hybrid wait returns a 504 shape when the run never finishes."""
+async def test_wait_for_webhook_result_times_out(client: AsyncClient) -> None:
+    """The hybrid wait returns a 504 shape when the run never finishes.
+
+    Takes ``client`` so ``triggers.SessionLocal`` is rebound to the SQLite test
+    engine; otherwise the call hits the global Postgres-default engine and fails
+    in the CI ``python`` lane (no Postgres) — see also test_leader_election.
+    """
     shape = await triggers.wait_for_webhook_result(
         run_id="nonexistent" + "0" * 20,
         mode="Last Node",
