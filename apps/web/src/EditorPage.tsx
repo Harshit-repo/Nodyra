@@ -224,6 +224,7 @@ export function EditorPage() {
         for (const p of pinnedList) pinnedMap[p.node_id] = p.payload;
         setPinned(pinnedMap);
         setStatus("ready");
+        window.setTimeout(() => window.dispatchEvent(new Event("noodle:fit-view")), 60);
       } catch (err) {
         if (cancelled) return;
         setMessage(String(err));

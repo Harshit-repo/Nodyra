@@ -177,6 +177,7 @@ export const api = {
     }),
 
   listEnvironments: () => request<Environment[]>("/environments"),
+  getEnvironment: (id: string) => request<Environment>(`/environments/${id}`),
   listBackends: () =>
     request<{
       platform: string;

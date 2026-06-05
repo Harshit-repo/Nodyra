@@ -2963,6 +2963,8 @@ export function NodeDetails({
 
   const [mode, setMode] = useState<"inspector" | "python">("inspector");
   const [pkgBusy, setPkgBusy] = useState(false);
+  const [pkgElapsed, setPkgElapsed] = useState(0);
+  const [pkgDone, setPkgDone] = useState(false);
   const { notify } = useToast();
   useEffect(() => setMode("inspector"), [nodeId]);
 
@@ -3011,17 +3013,41 @@ export function NodeDetails({
   async function addMissingToEnv(): Promise<void> {
     if (!envId || pkgBusy) return;
     setPkgBusy(true);
+    setPkgElapsed(0);
+    setPkgDone(false);
+
+    // Tick elapsed seconds while installing
+    const startedAt = Date.now();
+    const ticker = window.setInterval(() => {
+      setPkgElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+
     try {
       const updated = [...envPackages, ...missingPkgs];
       await api.setPackages(envId, updated);
       setEnvPackages(updated);
-      notify(
-        `Installing ${missingPkgs.join(", ")} — environment is rebuilding, this may take a minute.`,
-        "success",
-      );
+
+      // Poll until env is ready or errored
+      while (true) {
+        await new Promise<void>((r) => window.setTimeout(r, 2000));
+        const env = await api.getEnvironment(envId);
+        if (env.status === "ready") {
+          clearInterval(ticker);
+          setPkgBusy(false);
+          setPkgDone(true);
+          window.setTimeout(() => setPkgDone(false), 3000);
+          return;
+        }
+        if (env.status === "error") {
+          clearInterval(ticker);
+          notify("Package installation failed — check the environment logs.", "error");
+          setPkgBusy(false);
+          return;
+        }
+      }
     } catch {
+      clearInterval(ticker);
       notify("Failed to install packages — check the environment.", "error");
-    } finally {
       setPkgBusy(false);
     }
   }
@@ -3099,11 +3125,20 @@ export function NodeDetails({
           <div className="ndv-missing-actions">
             <button
               type="button"
-              className="btn btn-sm btn-primary"
+              className={`btn btn-sm${pkgDone ? " btn-success" : " btn-primary"}`}
               disabled={pkgBusy}
               onClick={() => void addMissingToEnv()}
             >
-              {pkgBusy ? "Adding…" : `Add to ${envName ?? "env"}`}
+              {pkgDone ? (
+                "✅ Installed!"
+              ) : pkgBusy ? (
+                <span className="pkg-installing">
+                  <span className="pkg-spinner" />
+                  Installing… {pkgElapsed}s
+                </span>
+              ) : (
+                `Add to ${envName ?? "env"}`
+              )}
             </button>
             {satisfyingEnvs.length > 0 && applyEnvSwitch && (
               <select

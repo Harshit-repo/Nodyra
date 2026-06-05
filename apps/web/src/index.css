@@ -1991,6 +1991,29 @@ kbd {
   align-items: center;
   flex-wrap: wrap;
 }
+.btn-success {
+  background: linear-gradient(180deg, #4ade80, #22c55e);
+  color: #fff;
+  border-color: #16a34a;
+}
+.pkg-installing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pkg-spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 2px solid rgba(255,255,255,0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: pkg-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes pkg-spin {
+  to { transform: rotate(360deg); }
+}
 .ndv-sysreq {
   border: 1px solid rgba(249, 115, 22, 0.35);
   border-radius: var(--radius-sm);
