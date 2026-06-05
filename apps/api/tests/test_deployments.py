@@ -173,10 +173,10 @@ async def test_active_deployment_overrides_in_graph_schedule(
 
 # --- Task 16: unsafe-node policy gate ----------------------------------------
 
-import pytest
+import pytest  # noqa: E402
 
-from app.config import settings
-from app.services.unsafe_nodes import classify as classify_unsafe_nodes
+from app.config import settings  # noqa: E402
+from app.services.unsafe_nodes import classify as classify_unsafe_nodes  # noqa: E402
 
 
 def _http_graph(url: str) -> dict:
@@ -191,7 +191,13 @@ def _http_graph(url: str) -> dict:
             },
         ],
         "edges": [
-            {"id": "e1", "source": "trig", "source_output": "main", "target": "fetch", "target_input": "input"}
+            {
+                "id": "e1",
+                "source": "trig",
+                "source_output": "main",
+                "target": "fetch",
+                "target_input": "input",
+            }
         ],
     }
 

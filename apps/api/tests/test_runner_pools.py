@@ -370,12 +370,10 @@ def test_install_script_quotes_injection() -> None:
 
 # --- Task 7: runner heartbeats + lease expiry --------------------------------
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta  # noqa: E402
 
-import pytest
-
-from app.models import RunQueueEntry
-from app.services.remote_dispatch import dispatcher
+from app.models import RunQueueEntry  # noqa: E402
+from app.services.remote_dispatch import dispatcher  # noqa: E402
 
 
 async def test_mark_stale_runners_offline_marks_and_requeues(client: AsyncClient) -> None:

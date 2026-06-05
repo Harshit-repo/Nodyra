@@ -283,7 +283,11 @@ def metrics_chart(input: Any = None, source: str = "auto", title: str = "") -> d
                     break
             if watch:
                 points = [
-                    {"x": idx, "y": _to_number(h.get(watch)) or 0.0, "label": str(h.get("timestamp", idx))}
+                    {
+                        "x": idx,
+                        "y": _to_number(h.get(watch)) or 0.0,
+                        "label": str(h.get("timestamp", idx)),
+                    }
                     for idx, h in enumerate(items)
                 ]
                 return make_chart(chart_type="line", title=title or f"{watch} over time",
@@ -355,7 +359,12 @@ def build_report(
 def _make_tile(value: Any, index: int) -> dict[str, Any] | None:
     tile_id = f"tile-{index + 1}"
     if is_chart_ref(value):
-        return {"id": tile_id, "type": "chart", "title": value.get("title") or "Chart", "data": value}
+        return {
+            "id": tile_id,
+            "type": "chart",
+            "title": value.get("title") or "Chart",
+            "data": value,
+        }
     if is_report_ref(value):
         # Flatten a nested report's tiles is overkill; embed its title as text.
         return {"id": tile_id, "type": "text", "title": value.get("title") or "Report", "data": ""}
@@ -551,8 +560,12 @@ def render_chart_svg(chart: dict[str, Any], width: int = 720, height: int = 420)
         for si, s in enumerate(series):
             color = _CHART_PALETTE[si % len(_CHART_PALETTE)]
             label = _esc(s.get("name", f"series {si + 1}"))
-            parts.append(f'<rect x="{lx}" y="{ly - 9}" width="10" height="10" fill="{color}" rx="2"/>')
-            parts.append(f'<text x="{lx + 15}" y="{ly}" font-size="11" fill="#334155">{label}</text>')
+            parts.append(
+                f'<rect x="{lx}" y="{ly - 9}" width="10" height="10" fill="{color}" rx="2"/>'
+            )
+            parts.append(
+                f'<text x="{lx + 15}" y="{ly}" font-size="11" fill="#334155">{label}</text>'
+            )
             lx += 18 + len(s.get("name", "")) * 7 + 16
 
     parts.append("</svg>")

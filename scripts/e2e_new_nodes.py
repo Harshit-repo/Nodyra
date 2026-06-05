@@ -185,7 +185,8 @@ def main() -> None:
     print("  registered_as:", reg.get("registered_as"))
     print("  monitor metric:", (mon.get("metrics") or {}).get("metric"),
           "value:", (mon.get("metrics") or {}).get("value"))
-    print("  chart marker:", chart.get("__noodle_chart__"), "series:", len(chart.get("series") or []))
+    print("  chart marker:", chart.get("__noodle_chart__"),
+          "series:", len(chart.get("series") or []))
     print("  report marker:", report.get("__noodle_report__"),
           "tiles:", [t.get("type") for t in (report.get("tiles") or [])])
 

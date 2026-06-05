@@ -470,7 +470,10 @@ async def test_lease_uses_config_lease_seconds(session) -> None:
         entry = await queue.lease(session, worker_id='w1')
         assert entry is not None
         assert entry.lease_expires_at is not None
-        delta = (entry.lease_expires_at.replace(tzinfo=UTC) if entry.lease_expires_at.tzinfo is None else entry.lease_expires_at) - before
+        expires = entry.lease_expires_at
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=UTC)
+        delta = expires - before
         assert 5 <= delta.total_seconds() <= 9
     finally:
         app_settings.queue_lease_seconds = original

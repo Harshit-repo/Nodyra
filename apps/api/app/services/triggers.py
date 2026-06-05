@@ -620,7 +620,7 @@ def _match_webhook_path(template: str, path: str) -> dict[str, str] | None:
     if len(t_segs) != len(p_segs):
         return None
     params: dict[str, str] = {}
-    for t_seg, p_seg in zip(t_segs, p_segs):
+    for t_seg, p_seg in zip(t_segs, p_segs, strict=True):
         if len(t_seg) >= 2 and t_seg[0] == "{" and t_seg[-1] == "}":
             name = t_seg[1:-1]
             if not name:

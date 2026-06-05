@@ -12,7 +12,11 @@ def test_openrouter_models_parses_data_ids(monkeypatch):
     out = mo.llm_models(credentials={"provider": "openrouter", "api_key": "sk-or"})
     assert out == [
         {"value": "openai/gpt-4.1-mini", "label": "openai/gpt-4.1-mini", "description": ""},
-        {"value": "anthropic/claude-3.7-sonnet", "label": "anthropic/claude-3.7-sonnet", "description": ""},
+        {
+            "value": "anthropic/claude-3.7-sonnet",
+            "label": "anthropic/claude-3.7-sonnet",
+            "description": "",
+        },
     ]
 
 
@@ -65,8 +69,8 @@ def test_unreachable_provider_falls_back_to_curated(monkeypatch):
 
 
 def test_loader_is_registered():
-    from noodle_nodes.integrations_v2.dynamic_options import list_loader_ids
     import noodle_nodes  # noqa: F401 - triggers registration
+    from noodle_nodes.integrations_v2.dynamic_options import list_loader_ids
 
     assert "llm_models" in list_loader_ids()
     assert "embedding_models" in list_loader_ids()

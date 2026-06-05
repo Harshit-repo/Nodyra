@@ -5,7 +5,6 @@ Reads the auth token from NOODLE_TOKEN env var (extracted from the browser).
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
 import time
@@ -260,7 +259,8 @@ def t05_ml_data_prep():
         n("gen", "code", 1, code=code),
         n("ds", "records_to_dataset", 2),
         n("sql", "duckdb_sql", 3,
-          sql="SELECT label, COUNT(*) AS n, AVG(feature) AS mean_feat FROM input GROUP BY label ORDER BY label"),
+          sql=("SELECT label, COUNT(*) AS n, AVG(feature) AS mean_feat "
+               "FROM input GROUP BY label ORDER BY label")),
         n("recs", "dataset_to_records", 4, max_rows=10),
     ]
     edges = [e("trig", "gen"), e("gen", "ds"), e("ds", "sql"), e("sql", "recs")]
@@ -399,7 +399,8 @@ def t10_large_dataset_expand_cap():
         n("loop", "loop_over_items", 3),
         n("each", "no_op", 4),
     ]
-    edges = [e("trig", "gen"), e("gen", "ds"), e("ds", "loop"), e("loop", "each", source_output="item")]
+    edges = [e("trig", "gen"), e("gen", "ds"), e("ds", "loop"),
+             e("loop", "each", source_output="item")]
     g = set_graph(wf, nodes, edges)
     if "_error" in g:
         issue(f"t10 set_graph failed: {g['_error']}")
@@ -433,7 +434,6 @@ def t11_empty_graph_run():
 def t12_csv_parse_aggregate():
     """csv_parse -> aggregate dataset stats."""
     wf = create_workflow(f"E2E-csv-{uuid.uuid4().hex[:6]}")
-    csv = "name,amount\\nAda,100\\nBob,250\\nCy,75\\n"
     nodes = [
         n("trig", "manual_trigger", 0),
         n("parse", "csv_parse", 1, text="name,amount\nAda,100\nBob,250\nCy,75\n", has_header=True),

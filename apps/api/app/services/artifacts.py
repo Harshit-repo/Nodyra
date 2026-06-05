@@ -22,6 +22,7 @@ from app.services.artifact_backends import (
     LocalBackend,
     get_backend,
 )
+
 # Re-exported for app.routers.runner_pools, which imports _artifact_path from here.
 from app.services.artifact_backends import (
     _resolve_local_path as _artifact_path,  # noqa: F401

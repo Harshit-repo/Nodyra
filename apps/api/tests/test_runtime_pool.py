@@ -14,6 +14,7 @@ import pytest
 from app.config import settings
 from app.services.runtime_pool import RuntimePool, _EnvPool, _RssBudget
 
+
 @dataclass(eq=False)  # default identity-based hash so the pool's set works
 class _FakeProcess:
     """Mimics the bits of ``_RuntimeProcess`` the pool inspects."""

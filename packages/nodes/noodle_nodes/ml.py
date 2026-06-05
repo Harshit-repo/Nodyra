@@ -1050,7 +1050,11 @@ def monitor_model(
 
     previous = history[-2] if len(history) > 1 else None
     delta = None
-    if previous is not None and isinstance(previous.get(watch), (int, float)) and isinstance(current, (int, float)):
+    if (
+        previous is not None
+        and isinstance(previous.get(watch), (int, float))
+        and isinstance(current, (int, float))
+    ):
         delta = _num(current - previous[watch])
 
     alert = False

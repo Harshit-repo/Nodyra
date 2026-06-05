@@ -977,9 +977,9 @@ class _FakeResponse:
 
 
 def test_raise_if_tools_unsupported_gives_actionable_error() -> None:
-    from noodle_nodes.ai_v2.providers.openai import _raise_if_tools_unsupported
-
     import pytest
+
+    from noodle_nodes.ai_v2.providers.openai import _raise_if_tools_unsupported
 
     resp = _FakeResponse(
         404,

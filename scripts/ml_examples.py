@@ -156,7 +156,8 @@ def classification_graph() -> dict:
                 120,
             ),
             node("save", "save_model", {"name": "iris-species"}, 1040, 120),
-            node("predict", "ml_predict", {"output_column": "prediction", "include_proba": True}, 1040, 300),
+            node("predict", "ml_predict",
+                 {"output_column": "prediction", "include_proba": True}, 1040, 300),
         ],
         "edges": [
             edge("trigger", "generate"),
@@ -263,8 +264,17 @@ def main() -> None:
     clf_nodes = node_outputs(clf_run)
     metrics = (clf_nodes.get("train", {}).get("output") or {}).get("metrics")
     if isinstance(metrics, dict):
-        print(f"  accuracy={metrics.get('accuracy')} f1={metrics.get('f1')} classes={metrics.get('classes')}")
-    print(f"  save -> {clf_nodes.get('save', {}).get('output', {}).get('saved_as') if isinstance(clf_nodes.get('save', {}).get('output'), dict) else clf_nodes.get('save', {}).get('status')}")
+        print(
+            f"  accuracy={metrics.get('accuracy')} f1={metrics.get('f1')} "
+            f"classes={metrics.get('classes')}"
+        )
+    save_out = clf_nodes.get("save", {}).get("output", {})
+    saved = (
+        save_out.get("saved_as")
+        if isinstance(save_out, dict)
+        else clf_nodes.get("save", {}).get("status")
+    )
+    print(f"  save -> {saved}")
     for nid, info in clf_nodes.items():
         if info["status"] != "success":
             print(f"  !! {nid}: {info['status']} {info['error']}")
@@ -276,7 +286,10 @@ def main() -> None:
     reg_nodes = node_outputs(reg_run)
     rmetrics = (reg_nodes.get("train", {}).get("output") or {}).get("metrics")
     if isinstance(rmetrics, dict):
-        print(f"  r2={rmetrics.get('r2')} rmse={rmetrics.get('rmse')} coef={rmetrics.get('coefficients')}")
+        print(
+            f"  r2={rmetrics.get('r2')} rmse={rmetrics.get('rmse')} "
+            f"coef={rmetrics.get('coefficients')}"
+        )
     for nid, info in reg_nodes.items():
         if info["status"] != "success":
             print(f"  !! {nid}: {info['status']} {info['error']}")

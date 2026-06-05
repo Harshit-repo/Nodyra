@@ -42,10 +42,9 @@ async def test_retention_prune_deletes_artifact_metadata_and_file(
 
 # --- Task 10/11: pluggable artifact backend ----------------------------------
 
-from collections.abc import Iterable
+from collections.abc import Iterable  # noqa: E402
 
-from app.services import artifact_backends
-from app.services.artifact_backends import (
+from app.services.artifact_backends import (  # noqa: E402
     ArtifactDownload,
     LocalBackend,
     get_backend,
@@ -167,8 +166,9 @@ async def test_signed_url_endpoint_returns_null_for_local_backend(
 
 def test_s3_backend_requires_bucket_setting(monkeypatch) -> None:
     monkeypatch.setattr(settings, "artifact_s3_bucket", "")
-    from app.services.s3_artifact_backend import S3Backend
     import pytest
+
+    from app.services.s3_artifact_backend import S3Backend
 
     with pytest.raises(RuntimeError, match="ARTIFACT_S3_BUCKET"):
         S3Backend()
@@ -183,6 +183,7 @@ async def test_persist_artifact_refs_rehomes_to_configured_backend(
     client: AsyncClient, monkeypatch
 ) -> None:
     from pathlib import Path as _P
+
     from app.services import artifacts as artifacts_svc
     from app.services.artifact_backends import register_backend, reset_backends_for_tests
 
@@ -244,6 +245,7 @@ async def test_persist_artifact_refs_keeps_local_when_upload_fails(
     client: AsyncClient, monkeypatch
 ) -> None:
     from pathlib import Path as _P
+
     from app.services import artifacts as artifacts_svc
     from app.services.artifact_backends import register_backend, reset_backends_for_tests
 

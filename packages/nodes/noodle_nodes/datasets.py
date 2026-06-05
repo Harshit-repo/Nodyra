@@ -530,7 +530,9 @@ def dataset_select(input: Any = None, columns: str = "") -> dict[str, Any]:
     output_kinds={"main": "dataset"},
     params={
         "where": {
-            "description": "SQL WHERE expression (DuckDB syntax). e.g. age > 18 AND status = 'active'.",
+            "description": (
+                "SQL WHERE expression (DuckDB syntax). e.g. age > 18 AND status = 'active'."
+            ),
             "placeholder": "age > 18",
             "multiline": True,
         },

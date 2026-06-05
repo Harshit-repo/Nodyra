@@ -160,7 +160,10 @@ def classify(graph: dict | WorkflowGraph) -> list[dict[str, str]]:
                         "node_id": nid,
                         "type": nt,
                         "kind": "sql_with_expressions",
-                        "reason": "SQL query interpolates a templated expression — potential injection vector",
+                        "reason": (
+                            "SQL query interpolates a templated expression — "
+                            "potential injection vector"
+                        ),
                     }
                 )
 
