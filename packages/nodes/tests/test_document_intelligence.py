@@ -341,6 +341,72 @@ def test_docx_extract_returns_tables(store_ctx) -> None:
     assert result["tables"][0]["row_count"] == 2
 
 
+def test_excel_report_generate_raises_without_input(store_ctx) -> None:
+    from noodle_nodes.document_intelligence import excel_report_generate
+    with pytest.raises(ValueError, match="input is required"):
+        excel_report_generate(input=None)
+
+
+def test_excel_report_generate_raises_on_empty_dataset(store_ctx) -> None:
+    pytest.importorskip("openpyxl")
+    pytest.importorskip("pandas")
+    from noodle_nodes.document_intelligence import excel_report_generate
+    with pytest.raises(ValueError, match="empty"):
+        excel_report_generate(input=[])
+
+
+def test_excel_report_generate_returns_artifact_from_records(store_ctx) -> None:
+    pytest.importorskip("openpyxl")
+    pytest.importorskip("pandas")
+    from noodle.artifacts import read_bytes
+    from noodle_nodes.document_intelligence import excel_report_generate
+
+    result = excel_report_generate(
+        input=[{"name": "Alice", "score": 95}, {"name": "Bob", "score": 87}],
+        sheet_name="Results",
+        title="Test Results",
+        filename="results.xlsx",
+    )
+    assert is_artifact_ref(result["artifact"])
+    assert "spreadsheet" in result["artifact"]["content_type"]
+    assert result["rows"] == 2
+    assert result["columns"] == 2
+
+    raw = read_bytes(result["artifact"])
+    assert raw[:4] == b"PK\x03\x04"  # xlsx is a zip file
+
+
+def test_excel_report_generate_returns_artifact_from_dataset(store_ctx) -> None:
+    pytest.importorskip("openpyxl")
+    pytest.importorskip("pandas")
+    from noodle_nodes.datasets import records_to_dataset
+    from noodle_nodes.document_intelligence import excel_report_generate
+
+    ds = records_to_dataset([{"x": 1, "y": 2}, {"x": 3, "y": 4}])
+    result = excel_report_generate(input=ds, filename="out.xlsx")
+    assert is_artifact_ref(result["artifact"])
+
+
+def test_excel_extract_returns_dataset_ref(store_ctx) -> None:
+    pytest.importorskip("openpyxl")
+    pytest.importorskip("pandas")
+    from noodle_nodes.document_intelligence import excel_extract, excel_report_generate
+
+    # Generate an xlsx first, then extract it
+    gen_result = excel_report_generate(
+        input=[{"fruit": "apple", "count": 5}, {"fruit": "banana", "count": 3}],
+        filename="fruit.xlsx",
+    )
+    result = excel_extract(input=gen_result["artifact"])
+    assert is_dataset_ref(result)
+
+
+def test_excel_extract_raises_without_input(store_ctx) -> None:
+    from noodle_nodes.document_intelligence import excel_extract
+    with pytest.raises(ValueError, match="input is required"):
+        excel_extract(input=None)
+
+
 def test_document_intelligence_importable_without_optional_packages() -> None:
     """Module must import cleanly even when no doc-processing packages are installed."""
     import importlib
