@@ -239,7 +239,7 @@ def test_pixi_python_path_posix(tmp_path) -> None:
         with patch("app.services.backends.pixi.venv_dir", return_value=tmp_path):
             p = b.python_path("env-id")
     assert ".pixi" in str(p)
-    assert "bin/python" in str(p)
+    assert p.parts[-2:] == ("bin", "python")
 
 
 def test_pixi_python_path_win32(tmp_path) -> None:
