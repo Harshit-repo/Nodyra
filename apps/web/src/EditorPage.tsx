@@ -242,6 +242,7 @@ export function EditorPage() {
       id: e.id,
       name: e.name,
       packages: e.packages,
+      backend: e.backend,
     }));
     const current = environments.find((e) => e.id === environmentId) ?? null;
     setEnvContext({

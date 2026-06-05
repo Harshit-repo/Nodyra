@@ -853,6 +853,14 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
             ⚠
           </span>
         )}
+        {(manifest.system_requirements?.length ?? 0) > 0 && (
+          <span
+            className="node-badge node-badge--sysreq"
+            title={`System dependencies required: ${manifest.system_requirements!.map((r) => r.name).join(", ")}`}
+          >
+            ●
+          </span>
+        )}
       </div>
       {runMeta?.durationMs != null && runStatus !== "running" && (
         <div className="node-duration nodrag nopan">

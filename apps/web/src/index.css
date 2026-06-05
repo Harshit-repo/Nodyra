@@ -1930,10 +1930,53 @@ kbd {
   align-items: center;
   flex-wrap: wrap;
 }
+.ndv-sysreq {
+  border: 1px solid rgba(249, 115, 22, 0.35);
+  border-radius: var(--radius-sm);
+  background: rgba(249, 115, 22, 0.07);
+  padding: 9px 11px;
+  margin: 10px 0;
+  font-size: 12px;
+}
+.sysreq-item {
+  margin-top: 6px;
+}
+.sysreq-item:first-of-type {
+  margin-top: 4px;
+}
+.sysreq-name {
+  font-weight: 600;
+  color: #f97316;
+  margin-bottom: 3px;
+}
+.sysreq-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sysreq-label {
+  opacity: 0.7;
+}
+.sysreq-code {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+}
+.sysreq-note {
+  opacity: 0.7;
+  font-style: italic;
+}
 .node-missing-pkg {
   margin-left: 5px;
   color: #f0a23a;
   cursor: help;
+}
+.node-badge--sysreq {
+  margin-left: 5px;
+  color: #f97316;
+  cursor: help;
+  font-size: 8px;
+  vertical-align: middle;
 }
 
 /* ---- credentials ---- */

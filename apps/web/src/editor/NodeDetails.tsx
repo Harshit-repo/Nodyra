@@ -2959,6 +2959,7 @@ export function NodeDetails({
   const applyEnvSwitch = useEditor((s) => s.applyEnvSwitch);
   const setEnvPackages = useEditor((s) => s.setEnvPackages);
   const platform = useServerPlatform();
+  const activeEnv = environmentsList.find((e) => e.id === envId);
 
   const [mode, setMode] = useState<"inspector" | "python">("inspector");
   const [pkgBusy, setPkgBusy] = useState(false);
@@ -3118,6 +3119,44 @@ export function NodeDetails({
               </select>
             )}
           </div>
+        </div>
+      )}
+
+      {manifest.system_requirements && manifest.system_requirements.length > 0 && (
+        <div className="node-details-section ndv-sysreq">
+          <div className="node-details-section-title inspector-section-head">System dependencies</div>
+          {manifest.system_requirements.map((sr) => (
+            <div key={sr.name} className="sysreq-item">
+              <div className="sysreq-name">{sr.name}</div>
+              {activeEnv?.backend === "docker" ? (
+                sr.dockerfile_hint ? (
+                  <div className="sysreq-hint">
+                    <span className="sysreq-label">Add to Dockerfile:</span>
+                    <code className="sysreq-code">{sr.dockerfile_hint}</code>
+                  </div>
+                ) : (
+                  <div className="sysreq-hint">Must be included in your Docker image.</div>
+                )
+              ) : (
+                <div className="sysreq-hint">
+                  <span className="sysreq-label">Must be installed on the server.</span>
+                  {sr.apt && <div><strong>Linux:</strong> <code>apt install {sr.apt}</code></div>}
+                  {sr.brew && <div><strong>macOS:</strong> <code>brew install {sr.brew}</code></div>}
+                  {sr.windows && (
+                    <div>
+                      <strong>Windows:</strong>{" "}
+                      {sr.windows.startsWith("http") ? (
+                        <a href={sr.windows} target="_blank" rel="noreferrer">{sr.windows}</a>
+                      ) : (
+                        <span>{sr.windows}</span>
+                      )}
+                    </div>
+                  )}
+                  {sr.note && <div className="sysreq-note">{sr.note}</div>}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
 

@@ -158,13 +158,13 @@ interface EditorStore {
   envId: string | null;
   envName: string | null;
   envPackages: string[];
-  environmentsList: { id: string; name: string; packages: string[] }[];
+  environmentsList: { id: string; name: string; packages: string[]; backend?: string }[];
   applyEnvSwitch: ((id: string) => void) | null;
   setEnvContext: (ctx: {
     envId: string | null;
     envName: string | null;
     envPackages: string[];
-    environmentsList: { id: string; name: string; packages: string[] }[];
+    environmentsList: { id: string; name: string; packages: string[]; backend?: string }[];
   }) => void;
   setEnvPackages: (packages: string[]) => void;
   setApplyEnvSwitch: (fn: ((id: string) => void) | null) => void;
