@@ -177,6 +177,14 @@ export const api = {
     }),
 
   listEnvironments: () => request<Environment[]>("/environments"),
+  listBackends: () =>
+    request<{
+      platform: string;
+      venv: { available: boolean; version: string | null; managed: boolean };
+      conda: { available: boolean; version: string | null; managed: boolean };
+      pixi: { available: boolean; version: string | null; managed: boolean };
+      docker: { available: boolean; version: string | null; managed: boolean };
+    }>("/environments/backends"),
   createEnvironment: (body: {
     name: string;
     python_version?: string;

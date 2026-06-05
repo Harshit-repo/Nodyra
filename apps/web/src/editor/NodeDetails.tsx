@@ -21,6 +21,7 @@ import { TimezoneSelect } from "./fields/TimezoneSelect";
 import { fromAiExpr, isFromAiExpr, paramArgType } from "./toolParam";
 import { missingFor } from "./missingPackages";
 import { useEditor } from "./store";
+import { useServerPlatform } from "../hooks/useServerPlatform";
 
 interface CredentialRef {
   __noodle_credential__: true;
@@ -2957,6 +2958,7 @@ export function NodeDetails({
   const environmentsList = useEditor((s) => s.environmentsList);
   const applyEnvSwitch = useEditor((s) => s.applyEnvSwitch);
   const setEnvPackages = useEditor((s) => s.setEnvPackages);
+  const platform = useServerPlatform();
 
   const [mode, setMode] = useState<"inspector" | "python">("inspector");
   const [pkgBusy, setPkgBusy] = useState(false);
@@ -3000,9 +3002,9 @@ export function NodeDetails({
   };
 
   // Packages this node needs that the workflow's env doesn't have.
-  const missingPkgs = missingFor(manifest.requirements ?? [], envPackages);
+  const missingPkgs = missingFor(manifest.requirements ?? [], envPackages, platform ?? undefined);
   const satisfyingEnvs = environmentsList.filter(
-    (e) => e.id !== envId && missingFor(missingPkgs, e.packages).length === 0,
+    (e) => e.id !== envId && missingFor(missingPkgs, e.packages, platform ?? undefined).length === 0,
   );
 
   async function addMissingToEnv(): Promise<void> {

@@ -223,6 +223,8 @@ export interface Environment {
   runner_pool_id: string | null;
   runner_pool_name: string | null;
   worker_rss_estimate_bytes: number | null;
+  backend: string;
+  backend_config: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }

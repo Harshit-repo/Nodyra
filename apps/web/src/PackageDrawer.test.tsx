@@ -20,6 +20,8 @@ const env: Environment = {
   runner_pool_id: null,
   runner_pool_name: null,
   worker_rss_estimate_bytes: null,
+  backend: "venv",
+  backend_config: {},
   created_at: "",
   updated_at: "",
 };

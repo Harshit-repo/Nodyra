@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalName,
   diffPackages,
+  evaluateMarker,
   missingFor,
   parseRequirementsTxt,
 } from "./missingPackages";
@@ -43,5 +44,47 @@ describe("banner state", () => {
     const manifestRequirements = ["duckdb>=0.9"];
     const envPackages = ["pandas"];
     expect(missingFor(manifestRequirements, envPackages)).toEqual(["duckdb>=0.9"]);
+  });
+});
+
+describe("evaluateMarker", () => {
+  it("returns true for eq match", () => {
+    expect(evaluateMarker("sys_platform == 'linux'", "linux")).toBe(true);
+  });
+
+  it("returns false for eq no-match", () => {
+    expect(evaluateMarker("sys_platform == 'win32'", "linux")).toBe(false);
+  });
+
+  it("returns true for ne match (different platform)", () => {
+    expect(evaluateMarker("sys_platform != 'win32'", "linux")).toBe(true);
+  });
+
+  it("returns false for ne no-match (same platform)", () => {
+    expect(evaluateMarker("sys_platform != 'linux'", "linux")).toBe(false);
+  });
+
+  it("returns true for unknown marker (safe fallback)", () => {
+    expect(evaluateMarker("python_version >= '3.9'", "linux")).toBe(true);
+  });
+});
+
+describe("missingFor with platform filtering", () => {
+  it("skips requirements whose sys_platform marker does not match", () => {
+    const reqs = [
+      "pyzbar>=0.1.9; sys_platform!='win32'",
+      "zxing-cpp>=2.2; sys_platform=='win32'",
+      "pillow>=10.0",
+    ];
+    const missing = missingFor(reqs, [], "linux");
+    expect(missing).toContain("pyzbar>=0.1.9; sys_platform!='win32'");
+    expect(missing).toContain("pillow>=10.0");
+    expect(missing).not.toContain("zxing-cpp>=2.2; sys_platform=='win32'");
+  });
+
+  it("shows all as missing when no platform provided (backwards compat)", () => {
+    const reqs = ["pyzbar>=0.1.9; sys_platform!='win32'", "pillow>=10.0"];
+    const missing = missingFor(reqs, []);
+    expect(missing).toHaveLength(2);
   });
 });

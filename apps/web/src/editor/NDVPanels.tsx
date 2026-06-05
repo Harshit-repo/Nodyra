@@ -4,6 +4,7 @@ import { api } from "../api";
 import { useToast } from "../ToastProvider";
 import type { ArtifactInfo, ParamSpec } from "../types";
 import { missingFor } from "./missingPackages";
+import { useServerPlatform } from "../hooks/useServerPlatform";
 import { DataPanel } from "./DataPanel";
 import {
   ParamField,
@@ -721,6 +722,7 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
   const applyEnvSwitch = useEditor((s) => s.applyEnvSwitch);
   const [pkgBusy, setPkgBusy] = useState(false);
   const { notify } = useToast();
+  const platform = useServerPlatform();
 
   if (!node) {
     return (
@@ -730,9 +732,9 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
     );
   }
 
-  const missingPkgs = missingFor(node.data.manifest.requirements ?? [], envPackages);
+  const missingPkgs = missingFor(node.data.manifest.requirements ?? [], envPackages, platform ?? undefined);
   const satisfyingEnvs = environmentsList.filter(
-    (e) => e.id !== envId && missingFor(missingPkgs, e.packages).length === 0,
+    (e) => e.id !== envId && missingFor(missingPkgs, e.packages, platform ?? undefined).length === 0,
   );
 
   async function addMissingToEnv(): Promise<void> {

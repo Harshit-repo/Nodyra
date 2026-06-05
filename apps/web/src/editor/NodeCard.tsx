@@ -8,6 +8,7 @@ import { isBrandIconName, NodeIcon } from "../NodeIcon";
 import { missingFor } from "./missingPackages";
 import { SdkModal } from "./SdkModal";
 import { type NoodleNode, useEditor } from "./store";
+import { useServerPlatform } from "../hooks/useServerPlatform";
 
 const TILE = 72;
 const AGENT_CARD_HEIGHT = 150;
@@ -190,7 +191,8 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const running = useEditor((s) => s.running);
   const isPinned = useEditor((s) => Boolean(s.pinned[id]));
   const envPackages = useEditor((s) => s.envPackages);
-  const missingPkgs = missingFor(manifest.requirements ?? [], envPackages);
+  const platform = useServerPlatform();
+  const missingPkgs = missingFor(manifest.requirements ?? [], envPackages, platform ?? undefined);
   const agentModelLabel = useEditor((s) => {
     if (!isAgentV2) return "";
     const modelEdge = s.edges.find(
