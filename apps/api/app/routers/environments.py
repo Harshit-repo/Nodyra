@@ -197,6 +197,30 @@ async def update_environment(
     return _to_info(env, await _pool_name(session, env.runner_pool_id))
 
 
+@router.get("/backends")
+async def list_backends() -> dict:
+    """Return the server platform and which environment backends are available.
+
+    The ``platform`` field is used by the frontend to evaluate PEP 508
+    sys_platform markers when checking for missing packages.
+    """
+    import shutil
+    import sys
+
+    uv_path = shutil.which("uv")
+    return {
+        "platform": sys.platform,
+        "venv": {
+            "available": uv_path is not None,
+            "version": None,
+            "managed": False,
+        },
+        "conda": {"available": False, "version": None, "managed": False},
+        "pixi": {"available": False, "version": None, "managed": False},
+        "docker": {"available": False, "version": None, "managed": False},
+    }
+
+
 @router.get("/{env_id}", response_model=EnvironmentInfo)
 async def get_environment(env_id: str, session: AsyncSession = Depends(get_session)):
     env = await _load(session, env_id)
