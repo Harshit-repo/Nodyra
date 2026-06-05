@@ -104,6 +104,7 @@ apps/api/app/services/
   backends/
     __init__.py      # get_backend() dispatcher; build_environment() moved here
     base.py          # EnvironmentBackend Protocol
+    tools.py         # ensure_tool() auto-download for micromamba + pixi
     venv.py          # extracted from current venv.py — minimal changes
     conda.py         # Phase 2 — shells out to micromamba/mamba/conda
     pixi.py          # Phase 2 — shells out to pixi CLI
@@ -170,16 +171,62 @@ def barcode_qr_decode(input=None):
 
 ## Phase 2: conda Backend + `system_requirements`
 
+### Tool Auto-Download
+
+Noodle auto-downloads micromamba and pixi on first use rather than requiring manual server setup. Both are static binaries with no dependencies. They are stored in `{data_dir}/tools/` and that path is prepended to `PATH` for all backend subprocesses.
+
+```python
+# apps/api/app/services/backends/tools.py
+
+TOOLS_DIR = Path(settings.data_dir) / "tools"
+
+_MICROMAMBA_URLS = {
+    "linux":  "https://micro.mamba.pm/api/micromamba/linux-64/latest",
+    "darwin": "https://micro.mamba.pm/api/micromamba/osx-arm64/latest",
+    "win32":  "https://micro.mamba.pm/api/micromamba/win-64/latest",
+}
+_PIXI_URLS = {
+    "linux":  "https://github.com/prefix-dev/pixi/releases/latest/download/pixi-x86_64-unknown-linux-musl",
+    "darwin": "https://github.com/prefix-dev/pixi/releases/latest/download/pixi-aarch64-apple-darwin",
+    "win32":  "https://github.com/prefix-dev/pixi/releases/latest/download/pixi-x86_64-pc-windows-msvc.exe",
+}
+
+async def ensure_tool(name: Literal["micromamba", "pixi"]) -> Path:
+    """Return path to tool binary, downloading it first if absent."""
+    TOOLS_DIR.mkdir(parents=True, exist_ok=True)
+    suffix = ".exe" if sys.platform == "win32" else ""
+    dest = TOOLS_DIR / f"{name}{suffix}"
+    if dest.exists():
+        return dest
+    urls = _MICROMAMBA_URLS if name == "micromamba" else _PIXI_URLS
+    url = urls[sys.platform]
+    log.info("Downloading %s from %s", name, url)
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        r = await client.get(url)
+        r.raise_for_status()
+        dest.write_bytes(r.content)
+    dest.chmod(0o755)  # no-op on Windows
+    return dest
+```
+
+`ensure_tool` is called at the start of `CondaBackend.build()` and `PixiBackend.build()`. It is idempotent — if the binary is already present it returns immediately. A download failure raises `RuntimeError` with the URL and HTTP status, which surfaces in the env card's `status_detail`.
+
+The conda tab is **never greyed out** — it is always available. Pixi tab is likewise always available. Only Docker remains greyed out when the Docker daemon is not reachable.
+
 ### conda Backend
 
-`CondaBackend.build()` uses micromamba by default, falling back to mamba then conda:
+`CondaBackend.build()` ensures micromamba is present, then falls back to system mamba/conda if the user already has them:
 
 ```python
 async def _solver_cmd(self) -> str:
-    for cmd in ("micromamba", "mamba", "conda"):
+    # prefer Noodle-managed micromamba, then fall back to system installs
+    managed = await ensure_tool("micromamba")
+    if managed.exists():
+        return str(managed)
+    for cmd in ("mamba", "conda"):
         if shutil.which(cmd):
             return cmd
-    raise RuntimeError("No conda-compatible solver found. Install micromamba.")
+    raise RuntimeError("micromamba download failed and no system conda found.")
 
 async def build(self, env: Environment) -> tuple[str, str]:
     solver = await self._solver_cmd()
@@ -204,16 +251,13 @@ def python_path(self, env_id: str) -> Path:
 
 The existing runner pool warm pool code works unchanged — `python_path()` still returns a `Path`.
 
-**Recommended conda solver: micromamba.** Single ~10MB static binary, no base environment, no Python dependency, same conda-forge channel compatibility as full conda. Documented as the recommended install; other solvers work as fallback.
-
 ### pixi Backend
 
-`PixiBackend.build()` creates a pixi project directory under `envs/{env_id}/`, writes a minimal `pixi.toml`, then runs `pixi install`:
+`PixiBackend.build()` ensures pixi is present (downloading if needed), creates a project directory under `envs/{env_id}/`, writes a minimal `pixi.toml`, then runs `pixi install`:
 
 ```python
 async def build(self, env: Environment) -> tuple[str, str]:
-    if not shutil.which("pixi"):
-        raise RuntimeError("pixi not found. Install from https://pixi.sh")
+    pixi_bin = await ensure_tool("pixi")
     env_dir = venv_dir(env.id)
     if env_dir.exists():
         shutil.rmtree(env_dir)
@@ -248,7 +292,7 @@ python = "{env.python_version}.*"
 {pypi_lines}
 """
     (env_dir / "pixi.toml").write_text(toml)
-    code, log = await _run("pixi", "install", "--manifest-path", str(env_dir / "pixi.toml"))
+    code, log = await _run(str(pixi_bin), "install", "--manifest-path", str(env_dir / "pixi.toml"))
     return ("ready" if code == 0 else "error"), log[-4000:]
 
 def python_path(self, env_id: str) -> Path:
@@ -420,16 +464,18 @@ The image name field in the creation dialog uses this for autocomplete, with Noo
 
 ### New endpoints
 
-`GET /environments/backends` — returns available backends and server platform. Cached at startup:
+`GET /environments/backends` — returns available backends and server platform. Re-checked on each call (binaries may be downloaded between calls):
 ```json
 {
   "platform": "linux",
   "venv":   {"available": true,  "version": "uv 0.4.1"},
-  "conda":  {"available": true,  "version": "micromamba 1.5.8", "solver": "micromamba"},
-  "pixi":   {"available": true,  "version": "pixi 0.24.2"},
+  "conda":  {"available": true,  "version": "micromamba 1.5.8", "solver": "micromamba", "managed": true},
+  "pixi":   {"available": true,  "version": "pixi 0.24.2", "managed": true},
   "docker": {"available": false, "version": null}
 }
 ```
+
+`"managed": true` means the binary was downloaded and is managed by Noodle. When using a system install, `"managed": false`. conda and pixi always return `"available": true` — if the binary hasn't been downloaded yet, the version field is `null` and the UI shows "will be downloaded on first use" rather than greying out the tab.
 
 `GET /environments/docker-images` — Phase 3 only. Returns locally available Docker images for autocomplete.
 
@@ -449,7 +495,7 @@ Zero downtime. Existing rows get `backend="venv"`, `backend_config={}`.
 
 ### `EnvironmentsPage.tsx`
 
-Creation dialog: tabbed backend selector at the top. Tabs: **uv + venv** | **conda** | **pixi** | **Docker** (greyed out if unavailable per `/environments/backends`). Fields below the tabs update per backend:
+Creation dialog: tabbed backend selector at the top. Tabs: **uv + venv** | **conda** | **pixi** | **Docker**. Only the Docker tab is greyed out (when the daemon is unreachable). conda and pixi are always enabled — Noodle downloads their binaries on first use. Fields below the tabs update per backend:
 - venv: name, python version, packages, extra index URLs
 - conda: name, python version, channels (ordered list, add/remove), packages
 - pixi: name, python version, channels (ordered list, add/remove), packages (suffix `@ pypi` for PyPI-only packages)
@@ -512,6 +558,8 @@ function missingFor(requirements: string[], installed: string[], platform: strin
 - `CondaBackend` generates correct `micromamba create` args with channels.
 - `PixiBackend` generates correct `pixi.toml` with channels; routes `@ pypi` packages to `[pypi-dependencies]`.
 - `DockerBackend` generates correct Dockerfile for managed mode; injects `noodle-runtime` for dockerfile mode.
+- `ensure_tool` returns existing binary without downloading when already present (mock `httpx`).
+- `ensure_tool` downloads binary, writes to `TOOLS_DIR`, sets executable bit when absent (mock `httpx`).
 - PEP 508 marker parsing — `evaluateMarker("sys_platform=='win32'", "linux")` returns `false`.
 - `missingFor()` filters platform-mismatched requirements correctly.
 - `system_requirements` round-trips through `@node` → `NodeManifest`.
@@ -520,8 +568,8 @@ function missingFor(requirements: string[], installed: string[], platform: strin
 ### Tier 2 — Integration (skipped if tool absent)
 
 - `VenvBackend.build()` produces a working venv — `skipif not shutil.which("uv")`.
-- `CondaBackend.build()` resolves packages from conda-forge — `skipif not shutil.which("micromamba")`.
-- `PixiBackend.build()` resolves a package and runs python — `skipif not shutil.which("pixi")`.
+- `CondaBackend.build()` triggers micromamba download then resolves a package — requires internet; tagged `slow`.
+- `PixiBackend.build()` triggers pixi download then resolves a package — requires internet; tagged `slow`.
 - `DockerBackend.build()` (managed) produces a pullable image — `skipif not shutil.which("docker")`.
 - `GET /environments/backends` returns correct availability.
 
@@ -536,8 +584,8 @@ function missingFor(requirements: string[], installed: string[], platform: strin
 
 | Edge case | Handling |
 |-----------|---------|
-| micromamba not found, conda not found | `CondaBackend.build()` raises with "No conda-compatible solver found. Install micromamba: ..." |
-| pixi not found | `PixiBackend.build()` raises with "pixi not found. Install from https://pixi.sh" |
+| micromamba download fails (no internet, firewall) | `ensure_tool` raises `RuntimeError` with URL + HTTP status; env card shows error with manual install instructions |
+| pixi download fails | same — `ensure_tool` raises with URL + HTTP status |
 | `@ pypi` package not on PyPI | pixi build fails with resolver error; full log shown in env status_detail |
 | Platform not supported by pixi (rare) | `_current_platform()` raises `RuntimeError`; env card shows "unsupported platform" |
 | Docker daemon not running | `DockerBackend.build()` fails with "Docker daemon unreachable. Start Docker and rebuild." |
