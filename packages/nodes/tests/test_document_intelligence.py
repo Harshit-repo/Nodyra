@@ -461,6 +461,59 @@ def test_barcode_qr_decode_raises_on_blank_image(store_ctx) -> None:
         barcode_qr_decode(input=ref)
 
 
+def test_document_intelligence_nodes_registered() -> None:
+    from noodle.sdk import registry
+    ids = {m.id for m in registry.manifests()}
+    expected = {
+        "pdf_extract_text",
+        "pdf_extract_tables",
+        "pdf_generate",
+        "docx_generate",
+        "docx_extract",
+        "excel_report_generate",
+        "excel_extract",
+        "barcode_qr_generate",
+        "barcode_qr_decode",
+    }
+    assert expected <= ids, f"Missing from registry: {expected - ids}"
+
+
+def test_document_intelligence_nodes_have_requirements() -> None:
+    """Every node with optional packages must declare requirements."""
+    from noodle.sdk import registry
+    nodes_with_reqs = {
+        "pdf_extract_text",
+        "pdf_extract_tables",
+        "pdf_generate",
+        "docx_generate",
+        "docx_extract",
+        "excel_report_generate",
+        "excel_extract",
+        "barcode_qr_generate",
+        "barcode_qr_decode",
+    }
+    manifests = {m.id: m for m in registry.manifests()}
+    for node_id in nodes_with_reqs:
+        manifest = manifests.get(node_id)
+        assert manifest is not None, f"Node {node_id} not in registry"
+        assert manifest.requirements, f"Node {node_id} has no requirements declared"
+
+
+def test_import_does_not_import_optional_packages() -> None:
+    """Importing noodle_nodes must not pull in any optional document packages."""
+    import sys
+    # If any of these were imported at module scope of document_intelligence.py,
+    # they would be present in sys.modules after `import noodle_nodes` at the top of this file.
+    # Tests that use pytest.importorskip skip entirely when the package is absent,
+    # so they cannot pollute sys.modules in this environment.
+    forbidden = {
+        "pdfplumber", "weasyprint", "docx", "openpyxl",
+        "qrcode", "barcode", "pyzbar",
+    }
+    leaked = forbidden & set(sys.modules.keys())
+    assert not leaked, f"Optional packages leaked into module scope: {leaked}"
+
+
 def test_document_intelligence_importable_without_optional_packages() -> None:
     """Module must import cleanly even when no doc-processing packages are installed."""
     import importlib
