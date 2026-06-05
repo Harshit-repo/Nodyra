@@ -606,34 +606,50 @@ def barcode_qr_generate(
     id="barcode_qr_decode",
     category="Document Intelligence",
     icon="tag",
-    requirements=["pyzbar>=0.1.9", "pillow>=10.0"],
+    requirements=[
+        "zxing-cpp>=2.2; sys_platform=='win32'",
+        "pyzbar>=0.1.9; sys_platform!='win32'",
+        "pillow>=10.0",
+    ],
     params={},
 )
 def barcode_qr_decode(input=None) -> dict:
     """Decode all barcodes and QR codes found in an image artifact."""
+    import sys as _sys
     if input is None:
         raise ValueError("input is required — wire an image artifact to this node.")
 
     try:
-        from pyzbar import pyzbar  # type: ignore[import-not-found]
         from PIL import Image  # type: ignore[import-not-found]
     except ImportError as exc:
         raise RuntimeError(
-            "pyzbar and pillow are required. Add them to the workflow "
-            "environment, rebuild it, then run again."
+            "pillow is required. Add it to the workflow environment, rebuild it, then run again."
         ) from exc
 
     img = Image.open(io.BytesIO(_read_bytes(input)))
-    decoded = pyzbar.decode(img)
 
-    if not decoded:
-        raise ValueError(
-            "No barcode or QR code detected in the image. "
-            "Check that the image is clear and not blurry."
-        )
-
-    return {
-        "codes": [
+    if _sys.platform == "win32":
+        try:
+            import zxing_cpp as _zx  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise RuntimeError(
+                "zxing-cpp is required on Windows. Add 'zxing-cpp>=2.2' to the workflow "
+                "environment, rebuild it, then run again."
+            ) from exc
+        raw = _zx.read_barcodes(img)
+        codes = [
+            {"type": r.format.name.upper(), "data": r.text, "rect": {}}
+            for r in raw if r.text
+        ]
+    else:
+        try:
+            from pyzbar import pyzbar  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise RuntimeError(
+                "pyzbar is required on Linux/macOS. Add 'pyzbar>=0.1.9' to the workflow "
+                "environment, rebuild it, then run again."
+            ) from exc
+        codes = [
             {
                 "type": d.type,
                 "data": d.data.decode("utf-8", errors="replace"),
@@ -644,7 +660,13 @@ def barcode_qr_decode(input=None) -> dict:
                     "height": d.rect.height,
                 },
             }
-            for d in decoded
-        ],
-        "count": len(decoded),
-    }
+            for d in pyzbar.decode(img)
+        ]
+
+    if not codes:
+        raise ValueError(
+            "No barcode or QR code detected in the image. "
+            "Check that the image is clear and not blurry."
+        )
+
+    return {"codes": codes, "count": len(codes)}

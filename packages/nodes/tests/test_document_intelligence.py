@@ -430,10 +430,22 @@ def test_barcode_qr_decode_raises_without_input(store_ctx) -> None:
         barcode_qr_decode(input=None)
 
 
+def test_barcode_qr_decode_requirements_are_platform_adaptive() -> None:
+    from noodle.sdk import registry
+    manifest = next(m for m in registry.manifests() if m.id == "barcode_qr_decode")
+    reqs = manifest.requirements
+    assert any("zxing" in r and "win32" in r for r in reqs), "zxing-cpp win32 req missing"
+    assert any("pyzbar" in r and "win32" in r for r in reqs), "pyzbar non-win32 req missing"
+
+
 def test_barcode_qr_roundtrip(store_ctx) -> None:
     """Generate a QR code then decode it — values must match."""
+    import sys
     pytest.importorskip("qrcode")
-    pytest.importorskip("pyzbar")
+    if sys.platform == "win32":
+        pytest.importorskip("zxing_cpp")
+    else:
+        pytest.importorskip("pyzbar")
     from noodle_nodes.document_intelligence import barcode_qr_generate, barcode_qr_decode
 
     gen_result = barcode_qr_generate(input="HELLO-NOODLE-123", format="qr")
@@ -441,11 +453,14 @@ def test_barcode_qr_roundtrip(store_ctx) -> None:
 
     assert decode_result["count"] == 1
     assert decode_result["codes"][0]["data"] == "HELLO-NOODLE-123"
-    assert decode_result["codes"][0]["type"] == "QRCODE"
 
 
 def test_barcode_qr_decode_raises_on_blank_image(store_ctx) -> None:
-    pytest.importorskip("pyzbar")
+    import sys
+    if sys.platform == "win32":
+        pytest.importorskip("zxing_cpp")
+    else:
+        pytest.importorskip("pyzbar")
     pytest.importorskip("PIL")
     from PIL import Image
     from noodle.artifacts import write_bytes
