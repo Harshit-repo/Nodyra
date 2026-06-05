@@ -66,11 +66,12 @@ async def _build_environment_locked(env_id: str) -> None:
         await session.commit()
         packages = list(env.packages)
         python_version = env.python_version
+        index_urls = list((env.backend_config or {}).get("index_urls", []))
 
     if not settings.enable_venv_builds:
         status, detail = "ready", "Venv builds are disabled in this environment."
     else:
-        status, detail = await _do_build(env_id, python_version, packages)
+        status, detail = await _do_build(env_id, python_version, packages, index_urls)
 
     rss_estimate: int | None = None
     if status == "ready" and settings.enable_venv_builds:
@@ -160,7 +161,10 @@ def _local_noodle_packages() -> list[str]:
 
 
 async def _do_build(
-    env_id: str, python_version: str, packages: list[str]
+    env_id: str,
+    python_version: str,
+    packages: list[str],
+    index_urls: list[str] | None = None,
 ) -> tuple[str, str]:
     target = venv_dir(env_id)
     try:
@@ -176,12 +180,16 @@ async def _do_build(
         # subprocess can import the engine + the built-in node library.
         to_install = [*_local_noodle_packages(), *packages]
         if to_install:
+            extra_index_args: list[str] = []
+            for url in (index_urls or []):
+                extra_index_args += ["--extra-index-url", url]
             code, install_log = await _run(
                 "uv",
                 "pip",
                 "install",
                 "--python",
                 str(venv_python(env_id)),
+                *extra_index_args,
                 *to_install,
             )
             log = f"{log}\n{install_log}"
