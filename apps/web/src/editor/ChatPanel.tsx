@@ -2,6 +2,7 @@ import { ArrowCounterClockwise, PaperPlaneTilt, Sparkle, X } from "@phosphor-ico
 import { useEffect, useRef, useState } from "react";
 
 import { api } from "../api";
+import type { ChatTurnResponse } from "../types";
 
 interface ChatMessage {
   role: "user" | "bot";
@@ -18,6 +19,8 @@ interface ChatPanelProps {
   onRun: (runId: string) => void;
   onClose: () => void;
   onViewRun?: (runId: string) => void;
+  /** Override the default authenticated send; used by the public chat page. */
+  sendMessage?: (message: string, sessionId: string) => Promise<ChatTurnResponse>;
 }
 
 function newSessionId(): string {
@@ -53,6 +56,7 @@ export function ChatPanel({
   onRun,
   onClose,
   onViewRun,
+  sendMessage,
 }: ChatPanelProps) {
   const [sessionId, setSessionId] = useState<string>(newSessionId);
   const [messages, setMessages] = useState<ChatMessage[]>(
@@ -75,7 +79,9 @@ export function ChatPanel({
     setMessages((m) => [...m, { role: "user", text }]);
     setSending(true);
     try {
-      const res = await api.sendChatMessage(workflowId, text, sessionId);
+      const res = sendMessage
+        ? await sendMessage(text, sessionId)
+        : await api.sendChatMessage(workflowId, text, sessionId);
       if (res.run_id) onRun(res.run_id);
       setMessages((m) => [
         ...m,

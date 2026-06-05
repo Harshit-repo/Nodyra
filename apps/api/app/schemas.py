@@ -969,3 +969,10 @@ class ChatTurnResponse(BaseModel):
     reply: str
     session_id: str
     status: str
+
+
+class ChatPublicConfig(BaseModel):
+    workflow_id: str
+    title: str
+    placeholder: str
+    initial_message: str

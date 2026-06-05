@@ -605,3 +605,10 @@ export interface ChatTurnResponse {
   session_id: string;
   status: "success" | "error" | "timeout";
 }
+
+export interface ChatPublicConfig {
+  workflow_id: string;
+  title: string;
+  placeholder: string;
+  initial_message: string;
+}

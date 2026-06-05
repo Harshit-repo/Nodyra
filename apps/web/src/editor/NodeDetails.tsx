@@ -2134,6 +2134,37 @@ function UrlRow({ url }: { url: string }) {
   );
 }
 
+export function ChatTriggerPanel({
+  params,
+}: {
+  params: Record<string, unknown>;
+}) {
+  const origin = window.location.origin;
+  const workflowId = useEditor((s) => s.workflowId);
+  if (!workflowId) return null;
+  const publicUrl = `${origin}/chat/${workflowId}`;
+  const isPublic = Boolean(params.public_access);
+  return (
+    <div className="inspector-section chat-trigger-panel">
+      <div className="inspector-section-head">Chat page</div>
+      {isPublic ? (
+        <>
+          <p className="field-desc">
+            Public access is <strong>on</strong>. Anyone with the link below
+            can chat with this workflow — no login required.
+          </p>
+          <UrlRow url={publicUrl} />
+        </>
+      ) : (
+        <p className="field-desc">
+          Enable <strong>Public access</strong> in the Options above to get
+          a shareable chat URL.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function WebhookPanel({
   path,
   nodeId,
@@ -3202,6 +3233,10 @@ export function NodeDetails({
           path={String(params.path ?? "noodle")}
           nodeId={node.id}
         />
+      )}
+
+      {manifest.id === "chat_trigger" && (
+        <ChatTriggerPanel params={params} />
       )}
         </>
       )}

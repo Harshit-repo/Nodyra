@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useLocation } from "react-router-dom";
 
 import { api, onUnauthorized, setToken, setUser } from "./api";
 import { ActivityPage } from "./ActivityPage";
+import { ChatPublicPage } from "./ChatPublicPage";
 import { CodeLibraryPage } from "./CodeLibraryPage";
 import { CredentialsPage } from "./CredentialsPage";
 import { DeploymentsPage } from "./DeploymentsPage";
@@ -18,7 +19,17 @@ import { WorkflowsPage } from "./WorkflowsPage";
 import type { AuthState, UserInfo } from "./types";
 
 export default function App() {
+  const location = useLocation();
   const [auth, setAuth] = useState<AuthState | null>(null);
+
+  // Public routes rendered before the auth gate.
+  if (location.pathname.startsWith("/chat/")) {
+    return (
+      <Routes>
+        <Route path="/chat/:workflowId" element={<ChatPublicPage />} />
+      </Routes>
+    );
+  }
 
   useEffect(() => {
     api

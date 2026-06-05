@@ -18,6 +18,7 @@ from app.routers import (
     audit,
     auth,
     chat,
+    chat_public,
     code_modules,
     credentials,
     deployments,
@@ -303,6 +304,7 @@ if settings.webhook_role != "disabled":
 app.include_router(workflows.router)
 app.include_router(runs.router)
 app.include_router(chat.router)
+app.include_router(chat_public.router)
 app.include_router(deployments.router)
 app.include_router(code_modules.router)
 app.include_router(internal.router)

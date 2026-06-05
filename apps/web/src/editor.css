@@ -4768,3 +4768,34 @@ th.sortable:hover { background:var(--bg-3); }
   color: var(--ink-3);
   font-style: italic;
 }
+
+/* ---- ChatPublicPage: full-page hosted chat -------------------------------- */
+.chat-public-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: var(--surface, #0d1117);
+  padding: 16px;
+}
+.chat-public-page .chat-panel {
+  position: relative;
+  width: 100%;
+  max-width: 560px;
+  height: min(700px, 90vh);
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.45);
+}
+.chat-public-error,
+.chat-public-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  color: var(--ink-2, #888);
+  font-size: 14px;
+}
+
+/* ---- ChatTriggerPanel: public URL display in inspector ------------------- */
+.chat-trigger-panel .webhook-url { margin-top: 4px; }

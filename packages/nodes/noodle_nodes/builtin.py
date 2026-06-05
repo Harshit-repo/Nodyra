@@ -371,7 +371,7 @@ def error_trigger(error: dict | None = None) -> dict:
 
 @node(name="Chat Trigger", id="chat_trigger", category="Triggers", icon="chat",
       inputs=[],
-      param_groups={"Options": ["initial_message", "input_placeholder", "title"]},
+      param_groups={"Options": ["initial_message", "input_placeholder", "title", "public_access"]},
       params={
           "initial_message": {
               "widget": "textarea", "group": "Options",
@@ -385,9 +385,13 @@ def error_trigger(error: dict | None = None) -> dict:
               "group": "Options", "placeholder": "Chat",
               "description": "Header label for the chat panel.",
           },
+          "public_access": {
+              "type": "boolean", "group": "Options", "default": False,
+              "description": "Allow anyone with the link to chat without logging in.",
+          },
       })
 def chat_trigger(initial_message: str = "", input_placeholder: str = "",
-                 title: str = "") -> dict:
+                 title: str = "", public_access: bool = False) -> dict:
     """Conversational entry point. When a chat turn runs, the chat service seeds
     this node's output with the user's message and session id; on a plain manual
     run it returns the empty shape so the graph stays runnable."""
