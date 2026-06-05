@@ -111,6 +111,21 @@ Python has the richest document processing ecosystem of any language. n8n has al
 - Table extraction → DatasetRef (one per detected table) plus `{"tables_found": int, "page": int}` summary.
 - File generation → ArtifactRef with `content_type` set correctly (`application/pdf`, `application/vnd.openxmlformats-officedocument.*`).
 
+### Known Edge Cases
+
+| Edge case | Node(s) affected | Handling |
+|-----------|-----------------|---------|
+| Scanned PDF with no text layer | `pdf_extract_text`, `pdf_extract_tables` | Detect via zero-character page count; fail with message "PDF appears to be scanned — use `ocr_document` first to add a text layer" |
+| Tables spanning multiple pages | `pdf_extract_tables` | Camelot's lattice mode handles this; pdfplumber stream mode does not — document the limitation and prefer Camelot when borders are present |
+| Password-protected PDF/Word/Excel | all extraction nodes | Fail fast with: "File is encrypted. Decrypt it before passing to this node." Do not silently return empty output |
+| Mixed-direction text (RTL + LTR) | `pdf_extract_text`, `ocr_document` | pdfplumber preserves character order; warn when RTL scripts are detected and output may need manual review |
+| Merged cells in Excel | `excel_extract` | openpyxl returns `None` for non-anchor cells in a merged region; forward-fill the anchor value and add a `_merged` boolean column |
+| Word template with missing merge fields | `docx_generate` | Detect missing keys before rendering; fail with the full list of unfilled fields rather than silently leaving placeholders |
+| Very large PDFs (>200 pages) | `pdf_extract_tables`, `document_parse_layout` | Add a `max_pages` config param; process in chunks; warn when the full document exceeds the param |
+| Low-resolution scanned images for OCR | `ocr_document`, `image_ocr` | Check DPI from image metadata; warn if DPI < 150 that quality may be poor |
+| QR/barcode decode from blurry image | `barcode_qr_decode` | pyzbar returns empty list on failure; raise a descriptive error rather than returning empty records |
+| weasyprint unsupported CSS | `pdf_generate`, `html_to_pdf` | Log unsupported CSS properties as warnings in node debug output; do not fail the node — document known limitations (flex/grid partial support) |
+
 ## Category 2 — Browser & Web Automation
 
 ### Overview
@@ -140,6 +155,20 @@ Playwright gives Noodle a real headless browser. This lets workflows scrape JS-r
 - Playwright browser nodes must be marked `tool_side_effecting=True`.
 - Session artifacts from `browser_auth_session` contain cookies/localStorage; they must be handled with the same redaction care as credentials.
 - `browser_scrape` should support a `selectors` config param (CSS selector → field name mapping) to define the output schema visually.
+
+### Known Edge Cases
+
+| Edge case | Node(s) affected | Handling |
+|-----------|-----------------|---------|
+| Anti-bot detection (Cloudflare, CAPTCHA, fingerprinting) | `browser_scrape`, `browser_screenshot` | Fail with a clear message: "Site returned a bot-detection page. Consider adding delays, rotating user agents, or handling the challenge manually." Do not retry silently — retrying triggers harder blocks |
+| Dynamic content not yet loaded when selector fires | `browser_scrape`, `browser_click_fill` | Expose `wait_for` config param with options: `load`, `networkidle`, `selector_visible`, `timeout_ms`. Default to `networkidle` with a 10s timeout |
+| JavaScript errors on the page | `browser_scrape`, `browser_screenshot` | Collect JS console errors into node debug output; do not fail the node unless the selector extraction itself fails |
+| Login flow requiring 2FA/OTP | `browser_auth_session` | Cannot be automated. Fail with: "2FA detected — this node cannot handle OTP or authenticator-app flows." |
+| SSL certificate errors on internal sites | all `browser_*` nodes | Expose `ignore_https_errors: bool` config param, default `false`. Warn loudly when enabled |
+| Iframe / shadow DOM isolation | `browser_scrape` | CSS selectors do not pierce shadow DOM by default; document this and expose a `pierce_shadow: bool` param for Playwright's pierce selector engine |
+| Browser process crash or OOM | all `browser_*` nodes | Catch `playwright._impl._errors.Error`; retry once with a fresh context; fail after second crash with full error message |
+| Very long-running page load | all `browser_*` nodes | Enforce a `page_timeout_ms` config param (default 30 000); surface timeout as a clear node error, not a cryptic Playwright exception |
+| Download file larger than artifact size limit | `browser_wait_download` | Check file size before writing artifact; fail with size info if it exceeds the configured artifact max |
 
 ## Category 3 — Statistical Analysis & Data Science
 
@@ -172,6 +201,20 @@ scipy, statsmodels, prophet, pulp, and umap-learn give Noodle a statistical anal
 - Forecasts: DatasetRef with columns `[ds, yhat, yhat_lower, yhat_upper]` plus summary `{"horizon": int, "model": str}`.
 - Optimization: `{"status": str, "objective": float, "variables": {...}, "shadow_prices": {...}}`.
 
+### Known Edge Cases
+
+| Edge case | Node(s) affected | Handling |
+|-----------|-----------------|---------|
+| Small sample size (n < 30) | `statistical_test` | Emit a warning in node output: "Sample size is small (n=N); p-value may be unreliable. Consider a non-parametric test." Do not fail — the user may still want the result |
+| Parametric test on non-normal data | `statistical_test` | Run a Shapiro-Wilk normality pre-check when `n <= 5000`; include `{"normality_warning": true}` in output if the data is significantly non-normal |
+| Time series with missing timestamps | `time_series_forecast`, `time_series_decompose` | Detect gaps; expose `fill_strategy` param: `forward_fill`, `interpolate`, `drop`. Fail if more than 20% of rows are missing without an explicit strategy set |
+| Fewer than 2 full seasonal periods of data | `time_series_forecast` | Prophet will fit but produce unreliable intervals; warn with row count and detected period. `pmdarima` AutoARIMA will raise — catch and re-raise with a human message |
+| Optimization problem is infeasible | `optimization_solve` | Return `{"status": "INFEASIBLE", "objective": null, "variables": {}}` — do not raise an exception. Route to `fail` output branch so the workflow can handle it |
+| Optimization problem is unbounded | `optimization_solve` | Return `{"status": "UNBOUNDED"}` with a message explaining that the objective has no finite optimum — likely a missing constraint |
+| Solver timeout on large MIP | `optimization_solve` | Expose `time_limit_seconds` param (default 60); return best integer solution found so far with `{"status": "TIME_LIMIT", "gap": float}` |
+| NaN/None values in embedding column | `embedding_visualize`, `dimensionality_reduce` | Drop rows with null embeddings before reduction; include `{"dropped_rows": int}` in output summary |
+| Embeddings of inconsistent dimension | `embedding_visualize` | Detect ragged arrays before passing to UMAP/t-SNE; fail with: "Embeddings have inconsistent dimensions — all vectors must be the same length" |
+
 ## Category 4 — Geospatial & Mapping
 
 ### Overview
@@ -196,6 +239,17 @@ geopandas and folium give Noodle a geospatial capability that n8n has zero of. B
 
 - `map_generate` output is an HTML artifact; the editor renders it in an artifact preview iframe.
 - Geocoding nodes should support configurable providers (Nominatim, Google, HERE) through a credential param.
+
+### Known Edge Cases
+
+| Edge case | Node(s) affected | Handling |
+|-----------|-----------------|---------|
+| CRS mismatch between two datasets | `geospatial_join`, `geospatial_buffer`, `geospatial_distance` | Detect CRS of both inputs; auto-reproject the right-hand dataset to match the left-hand CRS; emit a warning with the detected CRS values. Never silently produce wrong coordinates |
+| Invalid geometries (self-intersecting polygons, etc.) | `geospatial_join`, `geospatial_buffer` | Run `geopandas.is_valid` check; expose `fix_geometries: bool` param (default `true`) that applies `buffer(0)` repair; warn on count of fixed geometries |
+| Geocoding rate limits (Nominatim 1 req/s policy) | `geocode` | Expose `delay_seconds` param (default `1.1` for Nominatim); document that commercial providers (Google, HERE) require a credential and have higher limits |
+| Ambiguous address geocoding | `geocode` | Return the top match and include `{"match_confidence": str, "candidates": int}` in output; expose `on_ambiguous` param: `first` (default), `all`, `fail` |
+| Very large shapefile (>100 MB) | `shapefile_read` | Stream using geopandas chunked read where supported; add `max_features` param to cap output size; warn when the file exceeds 50 MB |
+| osmnx network download for isochrone | `isochrone_generate` | osmnx fetches OSM data live; this requires internet access from the runner. Fail clearly if the download times out rather than hanging |
 
 ## Category 5 — Audio & Media Processing
 
@@ -228,6 +282,20 @@ Python is uniquely capable for audio, image, and video work. The headline node i
 - `whisper_transcribe_local` should support model size param (`tiny`, `base`, `small`, `medium`, `large-v3`) so users can trade accuracy for speed/VRAM.
 - All media nodes must accept artifact refs as input and return artifact refs as output — never inline binary.
 - `tts_local` and `whisper_transcribe_local` should carry a data-sovereignty note in their node description: "Audio never leaves your host."
+
+### Known Edge Cases
+
+| Edge case | Node(s) affected | Handling |
+|-----------|-----------------|---------|
+| ffmpeg not installed (pydub and moviepy depend on it as a system binary) | `audio_convert_trim`, `audio_merge_split`, `video_*` | Detect on import via `shutil.which("ffmpeg")`; fail with: "ffmpeg is required but not found on PATH. Install it in the runner OS or Docker image, not via pip." |
+| Very long audio file (>60 min) on CPU | `whisper_transcribe_local` | Expose `max_duration_seconds` param (default `3600`); chunk files longer than ~30 min and merge transcripts; warn when CPU inference will be slow and suggest a GPU runner pool |
+| Unsupported or corrupted audio codec | `audio_convert_trim`, `whisper_transcribe_local` | Catch pydub/ffmpeg decode errors; re-raise with the codec name extracted from the ffmpeg stderr, not a raw exception |
+| Video with no audio track | `video_extract_audio` | Detect before extraction; return `{"has_audio": false}` and route to a `no_audio` output branch rather than raising an exception |
+| EXIF data absent (PNG, some WebP) | `image_metadata` | Return `{"exif": {}, "has_exif": false}` — do not fail |
+| CMYK or palette-mode images | `image_transform`, `image_composite` | Auto-convert to RGB before processing; include `{"converted_from": "CMYK"}` in output metadata |
+| Very large image (>50 MP) | `image_transform`, `image_analyze_cv` | Add `max_megapixels` guard param (default `50`); fail with image dimensions if exceeded, since in-memory processing will OOM |
+| OpenCV face detection model not downloaded | `image_analyze_cv` | OpenCV's Haar cascades ship with the package; YOLO weights do not — detect missing weights file and fail with download instructions |
+| Video file larger than artifact size limit | `video_clip_trim`, `video_to_gif` | Check output size estimate before writing; warn if the GIF will be large (GIFs are uncompressed by frame count) |
 
 ## Category 6 — Scientific & Domain Verticals
 
@@ -276,6 +344,17 @@ These nodes target specific professional domains. They are not for every Noodle 
 | `symbolic_math` | Solve equations, differentiate, integrate, simplify symbolically; output LaTeX string + numeric result | `sympy` |
 | `unit_convert` | Unit conversion with full dimensional analysis (metres ↔ feet, kg ↔ lbs, joules ↔ calories, etc.) | `pint` |
 
+### Known Edge Cases
+
+| Edge case | Node(s) affected | Handling |
+|-----------|-----------------|---------|
+| yfinance ticker not found or delisted | `financial_data_fetch` | yfinance returns an empty DataFrame silently; detect zero rows and fail with: "Ticker 'X' returned no data — it may be delisted or the symbol is incorrect" |
+| yfinance rate limiting / Yahoo API changes | `financial_data_fetch` | yfinance has no official API and breaks occasionally with Yahoo changes; catch `Exception` broadly, re-raise with a message noting this is an unofficial API and may need a package update |
+| NCBI BLAST rate limits (3 req/s without API key) | `blast_search` | Add `ncbi_api_key` credential param; enforce a 0.4s delay between requests without a key; expose `timeout_seconds` param |
+| Invalid SMILES string | `molecule_parse`, `molecular_fingerprint`, `molecule_similarity` | RDKit returns `None` for invalid SMILES without raising; check for `None` mol object and fail with the offending SMILES string |
+| Very dense graph (>100 k edges) for betweenness centrality | `graph_analyze` | Betweenness centrality is O(VE) — it will time out on large graphs. Expose `algorithms` multi-select param; warn when betweenness is selected on graphs with >10 k edges; apply `k` approximation parameter automatically |
+| sympy expression that cannot be solved analytically | `symbolic_math` | Return `{"solved": false, "symbolic_result": null, "message": "No closed-form solution found"}` rather than hanging or raising |
+
 ## Category 7 — Data Quality & Validation
 
 ### Overview
@@ -300,6 +379,17 @@ Data quality is an unglamorous but high-value workflow use case. These nodes plu
 
 - `schema_validate` outputs: `pass` branch on success, `fail` branch with DatasetRef of rows that failed validation.
 - `data_profile_report` outputs: HTML ArtifactRef + summary dict `{"rows": int, "columns": int, "missing_cells": int, "duplicate_rows": int}`.
+
+### Known Edge Cases
+
+| Edge case | Node(s) affected | Handling |
+|-----------|-----------------|---------|
+| Very wide dataset (>200 columns) in profiling | `data_profile_report` | ydata-profiling correlations are O(n²) on columns; expose `minimal: bool` param (default `false`) that skips correlation matrix and interaction plots for wide datasets; auto-enable when columns > 100 |
+| great_expectations suite file not found | `expectation_suite_run` | Fail with the full path it tried to load; do not return a partial validation result |
+| Record linkage on large datasets (>100 k rows) | `record_linkage` | Full-pair comparison is O(n²); require at least one `blocking_key` config param; fail if none is provided and both datasets exceed 10 k rows, with an explanation of why blocking is required |
+| pandera schema with timezone-aware datetime columns | `schema_validate` | Pandas is strict about tz-aware vs tz-naive; generate a clear error that names the column and whether the schema expects aware or naive |
+| `string_normalize` on a column with mixed types | `string_normalize` | Cast all values to str before processing; include `{"non_string_rows": int}` in output summary |
+| Ambiguous date strings that parse to wrong century | `date_parse_normalize` | Expose `prefer_day_first: bool` and `prefer_year_first: bool` params to disambiguate "01/02/03"-style strings; include original and parsed values in output for audit |
 
 ## Category 8 — Cryptography & Security Automation
 
@@ -328,6 +418,19 @@ These nodes support security automation workflows: check certificate expiry, enc
 - `ldap_query` must be marked `tool_side_effecting=True` for writes; read-only queries may be `False`.
 - `sftp_transfer` must be marked `tool_side_effecting=True`.
 
+### Known Edge Cases
+
+| Edge case | Node(s) affected | Handling |
+|-----------|-----------------|---------|
+| GPG home directory not initialised | `pgp_encrypt_decrypt` | python-gnupg requires a writable GPG home directory; default to a per-environment temp dir; fail with a clear message if the dir is not writable rather than a cryptic gnupg error |
+| JWT algorithm confusion attack (`alg: none`) | `jwt_sign_verify` | Always require an explicit `algorithms` param; never allow `none` as a valid algorithm; reject tokens whose header `alg` does not match the configured algorithms list |
+| LDAP bind failure (wrong password or locked account) | `ldap_query` | Catch `ldap3.core.exceptions.LDAPBindError`; re-raise with: "LDAP bind failed — check the credential. Do not log the bind password." |
+| LDAP result set too large | `ldap_query` | Many AD servers enforce a size limit (default 1000 entries); expose `size_limit` param; return `{"truncated": true, "size_limit_hit": true}` in output metadata when the limit is hit |
+| SFTP host key not in known_hosts | `sftp_transfer` | Expose `host_key_policy` param: `strict` (default, fail if unknown), `auto_add` (accept and store first-seen key — log a warning), `ignore` (insecure, warn loudly). Never silently accept unknown keys |
+| X.509 certificate with non-standard extensions | `certificate_inspect` | Use `cryptography`'s `UnrecognizedExtension` handler; include unrecognised extensions as raw bytes in output under `extensions.unknown`; do not fail the node |
+| Expired certificate | `certificate_inspect` | Always include `{"expired": true, "days_until_expiry": -N}` — the node's job is to report this, not to refuse to parse the cert |
+| paramiko SSH key type mismatch | `sftp_transfer` | Catch `paramiko.ssh_exception.AuthenticationException`; re-raise with: "Authentication failed — check that the key type matches what the server accepts (RSA/ED25519/ECDSA)" |
+
 ## Environment Presets
 
 These are template presets, not default installs. Users pick a preset when creating an environment.
@@ -342,6 +445,22 @@ These are template presets, not default installs. Users pick a preset when creat
 | Finance & Quant | `yfinance`, `pandas-ta`, `cvxpy`, `mibian`, `forex-python` |
 | Data Quality | `pandera`, `great-expectations`, `ydata-profiling`, `recordlinkage`, `rapidfuzz`, `dateparser`, `babel` |
 | Security Automation | `cryptography`, `python-gnupg`, `pyjwt`, `ldap3`, `paramiko`, `passlib` |
+
+## Edge Case Handling Principles
+
+These rules apply across all eight categories.
+
+1. **Fail fast with actionable messages.** When input is invalid (wrong file type, encrypted file, missing column), raise immediately with a message that names the problem and tells the user what to do. Never return empty output and silently succeed.
+
+2. **Warn, don't fail, on quality issues.** When the operation can still complete but the result may be unreliable (small sample size, low-DPI image, non-normal data), include a `warnings: list[str]` field in the output rather than raising. Let the user decide.
+
+3. **Never hang on external dependencies.** Nodes that fetch live data (geocoding, yfinance, NCBI BLAST, osmnx) must enforce a `timeout_seconds` param. The default should be short (30s); long defaults cause silent workflow stalls.
+
+4. **Surface config params for the hard cases.** Many edge cases are best resolved by the user, not by silent heuristics. Add config params (`fill_strategy`, `on_ambiguous`, `fix_geometries`, `max_pages`, etc.) rather than making opinionated decisions in code.
+
+5. **System binary vs Python package distinction.** ffmpeg (pydub/moviepy), chromium (playwright), and tesseract (pytesseract) are OS-level dependencies that cannot be installed via pip. When these are missing, the error message must explicitly say "install X at the OS level" and not suggest `pip install`.
+
+6. **Large output guards.** Every node that can produce unbounded output (table extraction from a 500-page PDF, frame extraction from a 2-hour video, geocoding of 1M rows) must have a `max_*` guard param. Nodes should fail early with a size estimate rather than OOMing the runner.
 
 ## Testing Strategy
 
@@ -364,6 +483,9 @@ Add a test in `test_node_requirements.py` that imports all eight new modules in 
 - Output shape validated: artifact refs have correct `content_type`; DatasetRefs pass `is_dataset_ref()`.
 - Error path: missing package raises `RuntimeError` with actionable message.
 - Error path: malformed input (bad PDF bytes, unreachable URL, unsolvable LP) raises descriptive error.
+- Edge case path: every row in each category's "Known Edge Cases" table must have a corresponding unit test asserting the correct output shape or error message.
+- Warning path: quality-warning cases (small sample, low DPI, non-normal data) must assert `"warnings"` key present in output, not an exception.
+- System binary missing: mock `shutil.which` to return `None`; assert the error message says "install at OS level" for ffmpeg/tesseract/chromium nodes.
 
 ### Integration tests (slow, skipped by default)
 
