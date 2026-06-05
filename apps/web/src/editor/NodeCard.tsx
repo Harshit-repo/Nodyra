@@ -4,7 +4,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
 
 import { categoryColor } from "../categories";
-import { NodeIcon } from "../NodeIcon";
+import { isBrandIconName, NodeIcon } from "../NodeIcon";
 import { missingFor } from "./missingPackages";
 import { SdkModal } from "./SdkModal";
 import { type NoodleNode, useEditor } from "./store";
@@ -160,6 +160,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const { manifest, disabled, outputsOverride } = data;
   const isWebhook = manifest.id === "webhook_trigger";
   const isAgentV2 = manifest.id === "ai_agent_v2";
+  const hasBrandIcon = isBrandIconName(manifest.icon);
   const color = categoryColor(manifest.category);
   const { inputs } = manifest;
   // In tool mode the node is invoked by the Agent, not wired from upstream, so
@@ -260,6 +261,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   if (selected) tileClass.push("selected");
   if (disabled) tileClass.push("is-disabled");
   if (isPinned) tileClass.push("is-pinned");
+  if (hasBrandIcon) tileClass.push("has-brand-icon");
   if (hasMissingCredential) tileClass.push("missing-credential");
   if (hasInlineSecret) tileClass.push("inline-secret");
   if (runStatus) tileClass.push(`run-${runStatus}`);
@@ -722,7 +724,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
         onDoubleClick={isChatTrigger ? () => openChat() : undefined}
         title={isChatTrigger ? "Double-click to open chat" : undefined}
       >
-        <NodeIcon name={manifest.icon} size={26} />
+        <NodeIcon name={manifest.icon} size={hasBrandIcon ? 54 : 26} />
 
         {runStatus && (
           <span className={`node-status status-run-${runStatus}`}>

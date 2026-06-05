@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 
 import { categoryColor } from "../categories";
-import { NodeIcon } from "../NodeIcon";
+import { isBrandIconName, NodeIcon } from "../NodeIcon";
 import { NDVPanels } from "./NDVPanels";
 import { useEditor } from "./store";
 
@@ -50,6 +50,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
   if (!node) return null;
   const { manifest, disabled } = node.data;
   const isWebhook = manifest.id === "webhook_trigger";
+  const hasBrandIcon = isBrandIconName(manifest.icon);
   const color = categoryColor(manifest.category);
 
   return (
@@ -57,8 +58,11 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
       <div className="ndv-modal" onClick={(e) => e.stopPropagation()}>
         <header className="ndv-head">
           <div className="ndv-title">
-            <span className="inspector-glyph" style={{ color }}>
-              <NodeIcon name={manifest.icon} size={20} />
+            <span
+              className={`inspector-glyph${hasBrandIcon ? " has-brand-icon" : ""}`}
+              style={{ color }}
+            >
+              <NodeIcon name={manifest.icon} size={hasBrandIcon ? 30 : 20} />
             </span>
             <div>
               <h3>{manifest.name}</h3>

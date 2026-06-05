@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CATEGORY_ORDER, categoryColor } from "../categories";
-import { NodeIcon } from "../NodeIcon";
+import { isBrandIconName, NodeIcon } from "../NodeIcon";
 import type { NodeManifest } from "../types";
 import { useEditor } from "./store";
 
@@ -131,6 +131,7 @@ function PaletteItem({
 }) {
   const color = categoryColor(node.category);
   const badges = nodeBadges(node);
+  const hasBrandIcon = isBrandIconName(node.icon);
   return (
     <div
       key={node.id}
@@ -144,10 +145,14 @@ function PaletteItem({
       title={node.description}
     >
       <span
-        className="palette-item-glyph"
-        style={{ color, background: `${color}1f` }}
+        className={`palette-item-glyph${hasBrandIcon ? " has-brand-icon" : ""}`}
+        style={
+          hasBrandIcon
+            ? { color }
+            : { color, background: `${color}1f` }
+        }
       >
-        <NodeIcon name={node.icon} size={14} />
+        <NodeIcon name={node.icon} size={hasBrandIcon ? 20 : 14} />
       </span>
       <span className="palette-item-body">
         <span className="palette-item-name">{node.name}</span>

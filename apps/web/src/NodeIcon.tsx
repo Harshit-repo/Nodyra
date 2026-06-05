@@ -148,6 +148,12 @@ function BrandNodeIcon({
   );
 }
 
+export function isBrandIconName(
+  name: string | null | undefined,
+): name is `brand:${string}` {
+  return typeof name === "string" && name.startsWith("brand:");
+}
+
 export function NodeIcon({
   name,
   size = 20,
@@ -160,7 +166,7 @@ export function NodeIcon({
   // Real brand logos via SimpleIcons CDN. Convention: `brand:<slug>` where
   // <slug> matches https://simpleicons.org (e.g. brand:stripe, brand:openai).
   // Falls back to a local generic icon if the network request fails.
-  if (typeof name === "string" && name.startsWith("brand:")) {
+  if (isBrandIconName(name)) {
     const slug = name.slice("brand:".length);
     return <BrandNodeIcon slug={slug} size={size} className={className} />;
   }
