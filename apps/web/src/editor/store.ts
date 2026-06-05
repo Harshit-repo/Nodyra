@@ -118,6 +118,24 @@ function deriveCodeOutputs(code: unknown): string[] {
   return hasMain ? ["main", ...ports] : ports;
 }
 
+// Mirrors `triggers._match_api_route`'s view of the route table: one output
+// handle per route row's `output` name (deduped, in order). Lets the canvas
+// render the API Endpoint node's branches before the workflow runs.
+function deriveApiEndpointOutputs(routes: unknown): string[] {
+  if (!Array.isArray(routes) || routes.length === 0) return ["main"];
+  const ports: string[] = [];
+  const seen = new Set<string>();
+  for (const route of routes) {
+    if (!route || typeof route !== "object") continue;
+    const raw = (route as Record<string, unknown>).output;
+    const name = typeof raw === "string" ? raw.trim() : "";
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    ports.push(name);
+  }
+  return ports.length > 0 ? ports : ["main"];
+}
+
 export type NoodleNode = Node<NoodleNodeData, "noodle">;
 
 interface EditorStore {
@@ -417,6 +435,9 @@ export const useEditor = create<EditorStore>((set, get) => ({
       }
       if (!outputsOverride && manifest.id === "code") {
         outputsOverride = deriveCodeOutputs(params.code);
+      }
+      if (!outputsOverride && manifest.id === "api_endpoint") {
+        outputsOverride = deriveApiEndpointOutputs(params.routes);
       }
       nodes.push({
         id: n.id,
@@ -826,6 +847,13 @@ export const useEditor = create<EditorStore>((set, get) => ({
     }
     if (node && node.data.manifest.id === "code") {
       outputsOverride = deriveCodeOutputs(params.code);
+      const valid = new Set(outputsOverride);
+      edges = state.edges.filter(
+        (e) => e.source !== id || valid.has(e.sourceHandle ?? "main"),
+      );
+    }
+    if (node && node.data.manifest.id === "api_endpoint") {
+      outputsOverride = deriveApiEndpointOutputs(params.routes);
       const valid = new Set(outputsOverride);
       edges = state.edges.filter(
         (e) => e.source !== id || valid.has(e.sourceHandle ?? "main"),

@@ -772,6 +772,15 @@
   align-items: center;
   justify-content: center;
 }
+.palette-item-glyph.has-brand-icon {
+  background: transparent;
+  border-radius: 0;
+}
+.palette-item-glyph.has-brand-icon .node-brand-icon {
+  width: 20px;
+  height: 20px;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.28));
+}
 .palette-item-body {
   min-width: 0;
   flex: 1;
@@ -1393,6 +1402,24 @@ body.is-resizing-vertical {
   position: relative;
   z-index: 1;
 }
+.node-tile.has-brand-icon {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+.node-tile.has-brand-icon::before {
+  display: none;
+}
+.node-tile.has-brand-icon .node-brand-icon {
+  width: 54px;
+  height: 54px;
+  filter: drop-shadow(0 9px 14px rgba(0, 0, 0, 0.38));
+}
+.node-tile.has-brand-icon svg {
+  width: 42px;
+  height: 42px;
+  filter: drop-shadow(0 9px 14px rgba(0, 0, 0, 0.3));
+}
 .node:hover .node-tile {
   transform: translateY(-1px);
 }
@@ -1401,6 +1428,11 @@ body.is-resizing-vertical {
   box-shadow:
     0 0 0 3px var(--accent-glow),
     0 9px 22px -11px rgba(0, 0, 0, 0.9);
+}
+.node-tile.has-brand-icon.selected {
+  background: rgba(255, 255, 255, 0.035);
+  border-color: transparent;
+  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 .node-label {
   margin: 9px -22px 0;
@@ -1855,6 +1887,15 @@ body.is-resizing-vertical {
   border-radius: 9px;
   background: var(--surface-2);
   border: 1px solid var(--line-2);
+}
+.inspector-glyph.has-brand-icon {
+  background: transparent;
+  border-color: transparent;
+}
+.inspector-glyph.has-brand-icon .node-brand-icon {
+  width: 30px;
+  height: 30px;
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.32));
 }
 
 /* ---- webhook test panel ---- */
@@ -3561,6 +3602,54 @@ body.is-resizing {
   display: flex;
   flex-direction: column;
   gap: 7px;
+}
+.routes-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.routes-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.routes-method {
+  flex: 0 0 92px;
+}
+.routes-path {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.routes-output {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.routes-arrow {
+  color: var(--muted, #888);
+  flex: 0 0 auto;
+}
+.routes-remove {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+  line-height: 1;
+}
+.routes-add {
+  align-self: flex-start;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.routes-empty {
+  color: var(--muted, #888);
+  font-size: 12px;
+  margin: 0;
 }
 .kv-toolbar {
   display: inline-flex;

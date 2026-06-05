@@ -2,8 +2,9 @@
 
 **Date:** 2026-06-04
 **Status:** Phase 1 shipped (path-param routing on the webhook node). Phase 2
-**backend** shipped (API Endpoint node + route-table dispatch); Phase 2 **editor
-UI** (routes-table + dynamic output handles in the NDV) is the next sub-phase.
+shipped — **backend** (API Endpoint node + route-table dispatch) and **editor UI**
+(routes-table param editor + per-route output handles on the canvas). Remaining
+deferrals (HMAC/IP/dedup/raw-body, 405) tracked below.
 
 ## Goal
 
@@ -93,9 +94,21 @@ response, POST→create branch, basic-auth reject) + `_match_api_route` unit tes
 Full `test_triggers.py` + `test_trigger_gated_runs` = **61 passed**; node package
 **90 passed**. No migration; no frontend changes.
 
-### Deferred to the editor sub-phase (next)
-Routes-table param editor, deriving `outputs_override` from `routes` so the canvas
-renders one handle per route, NDV wiring, reusing the webhook NDV auth fields.
-Also still deferred (identical to webhook when added): HMAC / IP / dedup /
-raw-body, and `405` on path-match-but-method-miss. Until the editor lands the node
-is fully usable via graph JSON / the API.
+## Phase 2 editor sub-phase — what shipped (2026-06-05)
+
+- **`routes` param marked `widget: "routes_table"`** (`builtin.py`); flows to the
+  manifest via `sdk.py` and is read as `spec.widget` in the editor.
+- **`RoutesField`** (`apps/web/src/editor/NodeDetails.tsx`) — a row editor (method
+  dropdown + path template + output branch name, add/remove) rendered when
+  `spec.widget === "routes_table"`; styles in `editor.css` (`.routes-*`).
+- **`deriveApiEndpointOutputs(routes)`** (`apps/web/src/editor/store.ts`) — one
+  canvas handle per route `output`, wired into `loadGraph` and `updateParams`
+  (with dangling-edge pruning), mirroring the Code/Switch dynamic-output path.
+- Tests: `store.apiendpoint.test.ts` (derive on load; recompute + edge-prune on
+  param change; empty→`main` fallback). Frontend `tsc` clean, `vitest` 61 passed,
+  `vite build` green; backend node tests green.
+
+### Still deferred (identical to the webhook node when added)
+HMAC / IP allowlist / dedup / raw-body on the API Endpoint node, and `405` on
+path-match-but-method-miss (currently a non-match → 404). Also the webhook
+"Listen for test event" capture for multi-segment templated paths.

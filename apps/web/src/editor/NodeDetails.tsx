@@ -7,7 +7,7 @@ import {
   getLlmVariant,
   visibleCredentialFields,
 } from "../llmProviders";
-import { NodeIcon } from "../NodeIcon";
+import { isBrandIconName, NodeIcon } from "../NodeIcon";
 import { useToast } from "../ToastProvider";
 import type {
   Credential,
@@ -1634,6 +1634,110 @@ function LoadOptionsField({
   );
 }
 
+interface RouteRow {
+  method: string;
+  path: string;
+  output: string;
+}
+
+const ROUTE_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+
+function routeRowsFromValue(value: unknown): RouteRow[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (r): r is Record<string, unknown> => Boolean(r) && typeof r === "object",
+    )
+    .map((r) => ({
+      method: typeof r.method === "string" ? r.method : "GET",
+      path: typeof r.path === "string" ? r.path : "",
+      output: typeof r.output === "string" ? r.output : "",
+    }));
+}
+
+// Editor for the API Endpoint node's `routes` param: one row per route
+// (method + sub-path template → named output branch). Each row's `output`
+// becomes a handle on the canvas (see `deriveApiEndpointOutputs` in store.ts).
+function RoutesField({
+  value,
+  onChange,
+}: {
+  value: unknown;
+  onChange: (v: unknown) => void;
+}) {
+  const [rows, setRows] = useState<RouteRow[]>(() => routeRowsFromValue(value));
+
+  function commit(next: RouteRow[]): void {
+    setRows(next);
+    onChange(
+      next.map((r) => ({ method: r.method, path: r.path, output: r.output })),
+    );
+  }
+  function update(index: number, patch: Partial<RouteRow>): void {
+    commit(rows.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  }
+
+  return (
+    <div className="routes-field">
+      {rows.length === 0 && (
+        <p className="routes-empty">
+          No routes yet. Add one to create an endpoint branch.
+        </p>
+      )}
+      {rows.map((row, i) => (
+        <div className="routes-row" key={i}>
+          <select
+            className="field-input routes-method"
+            value={row.method}
+            onChange={(e) => update(i, { method: e.target.value })}
+          >
+            {ROUTE_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+          <input
+            className="field-input routes-path"
+            placeholder="/{id}"
+            value={row.path}
+            onChange={(e) => update(i, { path: e.target.value })}
+          />
+          <span className="routes-arrow" aria-hidden>
+            →
+          </span>
+          <input
+            className="field-input routes-output"
+            placeholder="branch name"
+            value={row.output}
+            onChange={(e) => update(i, { output: e.target.value })}
+          />
+          <button
+            type="button"
+            className="routes-remove"
+            aria-label="Remove route"
+            onClick={() => commit(rows.filter((_, idx) => idx !== i))}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="routes-add"
+        onClick={() =>
+          commit([
+            ...rows,
+            { method: "GET", path: "/", output: `route${rows.length + 1}` },
+          ])
+        }
+      >
+        + Add route
+      </button>
+    </div>
+  );
+}
+
 export function ParamField({
   spec,
   value,
@@ -1679,6 +1783,9 @@ export function ParamField({
         placeholder={spec.placeholder}
       />
     );
+  }
+  if (spec.widget === "routes_table") {
+    return <RoutesField value={value} onChange={onChange} />;
   }
   if (spec.key_value) {
     return (
@@ -2804,6 +2911,7 @@ export function NodeDetails({
   }
 
   const { manifest, params, disabled } = node.data;
+  const hasBrandIcon = isBrandIconName(manifest.icon);
   const color = categoryColor(manifest.category);
 
   const setParam = (name: string, value: unknown) => {
@@ -2847,8 +2955,11 @@ export function NodeDetails({
       {showHeader && (
         <div className="inspector-node">
           <div className="inspector-node-head">
-            <span className="inspector-glyph" style={{ color }}>
-              <NodeIcon name={manifest.icon} size={20} />
+            <span
+              className={`inspector-glyph${hasBrandIcon ? " has-brand-icon" : ""}`}
+              style={{ color }}
+            >
+              <NodeIcon name={manifest.icon} size={hasBrandIcon ? 30 : 20} />
             </span>
             <span className="inspector-node-name">{manifest.name}</span>
             {disabled && <span className="cred-type">disabled</span>}

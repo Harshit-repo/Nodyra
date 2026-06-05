@@ -275,6 +275,7 @@ def webhook_trigger(
               ),
           },
           "routes": {
+              "widget": "routes_table",
               "description": (
                   "Route table: a list of {method, path, output} rows. Each row "
                   "maps an HTTP method + sub-path template (e.g. 'GET /{id}', "
