@@ -6,6 +6,23 @@ import asyncio
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _pin_sqlite_leader_path(monkeypatch) -> None:
+    """Pin these tests to the SQLite leader path.
+
+    ``leader_election`` reads the *global* app ``settings.database_url`` /
+    ``engine`` (which default to Postgres), not the conftest SQLite test
+    engine. Without pinning, the SQLite-path tests only pass when a Postgres
+    happens to be reachable on ``localhost:5432`` — so they fail in the CI
+    ``python`` lane (no Postgres). Forcing a SQLite URL makes ``_is_postgres()``
+    return False and exercises the real single-writer short-circuit with no DB
+    connection.
+    """
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "database_url", "sqlite+aiosqlite:///:memory:")
+
+
 @pytest.mark.asyncio
 async def test_hold_leader_lock_sqlite_always_acquires() -> None:
     """Under SQLite the helper short-circuits — there's only one writer."""
