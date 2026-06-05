@@ -45,7 +45,7 @@ def _write_pixi_toml(toml_path: Path, env) -> None:
         f'platforms = ["{_current_platform()}"]',
         "",
         "[dependencies]",
-        f'python = "=={env.python_version}.*"',
+        f'python = "{env.python_version}.*"',
     ]
     for pkg in conda_pkgs:
         lines.append(f'{pkg} = "*"')
