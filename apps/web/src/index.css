@@ -1536,102 +1536,192 @@ kbd {
 }
 
 /* ---- package drawer ---- */
+@keyframes drawerIn {
+  from {
+    transform: translateX(24px);
+    opacity: 0.4;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
 .drawer-overlay {
   position: fixed;
   inset: 0;
   z-index: 60;
-  background: rgba(4, 6, 10, 0.55);
-  backdrop-filter: blur(2px);
+  background: rgba(4, 6, 10, 0.62);
+  backdrop-filter: blur(3px);
   display: flex;
   justify-content: flex-end;
   animation: fade 140ms ease;
 }
 .pkg-drawer {
-  width: min(420px, 100vw);
+  width: min(440px, 100vw);
   height: 100%;
   overflow-y: auto;
   background: var(--surface);
   border-left: 1px solid var(--line);
-  box-shadow: var(--shadow);
-  padding: 18px;
+  box-shadow: -18px 0 48px rgba(0, 0, 0, 0.45);
+  padding: 20px 22px 28px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
+  animation: drawerIn 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.pkg-drawer .field-label {
+  margin-top: 16px;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 10px;
+  color: var(--ink-3);
 }
 .pkg-drawer-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 4px;
+  padding-bottom: 14px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--line);
 }
 .pkg-drawer-head h3 {
-  font-size: 16px;
+  font-size: 17px;
+  margin: 0 0 3px;
 }
-.pkg-dropzone {
-  border: 1px dashed var(--line-2);
+.pkg-drawer-head .muted {
+  font-size: 11px;
+}
+.pkg-drawer-close {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--bg);
-  padding: 11px;
-  font-size: 11px;
+  color: var(--ink-2);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pkg-drawer-close:hover {
+  color: var(--ink);
+  border-color: var(--line-2);
+}
+.pkg-add-hint {
+  font-size: 10.5px;
   color: var(--ink-3);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  align-items: center;
+  margin: 5px 0 0;
+}
+.pkg-dropzone {
+  position: relative;
+  border: 1.5px dashed var(--line-2);
+  border-radius: var(--radius);
+  background: var(--bg);
+  padding: 18px 14px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  text-align: center;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.pkg-dropzone:hover {
+  border-color: var(--accent, #2563eb);
+  background: var(--surface-2);
+  color: var(--ink-2);
+}
+.pkg-dropzone input[type="file"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
 }
 .pkg-import-diff {
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   background: var(--bg);
-  padding: 10px;
+  padding: 12px;
   font-size: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 9px;
+}
+.pkg-import-diff > p {
+  margin: 0;
+  color: var(--ink-2);
+}
+.pkg-import-diff label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--ink-2);
 }
 .pkg-list {
   list-style: none;
-  margin: 0;
-  padding: 4px;
+  margin: 6px 0 0;
+  padding: 5px;
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  max-height: 260px;
+  border-radius: var(--radius);
+  background: var(--bg);
+  max-height: 320px;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 .pkg-list-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  padding: 5px 7px;
+  padding: 7px 9px;
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
+  color: var(--ink);
 }
 .pkg-list-row:hover {
   background: var(--surface-2);
 }
+.pkg-list-row > span {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  word-break: break-all;
+}
+.pkg-list-row > span.muted {
+  font-family: var(--font-sans, inherit);
+}
 .pkg-list-row button {
+  flex-shrink: 0;
   border: none;
   background: transparent;
   color: var(--ink-3);
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1;
-  padding: 0 3px;
+  padding: 2px 5px;
+  border-radius: 4px;
   cursor: pointer;
 }
 .pkg-list-row button:hover {
   color: #f0747a;
+  background: rgba(240, 116, 122, 0.12);
 }
 .pkg-tag-node {
-  margin-left: 6px;
   font-family: var(--font-sans, inherit);
   font-size: 9px;
-  padding: 1px 5px;
+  padding: 1px 6px;
   border-radius: 4px;
   background: rgba(74, 222, 128, 0.14);
   color: #4ade80;
+  white-space: nowrap;
 }
 
 .ndv-missing-pkgs {

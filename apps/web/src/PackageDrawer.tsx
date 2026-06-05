@@ -106,7 +106,11 @@ export function PackageDrawer({
               {env.packages.length} installed · rebuild runs on save
             </p>
           </div>
-          <button className="btn btn-ghost" onClick={onClose} aria-label="Close">
+          <button
+            className="pkg-drawer-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
             ×
           </button>
         </header>
@@ -120,10 +124,18 @@ export function PackageDrawer({
             onChange={(e) => setEntry(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && void addEntry()}
           />
-          <button className="btn btn-sm" disabled={busy} onClick={() => void addEntry()}>
+          <button
+            className="btn btn-sm btn-primary"
+            disabled={busy}
+            onClick={() => void addEntry()}
+          >
             Add
           </button>
         </div>
+        <p className="pkg-add-hint">
+          Separate multiple with commas. Version pins like
+          <code> numpy==2.1 </code> are kept.
+        </p>
 
         <label className="field-label">Import requirements.txt</label>
         <div
@@ -140,7 +152,7 @@ export function PackageDrawer({
             accept=".txt"
             onChange={(e) => e.target.files?.[0] && void onFile(e.target.files[0])}
           />
-          Drop a requirements.txt or browse
+          ⤓ Drop a requirements.txt here, or browse
         </div>
 
         {importDiff && (
