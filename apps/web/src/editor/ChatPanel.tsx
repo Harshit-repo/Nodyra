@@ -1,8 +1,11 @@
 import { ArrowCounterClockwise, PaperPlaneTilt, Sparkle, X } from "@phosphor-icons/react";
+import { marked } from "marked";
 import { useEffect, useRef, useState } from "react";
 
 import { api } from "../api";
 import type { ChatTurnResponse } from "../types";
+
+marked.use({ gfm: true, breaks: true });
 
 interface ChatMessage {
   role: "user" | "bot";
@@ -30,8 +33,8 @@ function newSessionId(): string {
   return `sess-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-/** Render a bot reply: pretty-print JSON payloads (e.g. an unwired trigger's
- *  raw output) as a code block, otherwise plain text. */
+/** Render a bot reply as markdown. Falls back to a JSON code block when the
+ *  text is a bare JSON object/array (e.g. an unwired trigger's raw output). */
 function MessageBody({ text }: { text: string }) {
   const trimmed = text.trim();
   const looksJson =
@@ -42,10 +45,18 @@ function MessageBody({ text }: { text: string }) {
       const parsed = JSON.parse(trimmed);
       return <pre className="chat-json">{JSON.stringify(parsed, null, 2)}</pre>;
     } catch {
-      /* not JSON after all — fall through to text */
+      /* not JSON after all — fall through to markdown */
     }
   }
-  return <span className="chat-text">{text}</span>;
+  const html = marked.parse(trimmed) as string;
+  return (
+    <div
+      className="chat-md"
+      // Content originates from the workflow owner's own model on their own
+      // server — same trust level as the existing <pre> output path.
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
 }
 
 export function ChatPanel({
