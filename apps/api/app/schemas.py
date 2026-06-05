@@ -129,6 +129,8 @@ class EnvironmentCreate(BaseModel):
     runner_pool_size: int = Field(default=1, ge=0, le=32)
     runner_pool_max: int | None = Field(default=None, ge=1, le=64)
     runner_pool_id: str | None = None
+    backend: str = "venv"
+    backend_config: dict = Field(default_factory=dict)
 
 
 class EnvironmentUpdate(BaseModel):
@@ -139,6 +141,7 @@ class EnvironmentUpdate(BaseModel):
     # Sentinel-free: send null to unbind, omit to leave unchanged.
     runner_pool_id: str | None = Field(default=None)
     runner_pool_set: bool = Field(default=False)
+    backend_config: dict | None = None
 
 
 class PackageRequest(BaseModel):
@@ -182,6 +185,8 @@ class EnvironmentInfo(BaseModel):
     runner_pool_id: str | None = None
     runner_pool_name: str | None = None
     worker_rss_estimate_bytes: int | None = None
+    backend: str = "venv"
+    backend_config: dict = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
 

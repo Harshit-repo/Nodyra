@@ -56,6 +56,8 @@ def _to_info(env: Environment, pool_name: str | None = None) -> EnvironmentInfo:
         runner_pool_id=env.runner_pool_id,
         runner_pool_name=pool_name,
         worker_rss_estimate_bytes=env.worker_rss_estimate_bytes,
+        backend=env.backend,
+        backend_config=dict(env.backend_config or {}),
         created_at=env.created_at,
         updated_at=env.updated_at,
     )
@@ -133,6 +135,8 @@ async def create_environment(
         runner_pool_size=body.runner_pool_size,
         runner_pool_max=body.runner_pool_max,
         runner_pool_id=body.runner_pool_id,
+        backend=body.backend,
+        backend_config=body.backend_config,
         status="pending",
     )
     session.add(env)
@@ -153,6 +157,7 @@ async def create_environment(
 async def update_environment(
     env_id: str,
     body: EnvironmentUpdate,
+    background: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
     actor: User | None = Depends(optional_current_user),
 ):
@@ -176,11 +181,19 @@ async def update_environment(
     if body.runner_pool_set or "runner_pool_id" in sent:
         await _validate_pool_ref(session, body.runner_pool_id)
         env.runner_pool_id = body.runner_pool_id
+    needs_rebuild = False
+    if body.backend_config is not None:
+        env.backend_config = body.backend_config
+        needs_rebuild = True
     await log_audit(session, "update", "environment", env.id, env.name,
                     actor_id=actor.id if actor else None,
                     actor_email=actor.email if actor else None)
     await session.commit()
     await session.refresh(env)
+    if needs_rebuild:
+        env.status = "pending"
+        await session.commit()
+        background.add_task(build_environment, env.id)
     return _to_info(env, await _pool_name(session, env.runner_pool_id))
 
 

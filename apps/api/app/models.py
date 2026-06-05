@@ -54,6 +54,8 @@ class Environment(Base):
     worker_rss_estimate_bytes: Mapped[int | None] = mapped_column(
         BigInteger, nullable=True
     )
+    backend: Mapped[str] = mapped_column(String(20), default="venv", nullable=False)
+    backend_config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

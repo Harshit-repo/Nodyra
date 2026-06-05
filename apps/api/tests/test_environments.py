@@ -1,3 +1,5 @@
+import sys
+
 from httpx import AsyncClient
 
 
@@ -119,3 +121,39 @@ async def test_package_usage_maps_packages_to_nodes(client: AsyncClient) -> None
         e["workflow_id"] == wf["id"] and e["node_id"] == "n1"
         for e in usage["duckdb"]
     )
+
+
+async def test_environment_backend_config_roundtrip(client: AsyncClient) -> None:
+    created = (
+        await client.post(
+            "/environments",
+            json={
+                "name": "CUDA env",
+                "backend": "venv",
+                "backend_config": {"index_urls": ["https://download.pytorch.org/whl/cu121"]},
+            },
+        )
+    ).json()
+    assert created["backend"] == "venv"
+    assert created["backend_config"] == {"index_urls": ["https://download.pytorch.org/whl/cu121"]}
+
+    fetched = (await client.get(f"/environments/{created['id']}")).json()
+    assert fetched["backend"] == "venv"
+    assert fetched["backend_config"] == {"index_urls": ["https://download.pytorch.org/whl/cu121"]}
+
+
+async def test_backends_endpoint_returns_platform(client: AsyncClient) -> None:
+    resp = await client.get("/environments/backends")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["platform"] == sys.platform
+    assert data["venv"]["available"] is True
+    assert "conda" in data
+    assert "pixi" in data
+    assert "docker" in data
+
+
+async def test_backends_platform_field_is_valid_string(client: AsyncClient) -> None:
+    data = (await client.get("/environments/backends")).json()
+    assert isinstance(data["platform"], str)
+    assert len(data["platform"]) > 0
