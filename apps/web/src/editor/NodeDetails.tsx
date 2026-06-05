@@ -1461,10 +1461,9 @@ function ExpressionEditorModal({
   );
 }
 
-/** Editable combobox for params with a `load_options` loader. Lazy-fetches the
- *  provider's catalogue once a credential (named in `depends_on`) is present,
- *  falls back to the curated `choices`, and always allows free-text entry via a
- *  native datalist. */
+/** Searchable dropdown for params with a `load_options` loader. Lazy-fetches
+ *  the provider's catalogue; falls back to curated `choices`. Supports free-
+ *  text entry — typed values not in the list are accepted as-is. */
 function LoadOptionsField({
   spec,
   value,
@@ -1488,7 +1487,14 @@ function LoadOptionsField({
   const [fetched, setFetched] = useState<string[]>(curated);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const listId = `opts-${spec.name}`;
+  const [query, setQuery] = useState(current);
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  // Keep the input text in sync with external value changes (e.g. preset selects).
+  useEffect(() => { setQuery(current); }, [current]);
 
   function fetchOptions(): void {
     if (!spec.load_options) return;
@@ -1501,30 +1507,118 @@ function LoadOptionsField({
       .finally(() => setLoading(false));
   }
 
-  // Auto-fetch once a credential is present (and when it changes).
+  // Auto-fetch on mount and whenever an input the loader keys off changes:
+  // the credential, the selected provider, or a custom base_url. Without the
+  // provider dependency the model list would stay stale after switching e.g.
+  // openai → openrouter. Public catalogues (OpenRouter) load even with no
+  // credential; keyed ones fall back to the curated list until a key is set.
   const credentialId = credential?.id;
+  const providerKey = typeof params.provider === "string" ? params.provider : "";
+  const baseUrlKey = typeof params.base_url === "string" ? params.base_url : "";
   useEffect(() => {
-    if (credentialId) fetchOptions();
+    fetchOptions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [credentialId]);
+  }, [credentialId, providerKey, baseUrlKey]);
 
   const options = mergeOptions(fetched, current);
+  const filtered = query.trim()
+    ? options.filter((o) => o.toLowerCase().includes(query.trim().toLowerCase()))
+    : options;
+
+  // Close when clicking outside the component.
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  // Scroll highlighted row into view.
+  useEffect(() => {
+    if (!open || !listRef.current) return;
+    listRef.current.querySelector<HTMLLIElement>(".lo-item-hi")?.scrollIntoView({ block: "nearest" });
+  }, [highlight, open]);
+
+  function select(opt: string): void {
+    onChange(opt);
+    setQuery(opt);
+    setOpen(false);
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>): void {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (!open) { setOpen(true); setHighlight(0); return; }
+      setHighlight((h) => Math.min(h + 1, filtered.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlight((h) => Math.max(h - 1, 0));
+    } else if (e.key === "Enter") {
+      if (open && filtered[highlight]) { e.preventDefault(); select(filtered[highlight]); }
+      else setOpen(false);
+    } else if (e.key === "Escape") {
+      setOpen(false);
+      setQuery(current);
+    }
+  }
 
   return (
-    <div className="load-options-field">
+    <div className="load-options-field" ref={wrapRef}>
       <div className="load-options-row">
-        <input
-          className="field-input"
-          list={listId}
-          placeholder={spec.placeholder || "Select or type a value"}
-          value={current}
-          onChange={(e) => onChange(e.target.value)}
-        />
-        <datalist id={listId}>
-          {options.map((opt) => (
-            <option key={opt} value={opt} />
-          ))}
-        </datalist>
+        <div className="lo-combo">
+          <input
+            className="field-input lo-input"
+            placeholder={spec.placeholder || "Select or type a value"}
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              onChange(e.target.value);
+              setOpen(true);
+              setHighlight(0);
+            }}
+            onFocus={() => { setOpen(true); setHighlight(0); }}
+            onKeyDown={handleKeyDown}
+          />
+          <button
+            type="button"
+            className="lo-chevron"
+            tabIndex={-1}
+            onMouseDown={(e) => { e.preventDefault(); setOpen((o) => !o); setHighlight(0); }}
+            aria-label="Toggle options"
+          >
+            ▾
+          </button>
+          {open && (
+            <ul className="lo-dropdown" ref={listRef} role="listbox">
+              {filtered.length === 0 ? (
+                <li className="lo-empty">
+                  {loading ? "Loading…" : "No matches — value saved as-is"}
+                </li>
+              ) : (
+                filtered.map((opt, i) => (
+                  <li
+                    key={opt}
+                    role="option"
+                    aria-selected={opt === current}
+                    className={[
+                      "lo-item",
+                      i === highlight ? "lo-item-hi" : "",
+                      opt === current ? "lo-item-sel" : "",
+                    ].filter(Boolean).join(" ")}
+                    onMouseDown={(e) => { e.preventDefault(); select(opt); }}
+                    onMouseEnter={() => setHighlight(i)}
+                  >
+                    {opt}
+                  </li>
+                ))
+              )}
+            </ul>
+          )}
+        </div>
         <button
           type="button"
           className="btn btn-sm btn-ghost"
