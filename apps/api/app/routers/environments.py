@@ -199,15 +199,35 @@ async def update_environment(
 
 @router.get("/backends")
 async def list_backends() -> dict:
-    """Return the server platform and which environment backends are available.
+    """Return server platform and available backends.
 
-    The ``platform`` field is used by the frontend to evaluate PEP 508
-    sys_platform markers when checking for missing packages.
+    conda and pixi are always available — their binaries auto-download on first use.
+    Only Docker is greyed out when the daemon is unreachable.
+    The ``platform`` field is used by the frontend PEP 508 marker evaluator.
     """
     import shutil
     import sys
+    from app.services.backends.tools import TOOLS_DIR
+
+    def _tool_version(name: str) -> str | None:
+        suffix = ".exe" if sys.platform == "win32" else ""
+        binary = TOOLS_DIR / f"{name}{suffix}"
+        if binary.exists():
+            return f"{name} (managed)"
+        system = shutil.which(name)
+        if system:
+            return f"{name} (system)"
+        return None
 
     uv_path = shutil.which("uv")
+    micromamba_version = _tool_version("micromamba") or (
+        "mamba (system)" if shutil.which("mamba") else
+        "conda (system)" if shutil.which("conda") else
+        None
+    )
+    pixi_version = _tool_version("pixi")
+    docker_available = shutil.which("docker") is not None
+
     return {
         "platform": sys.platform,
         "venv": {
@@ -215,9 +235,21 @@ async def list_backends() -> dict:
             "version": None,
             "managed": False,
         },
-        "conda": {"available": False, "version": None, "managed": False},
-        "pixi": {"available": False, "version": None, "managed": False},
-        "docker": {"available": False, "version": None, "managed": False},
+        "conda": {
+            "available": True,
+            "version": micromamba_version,
+            "managed": micromamba_version is not None and "managed" in (micromamba_version or ""),
+        },
+        "pixi": {
+            "available": True,
+            "version": pixi_version,
+            "managed": pixi_version is not None and "managed" in (pixi_version or ""),
+        },
+        "docker": {
+            "available": docker_available,
+            "version": None,
+            "managed": False,
+        },
     }
 
 

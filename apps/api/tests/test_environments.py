@@ -157,3 +157,22 @@ async def test_backends_platform_field_is_valid_string(client: AsyncClient) -> N
     data = (await client.get("/environments/backends")).json()
     assert isinstance(data["platform"], str)
     assert len(data["platform"]) > 0
+
+
+async def test_backends_conda_is_always_available(client: AsyncClient) -> None:
+    """conda and pixi must always be available (even before download) for the UI."""
+    resp = await client.get("/environments/backends")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["conda"]["available"] is True
+    assert data["pixi"]["available"] is True
+
+
+async def test_backends_venv_available_when_uv_present(client: AsyncClient) -> None:
+    """venv backend is available when uv is on PATH."""
+    import shutil
+    resp = await client.get("/environments/backends")
+    assert resp.status_code == 200
+    data = resp.json()
+    expected = shutil.which("uv") is not None
+    assert data["venv"]["available"] == expected
