@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api, runnerPoolsApi } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { HomeHeader } from "./HomeHeader";
 import { PackageDrawer } from "./PackageDrawer";
+import { useToast } from "./ToastProvider";
 import type { Environment, RunnerPoolInfo, SystemSettings } from "./types";
 
 const BACKEND_BADGE: Record<string, { label: string; color: string }> = {
@@ -721,6 +722,9 @@ export function EnvironmentsPage() {
   const [pools, setPools] = useState<RunnerPoolInfo[]>([]);
   const [error, setError] = useState("");
   const [modal, setModal] = useState(false);
+  const { notify } = useToast();
+  // Track previous statuses to fire toasts on transitions
+  const prevStatuses = useRef<Record<string, string>>({});
 
   function load() {
     api
@@ -743,6 +747,26 @@ export function EnvironmentsPage() {
       // Workspace settings are best-effort context; missing is fine.
     });
   }, []);
+
+  // Fire toasts when env build status transitions.
+  useEffect(() => {
+    if (!environments) return;
+    const prev = prevStatuses.current;
+    for (const env of environments) {
+      const was = prev[env.id];
+      const is = env.status;
+      const wasBuilding = was === "pending" || was === "building";
+      const isBuilding = is === "pending" || is === "building";
+      if ((!was || was === "ready" || was === "error") && isBuilding) {
+        notify(`⚙ Building ${env.name}…`, "info");
+      } else if (wasBuilding && is === "ready") {
+        notify(`✅ ${env.name} is ready!`, "success");
+      } else if (wasBuilding && is === "error") {
+        notify(`${env.name} failed to build — check the logs.`, "error");
+      }
+      prev[env.id] = is;
+    }
+  }, [environments, notify]);
 
   // Poll while any environment is still building.
   useEffect(() => {
