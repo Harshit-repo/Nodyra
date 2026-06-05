@@ -4,6 +4,7 @@ Importing this package registers all built-in nodes into the default registry.
 """
 
 from noodle_nodes import ai_extra as ai_extra
+from noodle_nodes import document_intelligence as document_intelligence
 from noodle_nodes import ai_v2 as ai_v2
 from noodle_nodes import builtin as builtin
 from noodle_nodes import charts as charts
@@ -28,6 +29,7 @@ from noodle_nodes.integrations_v2.providers import stripe as stripe_v2
 __version__ = "0.0.1"
 __all__ = [
     "ai_extra",
+    "document_intelligence",
     "ai_v2",
     "builtin",
     "charts",
