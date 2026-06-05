@@ -20,6 +20,7 @@ import app.services.retention as retention_module
 import app.services.runner as runner_module
 import app.services.runtime_pool as runtime_pool_module
 import app.services.triggers as triggers_module
+import app.services.backends as backends_module
 import app.services.venv as venv_module
 from app import models  # noqa: F401 - registers ORM models on Base.metadata
 from app.config import settings
@@ -168,7 +169,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     redaction_module.invalidate_secret_cache()
     live_settings_module.invalidate_live_settings_cache()
     originals = {
-        venv_module: venv_module.SessionLocal,
+        backends_module: backends_module.SessionLocal,
         artifacts_module: artifacts_module.SessionLocal,
         chat_service_module: chat_service_module.SessionLocal,
         runner_module: runner_module.SessionLocal,
@@ -180,7 +181,7 @@ async def client() -> AsyncIterator[AsyncClient]:
         remote_dispatch_module: remote_dispatch_module.SessionLocal,
         runner_pools_module: runner_pools_module.SessionLocal,
     }
-    venv_module.SessionLocal = test_session
+    backends_module.SessionLocal = test_session
     artifacts_module.SessionLocal = test_session
     chat_service_module.SessionLocal = test_session
     runner_module.SessionLocal = test_session

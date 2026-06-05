@@ -14,10 +14,10 @@ async def test_do_build_passes_extra_index_urls(tmp_path) -> None:
         calls.append(args)
         return 0, "ok"
 
-    with patch("app.services.venv._run", side_effect=fake_run):
-        with patch("app.services.venv.venv_dir", return_value=tmp_path / "envs" / "test-env"):
-            with patch("app.services.venv.venv_python", return_value=tmp_path / "python"):
-                with patch("app.services.venv._local_noodle_packages", return_value=[]):
+    with patch("app.services.backends.venv._run", side_effect=fake_run):
+        with patch("app.services.backends.venv.venv_dir", return_value=tmp_path / "envs" / "test-env"):
+            with patch("app.services.backends.venv.venv_python", return_value=tmp_path / "python"):
+                with patch("app.services.backends.venv._local_noodle_packages", return_value=[]):
                     status, _ = await _do_build(
                         "test-env",
                         "3.12",
@@ -40,10 +40,10 @@ async def test_do_build_no_extra_index_urls_when_empty(tmp_path) -> None:
         calls.append(args)
         return 0, "ok"
 
-    with patch("app.services.venv._run", side_effect=fake_run):
-        with patch("app.services.venv.venv_dir", return_value=tmp_path / "envs" / "test-env"):
-            with patch("app.services.venv.venv_python", return_value=tmp_path / "python"):
-                with patch("app.services.venv._local_noodle_packages", return_value=[]):
+    with patch("app.services.backends.venv._run", side_effect=fake_run):
+        with patch("app.services.backends.venv.venv_dir", return_value=tmp_path / "envs" / "test-env"):
+            with patch("app.services.backends.venv.venv_python", return_value=tmp_path / "python"):
+                with patch("app.services.backends.venv._local_noodle_packages", return_value=[]):
                     status, _ = await _do_build("test-env", "3.12", ["pandas"])
 
     assert status == "ready"

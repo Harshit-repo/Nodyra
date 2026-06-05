@@ -18,7 +18,7 @@ from app.schemas import (
 )
 from app.security import optional_current_user, require_permission
 from app.services.audit import log_audit
-from app.services.venv import build_environment
+from app.services.backends import build_environment
 from noodle.packages import canonical_package_name
 from noodle.sdk import registry as node_registry
 
