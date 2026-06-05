@@ -51,13 +51,14 @@ def _write_pixi_toml(toml_path: Path, env) -> None:
     channel_str = ", ".join(f'"{c}"' for c in channels)
 
     lines = [
-        "[project]",
+        "[workspace]",
         f'name = "noodle-env-{env.id}"',
         f"channels = [{channel_str}]",
         f'platforms = ["{_current_platform()}"]',
         "",
         "[dependencies]",
         f'python = "{env.python_version}.*"',
+        'pip = "*"',
     ]
     for pkg in conda_pkgs:
         lines.append(f'{pkg} = "*"')
@@ -90,13 +91,14 @@ def _incremental_additions(
     installed_conda = {
         k.lower().replace("-", "_")
         for k in data.get("dependencies", {}).keys()
-        if k != "python"
+        if k not in ("python", "pip")
     }
     installed_pypi = {
         k.lower().replace("-", "_")
         for k in data.get("pypi-dependencies", {}).keys()
     }
-    installed_channels = list(data.get("project", {}).get("channels", []))
+    workspace = data.get("workspace") or data.get("project") or {}
+    installed_channels = list(workspace.get("channels", []))
     desired_channels = (env.backend_config or {}).get("channels", _DEFAULT_CHANNELS)
     if installed_channels != desired_channels:
         return None  # channel change → full rebuild
