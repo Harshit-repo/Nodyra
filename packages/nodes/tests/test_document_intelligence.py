@@ -407,6 +407,60 @@ def test_excel_extract_raises_without_input(store_ctx) -> None:
         excel_extract(input=None)
 
 
+def test_barcode_qr_generate_raises_without_input(store_ctx) -> None:
+    from noodle_nodes.document_intelligence import barcode_qr_generate
+    with pytest.raises(ValueError, match="input is required"):
+        barcode_qr_generate(input=None)
+
+
+def test_barcode_qr_generate_qr_returns_png_artifact(store_ctx) -> None:
+    pytest.importorskip("qrcode")
+    from noodle_nodes.document_intelligence import barcode_qr_generate
+
+    result = barcode_qr_generate(input="https://example.com", format="qr", filename="qr.png")
+    assert is_artifact_ref(result["artifact"])
+    assert result["artifact"]["content_type"] == "image/png"
+    assert result["format"] == "qr"
+    assert result["value"] == "https://example.com"
+
+
+def test_barcode_qr_decode_raises_without_input(store_ctx) -> None:
+    from noodle_nodes.document_intelligence import barcode_qr_decode
+    with pytest.raises(ValueError, match="input is required"):
+        barcode_qr_decode(input=None)
+
+
+def test_barcode_qr_roundtrip(store_ctx) -> None:
+    """Generate a QR code then decode it — values must match."""
+    pytest.importorskip("qrcode")
+    pytest.importorskip("pyzbar")
+    from noodle_nodes.document_intelligence import barcode_qr_generate, barcode_qr_decode
+
+    gen_result = barcode_qr_generate(input="HELLO-NOODLE-123", format="qr")
+    decode_result = barcode_qr_decode(input=gen_result["artifact"])
+
+    assert decode_result["count"] == 1
+    assert decode_result["codes"][0]["data"] == "HELLO-NOODLE-123"
+    assert decode_result["codes"][0]["type"] == "QRCODE"
+
+
+def test_barcode_qr_decode_raises_on_blank_image(store_ctx) -> None:
+    pytest.importorskip("pyzbar")
+    pytest.importorskip("PIL")
+    from PIL import Image
+    from noodle.artifacts import write_bytes
+    from noodle_nodes.document_intelligence import barcode_qr_decode
+
+    # Blank white image — no barcode
+    img = Image.new("RGB", (100, 100), color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    ref = write_bytes(buf.getvalue(), name="blank.png", content_type="image/png")
+
+    with pytest.raises(ValueError, match="No barcode"):
+        barcode_qr_decode(input=ref)
+
+
 def test_document_intelligence_importable_without_optional_packages() -> None:
     """Module must import cleanly even when no doc-processing packages are installed."""
     import importlib
