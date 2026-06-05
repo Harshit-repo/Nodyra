@@ -32,6 +32,17 @@ class CredentialSpec(BaseModel):
     test_service: str | None = None
 
 
+class SystemRequirement(BaseModel):
+    """An OS-level dependency a node needs (e.g. ghostscript, libzbar)."""
+
+    name: str
+    apt: str = ""
+    brew: str = ""
+    windows: str = ""
+    dockerfile_hint: str = ""
+    note: str = ""
+
+
 class ParamSpec(BaseModel):
     """A configurable node parameter, edited in the inspector (not wired)."""
 
@@ -128,6 +139,7 @@ class NodeManifest(BaseModel):
     params: list[ParamSpec] = Field(default_factory=list)
     outputs: list[PortSpec] = Field(default_factory=list)
     requirements: list[str] = Field(default_factory=list)
+    system_requirements: list[SystemRequirement] = Field(default_factory=list)
 
 
 class Position(BaseModel):

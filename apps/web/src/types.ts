@@ -65,6 +65,15 @@ export interface PortSpec {
   data_kind?: PortDataKind;
 }
 
+export interface SystemRequirement {
+  name: string;
+  apt?: string;
+  brew?: string;
+  windows?: string;
+  dockerfile_hint?: string;
+  note?: string;
+}
+
 export interface NodeManifest {
   id: string;
   name: string;
@@ -81,6 +90,7 @@ export interface NodeManifest {
   params: ParamSpec[];
   outputs: PortSpec[];
   requirements?: string[];
+  system_requirements?: SystemRequirement[];
 }
 
 export interface PackageUsageEntry {

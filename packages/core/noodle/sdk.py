@@ -24,7 +24,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, get_args, get_origin, get_type_hints
 
-from noodle.models import CredentialSpec, NodeManifest, ParamSpec, PortSpec
+from noodle.models import CredentialSpec, NodeManifest, ParamSpec, PortSpec, SystemRequirement
 
 _TYPE_MAP: dict[Any, str] = {
     str: "string",
@@ -236,6 +236,7 @@ def _build_manifest(
     usable_as_tool: bool | None = None,
     tool_side_effecting: bool = True,
     requirements: list[str] | None = None,
+    system_requirements: list[dict] | None = None,
 ) -> NodeManifest:
     hints = get_type_hints(func)
     signature = inspect.signature(func)
@@ -301,6 +302,9 @@ def _build_manifest(
             for o in outputs
         ],
         requirements=list(requirements or []),
+        system_requirements=[
+            SystemRequirement.model_validate(sr) for sr in (system_requirements or [])
+        ],
     )
 
 
@@ -814,6 +818,7 @@ def node(
     usable_as_tool: bool | None = None,
     tool_side_effecting: bool = True,
     requirements: list[str] | None = None,
+    system_requirements: list[dict] | None = None,
     registry: NodeRegistry = registry,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Register a function as a Noodle node.
@@ -858,6 +863,7 @@ def node(
             usable_as_tool=usable_as_tool,
             tool_side_effecting=tool_side_effecting,
             requirements=requirements,
+            system_requirements=system_requirements,
         )
         param_names, has_var_kw = _signature_info(func)
         node_def = NodeDef(
