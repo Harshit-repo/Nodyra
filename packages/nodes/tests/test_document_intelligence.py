@@ -222,6 +222,125 @@ def test_pdf_generate_renders_template_variables(store_ctx) -> None:
     assert raw[:4] == b"%PDF"
 
 
+def test_docx_generate_raises_missing_package(store_ctx, monkeypatch) -> None:
+    import builtins
+    real_import = builtins.__import__
+
+    def mock_import(name, *args, **kwargs):
+        if name == "docx":
+            raise ImportError("No module named 'docx'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", mock_import)
+    from noodle_nodes.document_intelligence import docx_generate
+    with pytest.raises(RuntimeError, match="python-docx"):
+        docx_generate(input={"name": "Alice"})
+
+
+def test_docx_generate_returns_artifact(store_ctx) -> None:
+    pytest.importorskip("docx")
+    from noodle_nodes.document_intelligence import docx_generate
+
+    result = docx_generate(input={"greeting": "Hello"}, filename="test.docx")
+    assert is_artifact_ref(result["artifact"])
+    assert "wordprocessingml" in result["artifact"]["content_type"]
+
+
+def test_docx_generate_fills_template_placeholders(store_ctx) -> None:
+    pytest.importorskip("docx")
+    from docx import Document
+    from noodle.artifacts import write_bytes, read_bytes
+    from noodle_nodes.document_intelligence import docx_generate
+
+    # Build a real .docx template with {{name}} placeholder
+    doc = Document()
+    doc.add_paragraph("Dear {{name}},")
+    doc.add_paragraph("Your order {{order_id}} is ready.")
+    buf = io.BytesIO()
+    doc.save(buf)
+    template_ref = write_bytes(
+        buf.getvalue(),
+        name="template.docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+    result = docx_generate(
+        input={"name": "Alice", "order_id": "ORD-001"},
+        template_artifact=template_ref,
+        filename="filled.docx",
+    )
+    assert is_artifact_ref(result["artifact"])
+    assert result["placeholders_filled"] == 2
+
+    # Verify the text was actually replaced
+    filled_bytes = read_bytes(result["artifact"])
+    filled_doc = Document(io.BytesIO(filled_bytes))
+    full_text = " ".join(p.text for p in filled_doc.paragraphs)
+    assert "Alice" in full_text
+    assert "ORD-001" in full_text
+    assert "{{name}}" not in full_text
+
+
+def test_docx_generate_raises_for_unfilled_placeholders(store_ctx) -> None:
+    pytest.importorskip("docx")
+    from docx import Document
+    from noodle.artifacts import write_bytes
+    from noodle_nodes.document_intelligence import docx_generate
+
+    doc = Document()
+    doc.add_paragraph("Hello {{name}}, your code is {{code}}.")
+    buf = io.BytesIO()
+    doc.save(buf)
+    template_ref = write_bytes(buf.getvalue(), name="tpl.docx", content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+    with pytest.raises(ValueError, match="name"):
+        docx_generate(input={}, template_artifact=template_ref)
+
+
+def test_docx_extract_returns_paragraphs(store_ctx) -> None:
+    pytest.importorskip("docx")
+    from docx import Document
+    from noodle.artifacts import write_bytes
+    from noodle_nodes.document_intelligence import docx_extract
+
+    doc = Document()
+    doc.add_heading("My Title", level=1)
+    doc.add_paragraph("First paragraph.")
+    doc.add_paragraph("Second paragraph.")
+    buf = io.BytesIO()
+    doc.save(buf)
+    artifact_ref = write_bytes(buf.getvalue(), name="test.docx", content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+    result = docx_extract(input=artifact_ref)
+    assert result["paragraph_count"] >= 3
+    headings = [p for p in result["paragraphs"] if p["is_heading"]]
+    assert any("My Title" in h["text"] for h in headings)
+
+
+def test_docx_extract_returns_tables(store_ctx) -> None:
+    pytest.importorskip("docx")
+    from docx import Document
+    from noodle.artifacts import write_bytes
+    from noodle_nodes.document_intelligence import docx_extract
+
+    doc = Document()
+    tbl = doc.add_table(rows=3, cols=2)
+    tbl.cell(0, 0).text = "Name"
+    tbl.cell(0, 1).text = "Score"
+    tbl.cell(1, 0).text = "Alice"
+    tbl.cell(1, 1).text = "95"
+    tbl.cell(2, 0).text = "Bob"
+    tbl.cell(2, 1).text = "87"
+    buf = io.BytesIO()
+    doc.save(buf)
+    artifact_ref = write_bytes(buf.getvalue(), name="test.docx", content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+    result = docx_extract(input=artifact_ref, include_tables=True)
+    assert result["table_count"] == 1
+    assert result["tables"][0]["headers"] == ["Name", "Score"]
+    assert result["tables"][0]["row_count"] == 2
+
+
 def test_document_intelligence_importable_without_optional_packages() -> None:
     """Module must import cleanly even when no doc-processing packages are installed."""
     import importlib
