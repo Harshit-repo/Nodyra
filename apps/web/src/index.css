@@ -1597,6 +1597,64 @@ kbd {
   vertical-align: middle;
   object-fit: contain;
 }
+.env-card-head-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.env-log-icon {
+  position: relative;
+  display: inline-flex;
+}
+.env-log-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid var(--line-2);
+  background: var(--surface-2);
+  color: var(--ink-3);
+  font-size: 13px;
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.env-log-btn:hover {
+  color: var(--ink);
+  border-color: var(--line);
+  background: var(--surface-3);
+}
+.env-log-tooltip {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 200;
+  width: 360px;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+  padding: 10px 12px 8px;
+}
+.env-log-tooltip pre {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.env-log-tooltip-hint {
+  margin: 6px 0 0;
+  font-size: 10px;
+  color: var(--ink-3);
+  text-align: right;
+}
 .env-card-head {
   display: flex;
   align-items: flex-start;
@@ -1812,7 +1870,6 @@ kbd {
 }
 .package-drawer-section {
   padding: 10px 0 6px;
-  border-bottom: 1px solid var(--line-1);
   margin-bottom: 8px;
 }
 .channels-list {

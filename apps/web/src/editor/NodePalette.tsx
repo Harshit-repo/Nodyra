@@ -193,7 +193,7 @@ function PaletteItem({
 const COLLAPSED_KEY = "noodle_palette_collapsed";
 const EXPANDED_GROUPS_KEY = "noodle_palette_expanded_groups";
 const COLLAPSED_QUICK_KEY = "noodle_palette_collapsed_quick";
-const DEFAULT_EXPANDED_GROUPS = ["Integrations"];
+const DEFAULT_EXPANDED_GROUPS: string[] = [];
 
 export function NodePalette() {
   const manifests = useEditor((s) => s.manifests);
@@ -471,7 +471,11 @@ export function NodePalette() {
         <button
           type="button"
           className={categoryFilter === "all" ? "active" : ""}
-          onClick={() => setCategoryFilter("all")}
+          onClick={() => {
+            setCategoryFilter("all");
+            setExpandedGroups(new Set());
+            try { localStorage.setItem(EXPANDED_GROUPS_KEY, "[]"); } catch { /* */ }
+          }}
         >
           All
         </button>

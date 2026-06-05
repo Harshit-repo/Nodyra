@@ -63,6 +63,41 @@ function PoolSelect({
 
 type PoolMode = "fixed" | "elastic" | "spawn";
 
+function LogIcon({ envName, log }: { envName: string; log: string }) {
+  const [show, setShow] = useState(false);
+  const tail = log.split("\n").slice(-14).join("\n");
+
+  function download() {
+    const blob = new Blob([log], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${envName.replace(/[^a-z0-9_-]/gi, "_")}-build.log`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <span
+      className="env-log-icon"
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
+    >
+      <button type="button" className="env-log-btn" onClick={download} title="Click to download full log">
+        ≡
+      </button>
+      {show && (
+        <div className="env-log-tooltip">
+          <pre>{tail}</pre>
+          <p className="env-log-tooltip-hint">Click to download full log</p>
+        </div>
+      )}
+    </span>
+  );
+}
+
 function InfoTip({ text }: { text: string }) {
   return (
     <span className="info-tip" title={text} aria-label={text}>
@@ -622,7 +657,10 @@ function EnvCard({
             );
           })()}
         </div>
-        <span className={`env-status status-${env.status}`}>{env.status}</span>
+        <div className="env-card-head-right">
+          {env.status_detail && <LogIcon envName={env.name} log={env.status_detail} />}
+          <span className={`env-status status-${env.status}`}>{env.status}</span>
+        </div>
       </div>
       <div className="env-meta">
         Python {env.python_version} · {poolLabel(env)} ·{" "}
@@ -656,10 +694,6 @@ function EnvCard({
         </div>
       </div>
       {env.description && <p className="env-description">{env.description}</p>}
-
-      {env.status_detail && (env.status === "error" || env.status === "building") && (
-        <pre className="env-log">{env.status_detail}</pre>
-      )}
 
       <div className="env-actions">
         <button className="btn btn-sm btn-primary" onClick={() => setShowPackages(true)}>
