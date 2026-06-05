@@ -162,7 +162,7 @@ def test_conda_python_path_posix(tmp_path) -> None:
     with patch("sys.platform", "linux"):
         with patch("app.services.backends.conda.venv_dir", return_value=tmp_path):
             p = b.python_path("env-id")
-    assert str(p).endswith("bin/python")
+    assert p.parts[-2:] == ("bin", "python")
 
 
 def test_conda_python_path_win32(tmp_path) -> None:
