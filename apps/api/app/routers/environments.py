@@ -1,9 +1,9 @@
-import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
 from app.db import get_session
 from app.models import Environment, RunnerPool, User, Workflow
 from app.schemas import (
@@ -16,11 +16,11 @@ from app.schemas import (
     PackageUsageInfo,
     PackageUsagePackage,
 )
-from noodle.packages import canonical_package_name
-from noodle.sdk import registry as node_registry
 from app.security import optional_current_user, require_permission
 from app.services.audit import log_audit
 from app.services.venv import build_environment
+from noodle.packages import canonical_package_name
+from noodle.sdk import registry as node_registry
 
 router = APIRouter(prefix="/environments", tags=["environments"])
 
