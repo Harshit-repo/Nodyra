@@ -562,9 +562,10 @@ function EnvCard({
           type="button"
           className="env-health-tile-btn"
           onClick={() => setShowPackages(true)}
+          title="Add, remove or import packages"
         >
-          <span>Packages</span>
-          <strong>{env.packages.length} ›</strong>
+          <span>Packages ›</span>
+          <strong>{env.packages.length}</strong>
         </button>
         <div>
           <span>Worker RAM</span>
@@ -582,6 +583,9 @@ function EnvCard({
       )}
 
       <div className="env-actions">
+        <button className="btn btn-sm btn-primary" onClick={() => setShowPackages(true)}>
+          Manage packages
+        </button>
         <button className="btn btn-sm" onClick={() => setEditing(true)}>
           Edit
         </button>
