@@ -11,7 +11,7 @@ loop (``enable_inprocess_scheduler=false``) and drive runs from Celery Beat.
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from croniter import croniter
@@ -20,7 +20,14 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import Deployment, Run, ScheduleState, Workflow, WorkflowVersion
+from app.models import (
+    Deployment,
+    ProviderTriggerSubscription,
+    Run,
+    ScheduleState,
+    Workflow,
+    WorkflowVersion,
+)
 from app.services.graph_utils import first_trigger_node
 from app.services.runner import start_run
 
@@ -876,6 +883,131 @@ def _deployment_params(deployment: Deployment) -> dict:
     }
 
 
+async def _load_active_poll_subscriptions() -> list[ProviderTriggerSubscription]:
+    async with SessionLocal() as session:
+        rows = await session.scalars(
+            select(ProviderTriggerSubscription).where(
+                ProviderTriggerSubscription.status == "active"
+            )
+        )
+        return list(rows.all())
+
+
+async def _execute_poll(
+    sub: ProviderTriggerSubscription,
+    now: datetime,
+) -> None:
+    from noodle_nodes.integrations_v2.registry import get_registered_provider_trigger
+    from noodle_nodes.integrations_v2.specs import ProviderTriggerPollContext
+
+    registered = get_registered_provider_trigger(sub.node_type)
+    spec = registered.spec
+
+    async with SessionLocal() as session:
+        workflow = await session.get(
+            Workflow, sub.workflow_id, options=[selectinload(Workflow.versions)]
+        )
+        if workflow is None or not workflow.active or not workflow.versions:
+            return
+        version = workflow.versions[-1]
+        graph = version.graph or {}
+        node_params: dict = {}
+        for node in graph.get("nodes", []):
+            if node.get("id") == sub.node_id:
+                node_params = node.get("params") or {}
+                break
+        from app.services.credentials import resolve_credential_refs
+        resolved = await resolve_credential_refs(
+            session,
+            node_params,
+            workflow_id=sub.workflow_id,
+            environment_id=getattr(workflow, "environment_id", None),
+        )
+
+    cursor = (sub.config or {}).get("poll_cursor") or {}
+    ctx = ProviderTriggerPollContext(params=resolved, cursor=cursor)
+    result = await asyncio.to_thread(spec.poll, ctx)
+
+    next_poll_at = (now + timedelta(seconds=spec.poll_interval_seconds)).isoformat()
+
+    async with SessionLocal() as session:
+        row = await session.get(ProviderTriggerSubscription, sub.id)
+        if row is None:
+            return
+        row.config = {
+            **(row.config or {}),
+            "poll_cursor": result.cursor,
+            "next_poll_at": next_poll_at,
+        }
+        if result.events:
+            row.last_event_at = now
+        await session.commit()
+
+    if not result.events:
+        return
+
+    async with SessionLocal() as session:
+        workflow = await session.get(
+            Workflow, sub.workflow_id, options=[selectinload(Workflow.versions)]
+        )
+        if workflow is None or not workflow.versions:
+            return
+        version = workflow.versions[-1]
+        graph = version.graph or {}
+
+    for event_payload in result.events:
+        await start_run(
+            sub.workflow_id,
+            graph,
+            version.version,
+            workflow_version_id=version.id,
+            mode="production",
+            trigger_type="provider_trigger",
+            trigger_node_id=sub.node_id,
+            cache={sub.node_id: {"main": event_payload}},
+        )
+
+
+async def _poll_subscriptions(now: datetime) -> None:
+    """Fire poll hooks for any active provider trigger subscriptions that are due."""
+    from noodle_nodes.integrations_v2.registry import (
+        get_registered_provider_trigger,
+        is_registered_provider_trigger,
+    )
+
+    subs = await _load_active_poll_subscriptions()
+    for sub in subs:
+        if not is_registered_provider_trigger(sub.node_type):
+            continue
+        registered = get_registered_provider_trigger(sub.node_type)
+        if registered.spec.poll is None:
+            continue
+
+        config = sub.config or {}
+        next_poll_str = config.get("next_poll_at")
+        if next_poll_str:
+            try:
+                next_poll = datetime.fromisoformat(next_poll_str)
+                if next_poll.tzinfo is None:
+                    next_poll = next_poll.replace(tzinfo=UTC)
+                if now < next_poll:
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        try:
+            await _execute_poll(sub, now)
+        except Exception:
+            logger.warning(
+                "poll failed for subscription %s (%s)", sub.id, sub.node_type, exc_info=True
+            )
+            async with SessionLocal() as session:
+                row = await session.get(ProviderTriggerSubscription, sub.id)
+                if row is not None:
+                    row.error = "Poll hook raised an exception — check logs"
+                    await session.commit()
+
+
 async def _tick() -> None:
     """One pass of the scheduler.
 
@@ -1038,6 +1170,9 @@ async def _tick() -> None:
             parameters=params or None,
             trigger_node_id=trigger_id,
         )
+
+    # --- 3. Fire poll hooks for due provider trigger subscriptions.
+    await _poll_subscriptions(now)
 
 
 async def scheduler_loop() -> None:
