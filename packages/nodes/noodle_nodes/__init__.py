@@ -13,6 +13,8 @@ from noodle_nodes import communication as communication
 from noodle_nodes import datasets as datasets
 from noodle_nodes import integrations as integrations
 from noodle_nodes import llm as llm
+from noodle_nodes import llm_evals as llm_evals
+from noodle_nodes import llm_training as llm_training
 from noodle_nodes import ml as ml
 from noodle_nodes import saas as saas
 from noodle_nodes import storage as storage
@@ -45,6 +47,8 @@ __all__ = [
     "slack_v2",
     "stripe_v2",
     "llm",
+    "llm_evals",
+    "llm_training",
     "ml",
     "saas",
     "storage",
