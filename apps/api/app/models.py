@@ -456,10 +456,10 @@ class Artifact(Base):
     __tablename__ = "artifacts"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    run_id: Mapped[str] = mapped_column(
-        ForeignKey("runs.id", ondelete="CASCADE"), index=True, nullable=False
+    run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="CASCADE"), index=True, nullable=True
     )
-    node_id: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
+    node_id: Mapped[str | None] = mapped_column(String(120), index=True, nullable=True)
     name: Mapped[str] = mapped_column(String(240), nullable=False)
     kind: Mapped[str] = mapped_column(String(40), default="binary", nullable=False)
     content_type: Mapped[str] = mapped_column(

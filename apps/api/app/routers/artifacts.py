@@ -1,13 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db import get_session
 from app.models import Artifact, Run
 from app.schemas import ArtifactInfo, DatasetQueryRequest, DatasetQueryResult
 from app.security import require_permission
-from app.services.artifact_backends import get_backend
+from app.services.artifact_backends import _artifact_base_dir, get_backend
 from app.services.artifacts import delete_artifact_files
 from app.services.datasets_query import DatasetQueryError, run_dataset_query
 
@@ -155,6 +159,48 @@ async def get_artifact_signed_url(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     url = backend.signed_url(row, expires_in=max(1, int(expires_in)))
     return {"url": url, "expires_in": expires_in if url else None}
+
+
+@router.post("/artifacts/upload", response_model=ArtifactInfo)
+async def upload_artifact(
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_permission("artifact:write")),
+) -> ArtifactInfo:
+    """Upload a file from the browser and store it as a run-less artifact."""
+    content = await file.read()
+    max_bytes: int = getattr(settings, "max_upload_size_bytes", 52_428_800)
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            f"File exceeds maximum upload size of {max_bytes} bytes",
+        )
+
+    filename = file.filename or "upload"
+    content_type = file.content_type or "application/octet-stream"
+    artifact_id = uuid.uuid4().hex
+
+    storage_key = f"uploads/{artifact_id}/{filename}"
+    artifact_path = _artifact_base_dir() / storage_key
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_bytes(content)
+
+    backend = get_backend()
+    row = Artifact(
+        id=artifact_id,
+        run_id=None,
+        node_id=None,
+        name=filename,
+        kind="upload",
+        content_type=content_type,
+        size_bytes=len(content),
+        storage_backend=backend.name,
+        storage_key=storage_key,
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return _info(row)
 
 
 @router.delete(

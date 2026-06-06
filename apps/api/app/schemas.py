@@ -329,8 +329,8 @@ class RunInfo(BaseModel):
 
 class ArtifactInfo(BaseModel):
     id: str
-    run_id: str
-    node_id: str
+    run_id: str | None = None
+    node_id: str | None = None
     name: str
     kind: str
     content_type: str

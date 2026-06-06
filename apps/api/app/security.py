@@ -31,6 +31,7 @@ _PERMISSION_MIN_ROLE = {
     "deployment:run": "editor",
     "code_module:write": "editor",
     "pinned:write": "editor",
+    "artifact:write": "editor",
     "artifact:delete": "editor",
     "credential:read": "editor",
     "credential:test": "editor",
