@@ -16,6 +16,7 @@ from noodle_nodes import llm as llm
 from noodle_nodes import llm_evals as llm_evals
 from noodle_nodes import llm_training as llm_training
 from noodle_nodes import ml as ml
+from noodle_nodes import rag_lifecycle as rag_lifecycle
 from noodle_nodes import synthetic_data as synthetic_data
 from noodle_nodes import saas as saas
 from noodle_nodes import storage as storage
@@ -51,6 +52,7 @@ __all__ = [
     "llm_evals",
     "llm_training",
     "ml",
+    "rag_lifecycle",
     "saas",
     "synthetic_data",
     "storage",
