@@ -140,8 +140,9 @@ def test_new_nodes_declare_requirements() -> None:
             f"{node_id} must declare openai>=1.0 in requirements"
         )
 
+    # llm_fine_tune_dataset uses only duckdb (via records_to_dataset) — no pandas
     ft_dataset = manifests["llm_fine_tune_dataset"]
-    assert any("pandas" in r for r in ft_dataset.requirements)
+    assert ft_dataset.requirements == [] or not any("pandas" in r for r in ft_dataset.requirements)
 
 
 # ---------------------------------------------------------------------------

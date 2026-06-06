@@ -20,7 +20,7 @@ from noodle.artifacts import is_artifact_ref, read_bytes, write_bytes
 from noodle.datasets import is_dataset_ref
 from noodle.sdk import node
 from noodle_nodes._creds import cred_single
-from noodle_nodes.datasets import read_dataset
+from noodle_nodes.datasets import materialize_dataset, read_dataset
 
 # ---------------------------------------------------------------------------
 # Markers / reference envelopes
@@ -59,10 +59,6 @@ def _is_model_registry(value: Any) -> bool:
 # Lazy import helpers
 # ---------------------------------------------------------------------------
 
-_PANDAS_ERROR = (
-    "pandas is required for LLM dataset prep. Add pandas>=2.0 to the workflow "
-    "environment and rebuild it, then run again."
-)
 _TIKTOKEN_ERROR = (
     "tiktoken is required for token counting. Add tiktoken>=0.7 to the "
     "workflow environment and rebuild it."
@@ -71,14 +67,6 @@ _OPENAI_ERROR = (
     "openai is required for OpenAI fine-tuning nodes. Add openai>=1.0 to the "
     "workflow environment and rebuild it, then run again."
 )
-
-
-def _pandas():
-    try:
-        import pandas as pd  # type: ignore[import-not-found]
-    except ImportError as exc:
-        raise RuntimeError(_PANDAS_ERROR) from exc
-    return pd
 
 
 def _tiktoken():
@@ -106,16 +94,12 @@ def _openai_client(api_key: str, base_url: str | None = None, organization: str 
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _to_dataframe(input_value: Any):
-    pd = _pandas()
+def _to_records(input_value: Any) -> list[dict[str, Any]]:
+    """Return input as a list of plain dicts without requiring pandas."""
     if is_dataset_ref(input_value):
-        conn, rel = read_dataset(input_value)
-        try:
-            return rel.df()
-        finally:
-            conn.close()
+        return materialize_dataset(input_value, cap=100_000, allow_truncate=True)
     if isinstance(input_value, list):
-        return pd.DataFrame(input_value)
+        return [r for r in input_value if isinstance(r, dict)]
     raise ValueError(
         "input must be a DatasetRef or a list of records — add a Records To "
         "Dataset or CSV Parse node upstream to produce one."
@@ -158,7 +142,6 @@ def _extract_api_key(credentials: Any) -> tuple[str, str | None, str | None]:
         "Validates format, deduplicates, estimates token costs, and outputs a "
         "FineTuneDatasetRef artifact."
     ),
-    requirements=["pandas>=2.0"],
     inputs=["input"],
     outputs=["main"],
     params={
@@ -221,16 +204,23 @@ def llm_fine_tune_dataset(
     validation_split: float = 0.0,
 ) -> dict[str, Any]:
     """Convert rows into provider-ready JSONL and return a FineTuneDatasetRef."""
-    df = _to_dataframe(input)
+    raw_rows = _to_records(input)
 
     if dedupe:
-        before = len(df)
-        df = df.drop_duplicates()
-        dropped = before - len(df)
+        before = len(raw_rows)
+        seen: set[tuple[Any, ...]] = set()
+        deduped: list[dict[str, Any]] = []
+        for r in raw_rows:
+            key = tuple(sorted((k, str(v)) for k, v in r.items()))
+            if key not in seen:
+                seen.add(key)
+                deduped.append(r)
+        raw_rows = deduped
+        dropped = before - len(raw_rows)
     else:
         dropped = 0
 
-    n_total = len(df)
+    n_total = len(raw_rows)
     if n_total < max(1, min_examples):
         raise ValueError(
             f"Dataset has {n_total} rows but min_examples={min_examples}. "
@@ -240,7 +230,7 @@ def llm_fine_tune_dataset(
     errors: list[str] = []
     warnings: list[str] = []
 
-    def _build_chat_messages(row: Any) -> list[dict[str, str]]:
+    def _build_chat_messages(row: dict[str, Any]) -> list[dict[str, str]]:
         if messages_column and messages_column in row and row[messages_column]:
             raw = row[messages_column]
             if isinstance(raw, str):
@@ -265,7 +255,7 @@ def llm_fine_tune_dataset(
         msgs.append({"role": "assistant", "content": asst_text})
         return msgs
 
-    def _build_pc(row: Any) -> dict[str, str] | None:
+    def _build_pc(row: dict[str, Any]) -> dict[str, str] | None:
         p = str(row.get(prompt_column or "prompt", "")).strip()
         c = str(row.get(completion_column or "completion", "")).strip()
         if not p or not c:
@@ -276,8 +266,7 @@ def llm_fine_tune_dataset(
     total_tokens = 0
     token_warnings = 0
 
-    rows_iter = (df.iloc[i] for i in range(len(df)))
-    for row in rows_iter:
+    for row in raw_rows:
         try:
             if format == "openai_chat_jsonl":
                 msgs = _build_chat_messages(row)

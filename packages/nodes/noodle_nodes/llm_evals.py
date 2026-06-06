@@ -89,6 +89,18 @@ def _to_dataframe(input_value: Any):
     )
 
 
+def _to_records(input_value: Any) -> list[dict[str, Any]]:
+    """Read input as list of dicts without requiring pandas (DuckDB only)."""
+    from noodle_nodes.datasets import materialize_dataset
+    if is_dataset_ref(input_value):
+        return materialize_dataset(input_value, cap=100_000, allow_truncate=True)
+    if isinstance(input_value, list):
+        return [r for r in input_value if isinstance(r, dict)]
+    raise ValueError(
+        "input must be a DatasetRef or list of records — add a Records To Dataset node upstream."
+    )
+
+
 def _ts() -> str:
     return datetime.now(tz=UTC).isoformat()
 
@@ -659,20 +671,26 @@ def llm_rule_eval(
     strip_whitespace: bool = True,
 ) -> dict[str, Any]:
     """Run deterministic rule-based evaluation and return EvalResultRef."""
-    pd = _pandas()
+    from noodle_nodes.datasets import records_to_dataset as _records_to_dataset
 
     if _is_eval_result(input) and "rows" in input:
-        df = _to_dataframe(input["rows"])
+        rows_input = input["rows"]
         out_col = output_column or "candidate_output"
     else:
-        df = _to_dataframe(input)
+        rows_input = input
         out_col = output_column
 
-    if out_col not in df.columns:
-        raise ValueError(
-            f"output_column {out_col!r} not found. "
-            f"Available columns: {list(df.columns)}"
-        )
+    rows = _to_records(rows_input)
+
+    if rows:
+        all_keys: set[str] = set()
+        for r in rows:
+            all_keys.update(r.keys())
+        if out_col not in all_keys:
+            raise ValueError(
+                f"output_column {out_col!r} not found. "
+                f"Available columns: {sorted(all_keys)}"
+            )
 
     json_schema: Any = None
     if mode == "json_schema" and json_schema_str:
@@ -777,7 +795,6 @@ def llm_rule_eval(
 
         return {"passed": passed, **details}
 
-    rows = df.to_dict(orient="records")
     result_rows: list[dict[str, Any]] = []
 
     for row in rows:
@@ -793,8 +810,7 @@ def llm_rule_eval(
     n_passed = sum(1 for r in result_rows if r.get("eval_passed") is True)
     accuracy = n_passed / n_total if n_total else 0.0
 
-    result_df = pd.DataFrame(result_rows)
-    rows_ref = dataframe_to_dataset(result_df, name="rule_eval_results.parquet")
+    rows_ref = _records_to_dataset(result_rows, name="rule_eval_results.parquet")
 
     summary: dict[str, Any] = {
         "mode": mode,
@@ -947,6 +963,9 @@ def eval_report(
     sample_rows: int = 10,
 ) -> dict[str, Any]:
     """Generate a Markdown eval report artifact from an EvalResultRef."""
+    # Unwrap eval_gate output: gate emits {"metric":..., "input": <EvalResultRef>}
+    if isinstance(input, dict) and not _is_eval_result(input) and _is_eval_result(input.get("input")):
+        input = input["input"]
     if not _is_eval_result(input):
         raise ValueError(
             "input must be an EvalResultRef — connect this to Rule Eval, "
@@ -983,25 +1002,20 @@ def eval_report(
 
     if include_sample_rows and "rows" in input and is_dataset_ref(input["rows"]):
         try:
-            pd = _pandas()
-            conn, rel = read_dataset(input["rows"])
-            try:
-                df = rel.df()
-            finally:
-                conn.close()
-
-            n = min(int(sample_rows or 10), len(df))
-            if n > 0:
-                sample = df.head(n)
+            from noodle_nodes.datasets import materialize_dataset
+            n = max(1, int(sample_rows or 10))
+            sample = materialize_dataset(input["rows"], cap=n, allow_truncate=True)
+            if sample:
+                cols = list(sample[0].keys())
                 lines += ["", "## Sample Rows", ""]
-                lines.append("| " + " | ".join(str(c) for c in sample.columns) + " |")
-                lines.append("| " + " | ".join(["---"] * len(sample.columns)) + " |")
-                for _, row in sample.iterrows():
+                lines.append("| " + " | ".join(str(c) for c in cols) + " |")
+                lines.append("| " + " | ".join(["---"] * len(cols)) + " |")
+                for row in sample:
                     lines.append(
                         "| "
                         + " | ".join(
-                            str(v)[:80].replace("|", "\\|")
-                            for v in row.values
+                            str(row.get(c, ""))[:80].replace("|", "\\|")
+                            for c in cols
                         )
                         + " |"
                     )
