@@ -547,6 +547,40 @@ export const api = {
     request<RunDebugSnapshot>(`/runs/${runId}/debug-snapshot`),
 };
 
+export async function uploadArtifact(file: File): Promise<ArtifactInfo> {
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const body = new FormData();
+  body.append("file", file);
+  const resp = await fetch(`${BASE}/artifacts/upload`, {
+    method: "POST",
+    headers,
+    body,
+  });
+  if (resp.status === 401) {
+    setToken(null);
+    setUser(null);
+    unauthorizedHandler?.();
+    throw new Error("401 Unauthorized");
+  }
+  if (!resp.ok) {
+    let detail: unknown = resp.statusText;
+    try {
+      const parsed = (await resp.json()) as { detail?: unknown };
+      if (parsed.detail !== undefined && parsed.detail !== null) detail = parsed.detail;
+    } catch {
+      /* no JSON body */
+    }
+    const message =
+      typeof detail === "string"
+        ? detail
+        : (detail as { message?: string })?.message ?? JSON.stringify(detail);
+    throw new ApiError(resp.status, `${resp.status} ${message}`, detail);
+  }
+  return (await resp.json()) as ArtifactInfo;
+}
+
 // --- Ops dashboard types -----------------------------------------------------
 
 export interface RuntimeModeStatus {

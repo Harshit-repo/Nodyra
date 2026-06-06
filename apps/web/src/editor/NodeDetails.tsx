@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { api } from "../api";
+import { api, uploadArtifact } from "../api";
 import { categoryColor } from "../categories";
 import {
   LLM_PROVIDER_VARIANTS,
@@ -22,6 +22,22 @@ import { fromAiExpr, isFromAiExpr, paramArgType } from "./toolParam";
 import { missingFor } from "./missingPackages";
 import { useEditor } from "./store";
 import { useServerPlatform } from "../hooks/useServerPlatform";
+
+const PACKAGE_INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
+const PACKAGE_INSTALL_POLL_MS = 2000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function formatPinnedAt(value: string | null): string {
+  if (!value) return "time unknown";
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return value;
+  }
+}
 
 interface CredentialRef {
   __noodle_credential__: true;
@@ -1739,6 +1755,63 @@ function RoutesField({
   );
 }
 
+function FileUploadField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [filename, setFilename] = useState<string | null>(null);
+  const { notify } = useToast();
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBusy(true);
+    try {
+      const info = await uploadArtifact(file);
+      onChange(info.id);
+      setFilename(info.name);
+    } catch (err) {
+      notify(String(err), "error");
+    } finally {
+      setBusy(false);
+      e.target.value = "";
+    }
+  }
+
+  return (
+    <div className="file-upload-field">
+      {value && (
+        <div className="file-upload-current">
+          <span className="file-upload-name">{filename ?? value}</span>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            onClick={() => {
+              onChange("");
+              setFilename(null);
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+      <label className={`btn btn-sm${busy ? " btn-disabled" : ""}`}>
+        {busy ? "Uploading…" : value ? "Replace file" : "Choose file"}
+        <input
+          type="file"
+          style={{ display: "none" }}
+          disabled={busy}
+          onChange={handleFile}
+        />
+      </label>
+    </div>
+  );
+}
+
 export function ParamField({
   spec,
   value,
@@ -1782,6 +1855,14 @@ export function ParamField({
         value={String(value ?? "")}
         onChange={(next) => onChange(next)}
         placeholder={spec.placeholder}
+      />
+    );
+  }
+  if (spec.widget === "file_upload") {
+    return (
+      <FileUploadField
+        value={String(value ?? "")}
+        onChange={onChange}
       />
     );
   }
@@ -2973,8 +3054,8 @@ export function NodeDetails({
   async function pin(): Promise<void> {
     if (!workflowId || runOutput === undefined) return;
     try {
-      await api.pinNode(workflowId, nodeId, runOutput);
-      setPinnedFor(nodeId, runOutput);
+      const saved = await api.pinNode(workflowId, nodeId, runOutput);
+      setPinnedFor(nodeId, saved.payload, saved.updated_at);
     } catch {
       /* ignore */
     }
@@ -3029,9 +3110,9 @@ export function NodeDetails({
       await api.setPackages(envId, updated);
       setEnvPackages(updated);
 
-      // Poll until env is ready or errored
-      while (true) {
-        await new Promise<void>((r) => window.setTimeout(r, 2000));
+      // Poll until env is ready, errored, or clearly stuck.
+      while (Date.now() - startedAt < PACKAGE_INSTALL_TIMEOUT_MS) {
+        await delay(PACKAGE_INSTALL_POLL_MS);
         const env = await api.getEnvironment(envId);
         if (env.status === "ready") {
           clearInterval(ticker);
@@ -3047,6 +3128,9 @@ export function NodeDetails({
           return;
         }
       }
+      clearInterval(ticker);
+      notify("Package installation is still building. Check the environment logs.", "error");
+      setPkgBusy(false);
     } catch {
       clearInterval(ticker);
       notify("Failed to install packages — check the environment.", "error");
@@ -3327,7 +3411,15 @@ export function NodeDetails({
               {JSON.stringify(runOutput, null, 2)}
             </pre>
           ) : (
-            <p className="muted">No output captured.</p>
+            <p className="muted">
+              {disabled
+                ? "This node is disabled, so it will not produce output."
+                : runStatus === "skipped"
+                  ? "This node was skipped in the last run."
+                  : runStatus
+                    ? "No output was captured for this node in the last run."
+                    : "This node has not run yet."}
+            </p>
           )}
           {runOutput !== undefined && !pinned && (
             <button
@@ -3348,9 +3440,9 @@ export function NodeDetails({
             <span className="run-pill status-run-success">pinned</span>
           </div>
           <p className="field-desc">
-            Runs use this value instead of executing the node.
+            Runs use this value instead of executing the node. Pinned {formatPinnedAt(pinned.updatedAt)}.
           </p>
-          <pre className="run-output">{JSON.stringify(pinned, null, 2)}</pre>
+          <pre className="run-output">{JSON.stringify(pinned.payload, null, 2)}</pre>
           <button
             className="btn btn-sm btn-ghost"
             style={{ marginTop: 8 }}
