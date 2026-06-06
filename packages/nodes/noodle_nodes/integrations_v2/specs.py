@@ -158,6 +158,25 @@ ProviderTriggerHandleEvent = Callable[
 
 
 @dataclass(frozen=True)
+class ProviderTriggerPollContext:
+    """Input passed to a provider trigger's poll hook."""
+
+    params: dict[str, Any]
+    cursor: dict[str, Any]
+
+
+@dataclass
+class ProviderTriggerPollResult:
+    """Return value from a provider trigger's poll hook."""
+
+    events: list[dict[str, Any]]
+    cursor: dict[str, Any]
+
+
+ProviderTriggerPoll = Callable[[ProviderTriggerPollContext], ProviderTriggerPollResult]
+
+
+@dataclass(frozen=True)
 class ProviderTriggerSpec:
     node_id: str
     name: str
@@ -174,6 +193,8 @@ class ProviderTriggerSpec:
     activate: ProviderTriggerActivate | None = None
     deactivate: ProviderTriggerDeactivate | None = None
     handle_event: ProviderTriggerHandleEvent | None = None
+    poll: ProviderTriggerPoll | None = None
+    poll_interval_seconds: int = 300
 
     @property
     def trigger_key(self) -> str:

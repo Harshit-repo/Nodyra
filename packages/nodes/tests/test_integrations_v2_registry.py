@@ -14,6 +14,8 @@ from noodle_nodes.integrations_v2.registry import (
 from noodle_nodes.integrations_v2.specs import (
     OperationParamSpec,
     OperationSpec,
+    ProviderTriggerPollContext,
+    ProviderTriggerPollResult,
     ProviderTriggerSpec,
 )
 
@@ -246,3 +248,27 @@ def test_operation_manifest_passes_requirements_through():
         requirements=("acme-sdk>=2",),
     )
     assert operation_manifest(spec).requirements == ["acme-sdk>=2"]
+
+
+def test_provider_trigger_spec_has_poll_fields() -> None:
+    spec = ProviderTriggerSpec(
+        node_id="test_poll_trigger",
+        name="Test Poll Trigger",
+        provider="test",
+        resource="resource",
+        event="poll",
+        poll=lambda ctx: ProviderTriggerPollResult(events=[], cursor={}),
+        poll_interval_seconds=60,
+    )
+    assert spec.poll is not None
+    assert spec.poll_interval_seconds == 60
+    assert spec.handle_event is None
+
+
+def test_poll_context_and_result_are_dataclasses() -> None:
+    ctx = ProviderTriggerPollContext(params={"key": "val"}, cursor={"last": "abc"})
+    assert ctx.params == {"key": "val"}
+    assert ctx.cursor == {"last": "abc"}
+    result = ProviderTriggerPollResult(events=[{"a": 1}], cursor={"last": "xyz"})
+    assert result.events == [{"a": 1}]
+    assert result.cursor == {"last": "xyz"}
