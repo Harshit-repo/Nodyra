@@ -357,6 +357,38 @@ async def test_batch_mode_maps_over_chunks():
     assert result.nodes["e"].outputs["results"] == [[2, 4], [6, 8], [10]]
 
 
+async def test_each_reduce_accumulates_to_a_single_value():
+    # sum [1,2,3,4] via a for-each reduce; concurrency set but must be ignored.
+    # In reduce mode the `item` port carries {"acc": <accumulator>, "item": <unit>}.
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": [1, 2, 3, 4]}),
+            _n("s", "loop_start", {"accumulate": True, "initial": 0, "concurrency": 4}),
+            _n("b", "code", {"code": "output = input['acc'] + input['item']"}),
+            _n("e", "loop_end", {"loop_start_id": "s"}),
+        ],
+        [_e("trig", "s"), _e("s", "b", src_out="item"), _e("b", "e")],
+    )
+    result = await execute(g, registry)
+    assert str(result.nodes["e"].status) == "success"
+    assert result.nodes["e"].outputs["results"] == 10
+
+
+async def test_batch_reduce_accumulates_over_chunks():
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": [1, 2, 3, 4, 5]}),
+            _n("s", "loop_start", {"mode": "batch", "batch_size": 2,
+                                   "accumulate": True, "initial": 0}),
+            _n("b", "code", {"code": "output = input['acc'] + sum(input['item'])"}),
+            _n("e", "loop_end", {"loop_start_id": "s"}),
+        ],
+        [_e("trig", "s"), _e("s", "b", src_out="item"), _e("b", "e")],
+    )
+    result = await execute(g, registry)
+    assert result.nodes["e"].outputs["results"] == 15
+
+
 async def test_window_mode_sums_sliding_windows():
     g = _g(
         [

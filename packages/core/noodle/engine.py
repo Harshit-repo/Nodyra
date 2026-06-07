@@ -1381,6 +1381,60 @@ async def _run_loop(
     # The node + port feeding loop_end.input, captured per iteration.
     end_in = incoming.get(region.end_id, {}).get("input")
 
+    # Reduce: thread an accumulator across the (fixed) for-each units. Sequential
+    # by nature; the `item` port carries {"acc": <accumulator>, "item": <unit>}
+    # and the value into Loop End becomes the next accumulator.
+    if bool(start.params.get("accumulate", False)):
+        from noodle.expr import build_context, evaluate
+        acc = evaluate(
+            start.params.get("initial"),
+            build_context(node_outputs=node_outputs),
+        )
+        err = _expr_error(acc)
+        if err is not None:
+            node_outputs[region.end_id] = {"results": None, "errors": []}
+            await finish(NodeRunResult(
+                node_id=region.end_id, status=NodeStatus.error,
+                error=f"loop initial state {err}",
+            ))
+            return RunStatus.error
+        for i, unit in enumerate(items):
+            path_token = iteration_path.set(iteration_path.get() + (i,))
+            try:
+                iter_outputs = dict(node_outputs)
+                iter_outputs[region.start_id] = {
+                    "item": {"acc": acc, "item": unit}, "index": i, "state": acc,
+                }
+                st = await _execute_nodes(
+                    node_ids=set(region.body_ids),
+                    levels=body_levels, graph=graph, registry=registry,
+                    nodes_by_id=nodes_by_id, incoming=incoming,
+                    node_outputs=iter_outputs, cache=cache,
+                    emit=emit, finish=finish, default_timeouts=default_timeouts,
+                    max_node_output_bytes=max_node_output_bytes,
+                    pause_on_approval=pause_on_approval,
+                    agent_action_resume=agent_action_resume,
+                    loop_regions=loop_regions, owned=child_owned,
+                )
+            finally:
+                iteration_path.reset(path_token)
+            if st is RunStatus.error:
+                node_outputs[region.end_id] = {"results": None, "errors": []}
+                await finish(NodeRunResult(
+                    node_id=region.end_id, status=NodeStatus.error,
+                    error=f"loop reduce iteration {i} failed",
+                ))
+                return RunStatus.error
+            if end_in is not None:
+                esrc, eout = end_in
+                acc = (iter_outputs.get(esrc) or {}).get(eout)
+        out = {"results": acc, "errors": []}
+        node_outputs[region.end_id] = out
+        await finish(NodeRunResult(
+            node_id=region.end_id, status=NodeStatus.success, outputs=out,
+        ))
+        return RunStatus.success
+
     collected: list[tuple[int, Any]] = []
     errors: list[dict] = []
     sem = asyncio.Semaphore(concurrency)
