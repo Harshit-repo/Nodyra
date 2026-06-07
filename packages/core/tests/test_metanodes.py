@@ -97,6 +97,49 @@ def test_expand_handles_nested_metanodes():
     assert ids == {"outer/inner/c"}
 
 
+async def test_isolated_metanode_runs_its_subgraph_and_maps_ports():
+    meta = _meta(
+        "m",
+        [_n("c", "code", {"code": "output = input * 2"})],
+        [],
+        {
+            "inputs": [{"port": "input", "targets": [{"target": "c", "target_input": "input"}]}],
+            "outputs": [{"port": "main", "source": "c", "source_output": "main"}],
+        },
+        execution="isolated",
+    )
+    g = _g(
+        [_n("trig", "manual_trigger", {"data": 5}), meta, _n("sink", "code", {"code": "output = input"})],
+        [_e("trig", "m", tgt_in="input"), _e("m", "sink")],
+    )
+    result = await execute(g, registry)
+    assert str(result.nodes["m"].status) == "success"
+    assert result.nodes["m"].outputs["main"] == 10
+    assert result.nodes["sink"].outputs["main"] == 10
+    # isolated: the child ran in a nested scope, not surfaced at top level
+    assert "m/c" not in result.nodes
+
+
+async def test_isolated_metanode_error_fails_the_run():
+    meta = _meta(
+        "m",
+        [_n("c", "code", {"code": "raise ValueError('boom')"})],
+        [],
+        {
+            "inputs": [{"port": "input", "targets": [{"target": "c", "target_input": "input"}]}],
+            "outputs": [{"port": "main", "source": "c", "source_output": "main"}],
+        },
+        execution="isolated",
+    )
+    g = _g(
+        [_n("trig", "manual_trigger", {"data": 1}), meta],
+        [_e("trig", "m", tgt_in="input")],
+    )
+    result = await execute(g, registry)
+    assert str(result.nodes["m"].status) == "error"
+    assert str(result.status) == "error"
+
+
 def test_isolated_metanode_is_left_intact():
     meta = _meta(
         "m",

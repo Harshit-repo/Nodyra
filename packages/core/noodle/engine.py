@@ -1753,6 +1753,87 @@ async def _run_conditional_loop(
     return RunStatus.success
 
 
+async def _run_metanode(
+    *,
+    node: Any,
+    incoming: dict[str, dict[str, tuple[str, str]]],
+    node_outputs: dict[str, dict[str, Any]],
+    registry: NodeRegistry,
+    emit: EventCallback,
+    finish: Callable[[NodeRunResult], Awaitable[None]],
+    default_timeouts: dict[str, float],
+    max_node_output_bytes: int | None,
+) -> RunStatus:
+    """Run an ``isolated`` metanode: execute its embedded sub-graph as a nested
+    run with its own scope, feeding boundary inputs in and mapping the boundary
+    outputs back onto the metanode's ports."""
+    mid = node.id
+    params = node.params or {}
+    subgraph = params.get("subgraph") or {"nodes": [], "edges": []}
+    ports = params.get("ports") or {}
+
+    await emit({"type": "node_started", "node_id": mid})
+    started = time.time()
+
+    # Resolve the value on each wired input port from the parent outputs.
+    edges_in = incoming.get(mid, {})
+    aug_nodes = [dict(n) for n in (subgraph.get("nodes") or [])]
+    aug_edges = [dict(e) for e in (subgraph.get("edges") or [])]
+    cache: dict[str, dict[str, Any]] = {}
+    for p in ports.get("inputs") or []:
+        port = p["port"]
+        value = None
+        if port in edges_in:
+            src, out = edges_in[port]
+            value = (node_outputs.get(src) or {}).get(out)
+        sid = f"__mn_{mid}_{port}"
+        aug_nodes.append({"id": sid, "type": "__metanode_input__", "params": {},
+                          "position": {"x": 0, "y": 0}})
+        cache[sid] = {"main": value}
+        for t in p.get("targets") or []:
+            aug_edges.append({
+                "id": f"{sid}->{t['target']}", "source": sid, "source_output": "main",
+                "target": t["target"], "target_input": t.get("target_input", "input"),
+            })
+
+    try:
+        sub_graph = WorkflowGraph.model_validate({"nodes": aug_nodes, "edges": aug_edges})
+        sub_result = await execute(
+            sub_graph, registry, cache=cache,
+            default_timeouts=default_timeouts,
+            max_node_output_bytes=max_node_output_bytes,
+        )
+    except Exception as exc:  # noqa: BLE001 - surface as a node error
+        node_outputs[mid] = {}
+        await finish(NodeRunResult(
+            node_id=mid, status=NodeStatus.error,
+            error=f"{type(exc).__name__}: {exc}",
+            started_at=started, finished_at=time.time(),
+        ))
+        return RunStatus.error
+
+    outputs: dict[str, Any] = {}
+    for p in ports.get("outputs") or []:
+        run = sub_result.nodes.get(p["source"])
+        outputs[p["port"]] = (
+            run.outputs.get(p.get("source_output", "main")) if run is not None else None
+        )
+
+    node_outputs[mid] = outputs
+    if str(sub_result.status) == "error":
+        await finish(NodeRunResult(
+            node_id=mid, status=NodeStatus.error,
+            error="metanode sub-graph failed", outputs=outputs,
+            started_at=started, finished_at=time.time(),
+        ))
+        return RunStatus.error
+    await finish(NodeRunResult(
+        node_id=mid, status=NodeStatus.success, outputs=outputs,
+        started_at=started, finished_at=time.time(),
+    ))
+    return RunStatus.success
+
+
 async def _execute_nodes(
     *,
     node_ids: set[str],
@@ -1783,6 +1864,16 @@ async def _execute_nodes(
             if nid in owned:
                 return
             gn = nodes_by_id[nid]
+            if gn.type == "meta_node":
+                st = await _run_metanode(
+                    node=gn, incoming=incoming, node_outputs=node_outputs,
+                    registry=registry, emit=emit, finish=finish,
+                    default_timeouts=default_timeouts,
+                    max_node_output_bytes=max_node_output_bytes,
+                )
+                if st is not RunStatus.success:
+                    run_status = st
+                return
             if gn.type == "loop_start" and nid in loop_regions:
                 mode = str(gn.params.get("mode", "each") or "each")
                 driver = (
