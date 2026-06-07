@@ -56,6 +56,52 @@ async def test_run_executes_the_graph(client: AsyncClient) -> None:
     assert results["t"]["status"] == "success"
 
 
+LOOP_GRAPH = {
+    "nodes": [
+        {"id": "t", "type": "manual_trigger", "params": {"data": [1, 2, 3]},
+         "position": {"x": 0, "y": 0}},
+        {"id": "s", "type": "loop_start", "params": {},
+         "position": {"x": 1, "y": 0}},
+        {"id": "b", "type": "code", "params": {"code": "output = input * 2"},
+         "position": {"x": 2, "y": 0}},
+        {"id": "e", "type": "loop_end", "params": {"loop_start_id": "s"},
+         "position": {"x": 3, "y": 0}},
+    ],
+    "edges": [
+        {"id": "t->s", "source": "t", "source_output": "main",
+         "target": "s", "target_input": "input"},
+        {"id": "s->b", "source": "s", "source_output": "item",
+         "target": "b", "target_input": "input"},
+        {"id": "b->e", "source": "b", "source_output": "main",
+         "target": "e", "target_input": "input"},
+    ],
+}
+
+
+async def test_loop_persists_one_node_run_per_iteration(client: AsyncClient) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "Loop"})).json()["id"]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": LOOP_GRAPH})
+
+    run_id = (
+        await client.post(f"/workflows/{workflow_id}/run", json={})
+    ).json()["run_id"]
+    run = (await client.get(f"/runs/{run_id}")).json()
+    assert run["status"] == "success"
+
+    body_runs = [nr for nr in run["node_runs"] if nr["node_id"] == "b"]
+    assert sorted(nr["iteration_path"] for nr in body_runs) == [[0], [1], [2]]
+
+    end_runs = [nr for nr in run["node_runs"] if nr["node_id"] == "e"]
+    assert len(end_runs) == 1
+    assert end_runs[0]["iteration_path"] is None
+    assert end_runs[0]["output"]["results"] == [2, 4, 6]
+
+    # Non-loop node keeps exactly one run with a null iteration_path.
+    trig_runs = [nr for nr in run["node_runs"] if nr["node_id"] == "t"]
+    assert len(trig_runs) == 1
+    assert trig_runs[0]["iteration_path"] is None
+
+
 async def test_run_records_node_errors(client: AsyncClient) -> None:
     workflow_id = (await client.post("/workflows", json={"name": "Bad"})).json()["id"]
     bad_graph = {

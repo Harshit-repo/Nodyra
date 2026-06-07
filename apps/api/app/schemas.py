@@ -274,6 +274,7 @@ class NodeRunInfo(BaseModel):
     started_at: float | None = None
     finished_at: float | None = None
     duration_ms: int | None = None
+    iteration_path: list[int] | None = None
 
     @model_validator(mode="after")
     def _redact_storage_internals(self) -> "NodeRunInfo":

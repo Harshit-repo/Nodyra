@@ -976,6 +976,11 @@ async def _execute_run(
     agent_action_resume: dict[str, AgentActionRequest] | None = None,
 ) -> None:
     node_events: dict[str, dict] = {}
+    # Distinct NodeRun records keyed by (node_id, iteration_path). Non-loop nodes
+    # key on an empty path -> one record each; looped body nodes get one per
+    # iteration. node_events stays keyed by node_id (last-wins) for back-compat
+    # consumers (webhook response, error handlers, guardrails).
+    node_run_records: dict[tuple[str, tuple], dict] = {}
     run_events: list[dict[str, Any]] = []
     run_event_sequence = 0
     artifact_refs: list[dict] = []
@@ -997,6 +1002,9 @@ async def _execute_run(
         broker.publish(run_id, clean)
         if clean.get("type") == "node_finished":
             node_events[clean["node_id"]] = clean
+            path = clean.get("iteration_path")
+            run_key = (clean["node_id"], tuple(path) if isinstance(path, list) else ())
+            node_run_records[run_key] = clean
             debug = clean.get("debug")
             guardrail_events = (
                 debug.get("guardrail_events") if isinstance(debug, dict) else None
@@ -1285,7 +1293,7 @@ async def _execute_run(
             webhook_response = _extract_webhook_response(graph_dict, node_events)
             if webhook_response is not None:
                 run.webhook_response = webhook_response
-            for node_id, event in node_events.items():
+            for (node_id, _path), event in node_run_records.items():
                 session.add(
                     NodeRun(
                         run_id=run_id,
@@ -1298,6 +1306,7 @@ async def _execute_run(
                         started_at=event.get("started_at"),
                         finished_at=event.get("finished_at"),
                         duration_ms=event.get("duration_ms"),
+                        iteration_path=event.get("iteration_path"),
                     )
                 )
             for item in run_events:
