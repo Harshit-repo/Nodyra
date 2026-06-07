@@ -201,3 +201,38 @@ async def test_loop_on_error_fail_aborts():
     result = await execute(g, registry)
     assert str(result.nodes["e"].status) == "error"
     assert str(result.status) == "error"
+
+
+async def test_loop_concurrency_preserves_order():
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": [0, 1, 2, 3, 4]}),
+            _n("s", "loop_start", {"concurrency": 3}),
+            _n("b", "code", {"code": "output = input"}),
+            _n("e", "loop_end", {"loop_start_id": "s"}),
+        ],
+        [_e("trig", "s"), _e("s", "b", src_out="item"), _e("b", "e")],
+    )
+    result = await execute(g, registry)
+    assert result.nodes["e"].outputs["results"] == [0, 1, 2, 3, 4]
+
+
+async def test_loop_empty_input_yields_empty_results():
+    # manual_trigger collapses a falsy [] to {}, so produce a real empty list
+    # from a code node to exercise the zero-iteration path.
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": {"go": 1}}),
+            _n("src", "code", {"code": "output = []"}),
+            _n("s", "loop_start"),
+            _n("b", "code", {"code": "output = input"}),
+            _n("e", "loop_end", {"loop_start_id": "s"}),
+        ],
+        [
+            _e("trig", "src"), _e("src", "s"),
+            _e("s", "b", src_out="item"), _e("b", "e"),
+        ],
+    )
+    result = await execute(g, registry)
+    assert str(result.nodes["e"].status) == "success"
+    assert result.nodes["e"].outputs["results"] == []
