@@ -493,18 +493,20 @@ def merge_node(input_a: Any = None, input_b: Any = None, mode: str = "append") -
 
 
 @node(name="Loop Over Items", id="loop_over_items", category="Logic", icon="repeat",
+      deprecated=True, replacement_id="loop_start",
       outputs=["item", "done"], params={
           "max_items": {
               "description": "Optional maximum number of items to emit (0 = all).",
           },
       })
 def loop_over_items(input: Any = None, max_items: int = 0) -> dict:
-    """Fan a list into an item branch and a done summary branch.
+    """DEPRECATED — use Loop Start / Loop End for real per-item iteration.
 
     Noodle's current DAG engine executes a node once per run rather than once
     per item. This node therefore emits the selected items as a list on the
-    ``item`` output while also emitting a completion summary on ``done``. It is
-    the UI/runtime-compatible foundation for n8n-style loop authoring.
+    ``item`` output while also emitting a completion summary on ``done``. The
+    Loop Start / Loop End nodes run the in-between sub-DAG once per row, which
+    is what most "loop" use cases actually want.
     """
     items = _as_list(input)
     limit = int(max_items or 0)
