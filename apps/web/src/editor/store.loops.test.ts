@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { NodeManifest, ParamSpec, PortSpec } from "../types";
+import type { NodeManifest, ParamSpec, PortSpec, WorkflowGraph } from "../types";
 import { useEditor } from "./store";
 
 function port(name: string, data_kind: PortSpec["data_kind"] = "any"): PortSpec {
@@ -79,5 +79,36 @@ describe("loop node authoring", () => {
     const end = useEditor.getState().nodes.find((n) => n.data.manifest?.id === "loop_end");
     expect(end).toBeTruthy();
     expect(end!.data.params.loop_start_id).toBe("");
+  });
+
+  it("a while Loop Start round-trips its mode/condition params via toGraph()", () => {
+    reset();
+    const graph: WorkflowGraph = {
+      nodes: [
+        {
+          id: "s", type: "loop_start",
+          params: {
+            mode: "while",
+            initial: { count: 0 },
+            condition: "{{ state.count < 10 }}",
+            max_iterations: 50,
+            on_max_iterations: "stop",
+          },
+          position: { x: 0, y: 0 }, disabled: false, outputs_override: null,
+          on_error: "stop", retry_on_fail: false, retries: 1,
+          retry_wait_seconds: 0, retry_backoff: false, always_output_data: false,
+          timeout_seconds: null,
+        },
+      ],
+      edges: [],
+    };
+    useEditor.getState().loadGraph(graph);
+
+    const node = useEditor.getState().toGraph().nodes[0];
+    expect(node.params.mode).toBe("while");
+    expect(node.params.condition).toBe("{{ state.count < 10 }}");
+    expect(node.params.initial).toEqual({ count: 0 });
+    expect(node.params.max_iterations).toBe(50);
+    expect(node.params.on_max_iterations).toBe("stop");
   });
 });
