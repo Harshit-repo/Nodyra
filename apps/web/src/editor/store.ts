@@ -20,6 +20,7 @@ import type {
   NodeManifest,
   ParamSpec,
   NodeRunDebug,
+  PortSpec,
   RunEvent,
   RunInfo,
   WorkflowGraph,
@@ -147,6 +148,142 @@ function unpairOrphanedLoopEnds(nodes: NoodleNode[], deletedIds: Set<string>): N
     );
   }
   return next;
+}
+
+// ---- Metanode helpers ---------------------------------------------------
+
+interface GraphNodeLike {
+  id: string;
+  type: string;
+  params: Record<string, unknown>;
+  position: { x: number; y: number };
+  disabled?: boolean;
+  outputs_override?: string[] | null;
+  on_error?: string;
+  retry_on_fail?: boolean;
+  retries?: number;
+  retry_wait_seconds?: number;
+  retry_backoff?: boolean;
+  always_output_data?: boolean;
+  timeout_seconds?: number | null;
+  tool_mode?: boolean;
+  tool_name?: string | null;
+  tool_description?: string;
+  label?: string;
+}
+
+interface GraphEdgeLike {
+  id: string;
+  source: string;
+  source_output: string;
+  target: string;
+  target_input: string;
+}
+
+function nodeToGraphNode(n: NoodleNode): GraphNodeLike {
+  return {
+    id: n.id,
+    type: n.data.manifest.id,
+    params: n.data.params,
+    position: { x: n.position.x, y: n.position.y },
+    disabled: Boolean(n.data.disabled),
+    outputs_override: n.data.outputsOverride,
+    on_error: n.data.onError ?? "stop",
+    retry_on_fail: Boolean(n.data.retryOnFail),
+    retries: typeof n.data.retries === "number" ? n.data.retries : 1,
+    retry_wait_seconds: typeof n.data.retryWaitSeconds === "number" ? n.data.retryWaitSeconds : 0,
+    retry_backoff: Boolean(n.data.retryBackoff),
+    always_output_data: Boolean(n.data.alwaysOutputData),
+    timeout_seconds: typeof n.data.timeoutSeconds === "number" ? n.data.timeoutSeconds : null,
+    tool_mode: Boolean(n.data.toolMode),
+    tool_name: n.data.toolName ?? null,
+    tool_description: n.data.toolDescription ?? "",
+    label: n.data.label || undefined,
+  };
+}
+
+function graphNodeToNode(
+  gn: GraphNodeLike,
+  byId: Record<string, NodeManifest>,
+): NoodleNode | null {
+  const manifest = byId[gn.type];
+  if (!manifest) return null;
+  return {
+    id: gn.id,
+    type: gn.type === "map_group" ? "mapGroup" : "noodle",
+    position: gn.position,
+    data: {
+      manifest,
+      params: gn.params ?? {},
+      disabled: Boolean(gn.disabled),
+      outputsOverride: gn.outputs_override ?? null,
+      onError: typeof gn.on_error === "string" ? gn.on_error : "stop",
+      retryOnFail: Boolean(gn.retry_on_fail),
+      retries: typeof gn.retries === "number" ? gn.retries : 1,
+      retryWaitSeconds: typeof gn.retry_wait_seconds === "number" ? gn.retry_wait_seconds : 0,
+      retryBackoff: Boolean(gn.retry_backoff),
+      alwaysOutputData: Boolean(gn.always_output_data),
+      timeoutSeconds: typeof gn.timeout_seconds === "number" ? gn.timeout_seconds : null,
+      toolMode: Boolean(gn.tool_mode),
+      toolName: gn.tool_name ?? null,
+      toolDescription: typeof gn.tool_description === "string" ? gn.tool_description : "",
+      label: gn.label || undefined,
+    },
+  } as NoodleNode;
+}
+
+function edgeToGraphEdge(e: Edge): GraphEdgeLike {
+  return {
+    id: e.id,
+    source: e.source,
+    source_output: e.sourceHandle ?? "main",
+    target: e.target,
+    target_input: e.targetHandle ?? "input",
+  };
+}
+
+function graphEdgeToEdge(ge: GraphEdgeLike): Edge {
+  return {
+    id: ge.id,
+    source: ge.source,
+    sourceHandle: ge.source_output,
+    target: ge.target,
+    targetHandle: ge.target_input,
+  } as Edge;
+}
+
+function buildMetanodeManifest(inputs: string[], outputs: string[]): NodeManifest {
+  const toPort = (name: string): PortSpec => ({ name, description: "", data_kind: "any" });
+  return {
+    id: "meta_node",
+    name: "Metanode",
+    category: "Logic",
+    version: "1.0.0",
+    description: "A group of nodes collapsed into one.",
+    icon: "stack",
+    inputs: inputs.map(toPort),
+    outputs: outputs.length > 0 ? outputs.map(toPort) : [toPort("main")],
+    params: [],
+  } as NodeManifest;
+}
+
+/** Cheap cycle check over an adjacency map (DFS with a recursion stack). */
+function adjacencyHasCycle(adj: Map<string, string[]>): boolean {
+  const state = new Map<string, 0 | 1 | 2>(); // 0=unseen 1=on-stack 2=done
+  const visit = (n: string): boolean => {
+    state.set(n, 1);
+    for (const m of adj.get(n) ?? []) {
+      const st = state.get(m) ?? 0;
+      if (st === 1) return true;
+      if (st === 0 && visit(m)) return true;
+    }
+    state.set(n, 2);
+    return false;
+  };
+  for (const n of adj.keys()) {
+    if ((state.get(n) ?? 0) === 0 && visit(n)) return true;
+  }
+  return false;
 }
 
 function buildBodyIndex(childWorkflows: Record<string, ChildWorkflowState>): Record<string, string> {
@@ -359,6 +496,8 @@ interface EditorStore {
   addGroupNode: (position: { x: number; y: number }) => void;
   autoLayout: () => void;
   duplicateNode: (id: string) => void;
+  collapseToMetanode: (nodeIds: string[]) => string | null;
+  ungroupMetanode: (id: string) => void;
   copySelection: () => ClipboardResult;
   cutSelection: () => ClipboardResult;
   pasteSelection: () => ClipboardResult;
@@ -997,6 +1136,191 @@ export const useEditor = create<EditorStore>((set, get) => ({
     set({
       nodes: [...state.nodes, node],
       selectedId: node.id,
+      dirty: true,
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
+    });
+  },
+
+  collapseToMetanode: (nodeIds) => {
+    const state = get();
+    const sel = new Set(nodeIds.filter((id) => state.nodes.some((n) => n.id === id)));
+    if (sel.size === 0) return null;
+    const selNodes = state.nodes.filter((n) => sel.has(n.id));
+    const edges = state.edges;
+
+    const internal = edges.filter((e) => sel.has(e.source) && sel.has(e.target));
+    const inbound = edges.filter((e) => !sel.has(e.source) && sel.has(e.target));
+    const outbound = edges.filter((e) => sel.has(e.source) && !sel.has(e.target));
+
+    const metaId = newNodeId();
+
+    // Reject if collapsing would create a cycle through the metanode.
+    const adj = new Map<string, string[]>();
+    const addEdge = (s: string, t: string) => {
+      if (s === t) return;
+      (adj.get(s) ?? adj.set(s, []).get(s)!).push(t);
+    };
+    for (const e of edges) {
+      addEdge(sel.has(e.source) ? metaId : e.source, sel.has(e.target) ? metaId : e.target);
+    }
+    if (adjacencyHasCycle(adj)) return null;
+
+    // Input ports: one per distinct external (source, sourceHandle), fanning to
+    // every internal target it fed.
+    const inGroups = new Map<
+      string,
+      { port: string; src: string; srcHandle: string; targets: { target: string; target_input: string }[] }
+    >();
+    let inIdx = 0;
+    for (const e of inbound) {
+      const srcHandle = e.sourceHandle ?? "main";
+      const key = `${e.source}::${srcHandle}`;
+      let g = inGroups.get(key);
+      if (!g) {
+        g = { port: `in_${inIdx++}`, src: e.source, srcHandle, targets: [] };
+        inGroups.set(key, g);
+      }
+      g.targets.push({ target: e.target, target_input: e.targetHandle ?? "input" });
+    }
+
+    // Output ports: one per distinct internal (source, sourceHandle) leaving.
+    const outGroups = new Map<
+      string,
+      { port: string; src: string; srcHandle: string; consumers: { target: string; targetHandle: string }[] }
+    >();
+    let outIdx = 0;
+    for (const e of outbound) {
+      const srcHandle = e.sourceHandle ?? "main";
+      const key = `${e.source}::${srcHandle}`;
+      let g = outGroups.get(key);
+      if (!g) {
+        g = { port: `out_${outIdx++}`, src: e.source, srcHandle, consumers: [] };
+        outGroups.set(key, g);
+      }
+      g.consumers.push({ target: e.target, targetHandle: e.targetHandle ?? "input" });
+    }
+
+    const inputs = [...inGroups.values()].map((g) => ({ port: g.port, targets: g.targets }));
+    const outputs = [...outGroups.values()].map((g) => ({
+      port: g.port,
+      source: g.src,
+      source_output: g.srcHandle,
+    }));
+
+    const subgraph = {
+      nodes: selNodes.map(nodeToGraphNode),
+      edges: internal.map(edgeToGraphEdge),
+    };
+    const cx = selNodes.reduce((a, n) => a + n.position.x, 0) / selNodes.length;
+    const cy = selNodes.reduce((a, n) => a + n.position.y, 0) / selNodes.length;
+
+    const metaNode: NoodleNode = {
+      id: metaId,
+      type: "noodle",
+      position: { x: cx, y: cy },
+      data: {
+        manifest: buildMetanodeManifest(inputs.map((p) => p.port), outputs.map((p) => p.port)),
+        params: { execution: "transparent", name: "Metanode", subgraph, ports: { inputs, outputs } },
+        disabled: false,
+        outputsOverride: null,
+        onError: "stop",
+        retryOnFail: false,
+        retries: 1,
+        retryWaitSeconds: 0,
+        retryBackoff: false,
+        alwaysOutputData: false,
+        timeoutSeconds: null,
+      },
+    } as NoodleNode;
+
+    const keepEdges = edges.filter((e) => !sel.has(e.source) && !sel.has(e.target));
+    const newEdges: Edge[] = [...keepEdges];
+    for (const g of inGroups.values()) {
+      newEdges.push({
+        id: `e_${g.src}_${metaId}_${g.port}`,
+        source: g.src,
+        sourceHandle: g.srcHandle,
+        target: metaId,
+        targetHandle: g.port,
+      } as Edge);
+    }
+    for (const g of outGroups.values()) {
+      for (const c of g.consumers) {
+        newEdges.push({
+          id: `e_${metaId}_${c.target}_${g.port}_${c.targetHandle}`,
+          source: metaId,
+          sourceHandle: g.port,
+          target: c.target,
+          targetHandle: c.targetHandle,
+        } as Edge);
+      }
+    }
+
+    set({
+      nodes: [...state.nodes.filter((n) => !sel.has(n.id)), metaNode],
+      edges: newEdges,
+      selectedId: metaId,
+      dirty: true,
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
+    });
+    return metaId;
+  },
+
+  ungroupMetanode: (id) => {
+    const state = get();
+    const meta = state.nodes.find((n) => n.id === id);
+    if (!meta || meta.data.manifest.id !== "meta_node") return;
+    const params = meta.data.params as {
+      subgraph?: { nodes: GraphNodeLike[]; edges: GraphEdgeLike[] };
+      ports?: {
+        inputs?: { port: string; targets: { target: string; target_input: string }[] }[];
+        outputs?: { port: string; source: string; source_output: string }[];
+      };
+    };
+    const subgraph = params.subgraph ?? { nodes: [], edges: [] };
+    const ports = params.ports ?? { inputs: [], outputs: [] };
+    const byId = state.manifestsById;
+
+    const childNodes = subgraph.nodes
+      .map((gn) => graphNodeToNode(gn, byId))
+      .filter((n): n is NoodleNode => n !== null);
+    const childEdges = subgraph.edges.map(graphEdgeToEdge);
+
+    const inputsByPort = new Map((ports.inputs ?? []).map((p) => [p.port, p.targets]));
+    const outputsByPort = new Map((ports.outputs ?? []).map((p) => [p.port, p]));
+
+    const restored: Edge[] = [];
+    for (const e of state.edges) {
+      if (e.target === id) {
+        for (const t of inputsByPort.get(e.targetHandle ?? "") ?? []) {
+          restored.push({
+            id: `e_${e.source}_${t.target}_restored_${restored.length}`,
+            source: e.source,
+            sourceHandle: e.sourceHandle,
+            target: t.target,
+            targetHandle: t.target_input,
+          } as Edge);
+        }
+      } else if (e.source === id) {
+        const o = outputsByPort.get(e.sourceHandle ?? "");
+        if (o) {
+          restored.push({
+            id: `e_${o.source}_${e.target}_restored_${restored.length}`,
+            source: o.source,
+            sourceHandle: o.source_output,
+            target: e.target,
+            targetHandle: e.targetHandle,
+          } as Edge);
+        }
+      }
+    }
+
+    set({
+      nodes: [...state.nodes.filter((n) => n.id !== id), ...childNodes],
+      edges: [...state.edges.filter((e) => e.source !== id && e.target !== id), ...childEdges, ...restored],
+      selectedId: null,
       dirty: true,
       _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
       _future: [],
