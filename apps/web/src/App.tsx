@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Route, Routes, useLocation } from "react-router-dom";
 
 import { api, onUnauthorized, setToken, setUser } from "./api";
+import { NO_AUTH_FALLBACK, shouldRetryAuthError } from "./authBootstrap";
+import { BackendLoading } from "./BackendLoading";
 import { ActivityPage } from "./ActivityPage";
 import { ChatPublicPage } from "./ChatPublicPage";
 import { CodeLibraryPage } from "./CodeLibraryPage";
@@ -21,38 +23,45 @@ import type { AuthState, UserInfo } from "./types";
 export default function App() {
   const location = useLocation();
   const [auth, setAuth] = useState<AuthState | null>(null);
+  // false once we've hit a transient failure and are waiting for the API to
+  // come up; flips back true the moment a bootstrap attempt succeeds.
+  const [apiReachable, setApiReachable] = useState(true);
+  const retryRef = useRef<number | null>(null);
 
-  // Chat pages are outside the auth gate: ChatPublicPage manages its own
-  // login check based on the workflow's require_login param.
-  if (location.pathname.startsWith("/chat/")) {
-    return (
-      <Routes>
-        <Route path="/chat/:workflowId" element={<ChatPublicPage />} />
-      </Routes>
-    );
-  }
-
-  useEffect(() => {
+  // Bootstrap the auth state, retrying while the backend is still starting
+  // (network error / 5xx) instead of falling through to render against a dead
+  // API — which previously left the whole app on a black screen.
+  const loadAuth = useCallback(() => {
     api
       .authRequired()
-      .then(setAuth)
-      .catch(() =>
-        setAuth({
-          auth_required: false,
-          signed_in: false,
-          registration_open: false,
-          user: null,
-        }),
-      );
+      .then((state) => {
+        setAuth(state);
+        setApiReachable(true);
+      })
+      .catch((err: unknown) => {
+        if (shouldRetryAuthError(err)) {
+          setApiReachable(false);
+          retryRef.current = window.setTimeout(loadAuth, 2000);
+        } else {
+          setAuth(NO_AUTH_FALLBACK);
+          setApiReachable(true);
+        }
+      });
+  }, []);
 
+  useEffect(() => {
+    loadAuth();
     onUnauthorized(() => {
       setUser(null);
       setAuth((current) =>
         current ? { ...current, signed_in: false, user: null } : current,
       );
     });
-    return () => onUnauthorized(null);
-  }, []);
+    return () => {
+      onUnauthorized(null);
+      if (retryRef.current) window.clearTimeout(retryRef.current);
+    };
+  }, [loadAuth]);
 
   function onSignedIn(user: UserInfo): void {
     setAuth((current) => ({
@@ -72,14 +81,7 @@ export default function App() {
     api
       .authRequired()
       .then(setAuth)
-      .catch(() =>
-        setAuth({
-          auth_required: false,
-          signed_in: false,
-          registration_open: false,
-          user: null,
-        }),
-      );
+      .catch(() => setAuth(NO_AUTH_FALLBACK));
   }
 
   useEffect(() => {
@@ -97,8 +99,21 @@ export default function App() {
     };
   });
 
+  // Chat pages are outside the auth gate: ChatPublicPage manages its own
+  // login check based on the workflow's require_login param. (Placed after all
+  // hooks so hook order stays stable across renders.)
+  if (location.pathname.startsWith("/chat/")) {
+    return (
+      <Routes>
+        <Route path="/chat/:workflowId" element={<ChatPublicPage />} />
+      </Routes>
+    );
+  }
+
+  // Still bootstrapping (or the backend isn't up yet): hold on a loader rather
+  // than rendering the app against an unready API.
   if (auth === null) {
-    return <div className="screen-center muted">Loading…</div>;
+    return <BackendLoading retrying={!apiReachable} />;
   }
   if (auth.auth_required && !auth.signed_in) {
     return (
