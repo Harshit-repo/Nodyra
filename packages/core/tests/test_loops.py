@@ -236,3 +236,27 @@ async def test_loop_empty_input_yields_empty_results():
     result = await execute(g, registry)
     assert str(result.nodes["e"].status) == "success"
     assert result.nodes["e"].outputs["results"] == []
+
+
+async def test_nested_loops_flatten_correctly():
+    # outer items [[1,2],[3]] ; inner doubles each -> results [[2,4],[6]]
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": [[1, 2], [3]]}),
+            _n("s1", "loop_start"),
+            _n("s2", "loop_start"),
+            _n("b", "code", {"code": "output = input * 2"}),
+            _n("e2", "loop_end", {"loop_start_id": "s2"}),
+            _n("e1", "loop_end", {"loop_start_id": "s1"}),
+        ],
+        [
+            _e("trig", "s1"),
+            _e("s1", "s2", src_out="item"),       # outer item (a sublist) -> inner loop input
+            _e("s2", "b", src_out="item"),
+            _e("b", "e2"),
+            _e("e2", "e1", src_out="results"),    # inner results -> outer collected value
+        ],
+    )
+    result = await execute(g, registry)
+    assert str(result.nodes["e1"].status) == "success"
+    assert result.nodes["e1"].outputs["results"] == [[2, 4], [6]]
