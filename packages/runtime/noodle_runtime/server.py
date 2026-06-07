@@ -291,13 +291,24 @@ async def _resolve_inline(
             future.set_exception(exc)
 
 
+# Node types that call ``workflow_caller`` and therefore need the host-side
+# stdin reader loop to stay alive so ``call_workflow_response`` messages can
+# be dispatched. If a new node type uses ``workflow_caller``, add it here.
+_HOST_CALLBACK_NODE_TYPES: frozenset[str] = frozenset({
+    "execute_workflow",
+    "map_items",
+    "map_group",
+    "map_dataset",
+})
+
+
 def _needs_host_callbacks(message: dict[str, Any]) -> bool:
     graph = message.get("graph") or {}
     nodes = graph.get("nodes") if isinstance(graph, dict) else None
     if not isinstance(nodes, list):
         return False
     return any(
-        isinstance(node, dict) and node.get("type") == "execute_workflow"
+        isinstance(node, dict) and node.get("type") in _HOST_CALLBACK_NODE_TYPES
         for node in nodes
     )
 
