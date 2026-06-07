@@ -520,29 +520,68 @@ def loop_over_items(input: Any = None, max_items: int = 0) -> dict:
     id="loop_start",
     category="Logic",
     icon="repeat",
-    outputs=["item", "index"],
+    outputs=["item", "index", "state"],
     params={
+        "mode": {
+            "description": (
+                "each = one row per iteration; batch = a list of N rows; "
+                "group = rows sharing a key; range = loop a fixed count; "
+                "while/until = loop on a condition, carrying state across iterations."
+            ),
+            "choices": ["each", "batch", "group", "range", "while", "until"],
+            "display_name": "Mode",
+        },
         "concurrency": {
-            "description": "How many rows to process at once (default 1 = one at a time).",
+            "description": "How many iterations to process at once (default 1). Forced to 1 for while/until.",
         },
         "on_error": {
-            "description": "fail = stop the loop on the first failing row; continue = collect errors and keep going.",
+            "description": "fail = stop the loop on the first failing iteration; continue = collect errors and keep going.",
             "choices": ["fail", "continue"],
         },
         "max_rows": {
-            "description": "Maximum rows allowed before the loop fails (default 10000). Never silently truncates.",
+            "description": "Maximum input rows allowed before the loop fails (each/batch/group; default 10000).",
+        },
+        "batch_size": {
+            "description": "Rows per iteration when mode=batch (the last batch may be shorter).",
+        },
+        "group_key": {
+            "description": "Row field to group by when mode=group; each iteration gets {key, rows}.",
+        },
+        "count": {
+            "description": "Number of iterations when mode=range (item = 0..count-1).",
+        },
+        "initial": {
+            "description": "Seed state for mode=while/until (any value or expression).",
+        },
+        "condition": {
+            "description": "Expression checked each iteration for while/until, e.g. {{ state.count < 10 }}.",
+        },
+        "max_iterations": {
+            "description": "Safety cap on while/until iterations (default 1000).",
+        },
+        "on_max_iterations": {
+            "description": "When the cap is hit: fail = raise; stop = emit the current state and warn.",
+            "choices": ["fail", "stop"],
         },
     },
 )
 def loop_start(
     input: Any = None,
+    mode: str = "each",
     concurrency: int = 1,
     on_error: str = "fail",
     max_rows: int = 10000,
+    batch_size: int = 1,
+    group_key: str = "",
+    count: int = 0,
+    initial: Any = None,
+    condition: str = "",
+    max_iterations: int = 1000,
+    on_max_iterations: str = "fail",
 ) -> dict[str, Any]:
     """Start of a loop region. The engine drives this node and runs the
-    nodes between it and the paired Loop End once per row; this function is
-    never called directly."""
+    nodes between it and the paired Loop End once per iteration; this function
+    is never called directly."""
     raise RuntimeError(
         "loop_start is executed by the engine's loop driver, not called directly"
     )
@@ -560,14 +599,22 @@ def loop_start(
             "description": "Auto-managed id of the paired Loop Start.",
         },
         "output_mode": {
-            "description": "records = a list of each row's result; dataset = a DatasetRef (each result must be a dict / object).",
+            "description": "records = a list of each row's result; dataset = a DatasetRef (each result must be a dict / object). For-each modes only.",
             "choices": ["records", "dataset"],
             "display_name": "Output",
+        },
+        "conditional_output": {
+            "description": "while/until only: final_state = the last accumulator value; all_states = {final, states:[...]}.",
+            "choices": ["final_state", "all_states"],
+            "display_name": "Conditional output",
         },
     },
 )
 def loop_end(
-    input: Any = None, loop_start_id: str = "", output_mode: str = "records"
+    input: Any = None,
+    loop_start_id: str = "",
+    output_mode: str = "records",
+    conditional_output: str = "final_state",
 ) -> dict[str, Any]:
     """End of a loop region. The engine collects each row's value here; this
     function is never called directly."""
