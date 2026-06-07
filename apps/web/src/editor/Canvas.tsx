@@ -30,6 +30,7 @@ import { useToast } from "../ToastProvider";
 import { LoopFrame } from "./LoopFrame";
 import { LOOP_FRAME_ID_PREFIX, computeLoopFrames } from "./loopFrames";
 import { MapGroupNode } from "./MapGroupNode";
+import { MetanodePreview } from "./MetanodePreview";
 import { MiniMapNoodleNode } from "./MiniMapNoodleNode";
 import { NodeCard } from "./NodeCard";
 import { NodeGroup } from "./NodeGroup";
@@ -301,6 +302,8 @@ export function Canvas() {
   const loadGraph = useEditor((s) => s.loadGraph);
   const setSelected = useEditor((s) => s.setSelected);
   const openNdv = useEditor((s) => s.openNdv);
+  const collapseToMetanode = useEditor((s) => s.collapseToMetanode);
+  const ungroupMetanode = useEditor((s) => s.ungroupMetanode);
   const toggleDisabled = useEditor((s) => s.toggleDisabled);
   const autoEnableAgentDependencies = useEditor((s) => s.autoEnableAgentDependencies);
   const deleteNode = useEditor((s) => s.deleteNode);
@@ -321,6 +324,7 @@ export function Canvas() {
 
   interface CtxMenu { x: number; y: number; nodeId?: string }
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
+  const [metaPreviewId, setMetaPreviewId] = useState<string | null>(null);
   const [ctxActiveIndex, setCtxActiveIndex] = useState(0);
   const ctxMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -529,6 +533,38 @@ export function Canvas() {
               setCtxMenu(null);
             },
           },
+          ...(() => {
+            const ctxNode = nodes.find((n) => n.id === ctxMenu.nodeId);
+            const isMeta = ctxNode?.data.manifest?.id === "meta_node";
+            const selectedIds = nodes.filter((n) => n.selected).map((n) => n.id);
+            const groupIds =
+              selectedIds.length >= 2
+                ? selectedIds
+                : ctxMenu.nodeId
+                  ? [ctxMenu.nodeId]
+                  : [];
+            const items: { label: string; action: () => void; danger?: boolean }[] = [];
+            if (isMeta) {
+              items.push({
+                label: "Ungroup metanode",
+                action: () => {
+                  ungroupMetanode(ctxMenu.nodeId!);
+                  setCtxMenu(null);
+                },
+              });
+            } else if (groupIds.length >= 2) {
+              items.push({
+                label: `Group ${groupIds.length} nodes into metanode`,
+                action: () => {
+                  const id = collapseToMetanode(groupIds);
+                  if (id) notify(`Grouped ${groupIds.length} nodes into a metanode.`, "success");
+                  else notify("Can't group: that selection would create a cycle.", "error");
+                  setCtxMenu(null);
+                },
+              });
+            }
+            return items;
+          })(),
           {
             label: "Duplicate",
             action: () => {
@@ -641,7 +677,14 @@ export function Canvas() {
         onConnect={handleConnect}
         isValidConnection={isValidConnection}
         onNodeClick={(_, node) => setSelected(node.id)}
-        onNodeDoubleClick={(_, node) => { if (node.type === "noodle" || node.type === "mapGroup") openNdv(node.id); }}
+        onNodeDoubleClick={(_, node) => {
+          const sn = nodes.find((n) => n.id === node.id);
+          if (sn?.data.manifest?.id === "meta_node") {
+            setMetaPreviewId(node.id);
+            return;
+          }
+          if (node.type === "noodle" || node.type === "mapGroup") openNdv(node.id);
+        }}
         onPaneClick={() => { setSelected(null); setCtxMenu(null); }}
         onNodeContextMenu={onNodeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
@@ -718,6 +761,22 @@ export function Canvas() {
           ))}
         </div>
       )}
+
+      {metaPreviewId && (() => {
+        const meta = nodes.find((n) => n.id === metaPreviewId);
+        if (!meta) return null;
+        return (
+          <MetanodePreview
+            metaNode={meta}
+            onClose={() => setMetaPreviewId(null)}
+            onUngroup={() => {
+              ungroupMetanode(metaPreviewId);
+              setMetaPreviewId(null);
+              notify("Metanode ungrouped.", "success");
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }

@@ -939,6 +939,11 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
           {loopBadgeText(manifest.id, data.params)}
         </div>
       )}
+      {manifest.id === "meta_node" && (
+        <div className="node-meta-badge" title="Metanode (double-click to open)">
+          {metaBadgeText(data.params)}
+        </div>
+      )}
       {runMeta?.durationMs != null && runStatus !== "running" && (
         <div className="node-duration nodrag nopan">
           {runMeta.durationMs < 1000
@@ -948,6 +953,14 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       )}
     </div>
   );
+}
+
+export function metaBadgeText(params: Record<string, unknown>): string {
+  const sub = params.subgraph as { nodes?: unknown[] } | undefined;
+  const count = sub?.nodes?.length ?? 0;
+  const exec = String(params.execution ?? "transparent");
+  const mark = exec === "isolated" ? " · isolated" : "";
+  return `▣ ${count} node${count === 1 ? "" : "s"}${mark}`;
 }
 
 export function loopBadgeText(id: string, params: Record<string, unknown>): string {

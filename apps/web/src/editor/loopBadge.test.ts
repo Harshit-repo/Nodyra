@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { loopBadgeText } from "./NodeCard";
+import { loopBadgeText, metaBadgeText } from "./NodeCard";
+
+describe("metaBadgeText", () => {
+  it("counts nodes and marks isolated execution", () => {
+    expect(metaBadgeText({ subgraph: { nodes: [{}, {}, {}] } })).toBe("▣ 3 nodes");
+    expect(metaBadgeText({ subgraph: { nodes: [{}] } })).toBe("▣ 1 node");
+    expect(metaBadgeText({ subgraph: { nodes: [{}, {}] }, execution: "isolated" })).toBe(
+      "▣ 2 nodes · isolated",
+    );
+    expect(metaBadgeText({})).toBe("▣ 0 nodes");
+  });
+});
 
 describe("loopBadgeText", () => {
   it("labels Loop End", () => {
