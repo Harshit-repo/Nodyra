@@ -757,7 +757,16 @@ function RunDetailPanel({
           {run.node_runs.length === 0 ? (
             <p className="muted">No node runs recorded yet.</p>
           ) : (
-            run.node_runs.map((n) => <NodeRunRow key={n.node_id} node={n} />)
+            run.node_runs.map((n, i) => (
+              <NodeRunRow
+                key={
+                  n.iteration_path && n.iteration_path.length > 0
+                    ? `${n.node_id}#${n.iteration_path.join(".")}`
+                    : `${n.node_id}#${i}`
+                }
+                node={n}
+              />
+            ))
           )}
         </div>
       )}
@@ -780,6 +789,13 @@ function NodeRunRow({ node }: { node: NodeRunResult }) {
       <header className="exec-node-head" onClick={() => setOpen(!open)}>
         <span className="exec-node-toggle">{open ? "▾" : "▸"}</span>
         <span className="exec-node-id">{node.node_id}</span>
+        {node.iteration_path && node.iteration_path.length > 0 && (
+          <span className="exec-node-iteration" title="Loop iteration">
+            {node.iteration_path.length === 1
+              ? `iter ${node.iteration_path[0]}`
+              : `iter [${node.iteration_path.join(", ")}]`}
+          </span>
+        )}
         <span className={`run-pill status-run-${node.status}`}>
           {node.status}
         </span>

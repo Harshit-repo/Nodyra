@@ -10,10 +10,15 @@ import {
 } from "@xyflow/react";
 import { create } from "zustand";
 
-import { validateConnection, type ConnectionCheck } from "./connectionValidation";
-import { isFromAiExpr } from "./toolParam";
+import {
+  findInputPort,
+  validateConnection,
+  type ConnectionCheck,
+} from "./connectionValidation";
+import { fromAiExpr, isFromAiExpr, paramArgType } from "./toolParam";
 import type {
   NodeManifest,
+  ParamSpec,
   NodeRunDebug,
   RunEvent,
   RunInfo,
@@ -72,17 +77,113 @@ export interface ClipboardResult {
   edgeCount: number;
 }
 
+export interface PinnedOutput {
+  payload: unknown;
+  updatedAt: string | null;
+}
+
+export interface ChildWorkflowState {
+  workflowId: string;
+  nodes: NoodleNode[];
+  edges: Edge[];
+  dirty: boolean;
+  loading: boolean;
+  error: string | null;
+}
+
+export function childToGraph(cw: ChildWorkflowState): WorkflowGraph {
+  return {
+    nodes: cw.nodes.map((n) => ({
+      id: n.id,
+      type: n.data.manifest.id,
+      params: n.data.params,
+      position: { x: n.position.x, y: n.position.y },
+      disabled: Boolean(n.data.disabled),
+      outputs_override: n.data.outputsOverride,
+      on_error: n.data.onError ?? "stop",
+      retry_on_fail: Boolean(n.data.retryOnFail),
+      retries: typeof n.data.retries === "number" ? n.data.retries : 1,
+      retry_wait_seconds: typeof n.data.retryWaitSeconds === "number" ? n.data.retryWaitSeconds : 0,
+      retry_backoff: Boolean(n.data.retryBackoff),
+      always_output_data: Boolean(n.data.alwaysOutputData),
+      timeout_seconds: typeof n.data.timeoutSeconds === "number" ? n.data.timeoutSeconds : null,
+      tool_mode: Boolean(n.data.toolMode),
+      tool_name: n.data.toolName ?? null,
+      tool_description: n.data.toolDescription ?? "",
+      label: n.data.label || undefined,
+    })),
+    edges: cw.edges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      source_output: e.sourceHandle ?? "main",
+      target: e.target,
+      target_input: e.targetHandle ?? "input",
+    })),
+  };
+}
+
+/**
+ * When a loop_start is removed, any surviving loop_end that pointed at it would
+ * dangle (the engine rejects a Loop End whose pair is missing). Clear those
+ * back-references so the orphaned Loop End is simply unpaired, not broken.
+ */
+function unpairOrphanedLoopEnds(nodes: NoodleNode[], deletedIds: Set<string>): NoodleNode[] {
+  let unpaired = 0;
+  const next = nodes.map((n) => {
+    if (
+      n.data.manifest?.id === "loop_end" &&
+      typeof n.data.params.loop_start_id === "string" &&
+      deletedIds.has(n.data.params.loop_start_id)
+    ) {
+      unpaired += 1;
+      return { ...n, data: { ...n.data, params: { ...n.data.params, loop_start_id: "" } } };
+    }
+    return n;
+  });
+  if (unpaired > 0) {
+    console.warn(
+      `Unpaired ${unpaired} Loop End node(s) whose Loop Start was deleted. ` +
+        "Re-pair or delete them before running.",
+    );
+  }
+  return next;
+}
+
+function buildBodyIndex(childWorkflows: Record<string, ChildWorkflowState>): Record<string, string> {
+  const index: Record<string, string> = {};
+  for (const [mgId, cw] of Object.entries(childWorkflows)) {
+    for (const node of cw.nodes) index[node.id] = mgId;
+  }
+  return index;
+}
+
+function buildBodyEdgeIndex(childWorkflows: Record<string, ChildWorkflowState>): Record<string, string> {
+  const index: Record<string, string> = {};
+  for (const [mgId, cw] of Object.entries(childWorkflows)) {
+    for (const edge of cw.edges) index[edge.id] = mgId;
+  }
+  return index;
+}
+
+function nodeChangeId(change: NodeChange<NoodleNode>): string {
+  return change.type === "add" ? change.item.id : change.id;
+}
+
+function edgeChangeId(change: EdgeChange): string {
+  return change.type === "add" ? change.item.id : change.id;
+}
+
 export const TRIGGER_CATEGORY = "Triggers";
 
 export function pickEditorRunTrigger(nodes: NoodleNode[]): NoodleNode | null {
-  const triggers = nodes.filter((n) => n.data.manifest.category === TRIGGER_CATEGORY);
+  const triggers = nodes.filter((n) => n.data.manifest?.category === TRIGGER_CATEGORY);
   if (triggers.length === 0) return null;
-  const manual = triggers.find((n) => n.data.manifest.id === "manual_trigger");
+  const manual = triggers.find((n) => n.data.manifest?.id === "manual_trigger");
   return manual ?? triggers[0];
 }
 
 export function isTriggerNode(node: NoodleNode | undefined): boolean {
-  return Boolean(node && node.data.manifest.category === TRIGGER_CATEGORY);
+  return Boolean(node && node.data.manifest?.category === TRIGGER_CATEGORY);
 }
 
 function deriveSwitchOutputs(rules: unknown): string[] {
@@ -138,7 +239,82 @@ function deriveApiEndpointOutputs(routes: unknown): string[] {
   return ports.length > 0 ? ports : ["main"];
 }
 
-export type NoodleNode = Node<NoodleNodeData, "noodle">;
+function shouldSeedFromAiParam(spec: ParamSpec, value: unknown): boolean {
+  if (spec.credential || spec.group || spec.choices) return false;
+  if (spec.type === "boolean" || spec.type === "object" || spec.type === "array") {
+    return false;
+  }
+  if (isFromAiExpr(value)) return false;
+  if (typeof value === "string") return value.trim() === "";
+  return value === null || value === undefined;
+}
+
+function seedBlankToolParams(
+  manifest: NodeManifest,
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  let changed = false;
+  const next: Record<string, unknown> = { ...params };
+  for (const spec of manifest.params) {
+    const current = Object.prototype.hasOwnProperty.call(next, spec.name)
+      ? next[spec.name]
+      : spec.default;
+    if (!shouldSeedFromAiParam(spec, current)) continue;
+    next[spec.name] = fromAiExpr(
+      spec.name,
+      spec.description || spec.placeholder || spec.name,
+      paramArgType(spec.type),
+    );
+    changed = true;
+  }
+  return changed ? next : params;
+}
+
+const AI_INPUT_PORT_KINDS = new Set([
+  "ai_language_model",
+  "ai_embedding_model",
+  "ai_memory",
+  "ai_tool",
+  "ai_output_parser",
+  "ai_retriever",
+  "ai_vector_store",
+  "ai_document_loader",
+  "ai_guardrail",
+]);
+
+function shouldEnableSourceForConnection(
+  nodes: NoodleNode[],
+  connection: Connection,
+): boolean {
+  if (!connection.source || !connection.target) return false;
+  const source = nodes.find((node) => node.id === connection.source);
+  const target = nodes.find((node) => node.id === connection.target);
+  if (!source?.data.disabled || !target?.data.manifest) return false;
+  const targetPort = findInputPort(target.data.manifest, connection.targetHandle);
+  return AI_INPUT_PORT_KINDS.has(targetPort?.data_kind ?? "any");
+}
+
+function disabledAgentDependencySourceIds(
+  nodes: NoodleNode[],
+  edges: Edge[],
+): Set<string> {
+  const ids = new Set<string>();
+  for (const edge of edges) {
+    if (
+      shouldEnableSourceForConnection(nodes, {
+        source: edge.source,
+        sourceHandle: edge.sourceHandle ?? null,
+        target: edge.target,
+        targetHandle: edge.targetHandle ?? null,
+      })
+    ) {
+      ids.add(edge.source);
+    }
+  }
+  return ids;
+}
+
+export type NoodleNode = Node<NoodleNodeData, string>;
 
 interface EditorStore {
   manifests: NodeManifest[];
@@ -184,6 +360,7 @@ interface EditorStore {
   autoLayout: () => void;
   duplicateNode: (id: string) => void;
   copySelection: () => ClipboardResult;
+  cutSelection: () => ClipboardResult;
   pasteSelection: () => ClipboardResult;
   clipboardNodeCount: number;
   updateParams: (id: string, params: Record<string, unknown>) => void;
@@ -199,7 +376,9 @@ interface EditorStore {
   closeChat: () => void;
 
   deleteNode: (id: string) => void;
+  deleteSelection: () => number;
   toggleDisabled: (id: string) => void;
+  autoEnableAgentDependencies: () => number;
   updateNodeSettings: (id: string, patch: NodeSettingsPatch) => void;
 
   runHandler: ((targets?: string[], options?: RunOptions) => Promise<void>) | null;
@@ -222,9 +401,9 @@ interface EditorStore {
   workflowId: string | null;
   setWorkflowId: (id: string | null) => void;
 
-  pinned: Record<string, unknown>;
-  setPinned: (pinned: Record<string, unknown>) => void;
-  setPinnedFor: (nodeId: string, payload: unknown | null) => void;
+  pinned: Record<string, PinnedOutput>;
+  setPinned: (pinned: Record<string, PinnedOutput>) => void;
+  setPinnedFor: (nodeId: string, payload: unknown | null, updatedAt?: string | null) => void;
 
   // History (undo/redo) — snapshots of {nodes, edges} only. Reset whenever
   // `loadGraph` is called for a different workflow so undo never crosses
@@ -236,6 +415,14 @@ interface EditorStore {
 
   devMode: boolean;
   toggleDevMode: () => void;
+
+  // Map Group inline editing — child workflow graphs keyed by map_group node ID.
+  childWorkflows: Record<string, ChildWorkflowState>;
+  loadChildGraph: (mapGroupId: string, workflowId: string, graph: WorkflowGraph) => void;
+  setChildWorkflowLoading: (mapGroupId: string, loading: boolean, error?: string | null) => void;
+  markChildClean: (mapGroupId: string) => void;
+  removeChildWorkflow: (mapGroupId: string) => void;
+  addBodyNode: (mapGroupId: string, manifestId: string, position: { x: number; y: number }) => void;
 }
 
 let seq = 0;
@@ -315,6 +502,26 @@ function selectedNodes(nodes: NoodleNode[], selectedId: string | null): NoodleNo
   if (selected.length > 0) return selected;
   const fallback = selectedId ? nodes.find((node) => node.id === selectedId) : null;
   return fallback ? [fallback] : [];
+}
+
+function copyNodesToClipboard(nodes: NoodleNode[], edges: Edge[]): ClipboardResult {
+  if (nodes.length === 0) return { nodeCount: 0, edgeCount: 0 };
+  const copiedIds = new Set(nodes.map((node) => node.id));
+  const copiedEdges = edges.filter(
+    (edge) => copiedIds.has(edge.source) && copiedIds.has(edge.target),
+  );
+  editorClipboard = {
+    nodes: nodes.map((node) => ({
+      ...cloneNode(node),
+      selected: false,
+    })),
+    edges: copiedEdges.map((edge) => ({
+      ...cloneValue(edge),
+      selected: false,
+    })),
+    pasteCount: 0,
+  };
+  return { nodeCount: nodes.length, edgeCount: copiedEdges.length };
 }
 
 function layoutPositions(
@@ -408,6 +615,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
   devMode: false,
   clipboardNodeCount: 0,
+  childWorkflows: {},
 
   envId: null,
   envName: null,
@@ -441,10 +649,12 @@ export const useEditor = create<EditorStore>((set, get) => ({
       if (!outputsOverride && manifest.id === "api_endpoint") {
         outputsOverride = deriveApiEndpointOutputs(params.routes);
       }
+      const rfType = n.type === "map_group" ? "mapGroup" : "noodle";
       nodes.push({
         id: n.id,
-        type: "noodle",
+        type: rfType,
         position: n.position,
+        ...(rfType === "mapGroup" ? { style: { width: 380, height: 280, zIndex: -1 } } : {}),
         data: {
           manifest,
           params,
@@ -481,13 +691,14 @@ export const useEditor = create<EditorStore>((set, get) => ({
       dirty: Boolean(opts?.dirty),
       _past: [],
       _future: [],
+      childWorkflows: {},
     });
   },
 
   toGraph: () => {
     const { nodes, edges } = get();
     return {
-      nodes: nodes.map((n) => ({
+      nodes: nodes.filter((n) => n.data.manifest).map((n) => ({
         id: n.id,
         type: n.data.manifest.id,
         params: n.data.params,
@@ -523,11 +734,34 @@ export const useEditor = create<EditorStore>((set, get) => ({
   },
 
   onNodesChange: (changes) => {
-    const structural = changes.some((c) => STRUCTURAL.has(c.type));
-    const commit = shouldCommitChanges(changes as Array<{ type: string; dragging?: boolean }>);
     const state = get();
+    const bodyIndex = buildBodyIndex(state.childWorkflows);
+
+    const parentChanges: NodeChange<NoodleNode>[] = [];
+    const byGroup: Record<string, NodeChange<NoodleNode>[]> = {};
+    for (const change of changes) {
+      const mgId = bodyIndex[nodeChangeId(change)];
+      if (mgId) (byGroup[mgId] ??= []).push(change);
+      else parentChanges.push(change);
+    }
+
+    const structural = parentChanges.some((c) => STRUCTURAL.has(c.type));
+    const commit = shouldCommitChanges(parentChanges as Array<{ type: string; dragging?: boolean }>);
+
+    const nextCw = { ...state.childWorkflows };
+    for (const [mgId, grpChanges] of Object.entries(byGroup)) {
+      const cw = nextCw[mgId];
+      if (!cw) continue;
+      nextCw[mgId] = {
+        ...cw,
+        nodes: applyNodeChanges(grpChanges, cw.nodes),
+        dirty: cw.dirty || grpChanges.some((c) => STRUCTURAL.has(c.type)),
+      };
+    }
+
     set({
-      nodes: applyNodeChanges(changes, state.nodes),
+      nodes: applyNodeChanges(parentChanges, state.nodes),
+      childWorkflows: nextCw,
       dirty: state.dirty || structural,
       ...(commit
         ? {
@@ -539,11 +773,34 @@ export const useEditor = create<EditorStore>((set, get) => ({
   },
 
   onEdgesChange: (changes) => {
-    const structural = changes.some((c) => STRUCTURAL.has(c.type));
-    const commit = shouldCommitChanges(changes as Array<{ type: string; dragging?: boolean }>);
     const state = get();
+    const bodyEdgeIndex = buildBodyEdgeIndex(state.childWorkflows);
+
+    const parentChanges: EdgeChange[] = [];
+    const byGroup: Record<string, EdgeChange[]> = {};
+    for (const change of changes) {
+      const mgId = bodyEdgeIndex[edgeChangeId(change)];
+      if (mgId) (byGroup[mgId] ??= []).push(change);
+      else parentChanges.push(change);
+    }
+
+    const structural = parentChanges.some((c) => STRUCTURAL.has(c.type));
+    const commit = shouldCommitChanges(parentChanges as Array<{ type: string; dragging?: boolean }>);
+
+    const nextCw = { ...state.childWorkflows };
+    for (const [mgId, grpChanges] of Object.entries(byGroup)) {
+      const cw = nextCw[mgId];
+      if (!cw) continue;
+      nextCw[mgId] = {
+        ...cw,
+        edges: applyEdgeChanges(grpChanges, cw.edges),
+        dirty: cw.dirty || grpChanges.some((c) => STRUCTURAL.has(c.type)),
+      };
+    }
+
     set({
-      edges: applyEdgeChanges(changes, state.edges),
+      edges: applyEdgeChanges(parentChanges, state.edges),
+      childWorkflows: nextCw,
       dirty: state.dirty || structural,
       ...(commit
         ? {
@@ -556,21 +813,49 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
   onConnect: (connection) => {
     const state = get();
-    const check = validateConnection(state.nodes, connection);
+    const allNodes = [
+      ...state.nodes,
+      ...Object.values(state.childWorkflows).flatMap((cw) => cw.nodes),
+    ];
+    const check = validateConnection(allNodes, connection);
     if (!check.ok) return check;
-    const kept = state.edges.filter(
-      (e) =>
-        !(
-          e.target === connection.target &&
-          e.targetHandle === connection.targetHandle
-        ),
-    );
-    set({
-      edges: addEdge(connection, kept),
-      dirty: true,
-      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
-      _future: [],
-    });
+
+    const bodyIndex = buildBodyIndex(state.childWorkflows);
+    const sourceGroupId = bodyIndex[connection.source!];
+    const targetGroupId = bodyIndex[connection.target!];
+
+    if (sourceGroupId && sourceGroupId === targetGroupId) {
+      const cw = state.childWorkflows[sourceGroupId];
+      const kept = cw.edges.filter(
+        (e) => !(e.target === connection.target && e.targetHandle === connection.targetHandle),
+      );
+      set({
+        childWorkflows: {
+          ...state.childWorkflows,
+          [sourceGroupId]: { ...cw, edges: addEdge(connection, kept), dirty: true },
+        },
+        _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+        _future: [],
+      });
+    } else {
+      const kept = state.edges.filter(
+        (e) => !(e.target === connection.target && e.targetHandle === connection.targetHandle),
+      );
+      const enableSource = shouldEnableSourceForConnection(state.nodes, connection);
+      set({
+        nodes: enableSource
+          ? state.nodes.map((node) =>
+              node.id === connection.source
+                ? { ...node, data: { ...node.data, disabled: false } }
+                : node,
+            )
+          : state.nodes,
+        edges: addEdge(connection, kept),
+        dirty: true,
+        _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+        _future: [],
+      });
+    }
     return check;
   },
 
@@ -649,16 +934,17 @@ export const useEditor = create<EditorStore>((set, get) => ({
     const state = get();
     const manifest = state.manifestsById[manifestId];
     if (!manifest) return;
-    const node: NoodleNode = {
+
+    const makeNode = (m: NodeManifest, pos: { x: number; y: number }): NoodleNode => ({
       id: newNodeId(),
-      type: "noodle",
-      position,
+      type: m.id === "map_group" ? "mapGroup" : "noodle",
+      position: pos,
+      ...(m.id === "map_group" ? { style: { width: 380, height: 280, zIndex: -1 } } : {}),
       data: {
-        manifest,
-        params: defaultParams(manifest),
+        manifest: m,
+        params: defaultParams(m),
         disabled: false,
-        outputsOverride:
-          manifest.id === "switch" ? ["fallback"] : null,
+        outputsOverride: m.id === "switch" ? ["fallback"] : null,
         onError: "stop",
         retryOnFail: false,
         retries: 1,
@@ -667,7 +953,27 @@ export const useEditor = create<EditorStore>((set, get) => ({
         alwaysOutputData: false,
         timeoutSeconds: null,
       },
-    };
+    });
+
+    // Dropping a Loop Start also drops a pre-paired Loop End so users author
+    // the region as one gesture (mirrors how map_group seeds its body).
+    const loopEndManifest =
+      manifestId === "loop_start" ? state.manifestsById["loop_end"] : undefined;
+    if (manifestId === "loop_start" && loopEndManifest) {
+      const start = makeNode(manifest, position);
+      const end = makeNode(loopEndManifest, { x: position.x + 320, y: position.y });
+      end.data.params = { ...end.data.params, loop_start_id: start.id };
+      set({
+        nodes: [...state.nodes, start, end],
+        selectedId: start.id,
+        dirty: true,
+        _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+        _future: [],
+      });
+      return;
+    }
+
+    const node = makeNode(manifest, position);
     set({
       nodes: [...state.nodes, node],
       selectedId: node.id,
@@ -757,24 +1063,28 @@ export const useEditor = create<EditorStore>((set, get) => ({
   copySelection: () => {
     const state = get();
     const copiedNodes = selectedNodes(state.nodes, state.selectedId);
-    if (copiedNodes.length === 0) return { nodeCount: 0, edgeCount: 0 };
-    const copiedIds = new Set(copiedNodes.map((node) => node.id));
-    const copiedEdges = state.edges.filter(
-      (edge) => copiedIds.has(edge.source) && copiedIds.has(edge.target),
-    );
-    editorClipboard = {
-      nodes: copiedNodes.map((node) => ({
-        ...cloneNode(node),
-        selected: false,
-      })),
-      edges: copiedEdges.map((edge) => ({
-        ...cloneValue(edge),
-        selected: false,
-      })),
-      pasteCount: 0,
-    };
-    set({ clipboardNodeCount: copiedNodes.length });
-    return { nodeCount: copiedNodes.length, edgeCount: copiedEdges.length };
+    const result = copyNodesToClipboard(copiedNodes, state.edges);
+    if (result.nodeCount > 0) set({ clipboardNodeCount: result.nodeCount });
+    return result;
+  },
+
+  cutSelection: () => {
+    const state = get();
+    const cutNodes = selectedNodes(state.nodes, state.selectedId);
+    const result = copyNodesToClipboard(cutNodes, state.edges);
+    if (result.nodeCount === 0) return result;
+    const cutIds = new Set(cutNodes.map((node) => node.id));
+    set({
+      nodes: state.nodes.filter((node) => !cutIds.has(node.id)),
+      edges: state.edges.filter((edge) => !cutIds.has(edge.source) && !cutIds.has(edge.target)),
+      selectedId: state.selectedId && cutIds.has(state.selectedId) ? null : state.selectedId,
+      ndvOpenId: state.ndvOpenId && cutIds.has(state.ndvOpenId) ? null : state.ndvOpenId,
+      clipboardNodeCount: result.nodeCount,
+      dirty: true,
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
+    });
+    return result;
   },
 
   pasteSelection: () => {
@@ -842,21 +1152,21 @@ export const useEditor = create<EditorStore>((set, get) => ({
     const node = state.nodes.find((n) => n.id === id);
     let outputsOverride = node?.data.outputsOverride ?? null;
     let edges = state.edges;
-    if (node && node.data.manifest.id === "switch") {
+    if (node && node.data.manifest?.id === "switch") {
       outputsOverride = deriveSwitchOutputs(params.rules);
       const valid = new Set(outputsOverride);
       edges = state.edges.filter(
         (e) => e.source !== id || valid.has(e.sourceHandle ?? "main"),
       );
     }
-    if (node && node.data.manifest.id === "code") {
+    if (node && node.data.manifest?.id === "code") {
       outputsOverride = deriveCodeOutputs(params.code);
       const valid = new Set(outputsOverride);
       edges = state.edges.filter(
         (e) => e.source !== id || valid.has(e.sourceHandle ?? "main"),
       );
     }
-    if (node && node.data.manifest.id === "api_endpoint") {
+    if (node && node.data.manifest?.id === "api_endpoint") {
       outputsOverride = deriveApiEndpointOutputs(params.routes);
       const valid = new Set(outputsOverride);
       edges = state.edges.filter(
@@ -912,15 +1222,41 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
   deleteNode: (id) => {
     const state = get();
+    if (!state.nodes.some((n) => n.id === id)) return;
+    const nextCw = { ...state.childWorkflows };
+    delete nextCw[id];
+    const survivors = state.nodes.filter((n) => n.id !== id);
     set({
-      nodes: state.nodes.filter((n) => n.id !== id),
+      nodes: unpairOrphanedLoopEnds(survivors, new Set([id])),
       edges: state.edges.filter((e) => e.source !== id && e.target !== id),
+      childWorkflows: nextCw,
       selectedId: state.selectedId === id ? null : state.selectedId,
       ndvOpenId: state.ndvOpenId === id ? null : state.ndvOpenId,
       dirty: true,
       _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
       _future: [],
     });
+  },
+
+  deleteSelection: () => {
+    const state = get();
+    const targets = selectedNodes(state.nodes, state.selectedId);
+    if (targets.length === 0) return 0;
+    const ids = new Set(targets.map((node) => node.id));
+    const nextCw = { ...state.childWorkflows };
+    for (const id of ids) delete nextCw[id];
+    const survivors = state.nodes.filter((node) => !ids.has(node.id));
+    set({
+      nodes: unpairOrphanedLoopEnds(survivors, ids),
+      edges: state.edges.filter((edge) => !ids.has(edge.source) && !ids.has(edge.target)),
+      childWorkflows: nextCw,
+      selectedId: state.selectedId && ids.has(state.selectedId) ? null : state.selectedId,
+      ndvOpenId: state.ndvOpenId && ids.has(state.ndvOpenId) ? null : state.ndvOpenId,
+      dirty: true,
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
+    });
+    return targets.length;
   },
 
   toggleDisabled: (id) => {
@@ -937,12 +1273,28 @@ export const useEditor = create<EditorStore>((set, get) => ({
     });
   },
 
+  autoEnableAgentDependencies: () => {
+    const state = get();
+    const ids = disabledAgentDependencySourceIds(state.nodes, state.edges);
+    if (ids.size === 0) return 0;
+    set({
+      nodes: state.nodes.map((node) =>
+        ids.has(node.id)
+          ? { ...node, data: { ...node.data, disabled: false } }
+          : node,
+      ),
+      dirty: true,
+    });
+    return ids.size;
+  },
+
   updateNodeSettings: (id, patch) => {
     const state = get();
     // Turning tool mode OFF reverts every "From AI" param back to Fixed:
     // a $fromAI() expression only resolves while the Agent drives the node, so
     // it would be dead config on a normally-wired node. Reset to spec defaults.
     const revertFromAi = patch.toolMode === false;
+    const seedFromAi = patch.toolMode === true;
     set({
       nodes: state.nodes.map((n) => {
         if (n.id !== id) return n;
@@ -961,7 +1313,18 @@ export const useEditor = create<EditorStore>((set, get) => ({
           }
           if (changed) params = next;
         }
-        return { ...n, data: { ...n.data, ...patch, params } };
+        if (seedFromAi) {
+          params = seedBlankToolParams(n.data.manifest, params);
+        }
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            ...patch,
+            params,
+            disabled: seedFromAi ? false : n.data.disabled,
+          },
+        };
       }),
       dirty: true,
       _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
@@ -1157,13 +1520,13 @@ export const useEditor = create<EditorStore>((set, get) => ({
   setWorkflowId: (id) => set({ workflowId: id }),
 
   setPinned: (pinned) => set({ pinned }),
-  setPinnedFor: (nodeId, payload) =>
+  setPinnedFor: (nodeId, payload, updatedAt = null) =>
     set((state) => {
       const next = { ...state.pinned };
       if (payload === null || payload === undefined) {
         delete next[nodeId];
       } else {
-        next[nodeId] = payload;
+        next[nodeId] = { payload, updatedAt };
       }
       return { pinned: next };
     }),
@@ -1196,4 +1559,122 @@ export const useEditor = create<EditorStore>((set, get) => ({
   },
 
   toggleDevMode: () => set((s) => ({ devMode: !s.devMode })),
+
+  loadChildGraph: (mapGroupId, workflowId, graph) => {
+    const byId = get().manifestsById;
+    const nodes: NoodleNode[] = [];
+    for (const n of graph.nodes) {
+      const manifest = byId[n.type];
+      if (!manifest) continue;
+      const params = n.params ?? {};
+      let outputsOverride: string[] | null = n.outputs_override ?? null;
+      if (!outputsOverride && manifest.id === "switch") outputsOverride = deriveSwitchOutputs(params.rules);
+      if (!outputsOverride && manifest.id === "code") outputsOverride = deriveCodeOutputs(params.code);
+      if (!outputsOverride && manifest.id === "api_endpoint") outputsOverride = deriveApiEndpointOutputs(params.routes);
+      nodes.push({
+        id: n.id,
+        type: "noodle",
+        position: n.position,
+        parentId: mapGroupId,
+        extent: "parent" as const,
+        data: {
+          manifest,
+          params,
+          disabled: Boolean(n.disabled),
+          outputsOverride,
+          onError: typeof n.on_error === "string" ? n.on_error : "stop",
+          retryOnFail: Boolean(n.retry_on_fail),
+          retries: typeof n.retries === "number" ? n.retries : 1,
+          retryWaitSeconds: typeof n.retry_wait_seconds === "number" ? n.retry_wait_seconds : 0,
+          retryBackoff: Boolean(n.retry_backoff),
+          alwaysOutputData: Boolean(n.always_output_data),
+          timeoutSeconds: typeof n.timeout_seconds === "number" ? n.timeout_seconds : null,
+          toolMode: Boolean(n.tool_mode),
+          toolName: typeof n.tool_name === "string" ? n.tool_name : null,
+          toolDescription: typeof n.tool_description === "string" ? n.tool_description : "",
+          label: typeof n.label === "string" && n.label ? n.label : undefined,
+        },
+      });
+    }
+    const edges: Edge[] = graph.edges.map((e, i) => ({
+      id: e.id || `e_${i}`,
+      source: e.source,
+      sourceHandle: e.source_output,
+      target: e.target,
+      targetHandle: e.target_input,
+    }));
+    set((state) => ({
+      childWorkflows: {
+        ...state.childWorkflows,
+        [mapGroupId]: { workflowId, nodes, edges, dirty: false, loading: false, error: null },
+      },
+    }));
+  },
+
+  setChildWorkflowLoading: (mapGroupId, loading, error = null) =>
+    set((state) => ({
+      childWorkflows: {
+        ...state.childWorkflows,
+        [mapGroupId]: {
+          ...(state.childWorkflows[mapGroupId] ?? {
+            workflowId: "",
+            nodes: [],
+            edges: [],
+            dirty: false,
+          }),
+          loading,
+          error: loading ? null : (error ?? null),
+        },
+      },
+    })),
+
+  markChildClean: (mapGroupId) =>
+    set((state) => {
+      const cw = state.childWorkflows[mapGroupId];
+      if (!cw) return state;
+      return {
+        childWorkflows: { ...state.childWorkflows, [mapGroupId]: { ...cw, dirty: false } },
+      };
+    }),
+
+  removeChildWorkflow: (mapGroupId) =>
+    set((state) => {
+      const next = { ...state.childWorkflows };
+      delete next[mapGroupId];
+      return { childWorkflows: next };
+    }),
+
+  addBodyNode: (mapGroupId, manifestId, position) => {
+    const state = get();
+    const manifest = state.manifestsById[manifestId];
+    if (!manifest) return;
+    const cw = state.childWorkflows[mapGroupId];
+    if (!cw) return;
+    const node: NoodleNode = {
+      id: newNodeId(),
+      type: "noodle",
+      position,
+      parentId: mapGroupId,
+      extent: "parent" as const,
+      data: {
+        manifest,
+        params: defaultParams(manifest),
+        disabled: false,
+        outputsOverride: manifest.id === "switch" ? ["fallback"] : null,
+        onError: "stop",
+        retryOnFail: false,
+        retries: 1,
+        retryWaitSeconds: 0,
+        retryBackoff: false,
+        alwaysOutputData: false,
+        timeoutSeconds: null,
+      },
+    };
+    set({
+      childWorkflows: {
+        ...state.childWorkflows,
+        [mapGroupId]: { ...cw, nodes: [...cw.nodes, node], dirty: true },
+      },
+    });
+  },
 }));

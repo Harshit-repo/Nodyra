@@ -89,6 +89,7 @@ export interface NodeManifest {
   inputs: PortSpec[];
   params: ParamSpec[];
   outputs: PortSpec[];
+  param_output_kinds?: Record<string, Record<string, string>>;
   requirements?: string[];
   system_requirements?: SystemRequirement[];
 }
@@ -262,6 +263,7 @@ export interface NodeRunResult {
   started_at?: number | null;
   finished_at?: number | null;
   duration_ms?: number | null;
+  iteration_path?: number[] | null;
 }
 
 export interface NodeVariableInfo {
