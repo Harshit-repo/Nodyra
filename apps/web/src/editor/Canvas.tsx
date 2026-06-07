@@ -9,6 +9,7 @@ import {
   ArrowClockwise,
   ArrowCounterClockwise,
   ArrowsOut,
+  BoundingBox,
   CaretLeft,
   CaretRight,
   ClipboardText,
@@ -26,6 +27,8 @@ import type { Connection, Edge } from "@xyflow/react";
 
 import { CANVAS_STARTERS } from "../workflowTemplates";
 import { useToast } from "../ToastProvider";
+import { LoopFrame } from "./LoopFrame";
+import { LOOP_FRAME_ID_PREFIX, computeLoopFrames } from "./loopFrames";
 import { MapGroupNode } from "./MapGroupNode";
 import { MiniMapNoodleNode } from "./MiniMapNoodleNode";
 import { NodeCard } from "./NodeCard";
@@ -34,9 +37,15 @@ import { NoodleEdge } from "./NoodleEdge";
 import { PortLegend } from "./PortLegend";
 import { StickyNote } from "./StickyNote";
 import { datasetConnectionIssues, validateConnection, type ConnectionCheck } from "./connectionValidation";
-import { pickEditorRunTrigger, useEditor } from "./store";
+import { pickEditorRunTrigger, useEditor, type NoodleNode } from "./store";
 
-const nodeTypes = { noodle: NodeCard, sticky: StickyNote, group: NodeGroup, mapGroup: MapGroupNode };
+const nodeTypes = {
+  noodle: NodeCard,
+  sticky: StickyNote,
+  group: NodeGroup,
+  mapGroup: MapGroupNode,
+  loopFrame: LoopFrame,
+};
 const edgeTypes = { default: NoodleEdge };
 
 function quickFixLabel(quickFixId: ConnectionCheck["quickFixId"]): string {
@@ -119,6 +128,11 @@ function CanvasControls() {
   const { notify } = useToast();
   const autoLayout = useEditor((s) => s.autoLayout);
   const addStickyNote = useEditor((s) => s.addStickyNote);
+  const showLoopFrames = useEditor((s) => s.showLoopFrames);
+  const toggleLoopFrames = useEditor((s) => s.toggleLoopFrames);
+  const hasLoop = useEditor((s) =>
+    s.nodes.some((n) => n.data.manifest?.id === "loop_start"),
+  );
   const nodes = useEditor((s) => s.nodes);
   const running = useEditor((s) => s.running);
   const runHandler = useEditor((s) => s.runHandler);
@@ -245,6 +259,18 @@ function CanvasControls() {
         >
           <Note size={14} weight="bold" />
         </button>
+        {hasLoop && (
+          <button
+            type="button"
+            className={showLoopFrames ? "is-active" : undefined}
+            title={showLoopFrames ? "Hide loop frames" : "Show loop frames"}
+            aria-label="Toggle loop frames"
+            aria-pressed={showLoopFrames}
+            onClick={() => toggleLoopFrames()}
+          >
+            <BoundingBox size={14} weight="bold" />
+          </button>
+        )}
       </div>
 
       {/* Run — always visible on the right */}
@@ -266,6 +292,7 @@ export function Canvas() {
   const nodes = useEditor((s) => s.nodes);
   const edges = useEditor((s) => s.edges);
   const onNodesChange = useEditor((s) => s.onNodesChange);
+  const showLoopFrames = useEditor((s) => s.showLoopFrames);
   const onEdgesChange = useEditor((s) => s.onEdgesChange);
   const onConnect = useEditor((s) => s.onConnect);
   const addNode = useEditor((s) => s.addNode);
@@ -449,11 +476,35 @@ export function Canvas() {
       : e,
   );
 
-  // Merge body nodes and edges from child workflows into the render list.
-  const allNodes = useMemo(
-    () => [...nodes, ...Object.values(childWorkflows).flatMap((cw) => cw.nodes)],
-    [nodes, childWorkflows],
+  // Auto-frames behind each loop's body. Derived from the graph (never
+  // persisted) and rendered first so they sit behind the real nodes.
+  const loopFrames = useMemo(
+    () => (showLoopFrames ? computeLoopFrames(nodes, edges) : []),
+    [showLoopFrames, nodes, edges],
   );
+
+  // Merge frames + body nodes/edges from child workflows into the render list.
+  const allNodes = useMemo(
+    () => [
+      // Frames are render-only RF nodes; cast keeps allNodes a NoodleNode[].
+      ...(loopFrames as unknown as NoodleNode[]),
+      ...nodes,
+      ...Object.values(childWorkflows).flatMap((cw) => cw.nodes),
+    ],
+    [loopFrames, nodes, childWorkflows],
+  );
+  // Derived loop frames are render-only; drop any change RF emits for them so
+  // they never reach the persisted store.
+  const handleNodesChange = useCallback(
+    (changes: Parameters<typeof onNodesChange>[0]) =>
+      onNodesChange(
+        changes.filter(
+          (c) => !("id" in c && typeof c.id === "string" && c.id.startsWith(LOOP_FRAME_ID_PREFIX)),
+        ),
+      ),
+    [onNodesChange],
+  );
+
   const allEdges = useMemo(
     () => [
       ...labeledEdges,
@@ -585,7 +636,7 @@ export function Canvas() {
         edges={allEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        onNodesChange={onNodesChange}
+        onNodesChange={handleNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}
         isValidConnection={isValidConnection}

@@ -374,6 +374,8 @@ interface EditorStore {
   chatOpen: boolean;
   openChat: () => void;
   closeChat: () => void;
+  showLoopFrames: boolean;
+  toggleLoopFrames: () => void;
 
   deleteNode: (id: string) => void;
   deleteSelection: () => number;
@@ -601,6 +603,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
   ndvOpenId: null,
   chatOpen: false,
+  showLoopFrames: true,
   runHandler: null,
 
   runId: null,
@@ -1219,6 +1222,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
   closeNdv: () => set({ ndvOpenId: null }),
   openChat: () => set({ chatOpen: true }),
   closeChat: () => set({ chatOpen: false }),
+  toggleLoopFrames: () => set((s) => ({ showLoopFrames: !s.showLoopFrames })),
 
   deleteNode: (id) => {
     const state = get();
