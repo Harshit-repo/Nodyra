@@ -146,3 +146,24 @@ def test_validate_accepts_well_nested():
         ],
     )
     _validate_loop_regions(g, _loop_regions(g))  # must not raise
+
+
+async def test_loop_runs_body_once_per_item_in_order():
+    # items [1,2,3] -> body doubles -> results [2,4,6]
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": [1, 2, 3]}),
+            _n("s", "loop_start"),
+            _n("b", "code", {"code": "output = input * 2"}),
+            _n("e", "loop_end", {"loop_start_id": "s"}),
+        ],
+        [
+            _e("trig", "s"),
+            _e("s", "b", src_out="item"),
+            _e("b", "e"),
+        ],
+    )
+    result = await execute(g, registry)
+    assert str(result.nodes["e"].status) == "success"
+    assert result.nodes["e"].outputs["results"] == [2, 4, 6]
+    assert result.nodes["e"].outputs["errors"] == []

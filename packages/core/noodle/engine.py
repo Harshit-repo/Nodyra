@@ -1219,8 +1219,165 @@ async def _run_one_node(
     return run_status
 
 
-async def _run_loop(**_: Any) -> RunStatus:
-    """Stub replaced by the real loop driver in Task 5."""
+class _LoopRowError(Exception):
+    """Raised inside a loop iteration to abort the whole loop (on_error=fail)."""
+
+    def __init__(self, index: int) -> None:
+        self.index = index
+
+
+def _restricted_levels(graph: WorkflowGraph, node_ids: frozenset[str]) -> list[list[str]]:
+    """Topo levels over the induced subgraph on ``node_ids`` only."""
+    node_index = {n.id: i for i, n in enumerate(graph.nodes)}
+    preds = {nid: set() for nid in node_ids}
+    for e in graph.edges:
+        if e.source in node_ids and e.target in node_ids:
+            preds[e.target].add(e.source)
+    indeg = {nid: len(p) for nid, p in preds.items()}
+    succ: dict[str, set[str]] = defaultdict(set)
+    for nid, p in preds.items():
+        for s in p:
+            succ[s].add(nid)
+    remaining = set(node_ids)
+    levels: list[list[str]] = []
+    while remaining:
+        level = sorted([n for n in remaining if indeg[n] == 0], key=lambda n: node_index[n])
+        if not level:
+            raise GraphError("cycle inside loop body")
+        levels.append(level)
+        for n in level:
+            remaining.remove(n)
+            for s in succ[n]:
+                indeg[s] -= 1
+    return levels
+
+
+def _loop_items(value: Any, *, max_rows: int) -> list[Any]:
+    """Resolve a loop_start input into an ordered list of items."""
+    from noodle.datasets import is_dataset_ref, materialize_dataset_rows
+    if is_dataset_ref(value):
+        total_cap = max(1, int(max_rows or 10000))
+        return materialize_dataset_rows(value, cap=total_cap, allow_truncate=False)
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+async def _run_loop(
+    *,
+    region: "LoopRegion",
+    graph: WorkflowGraph,
+    registry: NodeRegistry,
+    nodes_by_id: dict[str, Any],
+    incoming: dict[str, dict[str, tuple[str, str]]],
+    node_outputs: dict[str, dict[str, Any]],
+    cache: dict[str, dict[str, Any]],
+    emit: EventCallback,
+    finish: Callable[[NodeRunResult], Awaitable[None]],
+    default_timeouts: dict[str, float],
+    max_node_output_bytes: int | None,
+    pause_on_approval: bool,
+    agent_action_resume: dict[str, AgentActionRequest],
+    loop_regions: dict[str, "LoopRegion"],
+    owned: set[str],
+) -> RunStatus:
+    """Drive a loop region: resolve its input into items and run the body
+    sub-DAG once per item, collecting each iteration's value flowing into
+    Loop End in item order."""
+    start = nodes_by_id[region.start_id]
+    concurrency = max(1, int(start.params.get("concurrency", 1) or 1))
+    on_error = str(start.params.get("on_error", "fail") or "fail")
+    max_rows = int(start.params.get("max_rows", 10000) or 10000)
+
+    # The loop_start input is the value on its 'input' port (from the graph).
+    start_in = incoming.get(region.start_id, {})
+    items: list[Any] = []
+    if "input" in start_in:
+        src, out = start_in["input"]
+        items = _loop_items((node_outputs.get(src) or {}).get(out), max_rows=max_rows)
+
+    if len(items) > max_rows:
+        node_outputs[region.end_id] = {"results": [], "errors": []}
+        await finish(NodeRunResult(
+            node_id=region.end_id, status=NodeStatus.error,
+            error=f"loop received {len(items)} rows but max_rows is {max_rows}",
+        ))
+        return RunStatus.error
+
+    # Skip-set for the body run: only nodes owned by *directly nested* loops
+    # (their own driver handles them). This loop's own direct body nodes run.
+    child_owned: set[str] = set()
+    for other in loop_regions.values():
+        if other.parent_start_id == region.start_id:
+            child_owned |= set(other.body_ids)
+            child_owned.add(other.end_id)
+
+    body_levels = _restricted_levels(graph, region.body_ids)
+    # The node + port feeding loop_end.input, captured per iteration.
+    end_in = incoming.get(region.end_id, {}).get("input")
+
+    collected: list[tuple[int, Any]] = []
+    errors: list[dict] = []
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _one_iteration(i: int, item: Any) -> None:
+        async with sem:
+            iter_outputs = dict(node_outputs)  # inherit upstream values
+            iter_outputs[region.start_id] = {"item": item, "index": i}
+            st = await _execute_nodes(
+                node_ids=set(region.body_ids),
+                levels=body_levels, graph=graph, registry=registry,
+                nodes_by_id=nodes_by_id, incoming=incoming,
+                node_outputs=iter_outputs, cache=cache,
+                emit=emit, finish=finish, default_timeouts=default_timeouts,
+                max_node_output_bytes=max_node_output_bytes,
+                pause_on_approval=pause_on_approval,
+                agent_action_resume=agent_action_resume,
+                loop_regions=loop_regions, owned=child_owned,
+            )
+            if st is RunStatus.error:
+                if on_error == "fail":
+                    raise _LoopRowError(i)
+                errors.append({"index": i, "error": "row failed", "input": item})
+                return
+            value = None
+            if end_in is not None:
+                esrc, eout = end_in
+                value = (iter_outputs.get(esrc) or {}).get(eout)
+            collected.append((i, value))
+
+    if concurrency == 1:
+        for i, item in enumerate(items):
+            try:
+                await _one_iteration(i, item)
+            except _LoopRowError as exc:
+                node_outputs[region.end_id] = {"results": [], "errors": errors}
+                await finish(NodeRunResult(
+                    node_id=region.end_id, status=NodeStatus.error,
+                    error=f"loop row {exc.index} failed (on_error=fail)",
+                ))
+                return RunStatus.error
+    else:
+        try:
+            await asyncio.gather(
+                *[_one_iteration(i, it) for i, it in enumerate(items)]
+            )
+        except _LoopRowError as exc:
+            node_outputs[region.end_id] = {"results": [], "errors": errors}
+            await finish(NodeRunResult(
+                node_id=region.end_id, status=NodeStatus.error,
+                error=f"loop row {exc.index} failed (on_error=fail)",
+            ))
+            return RunStatus.error
+
+    collected.sort(key=lambda t: t[0])
+    out = {"results": [v for _, v in collected], "errors": errors}
+    node_outputs[region.end_id] = out
+    await finish(NodeRunResult(
+        node_id=region.end_id, status=NodeStatus.success, outputs=out,
+    ))
     return RunStatus.success
 
 
