@@ -130,7 +130,14 @@ Loop End returns the **final accumulator** (ignores `output_mode`).
 - `range` `start`/`step`; sliding `window` mode; for-each `reduce` (`accumulate`); distinct
   loop-boundary node rendering (a mode badge on Loop Start/End).
 
+## Phase 6 (shipped)
+
+- **Auto-frame loop container** — a toggleable, read-only frame drawn behind each paired loop's body,
+  sized to the SESE region and labeled with the mode. Derived from the graph each render (never
+  persisted); membership follows the wiring, so it can't drift from the actual loop. Toolbar toggle
+  (`showLoopFrames`).
+
 ## Out of scope / later
 
-- A full auto-resizing **container frame** around the loop body (the current rendering is a styled
-  boundary node, not a bounding box).
+- A drop-in container (parentId-based, drag nodes in/out) — deliberately not built; for loops the
+  auto-frame is more correct because membership is defined by the graph, not by a box.
