@@ -254,6 +254,11 @@ function graphEdgeToEdge(ge: GraphEdgeLike): Edge {
 
 function buildMetanodeManifest(inputs: string[], outputs: string[]): NodeManifest {
   const toPort = (name: string): PortSpec => ({ name, description: "", data_kind: "any" });
+  const spec = (overrides: Partial<ParamSpec> & { name: string }): ParamSpec => ({
+    type: "string", required: false, default: "", description: "",
+    placeholder: "", choices: null, multiline: false, key_value: false,
+    ...overrides,
+  });
   return {
     id: "meta_node",
     name: "Metanode",
@@ -263,7 +268,18 @@ function buildMetanodeManifest(inputs: string[], outputs: string[]): NodeManifes
     icon: "stack",
     inputs: inputs.map(toPort),
     outputs: outputs.length > 0 ? outputs.map(toPort) : [toPort("main")],
-    params: [],
+    params: [
+      spec({ name: "name", default: "Metanode", description: "Display name for this group." }),
+      spec({
+        name: "execution",
+        default: "transparent",
+        choices: ["transparent", "isolated"],
+        description:
+          "transparent = inlined into the parent at run time (pure grouping); " +
+          "isolated = runs as its own nested execution with its own scope.",
+        display_name: "Execution",
+      }),
+    ],
   } as NodeManifest;
 }
 
@@ -778,7 +794,20 @@ export const useEditor = create<EditorStore>((set, get) => ({
     const byId = get().manifestsById;
     const nodes: NoodleNode[] = [];
     for (const n of graph.nodes) {
-      const manifest = byId[n.type];
+      // Metanodes carry an embedded sub-graph; rebuild their (synthetic)
+      // manifest from the stored boundary ports so they survive a reload even
+      // though "meta_node" isn't a backend-registered node type.
+      let manifest = byId[n.type];
+      if (!manifest && n.type === "meta_node") {
+        const ports = ((n.params ?? {}).ports ?? {}) as {
+          inputs?: { port: string }[];
+          outputs?: { port: string }[];
+        };
+        manifest = buildMetanodeManifest(
+          (ports.inputs ?? []).map((p) => p.port),
+          (ports.outputs ?? []).map((p) => p.port),
+        );
+      }
       if (!manifest) continue;
       const params = n.params ?? {};
       let outputsOverride: string[] | null = n.outputs_override ?? null;

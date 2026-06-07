@@ -915,7 +915,9 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
         })}
       </div>
       <div className="node-label">
-        {data.label || manifest.name}
+        {manifest.id === "meta_node"
+          ? String(data.params.name || "Metanode")
+          : data.label || manifest.name}
         {missingPkgs.length > 0 && (
           <span
             className="node-missing-pkg"

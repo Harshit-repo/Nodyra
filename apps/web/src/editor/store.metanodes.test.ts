@@ -63,6 +63,13 @@ describe("metanode collapse / ungroup", () => {
     const pairs = s.edges.map((e) => [e.source, e.target]);
     expect(pairs).toContainEqual(["A", id!]);
     expect(pairs).toContainEqual([id!, "D"]);
+
+    // inspector-editable params: name + execution (transparent | isolated)
+    const pnames = meta.data.manifest.params.map((p) => p.name);
+    expect(pnames).toContain("name");
+    expect(pnames).toContain("execution");
+    const exec = meta.data.manifest.params.find((p) => p.name === "execution")!;
+    expect(exec.choices).toEqual(["transparent", "isolated"]);
   });
 
   it("ungroup is the inverse of collapse (round-trip)", () => {
@@ -74,6 +81,28 @@ describe("metanode collapse / ungroup", () => {
     expect(out.nodes.map((n) => n.id).sort()).toEqual(["A", "B", "C", "D"]);
     const pairs = out.edges.map((e) => `${e.source}->${e.target}`).sort();
     expect(pairs).toEqual(["A->B", "B->C", "C->D"]);
+  });
+
+  it("a metanode survives save + reload (synthetic manifest)", () => {
+    load(chainGraph());
+    const id = useEditor.getState().collapseToMetanode(["B", "C"])!;
+    const saved = useEditor.getState().toGraph();
+
+    // reload with only the "code" manifest registered (no meta_node from backend)
+    useEditor.getState().loadGraph({ nodes: [], edges: [] });
+    useEditor.getState().setManifests([codeManifest()]);
+    useEditor.getState().loadGraph(saved);
+
+    const meta = useEditor.getState().nodes.find((n) => n.id === id);
+    expect(meta).toBeTruthy();
+    expect(meta!.data.manifest.id).toBe("meta_node");
+    expect(meta!.data.manifest.inputs).toHaveLength(1);
+    expect(meta!.data.manifest.outputs).toHaveLength(1);
+
+    // and it can still be ungrouped after a reload
+    useEditor.getState().ungroupMetanode(id);
+    const out = useEditor.getState().toGraph();
+    expect(out.nodes.map((n) => n.id).sort()).toEqual(["A", "B", "C", "D"]);
   });
 
   it("rejects a collapse that would create a cycle", () => {
