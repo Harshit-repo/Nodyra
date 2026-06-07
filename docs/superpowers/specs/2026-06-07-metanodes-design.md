@@ -97,13 +97,20 @@ Nesting (metanode inside metanode) is supported by both; the breadcrumb shows th
 - **Runtime:** a transparent-metanode graph runs in-subprocess (flatten happens before dispatch).
 - **UI:** drill-in breadcrumb nav; inline expand; port bars.
 
-## 9. Phasing
+## 9. Phasing — all shipped (2026-06-07)
 
-1. **Engine** — `_expand_metanodes` transparent flatten + tests (foundational, pure).
-2. **Store** — collapse / ungroup / boundary-port derivation + vitest (the core authoring).
-3. **Execution choice** — isolated sub-run driver + `execution` param.
-4. **UI** — container rendering + drill-in canvas + inline expand + port bars.
-5. **Polish** — rename ports, nesting breadcrumb, validation messages.
+1. ✅ **Engine** — `_expand_metanodes` transparent flatten (namespaced ids, port rewire, nesting).
+2. ✅ **Store** — `collapseToMetanode` / `ungroupMetanode` + boundary-port derivation + cycle guard
+   (vitest: collapse, round-trip, cycle rejection, reload).
+3. ✅ **Execution choice** — `_run_metanode` isolated sub-run driver; `execution` param.
+4. ✅ **UI** — metanode badge, group/ungroup context-menu actions, double-click **drill-in preview**
+   (read-only sub-graph + breadcrumb + "Ungroup to edit").
+5. ✅ **Polish** — editable `name` + `execution` params (inspector), node label, save/reload survival
+   via synthetic manifest.
+
+**Remaining (optional, larger):** full in-place editing *inside* a metanode (a path-aware editing
+store so you can add/rewire nodes within the drill-in without ungrouping) and port renaming. The
+current drill-in is read-only; editing is done by ungrouping.
 
 ## Out of scope (later)
 
