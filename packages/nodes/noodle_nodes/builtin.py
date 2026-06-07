@@ -526,9 +526,10 @@ def loop_over_items(input: Any = None, max_items: int = 0) -> dict:
             "description": (
                 "each = one row per iteration; batch = a list of N rows; "
                 "group = rows sharing a key; range = loop a fixed count; "
+                "window = overlapping sliding windows of N rows; "
                 "while/until = loop on a condition, carrying state across iterations."
             ),
-            "choices": ["each", "batch", "group", "range", "while", "until"],
+            "choices": ["each", "batch", "group", "range", "window", "while", "until"],
             "display_name": "Mode",
         },
         "concurrency": {
@@ -542,13 +543,22 @@ def loop_over_items(input: Any = None, max_items: int = 0) -> dict:
             "description": "Maximum input rows allowed before the loop fails (each/batch/group; default 10000).",
         },
         "batch_size": {
-            "description": "Rows per iteration when mode=batch (the last batch may be shorter).",
+            "description": "Rows per iteration when mode=batch (last may be shorter) or window size when mode=window.",
         },
         "group_key": {
             "description": "Row field to group by when mode=group; each iteration gets {key, rows}.",
         },
         "count": {
-            "description": "Number of iterations when mode=range (item = 0..count-1).",
+            "description": "Number of iterations when mode=range.",
+        },
+        "start": {
+            "description": "First value when mode=range (default 0).",
+        },
+        "step": {
+            "description": "Step between values (mode=range) or window slide (mode=window); default 1.",
+        },
+        "accumulate": {
+            "description": "Reduce: thread an accumulator (seeded by `initial`) across for-each iterations; Loop End returns the final accumulator.",
         },
         "initial": {
             "description": "Seed state for mode=while/until (any value or expression).",
@@ -574,6 +584,9 @@ def loop_start(
     batch_size: int = 1,
     group_key: str = "",
     count: int = 0,
+    start: int = 0,
+    step: int = 1,
+    accumulate: bool = False,
     initial: Any = None,
     condition: str = "",
     max_iterations: int = 1000,

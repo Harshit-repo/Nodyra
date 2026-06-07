@@ -21,7 +21,10 @@ def test_loop_start_has_mode_and_per_mode_params():
         "initial", "condition", "max_iterations", "on_max_iterations",
     } <= pnames
     mode = next(p for p in nd.manifest.params if p.name == "mode")
-    assert set(mode.choices or []) == {"each", "batch", "group", "range", "while", "until"}
+    assert set(mode.choices or []) == {
+        "each", "batch", "group", "range", "window", "while", "until",
+    }
+    assert {"start", "step", "accumulate"} <= pnames
 
 
 def test_loop_end_registered_with_outputs_and_hidden_pair_param():
