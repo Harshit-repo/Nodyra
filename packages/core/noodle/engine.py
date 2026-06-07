@@ -1272,24 +1272,35 @@ def _loop_items(
     batch_size: int = 1,
     group_key: str = "",
     count: int = 0,
+    start: int = 0,
+    step: int = 1,
     max_rows: int = 10000,
 ) -> list[Any]:
     """Resolve a loop_start input into the ordered list of iteration *units*.
 
     The unit shape depends on ``mode``:
-      * each  -> one row per unit
-      * batch -> a list of up to ``batch_size`` rows per unit
-      * group -> {"key": k, "rows": [...]} per distinct ``group_key`` value
-      * range -> the integers 0..count-1 (input is ignored)
+      * each   -> one row per unit
+      * batch  -> a list of up to ``batch_size`` rows per unit (non-overlapping)
+      * group  -> {"key": k, "rows": [...]} per distinct ``group_key`` value
+      * range  -> the integers start, start+step, ... (``count`` of them)
+      * window -> overlapping sliding windows of ``batch_size`` rows, sliding
+                  by ``step``; only full windows are produced
     """
     if mode == "range":
-        return list(range(max(0, int(count or 0))))
+        n = max(0, int(count or 0))
+        st = int(step or 1) or 1
+        return [int(start) + k * st for k in range(n)]
 
     rows = _as_loop_rows(value, max_rows=max_rows)
 
     if mode == "batch":
         size = max(1, int(batch_size or 1))
         return [rows[i : i + size] for i in range(0, len(rows), size)]
+
+    if mode == "window":
+        size = max(1, int(batch_size or 1))
+        slide = max(1, int(step or 1))
+        return [rows[i : i + size] for i in range(0, len(rows) - size + 1, slide)]
 
     if mode == "group":
         groups: dict[Any, dict[str, Any]] = {}
@@ -1335,6 +1346,8 @@ async def _run_loop(
     batch_size = int(start.params.get("batch_size", 1) or 1)
     group_key = str(start.params.get("group_key", "") or "")
     count = int(start.params.get("count", 0) or 0)
+    range_start = int(start.params.get("start", 0) or 0)
+    step = int(start.params.get("step", 1) or 1)
 
     # The loop_start input is the value on its 'input' port (from the graph).
     # range mode ignores the input.
@@ -1344,8 +1357,8 @@ async def _run_loop(
         src, out = start_in["input"]
         raw_input = (node_outputs.get(src) or {}).get(out)
     items = _loop_items(
-        raw_input, mode=mode, batch_size=batch_size,
-        group_key=group_key, count=count, max_rows=max_rows,
+        raw_input, mode=mode, batch_size=batch_size, group_key=group_key,
+        count=count, start=range_start, step=step, max_rows=max_rows,
     )
 
     if len(items) > max_rows:

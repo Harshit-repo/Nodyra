@@ -65,6 +65,23 @@ def test_loop_items_range_counts_from_zero():
     assert _loop_items(None, mode="range", count=0, max_rows=100) == []
 
 
+def test_loop_items_range_start_step():
+    assert _loop_items(None, mode="range", count=4, start=10, step=5, max_rows=100) == [
+        10, 15, 20, 25,
+    ]
+
+
+def test_loop_items_window_overlapping():
+    assert _loop_items([1, 2, 3, 4], mode="window", batch_size=2, step=1, max_rows=100) == [
+        [1, 2], [2, 3], [3, 4],
+    ]
+    assert _loop_items([1, 2, 3, 4], mode="window", batch_size=2, step=2, max_rows=100) == [
+        [1, 2], [3, 4],
+    ]
+    # window larger than the input -> no full window
+    assert _loop_items([1], mode="window", batch_size=2, step=1, max_rows=100) == []
+
+
 def test_loop_regions_simple_body():
     # start -> body(code) -> end
     g = _g(
@@ -338,6 +355,21 @@ async def test_batch_mode_maps_over_chunks():
     result = await execute(g, registry)
     assert str(result.nodes["e"].status) == "success"
     assert result.nodes["e"].outputs["results"] == [[2, 4], [6, 8], [10]]
+
+
+async def test_window_mode_sums_sliding_windows():
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": [1, 2, 3, 4]}),
+            _n("s", "loop_start", {"mode": "window", "batch_size": 2, "step": 1}),
+            _n("b", "code", {"code": "output = sum(input)"}),
+            _n("e", "loop_end", {"loop_start_id": "s"}),
+        ],
+        [_e("trig", "s"), _e("s", "b", src_out="item"), _e("b", "e")],
+    )
+    result = await execute(g, registry)
+    assert str(result.nodes["e"].status) == "success"
+    assert result.nodes["e"].outputs["results"] == [3, 5, 7]  # 1+2, 2+3, 3+4
 
 
 async def test_range_mode_loops_count_times():
