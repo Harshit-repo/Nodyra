@@ -934,6 +934,11 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
           </span>
         )}
       </div>
+      {(manifest.id === "loop_start" || manifest.id === "loop_end") && (
+        <div className="node-loop-badge" title="Loop boundary">
+          {loopBadgeText(manifest.id, data.params)}
+        </div>
+      )}
       {runMeta?.durationMs != null && runStatus !== "running" && (
         <div className="node-duration nodrag nopan">
           {runMeta.durationMs < 1000
@@ -943,4 +948,15 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       )}
     </div>
   );
+}
+
+export function loopBadgeText(id: string, params: Record<string, unknown>): string {
+  if (id === "loop_end") return "↻ loop end";
+  const mode = String(params.mode ?? "each");
+  const accum = params.accumulate ? " · reduce" : "";
+  let hint = "";
+  if (mode === "batch" || mode === "window") hint = ` ${params.batch_size ?? ""}`;
+  else if (mode === "group") hint = ` ${params.group_key ?? ""}`;
+  else if (mode === "range") hint = ` ${params.count ?? ""}`;
+  return `↻ ${mode}${hint}${accum}`.trimEnd();
 }
