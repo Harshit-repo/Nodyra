@@ -443,6 +443,29 @@ async def test_while_loop_all_states_output():
     assert out["states"] == [{"count": 1}, {"count": 2}, {"count": 3}]
 
 
+async def test_for_each_and_while_loops_coexist_in_one_graph():
+    # Two disjoint regions: an each-loop and a while-loop, dispatched separately.
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": [1, 2]}),
+            _n("sa", "loop_start"),
+            _n("ba", "code", {"code": "output = input * 2"}),
+            _n("ea", "loop_end", {"loop_start_id": "sa"}),
+            _n("sb", "loop_start", {"mode": "while", "initial": {"count": 0},
+                                    "condition": "{{ state.count < 2 }}"}),
+            _n("bb", "code", {"code": "output = {'count': input['count'] + 1}"}),
+            _n("eb", "loop_end", {"loop_start_id": "sb"}),
+        ],
+        [
+            _e("trig", "sa"), _e("sa", "ba", src_out="item"), _e("ba", "ea"),
+            _e("sb", "bb", src_out="state"), _e("bb", "eb"),
+        ],
+    )
+    result = await execute(g, registry)
+    assert result.nodes["ea"].outputs["results"] == [2, 4]
+    assert result.nodes["eb"].outputs["results"] == {"count": 2}
+
+
 async def test_loop_events_are_iteration_tagged():
     events: list[dict] = []
 
