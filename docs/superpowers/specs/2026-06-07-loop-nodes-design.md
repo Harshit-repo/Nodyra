@@ -102,8 +102,18 @@ reach for.
 - Input `input`: the per-iteration value to collect.
 - Hidden param `loop_start_id`: node id of the paired Loop Start, **auto-managed by the editor**
   (same pattern `map_group` uses for `child_workflow_id`).
-- Outputs `results` (collected list, or a DatasetRef when the input was a dataset) and `errors`
+- Param `output_mode` (`records` | `dataset`, default `records`): controls the shape of `results`.
+  - `records` — `results` is the collected Python list (captured values **in item order**).
+  - `dataset` — the collected values are written to a new dataset and `results` is a `DatasetRef`,
+    so downstream dataset-aware nodes (and the dataset viewer) can consume the loop output directly.
+    Non-dict values are wrapped as `{"result": value}` before writing.
+- Outputs `results` (list, or a `DatasetRef` when `output_mode=dataset`) and `errors`
   (failed rows when `on_error=continue`; same shape as Map's errors output).
+
+The dataset write goes through a **registered writer hook** (`register_dataset_writer` /
+`dataset_from_records` in `packages/core/noodle/datasets.py`, mirroring the existing
+`register_materializer` / `materialize_dataset_rows` pair) so core stays decoupled from the nodes
+package; `packages/nodes/noodle_nodes/datasets.py` registers the concrete writer at import time.
 
 **Body region** = nodes on a path from Loop Start to Loop End (descendants of Start ∩ ancestors of
 End).
@@ -130,9 +140,9 @@ loops run normally.
    into a shared `_run_subgraph` helper used by both `execute()` and the driver, so behavior
    (timeouts, retries, expression eval, logging, dataset auto-expand) is identical inside and outside
    a loop. It captures the value flowing into `loop_end.input` for this iteration.
-3. After all iterations: writes `loop_end.results` (captured values **in item order**) and
-   `loop_end.errors`. Downstream of Loop End runs normally, reading `loop_end.results` as an ordinary
-   output — it has no idea a loop happened.
+3. After all iterations: writes `loop_end.results` (captured values **in item order**, or a
+   `DatasetRef` when `output_mode=dataset`) and `loop_end.errors`. Downstream of Loop End runs
+   normally, reading `loop_end.results` as an ordinary output — it has no idea a loop happened.
 
 **Concurrency:** `concurrency=1` runs iterations strictly sequentially (deterministic; the only mode
 that could host an accumulator later). `concurrency=N` runs up to N at once under an
@@ -212,7 +222,8 @@ child workflow — so the `childWorkflows` machinery is *not* reused. Simpler ed
 
 ### 7. Edge cases
 
-1. **Empty input** → zero iterations; `results = []`; not an error.
+1. **Empty input** → zero iterations; `results = []` (or an empty dataset when
+   `output_mode=dataset`); not an error.
 2. **Dataset over `max_rows`** → fail fast before any iteration (Map Dataset guard message).
 3. **`on_error=fail` mid-loop** → loop aborts with offending index; failed iteration's `NodeRun` row
    still persisted for inspection.
@@ -229,7 +240,9 @@ child workflow — so the `childWorkflows` machinery is *not* reused. Simpler ed
 - **Core engine (pytest):** region computation (linear, branched, nested, and *rejected*
   boundary-crossing / non-well-nested graphs); driver iteration order; sequential vs bounded
   concurrent; item seeding; collection ordering; empty input; dataset input + `max_rows`; `on_error`
-  fail/continue; nested loops producing correct `[i, j]` paths; cancellation mid-iteration.
+  fail/continue; nested loops producing correct `[i, j]` paths; cancellation mid-iteration;
+  `output_mode=records` returns a list and `output_mode=dataset` returns a `DatasetRef` (incl. the
+  non-dict wrapping rule) via the registered writer hook.
 - **Events:** iteration-tagged events; loop-progress events; the keying fix (iteration 2 does not
   overwrite iteration 1).
 - **Persistence:** one `NodeRun` per `(node_id, iteration_path)`; migration applies on **Postgres**
@@ -250,8 +263,11 @@ child workflow — so the `childWorkflows` machinery is *not* reused. Simpler ed
 - `packages/core/noodle/engine.py` — region detection, `_run_subgraph` extraction, loop driver,
   iteration events.
 - `packages/core/noodle/models.py` — any node/manifest support needed for loop ports/validation.
+- `packages/core/noodle/datasets.py` — `register_dataset_writer` / `dataset_from_records` hook
+  (mirror of the existing materializer hook) for `loop_end output_mode=dataset`.
 - `packages/nodes/noodle_nodes/builtin.py` — `loop_start` / `loop_end` nodes; mark `loop_over_items`
   `deprecated=True, replacement_id="loop_start"`.
+- `packages/nodes/noodle_nodes/datasets.py` — `register_dataset_writer(...)` concrete writer.
 - `apps/api/app/models.py` — `NodeRun.iteration_path` + index.
 - `apps/api/alembic/versions/` — migration (revision id ≤32 chars).
 - `apps/api/app/services/runner.py` — `node_events` keying + per-iteration `NodeRun` persistence.
