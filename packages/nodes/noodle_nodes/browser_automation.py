@@ -21,8 +21,8 @@ from noodle.sdk import node
 # ---------------------------------------------------------------------------
 
 @node(
-    name="HTML Extract",
-    id="html_extract",
+    name="HTML Extract Records",
+    id="html_extract_records",
     category="Browser & Web",
     icon="code",
     requirements=["beautifulsoup4>=4.12"],
@@ -38,7 +38,7 @@ from noodle.sdk import node
         },
     },
 )
-def html_extract(
+def html_extract_records(
     input=None,
     container_selector: str = "",
     selectors_json: str = "{}",
@@ -161,100 +161,6 @@ def web_feed_parse(input=None, max_items: int = 50) -> dict:
         "dataset": dataset,
     }
 
-
-# ---------------------------------------------------------------------------
-# graphql_request
-# ---------------------------------------------------------------------------
-
-@node(
-    name="GraphQL Request",
-    id="graphql_request",
-    category="Browser & Web",
-    icon="code",
-    tool_side_effecting=True,
-    requirements=["requests>=2.28"],
-    params={
-        "url": {"placeholder": "https://api.example.com/graphql"},
-        "headers_json": {
-            "multiline": True,
-            "placeholder": '{"Authorization": "Bearer YOUR_TOKEN"}',
-            "description": "JSON object of HTTP headers to include.",
-        },
-        "timeout_seconds": {"description": "Request timeout in seconds (default 30)"},
-    },
-)
-def graphql_request(
-    input=None,
-    url: str = "",
-    headers_json: str = "{}",
-    timeout_seconds: int = 30,
-) -> dict:
-    """Execute a GraphQL query or mutation and return the response data.
-
-    Input can be a query string or a dict with 'query' and optional 'variables' keys.
-    """
-    if not url:
-        raise ValueError("url is required — set the GraphQL endpoint in the node config.")
-
-    query: str
-    variables: dict[str, Any] = {}
-    operation_name: str | None = None
-
-    if input is None:
-        raise ValueError(
-            "query is required — wire a query string or {query, variables} dict as input."
-        )
-    elif isinstance(input, dict):
-        query = input.get("query", "")
-        variables = input.get("variables", {}) or {}
-        operation_name = input.get("operationName")
-    else:
-        query = str(input)
-
-    if not query.strip():
-        raise ValueError(
-            "query is required — wire a query string or {query, variables} dict as input."
-        )
-
-    try:
-        import requests as _requests  # type: ignore[import-not-found]
-    except ImportError as exc:
-        raise RuntimeError(
-            "requests is required. Add requests to the workflow "
-            "environment, rebuild it, then run again."
-        ) from exc
-
-    try:
-        headers: dict[str, str] = json.loads(headers_json) if headers_json.strip() else {}
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"headers_json must be valid JSON: {exc}") from exc
-
-    headers.setdefault("Content-Type", "application/json")
-
-    payload: dict[str, Any] = {"query": query}
-    if variables:
-        payload["variables"] = variables
-    if operation_name:
-        payload["operationName"] = operation_name
-
-    try:
-        resp = _requests.post(url, json=payload, headers=headers, timeout=timeout_seconds)
-        resp.raise_for_status()
-    except _requests.exceptions.Timeout as exc:
-        raise RuntimeError(
-            f"GraphQL request timed out after {timeout_seconds}s. "
-            "Increase timeout_seconds or check endpoint availability."
-        ) from exc
-    except _requests.exceptions.RequestException as exc:
-        raise RuntimeError(f"GraphQL request failed: {exc}") from exc
-
-    body: dict[str, Any] = resp.json()
-    return {
-        "data": body.get("data"),
-        "errors": body.get("errors"),
-        "status_code": resp.status_code,
-        "extensions": body.get("extensions"),
-    }
 
 
 # ---------------------------------------------------------------------------

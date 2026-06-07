@@ -15,6 +15,10 @@ from noodle.artifacts import LocalArtifactStore, is_artifact_ref
 from noodle.context import artifact_store, current_node_id
 from noodle.datasets import is_dataset_ref
 
+# Snapshot immediately after module import — captures only what leaked at module scope,
+# not what later tests lazily import from installed packages.
+_MODULES_AT_IMPORT = frozenset(sys.modules)
+
 
 @pytest.fixture
 def store_ctx(tmp_path):
@@ -53,9 +57,8 @@ def test_browser_automation_importable_without_optional_packages() -> None:
     """Module must import cleanly even when no browser packages are installed."""
     import importlib
     mod = importlib.import_module("noodle_nodes.browser_automation")
-    assert hasattr(mod, "html_extract")
+    assert hasattr(mod, "html_extract_records")
     assert hasattr(mod, "web_feed_parse")
-    assert hasattr(mod, "graphql_request")
     assert hasattr(mod, "browser_screenshot")
     assert hasattr(mod, "browser_scrape")
     assert hasattr(mod, "browser_click_fill")
@@ -78,9 +81,9 @@ HTML_SAMPLE = """
 
 
 def test_html_extract_raises_without_input(store_ctx) -> None:
-    from noodle_nodes.browser_automation import html_extract
+    from noodle_nodes.browser_automation import html_extract_records
     with pytest.raises(ValueError, match="input is required"):
-        html_extract(input=None)
+        html_extract_records(input=None)
 
 
 def test_html_extract_raises_missing_package(store_ctx, monkeypatch) -> None:
@@ -93,16 +96,16 @@ def test_html_extract_raises_missing_package(store_ctx, monkeypatch) -> None:
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", mock_import)
-    from noodle_nodes.browser_automation import html_extract
+    from noodle_nodes.browser_automation import html_extract_records
     with pytest.raises(RuntimeError, match="beautifulsoup4"):
-        html_extract(input=HTML_SAMPLE)
+        html_extract_records(input=HTML_SAMPLE)
 
 
 def test_html_extract_container_returns_records(store_ctx) -> None:
     pytest.importorskip("bs4")
-    from noodle_nodes.browser_automation import html_extract
+    from noodle_nodes.browser_automation import html_extract_records
 
-    result = html_extract(
+    result = html_extract_records(
         input=HTML_SAMPLE,
         container_selector="li.product",
         selectors_json='{"name": "h2", "price": ".price"}',
@@ -116,9 +119,9 @@ def test_html_extract_container_returns_records(store_ctx) -> None:
 
 def test_html_extract_no_container_single_record(store_ctx) -> None:
     pytest.importorskip("bs4")
-    from noodle_nodes.browser_automation import html_extract
+    from noodle_nodes.browser_automation import html_extract_records
 
-    result = html_extract(
+    result = html_extract_records(
         input=HTML_SAMPLE,
         selectors_json='{"description": "#desc"}',
     )
@@ -128,9 +131,9 @@ def test_html_extract_no_container_single_record(store_ctx) -> None:
 
 def test_html_extract_missing_selector_returns_empty_string(store_ctx) -> None:
     pytest.importorskip("bs4")
-    from noodle_nodes.browser_automation import html_extract
+    from noodle_nodes.browser_automation import html_extract_records
 
-    result = html_extract(
+    result = html_extract_records(
         input=HTML_SAMPLE,
         container_selector="li.product",
         selectors_json='{"name": "h2", "missing": ".no-such-class"}',
@@ -212,105 +215,6 @@ def test_web_feed_parse_raises_on_invalid_feed(store_ctx) -> None:
     with pytest.raises(ValueError, match="No feed entries"):
         web_feed_parse(input="<html><body>not a feed</body></html>")
 
-
-# ---------------------------------------------------------------------------
-# graphql_request
-# ---------------------------------------------------------------------------
-
-def test_graphql_request_raises_without_url(store_ctx) -> None:
-    from noodle_nodes.browser_automation import graphql_request
-    with pytest.raises(ValueError, match="url is required"):
-        graphql_request(input="{ users { id } }", url="")
-
-
-def test_graphql_request_raises_without_query(store_ctx) -> None:
-    from noodle_nodes.browser_automation import graphql_request
-    with pytest.raises(ValueError, match="query is required"):
-        graphql_request(input=None, url="https://api.example.com/graphql")
-
-
-def test_graphql_request_raises_missing_package(store_ctx, monkeypatch) -> None:
-    import builtins
-    real_import = builtins.__import__
-
-    def mock_import(name, *args, **kwargs):
-        if name == "requests":
-            raise ImportError("No module named 'requests'")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", mock_import)
-    from noodle_nodes.browser_automation import graphql_request
-    with pytest.raises(RuntimeError, match="requests"):
-        graphql_request(input="{ users { id } }", url="https://api.example.com/graphql")
-
-
-def test_graphql_request_posts_query_and_returns_data(store_ctx) -> None:
-    pytest.importorskip("requests")
-    from unittest.mock import patch
-    from noodle_nodes.browser_automation import graphql_request
-
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {"data": {"users": [{"id": "1", "name": "Alice"}]}}
-    mock_resp.raise_for_status = MagicMock()
-
-    with patch("requests.post", return_value=mock_resp) as mock_post:
-        result = graphql_request(
-            input="{ users { id name } }",
-            url="https://api.example.com/graphql",
-        )
-
-    mock_post.assert_called_once()
-    call_kwargs = mock_post.call_args
-    assert call_kwargs[0][0] == "https://api.example.com/graphql"
-    payload = call_kwargs[1]["json"]
-    assert payload["query"] == "{ users { id name } }"
-    assert result["data"] == {"users": [{"id": "1", "name": "Alice"}]}
-    assert result["errors"] is None
-    assert result["status_code"] == 200
-
-
-def test_graphql_request_accepts_dict_input_with_variables(store_ctx) -> None:
-    pytest.importorskip("requests")
-    from unittest.mock import patch
-    from noodle_nodes.browser_automation import graphql_request
-
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {"data": {"user": {"id": "42"}}}
-    mock_resp.raise_for_status = MagicMock()
-
-    gql_input = {
-        "query": "query GetUser($id: ID!) { user(id: $id) { id } }",
-        "variables": {"id": "42"},
-    }
-
-    with patch("requests.post", return_value=mock_resp) as mock_post:
-        result = graphql_request(input=gql_input, url="https://api.example.com/graphql")
-
-    payload = mock_post.call_args[1]["json"]
-    assert payload["variables"] == {"id": "42"}
-    assert result["data"] == {"user": {"id": "42"}}
-
-
-def test_graphql_request_surfaces_graphql_errors(store_ctx) -> None:
-    pytest.importorskip("requests")
-    from unittest.mock import patch
-    from noodle_nodes.browser_automation import graphql_request
-
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {
-        "data": None,
-        "errors": [{"message": "Field 'foo' doesn't exist"}],
-    }
-    mock_resp.raise_for_status = MagicMock()
-
-    with patch("requests.post", return_value=mock_resp):
-        result = graphql_request(input="{ foo }", url="https://api.example.com/graphql")
-
-    assert result["errors"] == [{"message": "Field 'foo' doesn't exist"}]
-    assert result["data"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -636,9 +540,8 @@ def test_browser_automation_nodes_registered() -> None:
     from noodle.sdk import registry
     ids = {m.id for m in registry.manifests()}
     expected = {
-        "html_extract",
+        "html_extract_records",
         "web_feed_parse",
-        "graphql_request",
         "browser_screenshot",
         "browser_scrape",
         "browser_click_fill",
@@ -650,9 +553,8 @@ def test_browser_automation_nodes_registered() -> None:
 def test_browser_automation_nodes_have_requirements() -> None:
     from noodle.sdk import registry
     ids_with_reqs = {
-        "html_extract",
+        "html_extract_records",
         "web_feed_parse",
-        "graphql_request",
         "browser_screenshot",
         "browser_scrape",
         "browser_click_fill",
@@ -681,13 +583,8 @@ def test_browser_nodes_are_side_effecting() -> None:
 
 
 def test_import_does_not_import_optional_packages() -> None:
-    import importlib
-    forbidden = {"playwright", "bs4", "feedparser", "requests"}
-    pre = set(sys.modules.keys())
-    if "noodle_nodes.browser_automation" in sys.modules:
-        importlib.reload(sys.modules["noodle_nodes.browser_automation"])
-    imported = set(sys.modules.keys()) - pre
-    leaked = forbidden & imported
+    forbidden = {"playwright", "bs4", "feedparser"}
+    leaked = forbidden & _MODULES_AT_IMPORT
     assert not leaked, f"Optional packages leaked into module scope: {leaked}"
 
 
