@@ -172,6 +172,105 @@ async def test_runtime_subprocess_runs_a_loop() -> None:
             await process.wait()
 
 
+BATCH_GRAPH = {
+    "nodes": [
+        {"id": "trig", "type": "manual_trigger", "params": {"data": [1, 2, 3, 4, 5]},
+         "position": {"x": 0, "y": 0}},
+        {"id": "s", "type": "loop_start", "params": {"mode": "batch", "batch_size": 2},
+         "position": {"x": 1, "y": 0}},
+        {"id": "b", "type": "code", "params": {"code": "output = sum(input)"},
+         "position": {"x": 2, "y": 0}},
+        {"id": "e", "type": "loop_end", "params": {"loop_start_id": "s"},
+         "position": {"x": 3, "y": 0}},
+    ],
+    "edges": [
+        {"id": "trig->s", "source": "trig", "source_output": "main",
+         "target": "s", "target_input": "input"},
+        {"id": "s->b", "source": "s", "source_output": "item",
+         "target": "b", "target_input": "input"},
+        {"id": "b->e", "source": "b", "source_output": "main",
+         "target": "e", "target_input": "input"},
+    ],
+}
+
+WHILE_GRAPH = {
+    "nodes": [
+        {"id": "s", "type": "loop_start",
+         "params": {"mode": "while", "initial": {"count": 0},
+                    "condition": "{{ state.count < 3 }}"},
+         "position": {"x": 0, "y": 0}},
+        {"id": "b", "type": "code",
+         "params": {"code": "output = {'count': input['count'] + 1}"},
+         "position": {"x": 1, "y": 0}},
+        {"id": "e", "type": "loop_end", "params": {"loop_start_id": "s"},
+         "position": {"x": 2, "y": 0}},
+    ],
+    "edges": [
+        {"id": "s->b", "source": "s", "source_output": "state",
+         "target": "b", "target_input": "input"},
+        {"id": "b->e", "source": "b", "source_output": "main",
+         "target": "e", "target_input": "input"},
+    ],
+}
+
+
+async def _run_via_subprocess(graph: dict, request_id: str) -> tuple[str, dict[str, dict]]:
+    process = await asyncio.create_subprocess_exec(
+        sys.executable, "-u", "-m", "noodle_runtime",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    assert process.stdin is not None
+    assert process.stdout is not None
+    try:
+        ready = await asyncio.wait_for(process.stdout.readline(), timeout=10)
+        assert json.loads(ready)["type"] == "ready"
+        request = {"type": "run", "request_id": request_id, "graph": graph,
+                   "cache": None, "targets": None}
+        process.stdin.write((json.dumps(request) + "\n").encode())
+        await process.stdin.drain()
+        finished: dict[str, dict] = {}
+        status = ""
+        while True:
+            line = await asyncio.wait_for(process.stdout.readline(), timeout=10)
+            event = json.loads(line)
+            kind = event.get("type")
+            if kind == "node_finished":
+                finished[event["node_id"]] = event
+            elif kind == "result":
+                status = event["status"]
+                break
+            elif kind == "error":
+                raise AssertionError(f"runtime error: {event.get('error')}")
+        return status, finished
+    finally:
+        if process.stdin:
+            process.stdin.close()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5)
+        except TimeoutError:
+            process.kill()
+            await process.wait()
+
+
+def test_batch_and_while_loops_do_not_need_host_callbacks():
+    assert _needs_host_callbacks({"type": "run", "graph": BATCH_GRAPH}) is False
+    assert _needs_host_callbacks({"type": "run", "graph": WHILE_GRAPH}) is False
+
+
+async def test_runtime_subprocess_runs_a_batch_loop() -> None:
+    status, finished = await _run_via_subprocess(BATCH_GRAPH, "batch")
+    assert status == "success"
+    assert finished["e"]["outputs"]["results"] == [3, 7, 5]  # [1+2, 3+4, 5]
+
+
+async def test_runtime_subprocess_runs_a_while_loop() -> None:
+    status, finished = await _run_via_subprocess(WHILE_GRAPH, "while")
+    assert status == "success"
+    assert finished["e"]["outputs"]["results"] == {"count": 3}
+
+
 async def test_runtime_serializes_events_and_deserializes_cache() -> None:
     graph = {
         "nodes": [
