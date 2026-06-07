@@ -1328,16 +1328,25 @@ async def _run_loop(
     sub-DAG once per item, collecting each iteration's value flowing into
     Loop End in item order."""
     start = nodes_by_id[region.start_id]
+    mode = str(start.params.get("mode", "each") or "each")
     concurrency = max(1, int(start.params.get("concurrency", 1) or 1))
     on_error = str(start.params.get("on_error", "fail") or "fail")
     max_rows = int(start.params.get("max_rows", 10000) or 10000)
+    batch_size = int(start.params.get("batch_size", 1) or 1)
+    group_key = str(start.params.get("group_key", "") or "")
+    count = int(start.params.get("count", 0) or 0)
 
     # The loop_start input is the value on its 'input' port (from the graph).
+    # range mode ignores the input.
     start_in = incoming.get(region.start_id, {})
-    items: list[Any] = []
+    raw_input: Any = None
     if "input" in start_in:
         src, out = start_in["input"]
-        items = _loop_items((node_outputs.get(src) or {}).get(out), max_rows=max_rows)
+        raw_input = (node_outputs.get(src) or {}).get(out)
+    items = _loop_items(
+        raw_input, mode=mode, batch_size=batch_size,
+        group_key=group_key, count=count, max_rows=max_rows,
+    )
 
     if len(items) > max_rows:
         node_outputs[region.end_id] = {"results": [], "errors": []}

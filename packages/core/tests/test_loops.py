@@ -324,6 +324,63 @@ async def test_loop_output_mode_dataset_returns_ref(store_ctx):
     assert sorted(r["v"] for r in rows) == [10, 20]
 
 
+async def test_batch_mode_maps_over_chunks():
+    # batch_size=2 over [1..5]; body doubles each element of the batch.
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": [1, 2, 3, 4, 5]}),
+            _n("s", "loop_start", {"mode": "batch", "batch_size": 2}),
+            _n("b", "code", {"code": "output = [x * 2 for x in input]"}),
+            _n("e", "loop_end", {"loop_start_id": "s"}),
+        ],
+        [_e("trig", "s"), _e("s", "b", src_out="item"), _e("b", "e")],
+    )
+    result = await execute(g, registry)
+    assert str(result.nodes["e"].status) == "success"
+    assert result.nodes["e"].outputs["results"] == [[2, 4], [6, 8], [10]]
+
+
+async def test_range_mode_loops_count_times():
+    g = _g(
+        [
+            _n("s", "loop_start", {"mode": "range", "count": 4}),
+            _n("b", "code", {"code": "output = input * input"}),
+            _n("e", "loop_end", {"loop_start_id": "s"}),
+        ],
+        [_e("s", "b", src_out="item"), _e("b", "e")],
+    )
+    result = await execute(g, registry)
+    assert str(result.nodes["e"].status) == "success"
+    assert result.nodes["e"].outputs["results"] == [0, 1, 4, 9]
+
+
+async def test_group_mode_iterates_per_key():
+    rows = [
+        {"c": "a", "v": 1},
+        {"c": "b", "v": 2},
+        {"c": "a", "v": 3},
+    ]
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": {"rows": rows}}),
+            _n("src", "code", {"code": "output = input['rows']"}),
+            _n("s", "loop_start", {"mode": "group", "group_key": "c"}),
+            _n("b", "code", {"code": "output = {'key': input['key'], 'n': len(input['rows'])}"}),
+            _n("e", "loop_end", {"loop_start_id": "s"}),
+        ],
+        [
+            _e("trig", "src"), _e("src", "s"),
+            _e("s", "b", src_out="item"), _e("b", "e"),
+        ],
+    )
+    result = await execute(g, registry)
+    assert str(result.nodes["e"].status) == "success"
+    assert result.nodes["e"].outputs["results"] == [
+        {"key": "a", "n": 2},
+        {"key": "b", "n": 1},
+    ]
+
+
 async def test_loop_events_are_iteration_tagged():
     events: list[dict] = []
 
