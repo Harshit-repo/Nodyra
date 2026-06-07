@@ -1252,8 +1252,8 @@ def _restricted_levels(graph: WorkflowGraph, node_ids: frozenset[str]) -> list[l
     return levels
 
 
-def _loop_items(value: Any, *, max_rows: int) -> list[Any]:
-    """Resolve a loop_start input into an ordered list of items."""
+def _as_loop_rows(value: Any, *, max_rows: int) -> list[Any]:
+    """Resolve a loop_start input into an ordered list of rows (one per item)."""
     from noodle.datasets import is_dataset_ref, materialize_dataset_rows
     if is_dataset_ref(value):
         total_cap = max(1, int(max_rows or 10000))
@@ -1263,6 +1263,47 @@ def _loop_items(value: Any, *, max_rows: int) -> list[Any]:
     if isinstance(value, list):
         return value
     return [value]
+
+
+def _loop_items(
+    value: Any,
+    *,
+    mode: str = "each",
+    batch_size: int = 1,
+    group_key: str = "",
+    count: int = 0,
+    max_rows: int = 10000,
+) -> list[Any]:
+    """Resolve a loop_start input into the ordered list of iteration *units*.
+
+    The unit shape depends on ``mode``:
+      * each  -> one row per unit
+      * batch -> a list of up to ``batch_size`` rows per unit
+      * group -> {"key": k, "rows": [...]} per distinct ``group_key`` value
+      * range -> the integers 0..count-1 (input is ignored)
+    """
+    if mode == "range":
+        return list(range(max(0, int(count or 0))))
+
+    rows = _as_loop_rows(value, max_rows=max_rows)
+
+    if mode == "batch":
+        size = max(1, int(batch_size or 1))
+        return [rows[i : i + size] for i in range(0, len(rows), size)]
+
+    if mode == "group":
+        groups: dict[Any, dict[str, Any]] = {}
+        order: list[Any] = []
+        for row in rows:
+            key = row.get(group_key) if isinstance(row, dict) else None
+            if key not in groups:
+                groups[key] = {"key": key, "rows": []}
+                order.append(key)
+            groups[key]["rows"].append(row)
+        return [groups[k] for k in order]
+
+    # "each" (and any unknown mode) -> one row per unit.
+    return rows
 
 
 async def _run_loop(

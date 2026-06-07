@@ -6,7 +6,7 @@ import pytest
 import noodle_nodes  # noqa: F401 - registers loop_start/loop_end/code
 from noodle.artifacts import LocalArtifactStore
 from noodle.context import artifact_store, current_node_id
-from noodle.engine import _loop_regions, _validate_loop_regions, execute
+from noodle.engine import _loop_items, _loop_regions, _validate_loop_regions, execute
 from noodle.models import WorkflowGraph
 from noodle.sdk import registry
 
@@ -33,6 +33,36 @@ def _n(nid, ntype, params=None):
 def _e(src, tgt, src_out="main", tgt_in="input"):
     return {"id": f"{src}->{tgt}", "source": src, "source_output": src_out,
             "target": tgt, "target_input": tgt_in}
+
+
+def test_loop_items_each_passthrough():
+    assert _loop_items([1, 2, 3], mode="each", max_rows=100) == [1, 2, 3]
+    assert _loop_items(None, mode="each", max_rows=100) == []
+    assert _loop_items(7, mode="each", max_rows=100) == [7]
+
+
+def test_loop_items_batch_chunks_with_short_tail():
+    assert _loop_items([1, 2, 3, 4, 5], mode="batch", batch_size=2, max_rows=100) == [
+        [1, 2], [3, 4], [5],
+    ]
+
+
+def test_loop_items_group_by_key_stable_order():
+    rows = [
+        {"c": "a", "v": 1},
+        {"c": "b", "v": 2},
+        {"c": "a", "v": 3},
+        {"c": "b", "v": 4},
+    ]
+    units = _loop_items(rows, mode="group", group_key="c", max_rows=100)
+    assert [u["key"] for u in units] == ["a", "b"]
+    assert units[0]["rows"] == [{"c": "a", "v": 1}, {"c": "a", "v": 3}]
+    assert units[1]["rows"] == [{"c": "b", "v": 2}, {"c": "b", "v": 4}]
+
+
+def test_loop_items_range_counts_from_zero():
+    assert _loop_items(None, mode="range", count=3, max_rows=100) == [0, 1, 2]
+    assert _loop_items(None, mode="range", count=0, max_rows=100) == []
 
 
 def test_loop_regions_simple_body():
