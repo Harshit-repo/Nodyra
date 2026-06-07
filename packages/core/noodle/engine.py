@@ -21,6 +21,7 @@ import sys
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import dataclass
 from typing import Any
 
 from noodle.ai_runtime import (
@@ -306,6 +307,121 @@ def _predecessors(graph: WorkflowGraph) -> dict[str, set[str]]:
     return preds
 
 
+@dataclass(frozen=True)
+class LoopRegion:
+    start_id: str
+    end_id: str
+    body_ids: frozenset[str]      # nodes strictly between start and end
+    parent_start_id: str | None   # enclosing loop's start_id, or None
+
+
+def _descendants(graph: WorkflowGraph, root: str) -> set[str]:
+    succ: dict[str, set[str]] = defaultdict(set)
+    for e in graph.edges:
+        succ[e.source].add(e.target)
+    seen: set[str] = set()
+    stack = list(succ[root])
+    while stack:
+        n = stack.pop()
+        if n in seen:
+            continue
+        seen.add(n)
+        stack.extend(succ[n])
+    return seen
+
+
+def _ancestors(graph: WorkflowGraph, root: str) -> set[str]:
+    preds = _predecessors(graph)
+    seen: set[str] = set()
+    stack = list(preds.get(root, ()))
+    while stack:
+        n = stack.pop()
+        if n in seen:
+            continue
+        seen.add(n)
+        stack.extend(preds.get(n, ()))
+    return seen
+
+
+def _loop_regions(graph: WorkflowGraph) -> dict[str, LoopRegion]:
+    """Map each loop_start node id to its LoopRegion.
+
+    Body = descendants(start) ∩ ancestors(end), excluding start and end.
+    Pairing is read from loop_end.params['loop_start_id'].
+    """
+    starts = [n.id for n in graph.nodes if n.type == "loop_start"]
+    ends_for_start: dict[str, str] = {}
+    for n in graph.nodes:
+        if n.type == "loop_end":
+            sid = str(n.params.get("loop_start_id") or "")
+            if sid:
+                ends_for_start[sid] = n.id
+
+    regions: dict[str, LoopRegion] = {}
+    for sid in starts:
+        eid = ends_for_start.get(sid)
+        if eid is None:
+            raise GraphError(f"Loop Start '{sid}' has no paired Loop End")
+        body = (_descendants(graph, sid) & _ancestors(graph, eid)) - {sid, eid}
+        regions[sid] = LoopRegion(
+            start_id=sid, end_id=eid, body_ids=frozenset(body), parent_start_id=None
+        )
+
+    # Resolve nesting: a region whose start is inside another region's body is nested.
+    for sid, r in list(regions.items()):
+        for other_sid, other in regions.items():
+            if other_sid != sid and sid in other.body_ids:
+                regions[sid] = LoopRegion(
+                    start_id=r.start_id, end_id=r.end_id,
+                    body_ids=r.body_ids, parent_start_id=other_sid,
+                )
+                break
+    return regions
+
+
+def _validate_loop_regions(
+    graph: WorkflowGraph, regions: dict[str, LoopRegion]
+) -> None:
+    """Raise GraphError unless every loop region is single-entry/single-exit
+    and any two regions are disjoint or strictly nested."""
+    for r in regions.values():
+        body = set(r.body_ids)
+        for e in graph.edges:
+            into_body = e.target in body
+            from_body = e.source in body
+            # Single entry: the only edge entering the body comes from start.
+            if into_body and e.source not in body and e.source != r.start_id:
+                raise GraphError(
+                    f"Loop '{r.start_id}': single entry violated — node "
+                    f"'{e.target}' is fed from '{e.source}' outside the loop"
+                )
+            # Single exit: the only edge leaving the body goes to end.
+            if from_body and e.target not in body and e.target != r.end_id:
+                raise GraphError(
+                    f"Loop '{r.start_id}': single exit violated — body node "
+                    f"'{e.source}' wires to '{e.target}' outside the loop"
+                )
+        # Every body node must reach end (no dead-ends inside the region).
+        for nid in body:
+            if r.end_id not in (_descendants(graph, nid) | {r.end_id}):
+                raise GraphError(
+                    f"Loop '{r.start_id}': body node '{nid}' does not reach Loop End"
+                )
+
+    # Well-nestedness: regions overlap only by strict containment.
+    items = list(regions.values())
+    for i, a in enumerate(items):
+        a_set = set(a.body_ids) | {a.start_id, a.end_id}
+        for b in items[i + 1:]:
+            b_set = set(b.body_ids) | {b.start_id, b.end_id}
+            inter = a_set & b_set
+            if inter and not (a_set <= b_set or b_set <= a_set):
+                raise GraphError(
+                    f"Loops '{a.start_id}' and '{b.start_id}' partially overlap; "
+                    f"loops must be disjoint or strictly nested"
+                )
+
+
 def _topo_order(graph: WorkflowGraph) -> list[str]:
     """Return a deterministic topological order of node ids.
 
@@ -454,6 +570,13 @@ def _validate_input_kinds(
             continue
         value = kwargs[port.name]
         if value is None:
+            if kind in AI_PORT_KINDS:
+                raise ValueError(
+                    f"node '{node_id}' input '{port.name}' expected "
+                    f"{_kind_label(kind)}, but the connected upstream node "
+                    "produced no value. Enable the upstream node or disconnect "
+                    "this AI port."
+                )
             continue
         if kind == "dataset" and not is_dataset_ref(value):
             raise ValueError(
