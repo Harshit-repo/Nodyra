@@ -22,7 +22,8 @@ sequential, state-threading driver path.
 | `each` (default) | one row | — | today's behavior |
 | `batch` | a list of ≤N rows | `batch_size` | last batch may be short |
 | `group` | all rows sharing a key | `group_key` | `item = {"key": k, "rows": [...]}` |
-| `range` | the index `i` (int) | `count` | no input collection required |
+| `range` | the index `i` (int) | `count`, `start`, `step` | yields `start, start+step, …` (count of them) |
+| `window` | overlapping list of rows | `batch_size` (size), `step` | sliding windows; full windows only |
 | `while` | current **state** | `initial`, `condition`, `max_iterations`, `on_max_iterations` | pre-test; runs while condition truthy |
 | `until` | current **state** | same as `while` | pre-test on negation; runs while condition falsy, stops when truthy |
 
@@ -116,8 +117,20 @@ on `nodes_by_id[start].params["mode"]`: `while`/`until` → `_run_conditional_lo
   conditional; iteration_path still tagged.
 - **Web:** `mode` dropdown round-trips; conditional params persist; (optional) param visibility.
 
+## Reduce (Phase 5)
+
+`accumulate` (bool) on Loop Start threads an accumulator across any for-each mode (each/batch/group/
+range/window), seeded by `initial` (the same param while/until uses). Each iteration the `item` port
+carries `{"acc": <accumulator>, "item": <unit>}` (single-input-node friendly) and the `state` port
+carries the accumulator; the value into Loop End becomes the next accumulator. Sequential by nature;
+Loop End returns the **final accumulator** (ignores `output_mode`).
+
+## Implemented in Phase 5
+
+- `range` `start`/`step`; sliding `window` mode; for-each `reduce` (`accumulate`); distinct
+  loop-boundary node rendering (a mode badge on Loop Start/End).
+
 ## Out of scope / later
 
-- For-each **accumulator/reduce** (fold over a fixed list) — conditional mode covers the
-  state-threading need for now; a dedicated reduce can reuse the same machinery later.
-- `range` `start`/`step`; sliding windows.
+- A full auto-resizing **container frame** around the loop body (the current rendering is a styled
+  boundary node, not a bounding box).
