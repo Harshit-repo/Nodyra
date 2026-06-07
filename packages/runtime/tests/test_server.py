@@ -5,7 +5,10 @@ import json
 import sys
 from decimal import Decimal
 
+import pytest
+
 from noodle.serialization import serialize_value
+from noodle_runtime.server import _needs_host_callbacks
 
 GRAPH = {
     "nodes": [
@@ -78,6 +81,87 @@ async def test_runtime_subprocess_executes_a_graph() -> None:
 
         assert status == "success"
         assert finished["c"]["outputs"]["main"] == 6
+    finally:
+        if process.stdin:
+            process.stdin.close()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5)
+        except TimeoutError:
+            process.kill()
+            await process.wait()
+
+
+LOOP_GRAPH = {
+    "nodes": [
+        {"id": "trig", "type": "manual_trigger", "params": {"data": [1, 2, 3]},
+         "position": {"x": 0, "y": 0}},
+        {"id": "s", "type": "loop_start", "params": {},
+         "position": {"x": 1, "y": 0}},
+        {"id": "b", "type": "code", "params": {"code": "output = input * 2"},
+         "position": {"x": 2, "y": 0}},
+        {"id": "e", "type": "loop_end", "params": {"loop_start_id": "s"},
+         "position": {"x": 3, "y": 0}},
+    ],
+    "edges": [
+        {"id": "trig->s", "source": "trig", "source_output": "main",
+         "target": "s", "target_input": "input"},
+        {"id": "s->b", "source": "s", "source_output": "item",
+         "target": "b", "target_input": "input"},
+        {"id": "b->e", "source": "b", "source_output": "main",
+         "target": "e", "target_input": "input"},
+    ],
+}
+
+
+def test_loop_graph_does_not_need_host_callbacks():
+    msg = {"type": "run", "graph": LOOP_GRAPH}
+    assert _needs_host_callbacks(msg) is False
+
+
+async def test_runtime_subprocess_runs_a_loop() -> None:
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-u",
+        "-m",
+        "noodle_runtime",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    assert process.stdin is not None
+    assert process.stdout is not None
+
+    try:
+        ready_line = await asyncio.wait_for(process.stdout.readline(), timeout=10)
+        assert json.loads(ready_line)["type"] == "ready"
+
+        request = {
+            "type": "run",
+            "request_id": "loop",
+            "graph": LOOP_GRAPH,
+            "cache": None,
+            "targets": None,
+        }
+        process.stdin.write((json.dumps(request) + "\n").encode())
+        await process.stdin.drain()
+
+        finished: dict[str, dict] = {}
+        status = ""
+        while True:
+            line = await asyncio.wait_for(process.stdout.readline(), timeout=10)
+            event = json.loads(line)
+            kind = event.get("type")
+            if kind == "node_finished":
+                finished[event["node_id"]] = event
+            elif kind == "result":
+                status = event["status"]
+                break
+            elif kind == "error":
+                raise AssertionError(f"runtime error: {event.get('error')}")
+
+        assert status == "success"
+        assert finished["e"]["outputs"]["results"] == [2, 4, 6]
+        assert finished["e"]["outputs"]["errors"] == []
     finally:
         if process.stdin:
             process.stdin.close()
@@ -234,3 +318,50 @@ async def test_runtime_subprocess_does_not_inject_artifacts_into_code_nodes() ->
         except TimeoutError:
             process.kill()
             await process.wait()
+
+
+# ---------------------------------------------------------------------------
+# _needs_host_callbacks unit tests
+# ---------------------------------------------------------------------------
+
+
+def _msg(node_type: str) -> dict:
+    return {
+        "type": "run",
+        "graph": {
+            "nodes": [{"id": "n1", "type": node_type, "params": {}, "position": {"x": 0, "y": 0}}],
+            "edges": [],
+        },
+    }
+
+
+@pytest.mark.parametrize("node_type", ["execute_workflow", "map_items", "map_group", "map_dataset"])
+def test_needs_host_callbacks_true_for_callback_nodes(node_type: str) -> None:
+    assert _needs_host_callbacks(_msg(node_type)) is True
+
+
+@pytest.mark.parametrize("node_type", ["code", "manual_trigger", "http_request", "csv_parse"])
+def test_needs_host_callbacks_false_for_plain_nodes(node_type: str) -> None:
+    assert _needs_host_callbacks(_msg(node_type)) is False
+
+
+def test_needs_host_callbacks_mixed_graph() -> None:
+    msg = {
+        "type": "run",
+        "graph": {
+            "nodes": [
+                {"id": "a", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
+                {"id": "b", "type": "map_items", "params": {}, "position": {"x": 100, "y": 0}},
+            ],
+            "edges": [],
+        },
+    }
+    assert _needs_host_callbacks(msg) is True
+
+
+def test_needs_host_callbacks_empty_graph() -> None:
+    assert _needs_host_callbacks({"type": "run", "graph": {"nodes": [], "edges": []}}) is False
+
+
+def test_needs_host_callbacks_missing_graph() -> None:
+    assert _needs_host_callbacks({"type": "run"}) is False
