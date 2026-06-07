@@ -1443,6 +1443,144 @@ async def _run_loop(
     return RunStatus.success
 
 
+def _expr_error(value: Any) -> str | None:
+    """Return the message if ``value`` is an expression-eval error sentinel."""
+    if isinstance(value, str) and value.startswith("[expr error"):
+        return value
+    return None
+
+
+async def _run_conditional_loop(
+    *,
+    region: "LoopRegion",
+    graph: WorkflowGraph,
+    registry: NodeRegistry,
+    nodes_by_id: dict[str, Any],
+    incoming: dict[str, dict[str, tuple[str, str]]],
+    node_outputs: dict[str, dict[str, Any]],
+    cache: dict[str, dict[str, Any]],
+    emit: EventCallback,
+    finish: Callable[[NodeRunResult], Awaitable[None]],
+    default_timeouts: dict[str, float],
+    max_node_output_bytes: int | None,
+    pause_on_approval: bool,
+    agent_action_resume: dict[str, AgentActionRequest],
+    loop_regions: dict[str, "LoopRegion"],
+    owned: set[str],
+) -> RunStatus:
+    """Drive a while/until loop: thread an accumulator (state) across iterations,
+    re-checking an expression condition each time, until it stops or a safety cap
+    is hit. Sequential by construction (each iteration depends on the previous
+    state). Delivers the v2 accumulator + break behavior."""
+    from noodle.expr import _wrap, build_context, evaluate
+
+    start = nodes_by_id[region.start_id]
+    end = nodes_by_id[region.end_id]
+    mode = str(start.params.get("mode", "while") or "while")
+    max_iterations = max(0, int(start.params.get("max_iterations", 1000) or 1000))
+    on_max = str(start.params.get("on_max_iterations", "fail") or "fail")
+    condition_expr = start.params.get("condition", "")
+    conditional_output = str(
+        end.params.get("conditional_output", "final_state") or "final_state"
+    )
+
+    async def _fail(message: str) -> RunStatus:
+        node_outputs[region.end_id] = {"results": None, "errors": []}
+        await finish(NodeRunResult(
+            node_id=region.end_id, status=NodeStatus.error, error=message,
+        ))
+        return RunStatus.error
+
+    def _ctx(state: Any, i: int) -> dict[str, Any]:
+        ctx = build_context(first_input=state, node_outputs=node_outputs)
+        ctx["state"] = _wrap(state)
+        ctx["index"] = i
+        return ctx
+
+    # Seed state from the `initial` param (literal or expression).
+    state = evaluate(start.params.get("initial"), _ctx(None, 0))
+    err = _expr_error(state)
+    if err is not None:
+        return await _fail(f"loop initial state {err}")
+
+    child_owned: set[str] = set()
+    for other in loop_regions.values():
+        if other.parent_start_id == region.start_id:
+            child_owned |= set(other.body_ids)
+            child_owned.add(other.end_id)
+
+    body_levels = _restricted_levels(graph, region.body_ids)
+    end_in = incoming.get(region.end_id, {}).get("input")
+
+    states: list[Any] = []
+    i = 0
+    hit_cap = False
+    while True:
+        if i >= max_iterations:
+            hit_cap = True
+            break
+        keep = evaluate(condition_expr, _ctx(state, i)) if condition_expr else False
+        err = _expr_error(keep)
+        if err is not None:
+            return await _fail(f"loop condition {err}")
+        go = bool(keep) if mode == "while" else (not bool(keep))
+        if not go:
+            break
+
+        path_token = iteration_path.set(iteration_path.get() + (i,))
+        try:
+            iter_outputs = dict(node_outputs)
+            iter_outputs[region.start_id] = {"item": state, "index": i, "state": state}
+            st = await _execute_nodes(
+                node_ids=set(region.body_ids),
+                levels=body_levels, graph=graph, registry=registry,
+                nodes_by_id=nodes_by_id, incoming=incoming,
+                node_outputs=iter_outputs, cache=cache,
+                emit=emit, finish=finish, default_timeouts=default_timeouts,
+                max_node_output_bytes=max_node_output_bytes,
+                pause_on_approval=pause_on_approval,
+                agent_action_resume=agent_action_resume,
+                loop_regions=loop_regions, owned=child_owned,
+            )
+        finally:
+            iteration_path.reset(path_token)
+
+        # A body failure makes the next state uncomputable; abort rather than
+        # spin forever on the same state (on_error=continue does not apply here).
+        if st is RunStatus.error:
+            return await _fail(f"loop iteration {i} failed")
+
+        new_state = None
+        if end_in is not None:
+            esrc, eout = end_in
+            new_state = (iter_outputs.get(esrc) or {}).get(eout)
+        state = new_state
+        states.append(state)
+        i += 1
+
+    logs: list[str] = []
+    if hit_cap:
+        if on_max == "fail":
+            return await _fail(
+                f"loop exceeded max_iterations ({max_iterations})"
+            )
+        logs.append(
+            f"loop stopped at the max_iterations cap ({max_iterations}); "
+            "emitting the current state"
+        )
+
+    if conditional_output == "all_states":
+        results_out: Any = {"final": state, "states": states}
+    else:
+        results_out = state
+    out = {"results": results_out, "errors": []}
+    node_outputs[region.end_id] = out
+    await finish(NodeRunResult(
+        node_id=region.end_id, status=NodeStatus.success, outputs=out, logs=logs,
+    ))
+    return RunStatus.success
+
+
 async def _execute_nodes(
     *,
     node_ids: set[str],
@@ -1474,7 +1612,13 @@ async def _execute_nodes(
                 return
             gn = nodes_by_id[nid]
             if gn.type == "loop_start" and nid in loop_regions:
-                st = await _run_loop(
+                mode = str(gn.params.get("mode", "each") or "each")
+                driver = (
+                    _run_conditional_loop
+                    if mode in ("while", "until")
+                    else _run_loop
+                )
+                st = await driver(
                     region=loop_regions[nid],
                     graph=graph, registry=registry, nodes_by_id=nodes_by_id,
                     incoming=incoming, node_outputs=node_outputs, cache=cache,

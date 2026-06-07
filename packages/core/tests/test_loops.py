@@ -381,6 +381,68 @@ async def test_group_mode_iterates_per_key():
     ]
 
 
+def _incr_while_graph(params=None, end_params=None):
+    sp = {"mode": "while", "initial": {"count": 0},
+          "condition": "{{ state.count < 3 }}", "max_iterations": 10}
+    sp.update(params or {})
+    return _g(
+        [
+            _n("s", "loop_start", sp),
+            _n("b", "code", {"code": "output = {'count': input['count'] + 1}"}),
+            _n("e", "loop_end", {"loop_start_id": "s", **(end_params or {})}),
+        ],
+        [_e("s", "b", src_out="state"), _e("b", "e")],
+    )
+
+
+async def test_while_loop_threads_state_to_completion():
+    # concurrency is set but must be ignored (conditional loops are sequential)
+    result = await execute(_incr_while_graph({"concurrency": 5}), registry)
+    assert str(result.nodes["e"].status) == "success"
+    assert result.nodes["e"].outputs["results"] == {"count": 3}
+
+
+async def test_until_loop_uses_negated_condition():
+    g = _incr_while_graph({"mode": "until", "condition": "{{ state.count >= 3 }}"})
+    result = await execute(g, registry)
+    assert str(result.nodes["e"].status) == "success"
+    assert result.nodes["e"].outputs["results"] == {"count": 3}
+
+
+async def test_while_loop_zero_iterations_returns_initial():
+    g = _incr_while_graph({"condition": "{{ state.count < 0 }}"})
+    result = await execute(g, registry)
+    assert str(result.nodes["e"].status) == "success"
+    assert result.nodes["e"].outputs["results"] == {"count": 0}
+
+
+async def test_while_loop_cap_fail_errors():
+    g = _incr_while_graph({"condition": "{{ state.count < 100 }}",
+                           "max_iterations": 2, "on_max_iterations": "fail"})
+    result = await execute(g, registry)
+    assert str(result.nodes["e"].status) == "error"
+    assert str(result.status) == "error"
+    assert "max_iterations" in (result.nodes["e"].error or "")
+
+
+async def test_while_loop_cap_stop_emits_current_state():
+    g = _incr_while_graph({"condition": "{{ state.count < 100 }}",
+                           "max_iterations": 2, "on_max_iterations": "stop"})
+    result = await execute(g, registry)
+    e = result.nodes["e"]
+    assert str(e.status) == "success"
+    assert e.outputs["results"] == {"count": 2}
+    assert any("max_iterations" in line for line in (e.logs or []))
+
+
+async def test_while_loop_all_states_output():
+    g = _incr_while_graph(end_params={"conditional_output": "all_states"})
+    result = await execute(g, registry)
+    out = result.nodes["e"].outputs["results"]
+    assert out["final"] == {"count": 3}
+    assert out["states"] == [{"count": 1}, {"count": 2}, {"count": 3}]
+
+
 async def test_loop_events_are_iteration_tagged():
     events: list[dict] = []
 
