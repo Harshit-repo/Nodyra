@@ -16,6 +16,8 @@ const BACKEND_BADGE: Record<string, { label: string; color: string }> = {
 
 type BackendTab = "venv" | "conda" | "pixi";
 
+const BUILD_POLL_TIMEOUT_MS = 20 * 60 * 1000;
+
 const DESCRIPTION_HELP =
   "Optional notes for your team — what this environment is for, who owns it, gotchas. Shown in the env card.";
 
@@ -123,6 +125,14 @@ function formatBytes(value: number | null | undefined): string {
     i += 1;
   }
   return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
+}
+
+function scrollToEnvironment(envId: string): void {
+  const el = document.getElementById(`env-card-${envId}`);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  el.classList.add("env-card--flash");
+  window.setTimeout(() => el.classList.remove("env-card--flash"), 1800);
 }
 
 function PoolModeFields({
@@ -372,10 +382,8 @@ function CreateEnvModal({
               {b === "venv" ? "uv + venv" : b}
             </button>
           ))}
-          <button className="backend-tab backend-tab--disabled" disabled type="button" title="Docker — coming soon">
-            Docker
-          </button>
         </div>
+        <div className="backend-coming-soon">Docker backend coming soon</div>
 
         <label className="field-label">Name</label>
         <input
@@ -643,7 +651,7 @@ function EnvCard({
   }
 
   return (
-    <article className="env-card">
+    <article className="env-card" id={`env-card-${env.id}`} tabIndex={-1}>
       <div className="env-card-head">
         <div className="env-title">
           <h3>{env.name}</h3>
@@ -659,7 +667,7 @@ function EnvCard({
         </div>
         <div className="env-card-head-right">
           {env.status_detail && <LogIcon envName={env.name} log={env.status_detail} />}
-          <span className={`env-status status-${env.status}`}>{env.status}</span>
+          <span className={`env-status status-${env.status}`}>{env.status.toUpperCase()}</span>
         </div>
       </div>
       <div className="env-meta">
@@ -759,6 +767,8 @@ export function EnvironmentsPage() {
   const { notify } = useToast();
   // Track previous statuses to fire toasts on transitions
   const prevStatuses = useRef<Record<string, string>>({});
+  const buildPollStarted = useRef<Record<string, number>>({});
+  const buildPollTimedOut = useRef<Set<string>>(new Set());
 
   function load() {
     api
@@ -792,11 +802,17 @@ export function EnvironmentsPage() {
       const wasBuilding = was === "pending" || was === "building";
       const isBuilding = is === "pending" || is === "building";
       if ((!was || was === "ready" || was === "error") && isBuilding) {
-        notify(`⚙ Building ${env.name}…`, "info");
+        notify(`Building ${env.name}…`, "info", {
+          label: "View logs",
+          onClick: () => scrollToEnvironment(env.id),
+        });
       } else if (wasBuilding && is === "ready") {
-        notify(`✅ ${env.name} is ready!`, "success");
+        notify(`${env.name} is ready.`, "success");
       } else if (wasBuilding && is === "error") {
-        notify(`${env.name} failed to build — check the logs.`, "error");
+        notify(`${env.name} failed to build — check the logs.`, "error", {
+          label: "View logs",
+          onClick: () => scrollToEnvironment(env.id),
+        });
       }
       prev[env.id] = is;
     }
@@ -804,12 +820,40 @@ export function EnvironmentsPage() {
 
   // Poll while any environment is still building.
   useEffect(() => {
-    if (!environments?.some((e) => e.status === "pending" || e.status === "building")) {
+    const building = environments?.filter((e) => e.status === "pending" || e.status === "building") ?? [];
+    if (building.length === 0) {
+      buildPollStarted.current = {};
+      buildPollTimedOut.current.clear();
+      return;
+    }
+
+    const now = Date.now();
+    const activeIds = new Set(building.map((env) => env.id));
+    for (const id of Object.keys(buildPollStarted.current)) {
+      if (!activeIds.has(id)) {
+        delete buildPollStarted.current[id];
+        buildPollTimedOut.current.delete(id);
+      }
+    }
+    for (const env of building) {
+      buildPollStarted.current[env.id] ??= now;
+      if (
+        now - buildPollStarted.current[env.id] > BUILD_POLL_TIMEOUT_MS &&
+        !buildPollTimedOut.current.has(env.id)
+      ) {
+        buildPollTimedOut.current.add(env.id);
+        notify(`${env.name} is still building after 20 minutes.`, "error", {
+          label: "View logs",
+          onClick: () => scrollToEnvironment(env.id),
+        });
+      }
+    }
+    if (building.every((env) => buildPollTimedOut.current.has(env.id))) {
       return;
     }
     const timer = window.setTimeout(load, 2500);
     return () => window.clearTimeout(timer);
-  }, [environments]);
+  }, [environments, notify]);
 
   const workspaceCap = systemSettings?.max_concurrent_runs ?? null;
   const rssSoftBudget = systemSettings?.worker_rss_soft_budget_bytes ?? 0;

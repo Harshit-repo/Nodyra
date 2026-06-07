@@ -12,10 +12,12 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
   const runFromNode = useEditor((s) => s.runFromNode);
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState("");
+  const [nameSaved, setNameSaved] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const nameSavedTimerRef = useRef<number | null>(null);
   const toggleDisabled = useEditor((s) => s.toggleDisabled);
   const deleteNode = useEditor((s) => s.deleteNode);
-  const isTrigger = node?.data.manifest.category === "Triggers";
+  const isTrigger = node?.data.manifest?.category === "Triggers";
   // Only allow running a node individually when it is wired to a trigger.
   const hasTriggerUpstream = useEditor((s) => {
     if (!node || isTrigger) return true;
@@ -26,7 +28,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
       else bySource.set(e.target, [e.source]);
     }
     const catById = new Map(
-      s.nodes.map((n) => [n.id, n.data.manifest.category]),
+      s.nodes.map((n) => [n.id, n.data.manifest?.category]),
     );
     const visited = new Set<string>([node.id]);
     const queue = [node.id];
@@ -51,11 +53,42 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [closeNdv]);
 
+  useEffect(
+    () => () => {
+      if (nameSavedTimerRef.current !== null) {
+        window.clearTimeout(nameSavedTimerRef.current);
+      }
+    },
+    [],
+  );
+
   if (!node) return null;
-  const { manifest, disabled } = node.data;
+  const currentNode = node;
+  const { manifest, disabled } = currentNode.data;
   const isWebhook = manifest.id === "webhook_trigger";
   const hasBrandIcon = isBrandIconName(manifest.icon);
   const color = categoryColor(manifest.category);
+
+  function flashNameSaved(): void {
+    setNameSaved(true);
+    if (nameSavedTimerRef.current !== null) {
+      window.clearTimeout(nameSavedTimerRef.current);
+    }
+    nameSavedTimerRef.current = window.setTimeout(() => {
+      setNameSaved(false);
+      nameSavedTimerRef.current = null;
+    }, 1400);
+  }
+
+  function saveName(): void {
+    const trimmed = nameVal.trim();
+    const nextLabel = trimmed || undefined;
+    if ((currentNode.data.label ?? undefined) !== nextLabel) {
+      updateNodeSettings(nodeId, { label: nextLabel });
+      flashNameSaved();
+    }
+    setEditingName(false);
+  }
 
   return (
     <div className="modal-overlay ndv-overlay" onClick={closeNdv}>
@@ -75,24 +108,21 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
                   className="ndv-name-input"
                   value={nameVal}
                   onChange={(e) => setNameVal(e.target.value)}
-                  onBlur={() => {
-                    const trimmed = nameVal.trim();
-                    updateNodeSettings(nodeId, { label: trimmed || undefined });
-                    setEditingName(false);
-                  }}
+                  onBlur={saveName}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") nameInputRef.current?.blur();
-                    if (e.key === "Escape") { setNameVal(node.data.label || manifest.name); setEditingName(false); }
+                    if (e.key === "Escape") { setNameVal(currentNode.data.label || manifest.name); setEditingName(false); }
                   }}
                 />
               ) : (
                 <h3
                   className="ndv-name-editable"
                   title="Click to rename for this workflow"
-                  onClick={() => { setNameVal(node.data.label || manifest.name); setEditingName(true); }}
+                  onClick={() => { setNameVal(currentNode.data.label || manifest.name); setEditingName(true); }}
                 >
-                  {node.data.label || manifest.name}
-                  {node.data.label && <span className="ndv-label-changed" title={`Original: ${manifest.name}`}>✎</span>}
+                  {currentNode.data.label || manifest.name}
+                  {currentNode.data.label && <span className="ndv-label-changed" title={`Original: ${manifest.name}`}>✎</span>}
+                  {nameSaved && <span className="ndv-name-saved" title="Saved">✓</span>}
                 </h3>
               )}
               <div className="ndv-meta">
@@ -106,7 +136,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
           <div className="ndv-actions">
             <button
               className="btn btn-sm btn-run"
-              onClick={() => runFromNode(node.id)}
+              onClick={() => runFromNode(currentNode.id)}
               disabled={!canRunStep}
               title={
                 !canRunStep
@@ -122,7 +152,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
               <button
                 className="btn btn-sm btn-ghost"
                 onClick={() =>
-                  runFromNode(node.id, { reuseUpstream: false })
+                  runFromNode(currentNode.id, { reuseUpstream: false })
                 }
                 disabled={!canRunStep}
                 title={
@@ -136,14 +166,14 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
             )}
             <button
               className="btn btn-sm"
-              onClick={() => toggleDisabled(node.id)}
+              onClick={() => toggleDisabled(currentNode.id)}
             >
               {disabled ? "Enable" : "Disable"}
             </button>
             <button
               className="btn btn-sm btn-ghost"
               onClick={() => {
-                deleteNode(node.id);
+                deleteNode(currentNode.id);
                 closeNdv();
               }}
             >

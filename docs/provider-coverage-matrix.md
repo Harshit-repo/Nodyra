@@ -16,12 +16,25 @@ Python function signatures.
 | OpenAI-compatible embeddings | Embedding model supplier | N/A | `embedding_provider` | Beta | Mocked adapter tests | Optional embedding cost estimate when provider returns prompt token usage. |
 | Cohere embeddings | Embedding model supplier | N/A | `embedding_provider` | Beta | Supplier tests | Usage/cost estimate waits on provider usage normalization. |
 | Qdrant | Vector-store adapter | N/A | URL/API key params | Beta | Mocked REST tests | Supports create collection, upsert, query, and delete through RAG nodes. |
-| Slack | Send message, reply in thread, update message, delete message, add reaction, open direct message, list channels, list users | Planned | Slack bot token | Beta | Mocked operation tests and AI-builder/template coverage | Legacy Slack send-message wrapper is hidden in favor of v2 nodes; signed event triggers, file upload, and richer dynamic options remain planned. |
-| Stripe | Create/get/list/update customer, create checkout session, create/get/list payment intent, create refund, create/list invoices, create/list/cancel subscriptions, list products/prices | Planned | Stripe API key | Beta | Mocked operation tests | Legacy create-customer wrapper is hidden in favor of v2 nodes; idempotency keys and signed webhook triggers remain planned. |
+| Slack | Send message, reply in thread, update message, delete message, add reaction, open direct message, list channels, list users | Signed event trigger (`slack_event_trigger_v2`) | Slack bot token + signing secret | Beta | Mocked operation tests, HMAC signature tests, event dispatch tests | Legacy Slack send-message wrapper is hidden in favor of v2 nodes. |
+| Stripe | Create/get/list/update customer, create checkout session, create/get/list payment intent, create refund, create/list invoices, create/list/cancel subscriptions, list products/prices | Signed event trigger (`stripe_event_trigger_v2`) | Stripe API key + webhook secret | Beta | Mocked operation tests, HMAC signature tests, event dispatch tests | Legacy create-customer wrapper is hidden in favor of v2 nodes; idempotency keys remain planned. |
 | Airtable | List/get/create/update/delete records, batch create/update records, upsert records | Planned | Airtable token | Beta | Mocked operation tests | Legacy Airtable list/create wrappers are hidden in favor of v2 nodes; metadata loaders and webhook/polling triggers remain planned. |
-| Notion | Search, query/get database, get/create/update/archive page, list/append block children | Planned | Notion integration token | Beta | Mocked operation tests | Legacy create-page wrapper is hidden in favor of v2 nodes; database/page/property option loaders and polling triggers remain planned. |
+| Notion | Search, query/get database, get/create/update/archive page, list/append block children | New-page polling trigger (`notion_new_database_page_trigger_v2`, 5 min) | Notion integration token | Beta | Mocked operation tests, polling cursor tests | Legacy create-page wrapper is hidden in favor of v2 nodes; database/page/property option loaders remain planned. |
+| Google Sheets (polling) | — | New-row polling trigger (`google_sheets_new_row_trigger_v2`, 5 min) | `google_sheets_oauth2` | Beta | Mocked polling tests with cursor assertions | Supplements the existing v2 operation nodes; watch-channel triggers remain planned. |
+| RSS / Atom | — | New-item polling trigger (`rss_feed_trigger`, 15 min) | None (public feeds) | Beta | RSS + Atom parsing tests, cursor ring-buffer tests | Stdlib XML parsing, no external HTTP library beyond `requests`; Atom namespace support included. |
 | Google Drive | None | Planned | Google OAuth credential | Planned | None | Candidate for file-created/updated triggers and file operations. |
 | Generic HTTP/Webhook | Built-in nodes | Built-in webhook trigger | Optional auth params | Shipped | API and node tests | HTTP nodes now block private/loopback/link-local targets before dispatch. |
+
+## File Reading Nodes
+
+| Node | Sources | Dataset mode | Requirements | Status | Tests |
+| --- | --- | --- | --- | --- | --- |
+| `read_text_file` | Server path, browser upload (artifact_id) | — | stdlib | Shipped | Path + upload + encoding tests |
+| `read_csv_file` | Server path, browser upload | `output_as_dataset` toggle → DatasetRef | stdlib | Shipped | Raw mode, no-header, empty, dataset mode, missing-source tests |
+| `read_json_file` | Server path, browser upload | `output_as_dataset` requires array of objects | stdlib | Shipped | Raw array, raw object, dataset mode, non-array error tests |
+| `read_xml_file` | Server path, browser upload | `output_as_dataset` + `row_xpath` extracts elements | `xmltodict` | Shipped | Raw mode, dataset mode with row extraction, missing-xpath error tests |
+
+Browser uploads use the `file_upload` widget in the node UI and are stored via `POST /artifacts/upload` as pre-run artifacts. The node reads bytes from `{artifacts_dir}/uploads/{artifact_id}/{filename}` at execution time.
 
 ## Status Definitions
 
@@ -31,10 +44,9 @@ Python function signatures.
 
 ## Next Provider Targets
 
-1. Slack signed event trigger.
-2. Stripe signed webhook trigger and additional Stripe operations.
-3. Outlook/Microsoft Graph subscription trigger with renewal handling.
-4. Google Drive/Sheets watch-channel triggers with renewal handling.
-5. Airtable metadata loaders plus update/delete operations.
-6. Notion database/page option loaders plus query/update operations.
-7. Add more GitHub operations such as comments, pull requests, releases, and file contents.
+1. Outlook/Microsoft Graph subscription trigger with renewal handling.
+2. Google Drive/Sheets watch-channel triggers with renewal handling.
+3. Airtable metadata loaders, webhook/polling triggers.
+4. Notion database/page option loaders and additional query/update operations.
+5. Add more GitHub operations such as comments, pull requests, releases, and file contents.
+6. File nodes: S3 / GCS / Azure Blob read support, streaming for large files.

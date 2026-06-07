@@ -14,6 +14,7 @@ from noodle.ai_runtime import (
     ChatResponse,
     GuardrailAdapter,
     MemoryAdapter,
+    MessageRole,
     OutputParserAdapter,
     ToolSchema,
 )
@@ -21,6 +22,7 @@ from noodle.sdk import node
 from noodle_nodes.ai_v2.tools import collect_tool_adapters
 
 AI_CATEGORY = "AI"
+TOOL_SYSTEM_PREFIX = "Noodle tools available in this run:"
 
 
 def _as_text(value: Any) -> str:
@@ -75,6 +77,48 @@ def _tool_schemas(tool_value: Any) -> list[ToolSchema]:
         seen.add(name)
         schemas.append(adapter.schema)
     return schemas
+
+
+def _tool_instruction(tools: list[ToolSchema]) -> AIMessage | None:
+    names = ", ".join(schema.name for schema in tools if schema.name)
+    if not names:
+        return None
+    return AIMessage.system(
+        f"{TOOL_SYSTEM_PREFIX} {names}. "
+        "When the user's request can be fulfilled by a connected tool, call the "
+        "relevant tool instead of saying you cannot access external systems or "
+        "run commands. Ask for missing tool arguments if needed."
+    )
+
+
+def _with_tool_instruction(
+    messages: list[AIMessage],
+    tools: list[ToolSchema],
+) -> list[AIMessage]:
+    instruction = _tool_instruction(tools)
+    if instruction is None:
+        return messages
+    if any(
+        message.role == MessageRole.system
+        and message.content.startswith(TOOL_SYSTEM_PREFIX)
+        for message in messages
+    ):
+        return messages
+    insert_at = 0
+    while insert_at < len(messages) and messages[insert_at].role == MessageRole.system:
+        insert_at += 1
+    return [*messages[:insert_at], instruction, *messages[insert_at:]]
+
+
+def _without_tool_instruction(messages: list[AIMessage]) -> list[AIMessage]:
+    return [
+        message
+        for message in messages
+        if not (
+            message.role == MessageRole.system
+            and message.content.startswith(TOOL_SYSTEM_PREFIX)
+        )
+    ]
 
 
 def _memory_messages(
@@ -224,9 +268,13 @@ def ai_agent_v2(
         raise ValueError("ai_agent_v2: connect an AI Chat Model to the model port")
 
     steps_limit = max(1, min(25, int(max_steps or 4)))
+    tool_schemas = _tool_schemas(tool)
     resume = runtime.get("agent_resume")
     if isinstance(resume, AgentResumeInput):
-        messages = _messages_from_resume(resume)
+        messages = _with_tool_instruction(
+            _messages_from_resume(resume),
+            tool_schemas,
+        )
         step = resume.step
     else:
         sid = _session_id(input, session_id)
@@ -235,7 +283,10 @@ def ai_agent_v2(
             raise ValueError("ai_agent_v2: prompt or input task is required")
         if isinstance(parser, OutputParserAdapter) and parser.format_instructions:
             task = f"{task}\n\n{parser.format_instructions}"
-        messages = _memory_messages(memory, session_id=sid, system=system)
+        messages = _with_tool_instruction(
+            _memory_messages(memory, session_id=sid, system=system),
+            tool_schemas,
+        )
         messages.append(AIMessage.user(task))
         step = 0
 
@@ -244,7 +295,7 @@ def ai_agent_v2(
         model=_model_name(model),
         temperature=float(temperature),
         max_tokens=max_tokens,
-        tools=_tool_schemas(tool),
+        tools=tool_schemas,
         response_format="json_object" if response_format == "json_object" else "text",
         timeout_seconds=int(timeout_seconds or 75),
     )
@@ -279,5 +330,5 @@ def ai_agent_v2(
     messages.append(AIMessage.assistant(response.text))
     sid = _session_id(input, session_id)
     if isinstance(memory, MemoryAdapter):
-        memory.save(session_id=sid, messages=messages)
+        memory.save(session_id=sid, messages=_without_tool_instruction(messages))
     return _final_output(response, parser=parser, step=step)

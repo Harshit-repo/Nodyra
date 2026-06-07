@@ -158,4 +158,79 @@ describe("editor clipboard", () => {
       ]),
     );
   });
+
+  it("cuts selected nodes and keeps the clipboard pasteable", () => {
+    resetEditor();
+    const sourceManifest = manifest("source");
+    const targetManifest = manifest("target");
+    const outsideManifest = manifest("outside");
+    useEditor.setState({
+      manifests: [sourceManifest, targetManifest, outsideManifest],
+      manifestsById: {
+        source: sourceManifest,
+        target: targetManifest,
+        outside: outsideManifest,
+      },
+      nodes: [
+        node("source", sourceManifest, 0, true),
+        node("target", targetManifest, 280, true),
+        node("outside", outsideManifest, 560),
+      ],
+      edges: [
+        {
+          id: "e_source_target",
+          source: "source",
+          sourceHandle: "main",
+          target: "target",
+          targetHandle: "input",
+        },
+        {
+          id: "e_target_outside",
+          source: "target",
+          sourceHandle: "main",
+          target: "outside",
+          targetHandle: "input",
+        },
+      ],
+    });
+
+    const cut = useEditor.getState().cutSelection();
+    expect(cut).toEqual({ nodeCount: 2, edgeCount: 1 });
+    expect(useEditor.getState().nodes.map((item) => item.id)).toEqual(["outside"]);
+    expect(useEditor.getState().edges).toHaveLength(0);
+
+    const pasted = useEditor.getState().pasteSelection();
+    expect(pasted).toEqual({ nodeCount: 2, edgeCount: 1 });
+    expect(useEditor.getState().nodes).toHaveLength(3);
+    expect(useEditor.getState().edges).toHaveLength(1);
+  });
+
+  it("deletes all selected nodes in one history entry", () => {
+    resetEditor();
+    const sourceManifest = manifest("source");
+    const targetManifest = manifest("target");
+    const outsideManifest = manifest("outside");
+    useEditor.setState({
+      nodes: [
+        node("source", sourceManifest, 0, true),
+        node("target", targetManifest, 280, true),
+        node("outside", outsideManifest, 560),
+      ],
+      edges: [
+        {
+          id: "e_source_target",
+          source: "source",
+          sourceHandle: "main",
+          target: "target",
+          targetHandle: "input",
+        },
+      ],
+    });
+
+    expect(useEditor.getState().deleteSelection()).toBe(2);
+    const state = useEditor.getState();
+    expect(state.nodes.map((item) => item.id)).toEqual(["outside"]);
+    expect(state.edges).toHaveLength(0);
+    expect(state._past).toHaveLength(1);
+  });
 });

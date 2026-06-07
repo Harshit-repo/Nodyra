@@ -17,6 +17,8 @@ from noodle_nodes.datasets import (
     dataset_select,
     dataset_to_records,
     duckdb_sql,
+    map_dataset,
+    polars_transform,
     records_to_dataset_node,
 )
 
@@ -173,6 +175,161 @@ async def test_engine_expands_dataset_ref_into_loop_items(store_ctx) -> None:
         {"id": 2},
         {"id": 3},
     ]
+
+
+# ---------------------------------------------------------------------------
+# polars_transform
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def polars_ref(store_ctx):
+    pl = pytest.importorskip("polars")  # noqa: F841
+    return csv_parse(text="amount,region\n100,east\n200,west\n50,east\n", has_header=True)
+
+
+def test_polars_transform_filter(store_ctx, polars_ref) -> None:
+    pytest.importorskip("polars")
+    ref = polars_transform(
+        input=polars_ref,
+        code="output = input.filter(pl.col('amount') > 60)",
+    )
+    assert is_dataset_ref(ref)
+    rows = dataset_to_records(input=ref, max_rows=100)
+    assert len(rows) == 2
+
+
+def test_polars_transform_aggregate(store_ctx, polars_ref) -> None:
+    pytest.importorskip("polars")
+    ref = polars_transform(
+        input=polars_ref,
+        code=(
+            "output = input.group_by('region').agg(pl.col('amount').sum().alias('total'))"
+            ".sort('region')"
+        ),
+    )
+    assert is_dataset_ref(ref)
+    rows = dataset_to_records(input=ref, max_rows=100)
+    assert len(rows) == 2
+
+
+def test_polars_transform_accepts_dataframe(store_ctx, polars_ref) -> None:
+    pytest.importorskip("polars")
+    ref = polars_transform(
+        input=polars_ref,
+        code="output = input.collect()",
+    )
+    assert is_dataset_ref(ref)
+
+
+def test_polars_transform_missing_output_raises(store_ctx, polars_ref) -> None:
+    pytest.importorskip("polars")
+    with pytest.raises(ValueError, match="output"):
+        polars_transform(input=polars_ref, code="x = 1")
+
+
+def test_polars_transform_non_polars_output_raises(store_ctx, polars_ref) -> None:
+    pytest.importorskip("polars")
+    with pytest.raises(ValueError, match="DataFrame or LazyFrame"):
+        polars_transform(input=polars_ref, code="output = [1, 2, 3]")
+
+
+def test_polars_transform_requires_dataset_ref(store_ctx) -> None:
+    pytest.importorskip("polars")
+    with pytest.raises(ValueError, match="DatasetRef"):
+        polars_transform(input={"not": "a ref"}, code="output = input")
+
+
+# ---------------------------------------------------------------------------
+# map_dataset
+# ---------------------------------------------------------------------------
+
+
+async def test_map_dataset_calls_child_per_row(store_ctx) -> None:
+    from noodle.context import workflow_caller
+
+    calls: list[dict] = []
+
+    async def caller(wf_id: str, payload: dict) -> dict:
+        calls.append(payload)
+        return {"processed": payload["row"]["x"] * 2}
+
+    ref = csv_parse(text="x\n1\n2\n3\n", has_header=True)
+    token = workflow_caller.set(caller)
+    try:
+        result = await map_dataset(
+            input=ref,
+            workflow_id="wf-1",
+            on_error="fail",
+            output_mode="records",
+        )
+    finally:
+        workflow_caller.reset(token)
+
+    assert len(calls) == 3
+    assert sorted(r["processed"] for r in result["main"]) == [2, 4, 6]
+
+
+async def test_map_dataset_dataset_output_is_ref(store_ctx) -> None:
+    from noodle.context import workflow_caller
+
+    async def caller(wf_id: str, payload: dict) -> dict:
+        return {"val": payload["row"]["x"]}
+
+    ref = csv_parse(text="x\n10\n20\n", has_header=True)
+    token = workflow_caller.set(caller)
+    try:
+        result = await map_dataset(
+            input=ref, workflow_id="wf-1", on_error="fail", output_mode="dataset"
+        )
+    finally:
+        workflow_caller.reset(token)
+
+    assert is_dataset_ref(result["main"])
+    rows = dataset_to_records(input=result["main"], max_rows=10)
+    assert sorted(r["val"] for r in rows) == [10, 20]
+
+
+async def test_map_dataset_max_rows_raises_before_mapping(store_ctx) -> None:
+    from noodle.context import workflow_caller
+
+    calls: list = []
+
+    async def caller(wf_id: str, payload: dict) -> dict:
+        calls.append(payload)
+        return {}
+
+    ref = csv_parse(text="x\n1\n2\n3\n", has_header=True)
+    token = workflow_caller.set(caller)
+    try:
+        with pytest.raises(ValueError, match="max_rows"):
+            await map_dataset(input=ref, workflow_id="wf-1", max_rows=2)
+    finally:
+        workflow_caller.reset(token)
+
+    assert calls == []  # no child calls should have happened
+
+
+async def test_map_dataset_continue_on_error(store_ctx) -> None:
+    from noodle.context import workflow_caller
+
+    async def caller(wf_id: str, payload: dict) -> dict:
+        if payload["row"]["x"] == 2:
+            raise RuntimeError("fail on 2")
+        return {"val": payload["row"]["x"]}
+
+    ref = csv_parse(text="x\n1\n2\n3\n", has_header=True)
+    token = workflow_caller.set(caller)
+    try:
+        result = await map_dataset(
+            input=ref, workflow_id="wf-1", on_error="continue", output_mode="records"
+        )
+    finally:
+        workflow_caller.reset(token)
+
+    assert len(result["main"]) == 2
+    assert len(result["errors"]) == 1
+    assert result["errors"][0]["index"] == 1
 
 
 def test_auto_expand_skips_code_and_dataset_ports(store_ctx) -> None:

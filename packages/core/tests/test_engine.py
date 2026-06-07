@@ -296,6 +296,52 @@ async def test_disabled_node_passes_input_through() -> None:
     assert result.nodes["e"].outputs["main"] == 10
 
 
+async def test_disabled_ai_supplier_errors_instead_of_silent_none() -> None:
+    reg = NodeRegistry()
+
+    @node(
+        name="Memory",
+        id="memory",
+        inputs=[],
+        outputs=["memory"],
+        output_kinds={"memory": "ai_memory"},
+        registry=reg,
+    )
+    def memory() -> object:
+        return object()
+
+    @node(
+        name="Agent",
+        id="agent",
+        inputs=["memory"],
+        input_kinds={"memory": "ai_memory"},
+        registry=reg,
+    )
+    def agent(memory: object | None = None) -> str:  # noqa: ARG001
+        return "ok"
+
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="m", type="memory", disabled=True),
+            GraphNode(id="a", type="agent"),
+        ],
+        edges=[
+            Edge(
+                source="m",
+                source_output="memory",
+                target="a",
+                target_input="memory",
+            )
+        ],
+    )
+    result = await execute(graph, reg)
+
+    assert result.status == RunStatus.error
+    assert result.nodes["a"].status == NodeStatus.error
+    assert "expected AI memory" in (result.nodes["a"].error or "")
+    assert "Enable the upstream node" in (result.nodes["a"].error or "")
+
+
 async def test_expressions_resolve_against_upstream_data() -> None:
     reg = make_registry()
 

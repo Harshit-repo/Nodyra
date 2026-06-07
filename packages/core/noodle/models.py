@@ -138,6 +138,9 @@ class NodeManifest(BaseModel):
     inputs: list[PortSpec] = Field(default_factory=list)
     params: list[ParamSpec] = Field(default_factory=list)
     outputs: list[PortSpec] = Field(default_factory=list)
+    # Maps output port name → {param_name, param_value_str → data_kind}.
+    # Example: {"main": {"param": "output_as_dataset", "true": "dataset", "false": "any"}}
+    param_output_kinds: dict[str, dict[str, str]] = Field(default_factory=dict)
     requirements: list[str] = Field(default_factory=list)
     system_requirements: list[SystemRequirement] = Field(default_factory=list)
 

@@ -36,7 +36,7 @@ const MAX_HEIGHT = 430;
 const COLLAPSED_HEIGHT = 44;
 
 function outputNames(node: NoodleNode): string[] {
-  return node.data.outputsOverride ?? node.data.manifest.outputs.map((o) => o.name);
+  return node.data.outputsOverride ?? node.data.manifest?.outputs.map((o) => o.name) ?? [];
 }
 
 function valueAtPort(
@@ -427,9 +427,9 @@ export function PortDataViewer() {
     event.preventDefault();
   }
 
-  const inputPorts = node?.data.manifest.inputs.map((p) => p.name) ?? [];
-  const outputs = node && pinned !== undefined ? pinned : node ? runOutputs[node.id] : undefined;
-  const selectedOutputNames = node ? outputNames(node) : [];
+  const inputPorts = node?.data.manifest?.inputs.map((p) => p.name) ?? [];
+  const outputs = node && pinned !== undefined ? pinned.payload : node ? runOutputs[node.id] : undefined;
+  const selectedOutputNames = node?.data.manifest ? outputNames(node) : [];
   const dataPortCount = selectedOutputNames.filter(
     (port) => valueAtPort(outputs, port).hasValue,
   ).length;
@@ -454,7 +454,7 @@ export function PortDataViewer() {
         <div>
           <h2>Port Data</h2>
           <span>
-            {node ? `${node.data.manifest.name} · ${node.id}` : "Select a node to inspect live port data"}
+            {node?.data.manifest ? `${node.data.manifest.name} · ${node.id}` : "Select a node to inspect live port data"}
           </span>
         </div>
         <div className="port-data-head-right">

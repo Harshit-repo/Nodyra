@@ -1,5 +1,5 @@
 import { ReactFlowProvider } from "@xyflow/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { api, type RunStreamHandle, subscribeToRunEvents } from "./api";
@@ -13,7 +13,13 @@ import { NodeDetailModal } from "./editor/NodeDetailModal";
 import { NodePalette } from "./editor/NodePalette";
 import { PortDataViewer } from "./editor/PortDataViewer";
 import { WorkflowHistory } from "./editor/WorkflowHistory";
-import { pickEditorRunTrigger, type RunOptions, useEditor } from "./editor/store";
+import {
+  childToGraph,
+  pickEditorRunTrigger,
+  type PinnedOutput,
+  type RunOptions,
+  useEditor,
+} from "./editor/store";
 import { Logo } from "./Logo";
 import { useCan } from "./permissions";
 import { useToast } from "./ToastProvider";
@@ -95,6 +101,10 @@ function chatTriggerNode(graph: WorkflowGraph | null | undefined) {
   return graph?.nodes?.find((n) => n.type === "chat_trigger") ?? null;
 }
 
+function pinnedPayload(pin: PinnedOutput | undefined): unknown {
+  return pin?.payload;
+}
+
 function buildPublishSummary(
   baseGraph: WorkflowGraph | null | undefined,
   currentGraph: WorkflowGraph,
@@ -167,9 +177,9 @@ export function EditorPage() {
   const dirty = useEditor((s) => s.dirty);
   const nodeCount = useEditor((s) => s.nodes.length);
   const hasTrigger = useEditor((s) => pickEditorRunTrigger(s.nodes) !== null);
-  const hasChatTrigger = useEditor((s) => s.nodes.some((n) => n.data.manifest.id === "chat_trigger"));
+  const hasChatTrigger = useEditor((s) => s.nodes.some((n) => n.data.manifest?.id === "chat_trigger"));
   const selectedId = useEditor((s) => s.selectedId);
-  const deleteNode = useEditor((s) => s.deleteNode);
+  const deleteSelection = useEditor((s) => s.deleteSelection);
   const duplicateNode = useEditor((s) => s.duplicateNode);
   const canRun = useCan("workflow:run");
   const canWrite = useCan("workflow:write");
@@ -190,6 +200,20 @@ export function EditorPage() {
   const setRunHandler = useEditor((s) => s.setRunHandler);
   const setWorkflowId = useEditor((s) => s.setWorkflowId);
   const setPinned = useEditor((s) => s.setPinned);
+  const loadChildGraph = useEditor((s) => s.loadChildGraph);
+  const setChildWorkflowLoading = useEditor((s) => s.setChildWorkflowLoading);
+  const markChildClean = useEditor((s) => s.markChildClean);
+  const updateParams = useEditor((s) => s.updateParams);
+  const manifestsById = useEditor((s) => s.manifestsById);
+  const editorNodes = useEditor((s) => s.nodes);
+  // Map Group nodes that need a child workflow created.
+  const mapGroupsNeedingChild = useMemo(
+    () =>
+      editorNodes.filter(
+      (n) => n.type === "mapGroup" && !(n.data.params.child_workflow_id as string),
+    ),
+    [editorNodes],
+  );
 
   useEffect(() => {
     if (!id) return;
@@ -220,11 +244,33 @@ export function EditorPage() {
         );
         setEnvironments(envs);
         setWorkflowId(id);
-        const pinnedMap: Record<string, unknown> = {};
-        for (const p of pinnedList) pinnedMap[p.node_id] = p.payload;
+        const pinnedMap: Record<string, PinnedOutput> = {};
+        for (const p of pinnedList) {
+          pinnedMap[p.node_id] = { payload: p.payload, updatedAt: p.updated_at };
+        }
         setPinned(pinnedMap);
         setStatus("ready");
         window.setTimeout(() => window.dispatchEvent(new Event("noodle:fit-view")), 60);
+
+        // Load child workflows for any map_group nodes.
+        const mapGroupNodes = useEditor.getState().nodes.filter(
+          (n) => n.type === "mapGroup" && Boolean(n.data.params.child_workflow_id as string),
+        );
+        if (mapGroupNodes.length > 0) {
+          await Promise.all(
+            mapGroupNodes.map(async (mg) => {
+              if (cancelled) return;
+              const childId = mg.data.params.child_workflow_id as string;
+              setChildWorkflowLoading(mg.id, true);
+              try {
+                const child = await api.getWorkflow(childId);
+                if (!cancelled) loadChildGraph(mg.id, childId, child.graph);
+              } catch (err) {
+                if (!cancelled) setChildWorkflowLoading(mg.id, false, String(err));
+              }
+            }),
+          );
+        }
       } catch (err) {
         if (cancelled) return;
         setMessage(String(err));
@@ -234,7 +280,7 @@ export function EditorPage() {
     return () => {
       cancelled = true;
     };
-  }, [id, setManifests, loadGraph, clearRun, closeNdv, setWorkflowId, setPinned]);
+  }, [id, setManifests, loadGraph, clearRun, closeNdv, setWorkflowId, setPinned, setChildWorkflowLoading, loadChildGraph]);
 
   // Mirror the current run-environment context into the editor store so the
   // NDV can flag nodes whose packages the env lacks (and offer fix actions).
@@ -259,6 +305,50 @@ export function EditorPage() {
     return () => setApplyEnvSwitch(null);
   }, [setApplyEnvSwitch]);
 
+  // Auto-create child workflows for newly dropped Map Group nodes.
+  const mgNeedingChildKey = mapGroupsNeedingChild.map((m) => m.id).join(",");
+  useEffect(() => {
+    if (!id || mapGroupsNeedingChild.length === 0) return;
+    const manualTriggerManifest = manifestsById["manual_trigger"];
+    for (const mg of mapGroupsNeedingChild) {
+      setChildWorkflowLoading(mg.id, true, null);
+      void (async () => {
+        try {
+          const childWf = await api.createWorkflow(`${name} — map body`);
+          const initialGraph: WorkflowGraph = {
+            nodes: manualTriggerManifest
+              ? [
+                  {
+                    id: `${mg.id}_t`,
+                    type: "manual_trigger",
+                    params: {},
+                    position: { x: 100, y: 80 },
+                    disabled: false,
+                    outputs_override: null,
+                    on_error: "stop",
+                    retry_on_fail: false,
+                    retries: 1,
+                    retry_wait_seconds: 0,
+                    retry_backoff: false,
+                    always_output_data: false,
+                    timeout_seconds: null,
+                  },
+                ]
+              : [],
+            edges: [],
+          };
+          await api.updateWorkflow(childWf.id, { graph: initialGraph });
+          updateParams(mg.id, { ...mg.data.params, child_workflow_id: childWf.id });
+          loadChildGraph(mg.id, childWf.id, initialGraph);
+        } catch (err) {
+          setChildWorkflowLoading(mg.id, false, String(err));
+          notify(`Could not create map body workflow: ${String(err)}`, "error");
+        }
+      })();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mgNeedingChildKey, id]);
+
   // Task 20: Debug in editor. When ExecutionsPage links to
   // /workflows/<id>?debug_run=<run_id>, load that run's snapshot once the
   // workflow is ready: rehydrate the graph as it ran, pin every successful
@@ -275,7 +365,14 @@ export function EditorPage() {
         const snap = await api.runDebugSnapshot(debugRunId);
         if (cancelled) return;
         loadGraph(snap.graph);
-        setPinned(snap.upstream_cache);
+        setPinned(
+          Object.fromEntries(
+            Object.entries(snap.upstream_cache).map(([nodeId, payload]) => [
+              nodeId,
+              { payload, updatedAt: null },
+            ]),
+          ),
+        );
         if (snap.failed_node_id) openNdv(snap.failed_node_id);
         setMessage(
           snap.failed_node_id
@@ -326,6 +423,23 @@ export function EditorPage() {
       });
       setWorkflow(updated);
       markClean();
+
+      // Save dirty child workflows concurrently.
+      const { childWorkflows } = useEditor.getState();
+      const dirtyChildren = Object.entries(childWorkflows).filter(([, cw]) => cw.dirty);
+      if (dirtyChildren.length > 0) {
+        await Promise.all(
+          dirtyChildren.map(async ([mgId, cw]) => {
+            try {
+              await api.updateWorkflow(cw.workflowId, { graph: childToGraph(cw) });
+              markChildClean(mgId);
+            } catch (err) {
+              notify(`Could not save map body workflow: ${String(err)}`, "error");
+            }
+          }),
+        );
+      }
+
       if (notifySuccess) notify("Draft saved.", "success");
       return updated;
     } catch (err) {
@@ -507,7 +621,7 @@ export function EditorPage() {
       const pinned = pinnedMap[nodeId];
       const output =
         pinned !== undefined
-          ? pinned
+          ? pinnedPayload(pinned)
           : runStatusMap[nodeId] === "success"
             ? runOutputsMap[nodeId]
             : undefined;
@@ -791,9 +905,10 @@ export function EditorPage() {
         useEditor.getState().addGroupNode({ x: 200 + Math.random() * 200, y: 200 + Math.random() * 100 });
         return;
       }
-      if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
+      if (e.key === "Delete" || e.key === "Backspace") {
+        const deleted = deleteSelection();
+        if (deleted === 0) return;
         e.preventDefault();
-        deleteNode(selectedId);
         return;
       }
       if (e.key.toLowerCase() === "d" && selectedId) {
@@ -803,7 +918,7 @@ export function EditorPage() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [deleteNode, duplicateNode, environmentId, run, save, selectedId]);
+  }, [deleteSelection, duplicateNode, environmentId, run, save, selectedId]);
 
   useEffect(() => {
     function onOpenShortcuts() { setShortcutsOpen(true); }
@@ -1172,6 +1287,9 @@ export function EditorPage() {
               <span>Copy selected nodes</span>
               <kbd>Ctrl</kbd>
               <kbd>C</kbd>
+              <span>Cut selected nodes</span>
+              <kbd>Ctrl</kbd>
+              <kbd>X</kbd>
               <span>Paste copied nodes</span>
               <kbd>Ctrl</kbd>
               <kbd>V</kbd>
@@ -1187,7 +1305,10 @@ export function EditorPage() {
               <span>Add group frame</span>
               <kbd>Shift</kbd>
               <kbd>G</kbd>
-              <span>Delete selected node</span>
+              <span>Add sticky note</span>
+              <kbd>Shift</kbd>
+              <kbd>N</kbd>
+              <span>Delete selected nodes</span>
               <kbd>Delete</kbd>
               <span />
               <span>Duplicate selected node</span>

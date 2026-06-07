@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { Info } from "@phosphor-icons/react";
+import { useEffect, useRef, useState } from "react";
 
 import { api } from "../api";
 import { useToast } from "../ToastProvider";
@@ -30,6 +31,24 @@ import { asArtifactRef, artifactDownloadUrl, artifactSummary, formatBytes } from
  * The user sees the data flowing in on the left, configures the node in
  * the middle, and inspects what came out on the right.
  */
+
+const PACKAGE_INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
+const PACKAGE_INSTALL_POLL_MS = 2000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function formatPinnedAt(value: string | null): string {
+  if (!value) return "time unknown";
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return value;
+  }
+}
+
+type NdvTab = "parameters" | "settings" | "docs" | "credentials" | "logs";
 
 function ParametersTab({ nodeId }: { nodeId: string }) {
   const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
@@ -122,7 +141,6 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
         />
       ) : (
       <>
-      <ToolModeSection nodeId={node.id} />
       <p className="expr-hint field-desc">
         Use <code>{"{{ $json.field }}"}</code> or{" "}
         <code>{'{{ $node["nodeId"].main.field }}'}</code> in string fields to
@@ -153,6 +171,12 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
             <div className="field" key={`${node.id}:${spec.name}`}>
               <div className="field-label">
                 <span className="field-name">{displayLabel}</span>
+                {spec.description && (
+                  <span className="param-info-icon" aria-label={spec.description}>
+                    <Info size={12} weight="bold" />
+                    <span className="param-info-tooltip">{spec.description}</span>
+                  </span>
+                )}
                 {spec.required && <span className="field-req">required</span>}
               </div>
               <FromAiParamControl
@@ -161,9 +185,6 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
                 value={value}
                 onSetParam={setParam}
               />
-              {spec.description && (
-                <p className="field-desc">{spec.description}</p>
-              )}
               {isFromAiExpr(value) ? (
                 <p className="from-ai-note">↯ The model supplies this argument.</p>
               ) : isWebhookAuthType ? (
@@ -704,7 +725,15 @@ function ArtifactBrowser({ runId, runOutput }: { runId: string; runOutput: unkno
 }
 
 export function NDVPanels({ nodeId }: { nodeId: string }) {
-  const [tab, setTab] = useState<"parameters" | "settings" | "docs" | "credentials" | "logs">("parameters");
+  const [tab, setTab] = useState<NdvTab>("parameters");
+  const middleBodyRef = useRef<HTMLDivElement | null>(null);
+  const tabScroll = useRef<Record<NdvTab, number>>({
+    parameters: 0,
+    settings: 0,
+    docs: 0,
+    credentials: 0,
+    logs: 0,
+  });
   const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
   const edges = useEditor((s) => s.edges);
   const runOutputs = useEditor((s) => s.runOutputs);
@@ -722,8 +751,33 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
   const setEnvPackages = useEditor((s) => s.setEnvPackages);
   const applyEnvSwitch = useEditor((s) => s.applyEnvSwitch);
   const [pkgBusy, setPkgBusy] = useState(false);
+  const [pkgElapsed, setPkgElapsed] = useState(0);
+  const [pkgDone, setPkgDone] = useState(false);
   const { notify } = useToast();
   const platform = useServerPlatform();
+
+  useEffect(() => {
+    tabScroll.current = {
+      parameters: 0,
+      settings: 0,
+      docs: 0,
+      credentials: 0,
+      logs: 0,
+    };
+    setTab("parameters");
+  }, [nodeId]);
+
+  useEffect(() => {
+    const body = middleBodyRef.current;
+    if (!body) return;
+    body.scrollTop = tabScroll.current[tab] ?? 0;
+  }, [tab]);
+
+  function selectTab(next: NdvTab): void {
+    const body = middleBodyRef.current;
+    if (body) tabScroll.current[tab] = body.scrollTop;
+    setTab(next);
+  }
 
   if (!node) {
     return (
@@ -741,14 +795,36 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
   async function addMissingToEnv(): Promise<void> {
     if (!envId || pkgBusy) return;
     setPkgBusy(true);
+    setPkgElapsed(0);
+    setPkgDone(false);
+    const startedAt = Date.now();
+    const ticker = window.setInterval(() => {
+      setPkgElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
     try {
       const updated = [...envPackages, ...missingPkgs];
       await api.setPackages(envId, updated);
       setEnvPackages(updated);
-      notify(`Added ${missingPkgs.join(", ")} to ${envName ?? "environment"}.`, "success");
+
+      while (Date.now() - startedAt < PACKAGE_INSTALL_TIMEOUT_MS) {
+        await delay(PACKAGE_INSTALL_POLL_MS);
+        const env = await api.getEnvironment(envId);
+        if (env.status === "ready") {
+          setPkgDone(true);
+          window.setTimeout(() => setPkgDone(false), 3000);
+          notify(`Installed ${missingPkgs.join(", ")} in ${envName ?? "environment"}.`, "success");
+          return;
+        }
+        if (env.status === "error") {
+          notify("Package installation failed — check the environment logs.", "error");
+          return;
+        }
+      }
+      notify("Package installation is still building. Check the environment logs.", "error");
     } catch {
       notify("Failed to install packages — check the environment.", "error");
     } finally {
+      window.clearInterval(ticker);
       setPkgBusy(false);
     }
   }
@@ -771,8 +847,8 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
   async function pin(): Promise<void> {
     if (!workflowId || runOutput === undefined) return;
     try {
-      await api.pinNode(workflowId, nodeId, runOutput);
-      setPinnedFor(nodeId, runOutput);
+      const saved = await api.pinNode(workflowId, nodeId, runOutput);
+      setPinnedFor(nodeId, saved.payload, saved.updated_at);
     } catch {
       /* ignore */
     }
@@ -788,12 +864,16 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
     }
   }
 
-  const outputData = pinned !== undefined ? pinned : runOutput;
+  const outputData = pinned !== undefined ? pinned.payload : runOutput;
   const outputEmptyMessage = runMeta?.error
     ? "This node failed before producing output."
-    : runStatus === "skipped"
-      ? "This node was skipped in the last run."
-      : "No output yet. Click Run to execute the workflow.";
+    : node.data.disabled
+      ? "This node is disabled, so it will not produce output."
+      : runStatus === "skipped"
+        ? "This node was skipped in the last run."
+        : runStatus
+          ? "No output was captured for this node in the last run."
+          : "This node has not run yet.";
 
   const outputFooter = (
     <div className="ndv-output-foot">
@@ -801,9 +881,12 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
         <span className={`run-pill status-run-${runStatus}`}>{runStatus}</span>
       )}
       {pinned !== undefined ? (
-        <button className="btn btn-sm btn-ghost" onClick={() => void unpin()}>
-          Unpin
-        </button>
+        <>
+          <span className="pin-timestamp">Pinned {formatPinnedAt(pinned.updatedAt)}</span>
+          <button className="btn btn-sm btn-ghost" onClick={() => void unpin()}>
+            Unpin
+          </button>
+        </>
       ) : (
         runOutput !== undefined && (
           <button className="btn btn-sm" onClick={() => void pin()}>
@@ -853,7 +936,16 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
                 disabled={pkgBusy}
                 onClick={() => void addMissingToEnv()}
               >
-                {pkgBusy ? "Adding…" : `Add to ${envName ?? "env"}`}
+                {pkgDone ? (
+                  "Installed"
+                ) : pkgBusy ? (
+                  <span className="pkg-installing">
+                    <span className="pkg-spinner" />
+                    Installing… {pkgElapsed}s
+                  </span>
+                ) : (
+                  `Add to ${envName ?? "env"}`
+                )}
               </button>
               {satisfyingEnvs.length > 0 && applyEnvSwitch && (
                 <select
@@ -876,40 +968,46 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
           <button
             type="button"
             className={tab === "parameters" ? "active" : ""}
-            onClick={() => setTab("parameters")}
+            onClick={() => selectTab("parameters")}
           >
             Parameters
           </button>
           <button
             type="button"
             className={tab === "settings" ? "active" : ""}
-            onClick={() => setTab("settings")}
+            onClick={() => selectTab("settings")}
           >
             Settings
           </button>
           <button
             type="button"
             className={tab === "docs" ? "active" : ""}
-            onClick={() => setTab("docs")}
+            onClick={() => selectTab("docs")}
           >
             Docs
           </button>
           <button
             type="button"
             className={tab === "credentials" ? "active" : ""}
-            onClick={() => setTab("credentials")}
+            onClick={() => selectTab("credentials")}
           >
             Credentials
           </button>
           <button
             type="button"
             className={tab === "logs" ? "active" : ""}
-            onClick={() => setTab("logs")}
+            onClick={() => selectTab("logs")}
           >
             Logs
           </button>
         </div>
-        <div className="ndv-middle-body">
+        <div
+          ref={middleBodyRef}
+          className="ndv-middle-body"
+          onScroll={(event) => {
+            tabScroll.current[tab] = event.currentTarget.scrollTop;
+          }}
+        >
           {tab === "parameters" ? (
             <ParametersTab nodeId={nodeId} />
           ) : tab === "settings" ? (

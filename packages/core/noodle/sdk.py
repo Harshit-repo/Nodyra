@@ -233,6 +233,7 @@ def _build_manifest(
     icon: str | None,
     input_kinds: dict[str, str] | None = None,
     output_kinds: dict[str, str] | None = None,
+    param_output_kinds: dict[str, dict[str, str]] | None = None,
     usable_as_tool: bool | None = None,
     tool_side_effecting: bool = True,
     requirements: list[str] | None = None,
@@ -301,6 +302,7 @@ def _build_manifest(
             PortSpec(name=o, data_kind=out_kinds.get(o, "any"))
             for o in outputs
         ],
+        param_output_kinds=dict(param_output_kinds or {}),
         requirements=list(requirements or []),
         system_requirements=[
             SystemRequirement.model_validate(sr) for sr in (system_requirements or [])
@@ -468,6 +470,7 @@ def _decorated_node_from_ast(
     outputs = list(kwargs.get("outputs") or ["main"])
     input_kinds = kwargs.get("input_kinds") or {}
     output_kinds = kwargs.get("output_kinds") or {}
+    param_output_kinds = dict(kwargs.get("param_output_kinds") or {})
     raw_param_meta = kwargs.get("params") or {}
     if not isinstance(raw_param_meta, dict):
         raw_param_meta = {}
@@ -533,6 +536,7 @@ def _decorated_node_from_ast(
         outputs=[
             PortSpec(name=o, data_kind=output_kinds.get(o, "any")) for o in outputs
         ],
+        param_output_kinds=param_output_kinds,
     )
     raw_wires = kwargs.get("wires") or {}
     wires = (
@@ -813,6 +817,7 @@ def node(
     outputs: list[str] | None = None,
     input_kinds: dict[str, str] | None = None,
     output_kinds: dict[str, str] | None = None,
+    param_output_kinds: dict[str, dict[str, str]] | None = None,
     icon: str | None = None,
     wires: dict[str, str] | None = None,
     usable_as_tool: bool | None = None,
@@ -860,6 +865,7 @@ def node(
             icon=icon,
             input_kinds=input_kinds,
             output_kinds=output_kinds,
+            param_output_kinds=param_output_kinds,
             usable_as_tool=usable_as_tool,
             tool_side_effecting=tool_side_effecting,
             requirements=requirements,

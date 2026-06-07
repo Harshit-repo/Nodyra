@@ -31,6 +31,7 @@ class OperationParamSpec:
     advanced: bool = False
     documentation_url: str = ""
     validation: dict[str, Any] | None = None
+    display_when: dict[str, Any] | None = None
 
     def to_param_spec(self) -> ParamSpec:
         return ParamSpec(
@@ -53,6 +54,7 @@ class OperationParamSpec:
             advanced=self.advanced,
             documentation_url=self.documentation_url,
             validation=self.validation,
+            display_when=self.display_when,
         )
 
 

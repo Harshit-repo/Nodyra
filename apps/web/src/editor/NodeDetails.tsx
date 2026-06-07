@@ -1,3 +1,4 @@
+import { Info } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 
 import { api, uploadArtifact } from "../api";
@@ -2922,7 +2923,7 @@ export function NodeCodePanel({
 export function ToolModeSection({ nodeId }: { nodeId: string }) {
   const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
   const updateNodeSettings = useEditor((s) => s.updateNodeSettings);
-  if (!node || !node.data.manifest.usable_as_tool) return null;
+  if (!node || !node.data.manifest?.usable_as_tool) return null;
   const { manifest } = node.data;
   const on = Boolean(node.data.toolMode);
   return (
@@ -3077,6 +3078,10 @@ export function NodeDetails({
         <p>This node is no longer in the workflow.</p>
       </div>
     );
+  }
+
+  if (!node.data.manifest) {
+    return null;
   }
 
   const { manifest, params, disabled } = node.data;
@@ -3307,6 +3312,16 @@ export function NodeDetails({
         {manifest.params
           .filter((spec) => spec.widget !== "hidden")
           .filter((spec) => !webhookHiddenParam(manifest.id, spec.name, params))
+          .filter((spec) => {
+            const dw = spec.display_when;
+            if (!dw || typeof dw !== "object") return true;
+            const paramName = String((dw as Record<string, unknown>).param ?? "");
+            const currentVal = String(params[paramName] ?? "");
+            const matchVal = (dw as Record<string, unknown>).value;
+            const matchVals = (dw as Record<string, unknown>).values;
+            if (Array.isArray(matchVals)) return matchVals.map(String).includes(currentVal);
+            return currentVal === String(matchVal ?? "");
+          })
           .map((spec) => {
             const value = params[spec.name];
             const fx = typeof value === "string" && /\{\{.+?\}\}/s.test(value);
@@ -3333,6 +3348,12 @@ export function NodeDetails({
               <div className="field" key={`${node.id}:${spec.name}`}>
                 <div className="field-label">
                   <span className="field-name">{displayLabel}</span>
+                  {spec.description && (
+                    <span className="param-info-icon" aria-label={spec.description}>
+                      <Info size={12} weight="bold" />
+                      <span className="param-info-tooltip">{spec.description}</span>
+                    </span>
+                  )}
                   {fx && <span className="fx-badge" title="Contains expression">fx</span>}
                   {spec.required && <span className="field-req">required</span>}
                 </div>
@@ -3342,9 +3363,6 @@ export function NodeDetails({
                   value={value}
                   onSetParam={setParam}
                 />
-                {spec.description && (
-                  <p className="field-desc">{spec.description}</p>
-                )}
                 {isFromAiExpr(value) ? (
                   <p className="from-ai-note">↯ The model supplies this argument.</p>
                 ) : isWebhookAuthType ? (

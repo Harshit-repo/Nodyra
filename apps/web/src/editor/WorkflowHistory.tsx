@@ -31,10 +31,41 @@ export function WorkflowHistory({ workflowId, onClose, onRestore }: Props) {
 
   function nodeDiff(idx: number): string {
     if (idx >= versions.length - 1) return "";
-    const diff = versions[idx].graph.nodes.length - versions[idx + 1].graph.nodes.length;
+    const a = versions[idx].graph?.nodes?.length ?? 0;
+    const b = versions[idx + 1].graph?.nodes?.length ?? 0;
+    const diff = a - b;
     if (diff === 0) return "";
     return diff > 0 ? ` +${diff}` : ` ${diff}`;
   }
+
+  function nodeLabel(graph: WorkflowGraph, id: string): string {
+    const node = graph.nodes?.find((item) => item.id === id);
+    if (!node) return id;
+    const label = typeof node.label === "string" && node.label ? node.label : node.type;
+    return `${label} (${id})`;
+  }
+
+  function selectedDiff() {
+    if (!selected?.graph?.nodes) return null;
+    const idx = versions.findIndex((version) => version.id === selected.id);
+    if (idx < 0 || idx >= versions.length - 1) return null;
+    const previous = versions[idx + 1];
+    if (!previous.graph?.nodes) return null;
+    const currentIds = new Set(selected.graph.nodes.map((node) => node.id));
+    const previousIds = new Set(previous.graph.nodes.map((node) => node.id));
+    return {
+      previousVersion: previous.version,
+      added: selected.graph.nodes
+        .filter((node) => !previousIds.has(node.id))
+        .map((node) => nodeLabel(selected.graph, node.id)),
+      removed: previous.graph.nodes
+        .filter((node) => !currentIds.has(node.id))
+        .map((node) => nodeLabel(previous.graph, node.id)),
+      edgeDelta: (selected.graph.edges?.length ?? 0) - (previous.graph.edges?.length ?? 0),
+    };
+  }
+
+  const diff = selectedDiff();
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -69,10 +100,10 @@ export function WorkflowHistory({ workflowId, onClose, onRestore }: Props) {
                   <div className="history-badges">
                     {v.published && <span className="history-badge history-badge--published">published</span>}
                     {nodeDiff(idx) && (
-                      <span className="history-badge">{v.graph.nodes.length} nodes{nodeDiff(idx)}</span>
+                      <span className="history-badge">{v.graph?.nodes?.length ?? 0} nodes{nodeDiff(idx)}</span>
                     )}
                     {!nodeDiff(idx) && (
-                      <span className="muted" style={{ fontSize: 11 }}>{v.graph.nodes.length} nodes</span>
+                      <span className="muted" style={{ fontSize: 11 }}>{v.graph?.nodes?.length ?? 0} nodes</span>
                     )}
                   </div>
                 </li>
@@ -84,8 +115,26 @@ export function WorkflowHistory({ workflowId, onClose, onRestore }: Props) {
             <div className="history-preview">
               <p className="history-preview-title">v{selected.version} — {formatDate(selected.created_at)}</p>
               <p className="muted" style={{ fontSize: 12 }}>
-                {selected.graph.nodes.length} nodes · {selected.graph.edges.length} edges
+                {selected.graph?.nodes?.length ?? 0} nodes · {selected.graph?.edges?.length ?? 0} edges
               </p>
+              {diff ? (
+                <div className="history-diff">
+                  <div>
+                    <strong>Compared with v{diff.previousVersion}</strong>
+                    <span>{diff.added.length} added · {diff.removed.length} removed · {diff.edgeDelta >= 0 ? "+" : ""}{diff.edgeDelta} edges</span>
+                  </div>
+                  {diff.added.length > 0 && (
+                    <p><span>Added:</span> {diff.added.slice(0, 4).join(", ")}{diff.added.length > 4 ? `, +${diff.added.length - 4} more` : ""}</p>
+                  )}
+                  {diff.removed.length > 0 && (
+                    <p><span>Removed:</span> {diff.removed.slice(0, 4).join(", ")}{diff.removed.length > 4 ? `, +${diff.removed.length - 4} more` : ""}</p>
+                  )}
+                </div>
+              ) : (
+                <p className="muted" style={{ fontSize: 12 }}>
+                  No earlier version to compare.
+                </p>
+              )}
               <button
                 className="btn btn-sm btn-primary"
                 onClick={() => { onRestore(selected.graph); onClose(); }}

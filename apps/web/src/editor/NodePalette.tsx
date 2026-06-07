@@ -472,6 +472,7 @@ export function NodePalette() {
           type="button"
           className={categoryFilter === "all" ? "active" : ""}
           onClick={() => {
+            setQuery("");
             setCategoryFilter("all");
             setExpandedGroups(new Set());
             try { localStorage.setItem(EXPANDED_GROUPS_KEY, "[]"); } catch { /* */ }
@@ -485,6 +486,7 @@ export function NodePalette() {
             key={category}
             className={categoryFilter === category ? "active" : ""}
             onClick={() => {
+              setQuery("");
               setCategoryFilter(category);
               setExpandedGroups((prev) => {
                 if (prev.has(category)) return prev;

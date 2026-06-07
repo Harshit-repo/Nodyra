@@ -140,6 +140,20 @@ export function validateConnection(
   if (!sourceNode || !targetNode) {
     return { ok: false, severity: "error", message: "Connection endpoint is missing." };
   }
+
+  // Reject cross-boundary connections between parent and body nodes.
+  const sourceParent = sourceNode.parentId ?? null;
+  const targetParent = targetNode.parentId ?? null;
+  if (sourceParent !== targetParent) {
+    return {
+      ok: false,
+      severity: "error",
+      message:
+        "Nodes inside a Map Group cannot connect to nodes outside it. " +
+        "Use the Map Group's input/output handles instead.",
+    };
+  }
+
   // A tool-mode node exposes a single `tool` output of kind ai_tool.
   const sourceKindOverride: PortDataKind | undefined =
     sourceNode.data.toolMode && connection.sourceHandle === "tool"

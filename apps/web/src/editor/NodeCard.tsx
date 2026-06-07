@@ -12,7 +12,7 @@ import { useServerPlatform } from "../hooks/useServerPlatform";
 
 const TILE = 72;
 const AGENT_CARD_HEIGHT = 150;
-const TOOLBAR_HIDE_DELAY_MS = 1000;
+const TOOLBAR_HIDE_DELAY_MS = 350;
 
 const AGENT_INPUT_PORTS = [
   { name: "input", label: "Chat Input" },
@@ -60,22 +60,46 @@ const AI_PORT_COLOR: Record<AiSemanticPort, string> = {
   memory: "#57c98a",
   tools: "#f6b44b",
 };
-const AI_AGENT_BOTTOM_INPUTS = new Set(["model", "memory", "tools"]);
+const AI_AGENT_BOTTOM_INPUTS = new Set(["memory", "tool"]);
+const AGENT_BOTTOM_PORT_LEFT: Record<string, string> = {
+  memory: "28%",
+  tool: "72%",
+};
 
 function portColor(kind: string | undefined): string {
   if (!kind || kind === "any" || kind === "main") return DATA_PORT_COLOR;
   return PORT_KIND_COLOR[kind] ?? DATA_PORT_COLOR;
 }
 
+function resolveOutputKind(
+  spec: { name: string; data_kind?: string } | undefined,
+  params: Record<string, unknown>,
+  paramOutputKinds: Record<string, Record<string, string>> | undefined,
+): string | undefined {
+  if (!spec) return undefined;
+  const rule = paramOutputKinds?.[spec.name];
+  if (rule?.param) {
+    const val = String(params[rule.param] ?? "false");
+    return rule[val] ?? spec.data_kind;
+  }
+  return spec.data_kind;
+}
+
 function aiPortSemantic(
   manifestId: string,
   portName: string,
 ): AiSemanticPort | undefined {
-  if (portName === "model" || portName === "memory" || portName === "tools") {
+  if (portName === "model" || portName === "memory") {
     return portName;
   }
+  if (portName === "tool" || portName === "tools") {
+    return "tools";
+  }
   if (manifestId === "ai_tool" && portName === "main") return "tools";
+  if (manifestId === "ai_http_tool" && portName === "tool") return "tools";
+  if (manifestId === "ai_workflow_tool" && portName === "tool") return "tools";
   if (manifestId === "ai_tool_box" && portName.startsWith("tool_")) return "tools";
+  if (manifestId === "ai_tool_bundle" && portName.startsWith("tool")) return "tools";
   return undefined;
 }
 
@@ -110,7 +134,10 @@ function portLeft(index: number, count: number): number {
 }
 
 function isAgentBottomInput(manifestId: string, portName: string): boolean {
-  return manifestId === "ai_agent" && AI_AGENT_BOTTOM_INPUTS.has(portName);
+  return (
+    (manifestId === "ai_agent" || manifestId === "ai_agent_v2") &&
+    AI_AGENT_BOTTOM_INPUTS.has(portName)
+  );
 }
 
 function portKindLabel(kind: string | undefined): string {
@@ -141,6 +168,22 @@ const STATUS_GLYPH: Record<string, string> = {
 
 function stop(event: MouseEvent): void {
   event.stopPropagation();
+}
+
+function ErrorCallout({ error }: { error: string }) {
+  const preview = error.length > 52 ? `${error.slice(0, 49)}…` : error;
+  return (
+    <div
+      className="node-error-callout nodrag nopan"
+      tabIndex={0}
+      aria-label={`Node error: ${error}`}
+    >
+      <span>{preview}</span>
+      <span className="node-error-tooltip" role="tooltip">
+        {error}
+      </span>
+    </div>
+  );
 }
 
 function isCredentialRef(value: unknown): boolean {
@@ -244,7 +287,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       else bySource.set(e.target, [e.source]);
     }
     const catById = new Map(
-      s.nodes.map((n) => [n.id, n.data.manifest.category]),
+      s.nodes.map((n) => [n.id, n.data.manifest?.category]),
     );
     const visited = new Set<string>([id]);
     const queue = [id];
@@ -442,13 +485,16 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
           }
         : null;
     }).filter((item): item is NonNullable<typeof item> => Boolean(item));
+    const agentSideInputs = agentInputs.filter(
+      (item) => !AI_AGENT_BOTTOM_INPUTS.has(item.name),
+    );
+    const agentBottomInputs = agentInputs.filter((item) =>
+      AI_AGENT_BOTTOM_INPUTS.has(item.name),
+    );
     const agentOutputs = outputNames.map((name) => {
       const spec = manifest.outputs.find((port) => port.name === name);
-      const colorForOutput = semanticPortColor(
-        manifest.id,
-        name,
-        spec?.data_kind,
-      );
+      const effectiveKind = resolveOutputKind(spec, data.params, manifest.param_output_kinds);
+      const colorForOutput = semanticPortColor(manifest.id, name, effectiveKind);
       return {
         name,
         spec,
@@ -510,18 +556,11 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
           {credentialBadges}
 
           {runMeta?.error && runStatus === "error" && (
-            <div
-              className="node-error-callout nodrag nopan"
-              title={runMeta.error}
-            >
-              {runMeta.error.length > 52
-                ? runMeta.error.slice(0, 49) + "…"
-                : runMeta.error}
-            </div>
+            <ErrorCallout error={runMeta.error} />
           )}
 
-          {agentInputs.map((item, i) => {
-            const top = agentPortTop(i, agentInputs.length);
+          {agentSideInputs.map((item, i) => {
+            const top = agentPortTop(i, agentSideInputs.length);
             return (
               <Fragment key={`agent-in-${item.name}`}>
                 <div
@@ -552,6 +591,42 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
                     background: item.color,
                   }}
                 />
+              </Fragment>
+            );
+          })}
+
+          {agentBottomInputs.map((item) => {
+            const left = AGENT_BOTTOM_PORT_LEFT[item.name] ?? "50%";
+            return (
+              <Fragment key={`agent-in-bottom-${item.name}`}>
+                <Handle
+                  type="target"
+                  position={Position.Bottom}
+                  id={item.name}
+                  title={`${item.name}: ${portKindLabel(item.spec.data_kind)}`}
+                  className={`${portHandleClass(
+                    manifest.id,
+                    item.name,
+                    item.spec.data_kind,
+                  ) ?? ""} agent-bottom-handle`.trim()}
+                  style={{
+                    left,
+                    bottom: -17,
+                    color: item.color,
+                    background: item.color,
+                  }}
+                />
+                <div
+                  className={`agent-port-row agent-port-row-bottom agent-port-row-bottom-${item.name}`}
+                  style={
+                    {
+                      left,
+                      "--port-color": item.color,
+                    } as CSSProperties
+                  }
+                >
+                  <span className="agent-port-chip">{item.label}</span>
+                </div>
               </Fragment>
             );
           })}
@@ -758,14 +833,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
         </div>
 
         {runMeta?.error && runStatus === "error" && (
-          <div
-            className="node-error-callout nodrag nopan"
-            title={runMeta.error}
-          >
-            {runMeta.error.length > 52
-              ? runMeta.error.slice(0, 49) + "…"
-              : runMeta.error}
-          </div>
+          <ErrorCallout error={runMeta.error} />
         )}
 
 
@@ -802,6 +870,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
 
         {outputNames.map((name, i) => {
           const spec = manifest.outputs.find((o) => o.name === name);
+          const effectiveKind = resolveOutputKind(spec, data.params, manifest.param_output_kinds);
           const isToolPort = Boolean(data.toolMode) && name === "tool";
           return (
             <Handle
@@ -809,17 +878,17 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
               type="source"
               position={Position.Right}
               id={name}
-              title={isToolPort ? "tool: AI tool" : `${name}: ${portKindLabel(spec?.data_kind)}`}
+              title={isToolPort ? "tool: AI tool" : `${name}: ${portKindLabel(effectiveKind)}`}
               className={
                 isToolPort
                   ? "handle-ai-tools"
-                  : portHandleClass(manifest.id, name, spec?.data_kind)
+                  : portHandleClass(manifest.id, name, effectiveKind)
               }
               style={{
                 top: portTop(i, outputNames.length),
                 background: isToolPort
                   ? PORT_KIND_COLOR.ai_tool
-                  : semanticPortColor(manifest.id, name, spec?.data_kind),
+                  : semanticPortColor(manifest.id, name, effectiveKind),
               }}
             />
           );
@@ -827,16 +896,17 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
 
         {outputNames.map((name, i) => {
           const spec = manifest.outputs.find((o) => o.name === name);
+          const effectiveKind = resolveOutputKind(spec, data.params, manifest.param_output_kinds);
           const isToolPort = Boolean(data.toolMode) && name === "tool";
           const displayName = isToolPort ? "tool" : name;
           const shouldShow =
             displayName !== "main" &&
-            (outputNames.length > 1 || spec?.data_kind === "dataset" || isToolPort);
+            (outputNames.length > 1 || effectiveKind === "dataset" || isToolPort);
           if (!shouldShow) return null;
           return (
             <span
               key={`tag-${name}`}
-              className={`port-tag${spec?.data_kind === "dataset" ? " port-tag-dataset" : ""}`}
+              className={`port-tag${effectiveKind === "dataset" ? " port-tag-dataset" : ""}`}
               style={{ top: portTop(i, outputNames.length) }}
             >
               {displayName}

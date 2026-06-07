@@ -758,6 +758,32 @@
   border-color: var(--accent-deep);
   background: var(--accent-glow);
 }
+.palette-create-row {
+  padding: 0 12px 10px;
+}
+.palette-create-note {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px dashed var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 650;
+  padding: 7px 9px;
+  transition:
+    background 110ms ease,
+    border-color 110ms ease,
+    color 110ms ease;
+}
+.palette-create-note:hover {
+  background: var(--surface-2);
+  border-color: var(--accent-deep);
+  color: var(--ink);
+}
 .palette-scroll {
   flex: 1;
   overflow-y: auto;
@@ -934,7 +960,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0;
+  opacity: 0.56;
   transition: opacity 100ms ease, color 100ms ease, background 100ms ease;
 }
 .palette-item:hover .palette-favorite,
@@ -987,6 +1013,13 @@
   cursor: pointer;
 }
 .canvas-ctx-menu button:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.canvas-ctx-menu button.is-active,
+.canvas-ctx-menu button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
   background: var(--surface-2);
   color: var(--ink);
 }
@@ -1043,7 +1076,15 @@
 .canvas-controls button:disabled {
   color: var(--ink-3);
   cursor: not-allowed;
-  opacity: 0.42;
+  opacity: 0.66;
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      rgba(255, 255, 255, 0.04) 0,
+      rgba(255, 255, 255, 0.04) 5px,
+      transparent 5px,
+      transparent 10px
+    );
 }
 .canvas-controls button:focus-visible {
   outline: 2px solid var(--accent);
@@ -1059,6 +1100,22 @@
   height: 22px;
   background: var(--line);
   margin: 0 2px;
+}
+
+/* Collapsible toolbar — group wrapper collapses as one unit (no residual gaps) */
+.canvas-control-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  max-width: 400px;
+  opacity: 1;
+  transition: max-width 200ms ease, opacity 160ms ease;
+}
+.canvas-controls--collapsed .canvas-control-group {
+  max-width: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .connection-banner {
@@ -1728,6 +1785,14 @@ body.is-resizing-vertical {
   color: var(--port-color);
   pointer-events: none;
   transform: translateY(-50%);
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+.node.agent-node:hover .agent-port-row,
+.node.agent-node.is-toolbar-visible .agent-port-row {
+  opacity: 1;
 }
 .agent-port-row-left {
   right: calc(100% + 3px);
@@ -1736,6 +1801,12 @@ body.is-resizing-vertical {
 .agent-port-row-right {
   left: calc(100% + 3px);
   justify-content: flex-start;
+}
+.agent-port-row-bottom {
+  top: calc(100% + 33px);
+  width: auto;
+  transform: translateX(-50%);
+  justify-content: center;
 }
 .agent-port-chip {
   flex: 0 1 auto;
@@ -1784,6 +1855,9 @@ body.is-resizing-vertical {
 .agent-node-card .react-flow__handle-right {
   right: -6px;
 }
+.agent-node-card .react-flow__handle.agent-bottom-handle {
+  bottom: -17px;
+}
 .agent-node-card .react-flow__handle:hover {
   border-color: #f8fafc;
 }
@@ -1818,8 +1892,42 @@ body.is-resizing-vertical {
   color: #fff;
   border-radius: 4px;
   padding: 2px 6px;
-  pointer-events: none;
+  pointer-events: auto;
   z-index: 5;
+  cursor: help;
+  outline: none;
+}
+.node-error-callout:focus-visible {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 4px rgba(240, 116, 122, 0.62);
+}
+.node-error-tooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 340px;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid rgba(240, 116, 122, 0.45);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  padding: 9px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 110ms ease;
+}
+.node-error-callout:hover .node-error-tooltip,
+.node-error-callout:focus-visible .node-error-tooltip {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 /* duration badge — below the node label */
@@ -1846,6 +1954,12 @@ body.is-resizing-vertical {
   color: var(--ink-3);
   white-space: nowrap;
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.node:hover .port-tag,
+.node.is-toolbar-visible .port-tag {
+  opacity: 1;
 }
 
 /* ---- react-flow theming ---- */
@@ -1984,8 +2098,16 @@ body.is-resizing-vertical {
   color: var(--ink);
 }
 .noodle-edge-btn:disabled {
-  opacity: 0.4;
+  opacity: 0.66;
   cursor: not-allowed;
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      rgba(255, 255, 255, 0.04) 0,
+      rgba(255, 255, 255, 0.04) 4px,
+      transparent 4px,
+      transparent 8px
+    );
 }
 .noodle-edge-btn-delete:hover {
   background: rgba(255, 85, 85, 0.14);
@@ -2118,6 +2240,42 @@ body.is-resizing-vertical {
   font-size: 11.5px;
   color: var(--ink-3);
   line-height: 1.45;
+}
+
+/* Info icon with tooltip for parameter descriptions */
+.param-info-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  color: var(--ink-3);
+  cursor: default;
+  flex-shrink: 0;
+}
+.param-info-icon:hover {
+  color: var(--ink-2);
+}
+.param-info-tooltip {
+  display: none;
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  background: var(--surface-3, #1a2030);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  line-height: 1.45;
+  white-space: normal;
+  width: 220px;
+  max-width: 260px;
+  z-index: 100;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+  pointer-events: none;
+}
+.param-info-icon:hover .param-info-tooltip {
+  display: block;
 }
 
 .inspector-glyph {
@@ -2545,15 +2703,27 @@ body.is-resizing-vertical {
   outline-offset: 1px;
 }
 .node-toolbar button:disabled {
-  opacity: 0.4;
+  opacity: 0.66;
   cursor: not-allowed;
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      rgba(255, 255, 255, 0.04) 0,
+      rgba(255, 255, 255, 0.04) 4px,
+      transparent 4px,
+      transparent 8px
+    );
 }
 .node-toolbar .toolbar-disable.is-on {
   color: var(--accent);
 }
+.node-toolbar .toolbar-delete {
+  color: #f39a9e;
+}
 .node-toolbar .toolbar-delete:hover {
   background: rgba(240, 116, 122, 0.18);
   color: #f0747a;
+  box-shadow: inset 0 0 0 1px rgba(240, 116, 122, 0.35);
 }
 /* Don't show toolbar on disabled nodes — it's confusing since actions won't run */
 .node-tile.is-disabled ~ .node-toolbar {
@@ -2659,6 +2829,24 @@ body.is-resizing {
   font-size: 11px;
   color: #a78bfa;
   font-weight: 400;
+}
+.ndv-name-saved {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  color: #06140c;
+  background: #57c98a;
+  font-size: 11px;
+  animation: saved-pop 180ms ease-out;
+}
+@keyframes saved-pop {
+  from {
+    transform: scale(0.78);
+    opacity: 0;
+  }
 }
 .ndv-name-input {
   font-size: 17px;
@@ -2809,6 +2997,11 @@ body.is-resizing {
   gap: 10px;
   width: 100%;
 }
+.pin-timestamp {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
 .json-tree-copy {
   border: 0;
   background: transparent;
@@ -2868,8 +3061,16 @@ body.is-resizing {
   color: var(--ink);
 }
 .data-view-toggle button:disabled {
-  opacity: 0.35;
+  opacity: 0.66;
   cursor: not-allowed;
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      rgba(255, 255, 255, 0.035) 0,
+      rgba(255, 255, 255, 0.035) 4px,
+      transparent 4px,
+      transparent 8px
+    );
 }
 .data-view-toggle button:hover:not(.active):not(:disabled) {
   color: var(--ink-2);
@@ -4678,14 +4879,163 @@ body.is-resizing {
 .cmd-palette-item-desc { font-size: 12px; color: var(--text-3, #888); }
 
 /* ----- Sticky notes ---------------------------------------------------- */
+.sticky-note-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* Hover toolbar — hidden by default, slides in on hover */
+.sticky-toolbar {
+  position: absolute;
+  top: -36px;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  background: rgba(16, 20, 28, 0.96);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  box-shadow: 0 3px 12px rgba(0,0,0,0.5);
+  backdrop-filter: blur(8px);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(3px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  /* delay disappearance so user can move mouse to toolbar */
+  transition-delay: 0ms;
+  z-index: 20;
+  white-space: nowrap;
+  min-width: max-content;
+}
+.sticky-note-wrapper:not(.is-hovered) .sticky-toolbar {
+  transition-delay: 400ms;
+}
+.sticky-note-wrapper.is-hovered .sticky-toolbar {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+  transition-delay: 0ms;
+}
+
+/* Collapsible sections inside the toolbar */
+.sticky-section {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* The always-visible trigger for each section */
+.sticky-section-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+  flex-shrink: 0;
+}
+
+/* Current-color dot shown as the color section trigger */
+.sticky-section-dot {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255,255,255,0.35);
+  flex-shrink: 0;
+}
+
+/* α / T labels */
+.sticky-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ink-3);
+  line-height: 1;
+  user-select: none;
+}
+
+/* The expandable content — collapses by default, opens on section hover */
+.sticky-section-content {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+  max-width: 0;
+  opacity: 0;
+  transition: max-width 180ms ease, opacity 150ms ease;
+}
+.sticky-section:hover .sticky-section-content {
+  max-width: 240px;
+  opacity: 1;
+}
+
+.sticky-section-value {
+  font-size: 9px;
+  color: var(--ink-3);
+  min-width: 26px;
+}
+
+.sticky-toolbar-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--line);
+  flex-shrink: 0;
+}
+
+.sticky-color-swatch {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  transition: transform 100ms ease, border-color 100ms ease;
+  flex-shrink: 0;
+}
+.sticky-color-swatch:hover { transform: scale(1.2); }
+.sticky-color-swatch.is-active { border-color: #fff; box-shadow: 0 0 0 1px rgba(255,255,255,0.4); }
+
+.sticky-slider {
+  width: 52px;
+  height: 3px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sticky-font-btn {
+  font-size: 9px;
+  color: var(--ink-3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 1px 3px;
+  cursor: pointer;
+  line-height: 1.5;
+  flex-shrink: 0;
+  transition: background 100ms ease, color 100ms ease;
+}
+.sticky-font-btn:hover { background: var(--surface-2); color: var(--ink); }
+.sticky-font-btn.is-active { background: var(--accent); color: #06101e; border-color: var(--accent-deep); }
+
 .sticky-note {
-  border-radius: 6px; min-width: 120px; min-height: 80px;
-  display: flex; flex-direction: column; padding: 4px;
+  border-radius: 6px;
+  min-width: 120px;
+  min-height: 80px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
   box-shadow: 2px 3px 8px rgba(0,0,0,0.25);
+  transition: opacity 150ms ease;
 }
 .sticky-note-textarea {
-  flex: 1; background: transparent; border: none; outline: none; resize: none;
-  font-size: 13px; color: #1a1a1a; padding: 8px; line-height: 1.5;
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  color: #1a1a1a;
+  padding: 8px;
+  line-height: 1.5;
   font-family: inherit;
 }
 
@@ -5013,7 +5363,7 @@ th.sortable:hover { background:var(--bg-3); }
 }
 .chat-send:hover:not(:disabled) { filter: brightness(1.08); }
 .chat-send:active:not(:disabled) { transform: scale(0.94); }
-.chat-send:disabled { opacity: 0.4; cursor: default; }
+.chat-send:disabled { opacity: 0.66; cursor: default; }
 
 /* ----- Tool mode (Use as tool) ------------------------------------------ */
 /* The toggle reuses the animated .field-toggle switch; this just promotes the
@@ -5163,4 +5513,96 @@ th.sortable:hover { background:var(--bg-3); }
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* ----- Map Group inline editor ----------------------------------------- */
+.map-group-node {
+  display: flex;
+  flex-direction: column;
+  border: 1.5px solid rgba(245,158,11,0.35);
+  border-radius: 10px;
+  background: rgba(245,158,11,0.03);
+  overflow: visible;
+}
+.map-group-node.is-selected {
+  border-color: rgba(245,158,11,0.65);
+  box-shadow: 0 0 0 2px rgba(245,158,11,0.12);
+}
+.map-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  background: rgba(245,158,11,0.1);
+  border-bottom: 1px solid rgba(245,158,11,0.18);
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  min-height: 32px;
+  user-select: none;
+}
+.map-group-header:hover { background: rgba(245,158,11,0.16); }
+.map-group-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60px;
+}
+.map-group-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  background: rgba(245,158,11,0.07);
+  border-top: 1px solid rgba(245,158,11,0.18);
+  border-radius: 0 0 8px 8px;
+  flex-shrink: 0;
+  min-height: 32px;
+}
+.map-group-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: #f59e0b;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.map-group-chips { display: flex; gap: 4px; flex: 1; }
+.map-group-chip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: rgba(245,158,11,0.12);
+  color: rgba(245,158,11,0.9);
+  border: 1px solid rgba(245,158,11,0.22);
+}
+.map-group-hint {
+  font-size: 11px;
+  color: rgba(245,158,11,0.35);
+  text-align: center;
+  padding: 12px;
+  pointer-events: none;
+}
+.map-group-error {
+  font-size: 11px;
+  color: var(--error, #ef4444);
+  text-align: center;
+  padding: 8px;
+}
+.map-group-output-labels {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  font-size: 10px;
+  color: rgba(245,158,11,0.55);
+  padding-right: 14px;
+}
+.map-group-handle.react-flow__handle {
+  background: #f59e0b !important;
+  border: 2px solid #92400e !important;
+  width: 10px !important;
+  height: 10px !important;
+  border-radius: 50% !important;
 }

@@ -24,3 +24,9 @@ def test_chart_to_image_requires_cairosvg():
 def test_plain_chart_node_has_no_requirements():
     ids = {m.name: m for m in registry.manifests()}
     assert ids["Chart"].requirements == []
+
+
+def test_polars_transform_requires_polars():
+    ids = {m.name: m for m in registry.manifests()}
+    reqs = {canonical_package_name(r) for r in ids["Polars Transform"].requirements}
+    assert "polars" in reqs

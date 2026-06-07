@@ -780,6 +780,9 @@ def test_agent_v2_requests_tool_and_resumes_to_final() -> None:
     assert request.allow_side_effects is True
     assert request.tool_calls[0].name == "lookup"
     assert model.requests[0].tools[0].name == "lookup"
+    assert model.requests[0].messages[0].role == MessageRole.system
+    assert "Noodle tools available" in model.requests[0].messages[0].content
+    assert "lookup" in model.requests[0].messages[0].content
     assert model.requests[0].messages[-1].role == MessageRole.user
     assert request.messages_so_far[-1].tool_calls[0].id == "call_1"
 
@@ -821,6 +824,25 @@ def test_agent_v2_saves_final_response_to_memory() -> None:
     saved = memory.load(session_id="s1")
     assert output["answer"] == "hello"
     assert [msg.role for msg in saved] == [MessageRole.user, MessageRole.assistant]
+
+
+def test_agent_v2_tool_instruction_is_not_saved_to_memory() -> None:
+    memory = registry.get("ai_buffer_memory").func(window=10)
+    model = ScriptedChatModel(
+        [ChatResponse(text="hello", model="test-model", provider="test")]
+    )
+    fn = registry.get("ai_agent_v2").func
+
+    fn(
+        input={"task": "Say hello", "session_id": "s1"},
+        model=model,
+        tool=DummyTool("lookup"),
+        memory=memory,
+    )
+
+    assert "Noodle tools available" in model.requests[0].messages[0].content
+    saved = memory.load(session_id="s1")
+    assert all("Noodle tools available" not in msg.content for msg in saved)
 
 
 # ---------------------------------------------------------------------------
