@@ -378,6 +378,9 @@ class NodeRun(Base):
     started_at: Mapped[float | None] = mapped_column(Float, nullable=True)
     finished_at: Mapped[float | None] = mapped_column(Float, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Loop iteration coordinates (outermost first), or NULL for non-loop nodes.
+    # A looped body node produces one NodeRun per iteration_path.
+    iteration_path: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     run: Mapped[Run] = relationship(back_populates="node_runs")
 
