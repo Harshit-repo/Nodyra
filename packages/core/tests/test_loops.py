@@ -167,3 +167,37 @@ async def test_loop_runs_body_once_per_item_in_order():
     assert str(result.nodes["e"].status) == "success"
     assert result.nodes["e"].outputs["results"] == [2, 4, 6]
     assert result.nodes["e"].outputs["errors"] == []
+
+
+async def test_loop_on_error_continue_collects_errors():
+    # row value 2 raises in the body; continue -> results [1,3] + 1 error
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": [1, 2, 3]}),
+            _n("s", "loop_start", {"on_error": "continue"}),
+            _n("b", "code", {"code": "assert input != 2, 'boom'\noutput = input"}),
+            _n("e", "loop_end", {"loop_start_id": "s"}),
+        ],
+        [_e("trig", "s"), _e("s", "b", src_out="item"), _e("b", "e")],
+    )
+    result = await execute(g, registry)
+    e = result.nodes["e"]
+    assert str(e.status) == "success"
+    assert sorted(e.outputs["results"]) == [1, 3]
+    assert len(e.outputs["errors"]) == 1
+    assert e.outputs["errors"][0]["index"] == 1
+
+
+async def test_loop_on_error_fail_aborts():
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": [1, 2, 3]}),
+            _n("s", "loop_start", {"on_error": "fail"}),
+            _n("b", "code", {"code": "assert input != 2, 'boom'\noutput = input"}),
+            _n("e", "loop_end", {"loop_start_id": "s"}),
+        ],
+        [_e("trig", "s"), _e("s", "b", src_out="item"), _e("b", "e")],
+    )
+    result = await execute(g, registry)
+    assert str(result.nodes["e"].status) == "error"
+    assert str(result.status) == "error"
