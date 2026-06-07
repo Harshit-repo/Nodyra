@@ -32,7 +32,7 @@ from noodle.ai_runtime import (
     ToolAdapter,
     ToolResult,
 )
-from noodle.context import current_node_id, node_debug
+from noodle.context import current_node_id, iteration_path, node_debug
 from noodle.expr import build_context, evaluate
 from noodle.models import (
     NodeRunResult,
@@ -1324,29 +1324,33 @@ async def _run_loop(
 
     async def _one_iteration(i: int, item: Any) -> None:
         async with sem:
-            iter_outputs = dict(node_outputs)  # inherit upstream values
-            iter_outputs[region.start_id] = {"item": item, "index": i}
-            st = await _execute_nodes(
-                node_ids=set(region.body_ids),
-                levels=body_levels, graph=graph, registry=registry,
-                nodes_by_id=nodes_by_id, incoming=incoming,
-                node_outputs=iter_outputs, cache=cache,
-                emit=emit, finish=finish, default_timeouts=default_timeouts,
-                max_node_output_bytes=max_node_output_bytes,
-                pause_on_approval=pause_on_approval,
-                agent_action_resume=agent_action_resume,
-                loop_regions=loop_regions, owned=child_owned,
-            )
-            if st is RunStatus.error:
-                if on_error == "fail":
-                    raise _LoopRowError(i)
-                errors.append({"index": i, "error": "row failed", "input": item})
-                return
-            value = None
-            if end_in is not None:
-                esrc, eout = end_in
-                value = (iter_outputs.get(esrc) or {}).get(eout)
-            collected.append((i, value))
+            path_token = iteration_path.set(iteration_path.get() + (i,))
+            try:
+                iter_outputs = dict(node_outputs)  # inherit upstream values
+                iter_outputs[region.start_id] = {"item": item, "index": i}
+                st = await _execute_nodes(
+                    node_ids=set(region.body_ids),
+                    levels=body_levels, graph=graph, registry=registry,
+                    nodes_by_id=nodes_by_id, incoming=incoming,
+                    node_outputs=iter_outputs, cache=cache,
+                    emit=emit, finish=finish, default_timeouts=default_timeouts,
+                    max_node_output_bytes=max_node_output_bytes,
+                    pause_on_approval=pause_on_approval,
+                    agent_action_resume=agent_action_resume,
+                    loop_regions=loop_regions, owned=child_owned,
+                )
+                if st is RunStatus.error:
+                    if on_error == "fail":
+                        raise _LoopRowError(i)
+                    errors.append({"index": i, "error": "row failed", "input": item})
+                    return
+                value = None
+                if end_in is not None:
+                    esrc, eout = end_in
+                    value = (iter_outputs.get(esrc) or {}).get(eout)
+                collected.append((i, value))
+            finally:
+                iteration_path.reset(path_token)
 
     if concurrency == 1:
         for i, item in enumerate(items):
@@ -1476,8 +1480,12 @@ async def execute(
     results: dict[str, NodeRunResult] = {}
 
     async def emit(event: dict[str, Any]) -> None:
-        if on_event is not None:
-            await on_event(event)
+        if on_event is None:
+            return
+        path = iteration_path.get()
+        if path and "iteration_path" not in event:
+            event = {**event, "iteration_path": list(path)}
+        await on_event(event)
 
     async def finish(result: NodeRunResult) -> None:
         results[result.node_id] = result

@@ -292,3 +292,65 @@ async def test_loop_output_mode_dataset_returns_ref(store_ctx):
     assert is_dataset_ref(ref)
     rows = dataset_to_records(input=ref, max_rows=10)
     assert sorted(r["v"] for r in rows) == [10, 20]
+
+
+async def test_loop_events_are_iteration_tagged():
+    events: list[dict] = []
+
+    async def collect(ev):
+        events.append(ev)
+
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": [1, 2, 3]}),
+            _n("s", "loop_start"),
+            _n("b", "code", {"code": "output = input * 2"}),
+            _n("e", "loop_end", {"loop_start_id": "s"}),
+        ],
+        [_e("trig", "s"), _e("s", "b", src_out="item"), _e("b", "e")],
+    )
+    await execute(g, registry, on_event=collect)
+    paths = sorted(
+        ev.get("iteration_path")
+        for ev in events
+        if ev.get("type") == "node_finished" and ev.get("node_id") == "b"
+    )
+    assert paths == [[0], [1], [2]]
+    e_paths = [
+        ev.get("iteration_path")
+        for ev in events
+        if ev.get("type") == "node_finished" and ev.get("node_id") == "e"
+    ]
+    assert e_paths == [None]  # loop_end runs at parent scope
+
+
+async def test_nested_loop_events_carry_full_path():
+    events: list[dict] = []
+
+    async def collect(ev):
+        events.append(ev)
+
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": [[1, 2], [3]]}),
+            _n("s1", "loop_start"),
+            _n("s2", "loop_start"),
+            _n("b", "code", {"code": "output = input * 2"}),
+            _n("e2", "loop_end", {"loop_start_id": "s2"}),
+            _n("e1", "loop_end", {"loop_start_id": "s1"}),
+        ],
+        [
+            _e("trig", "s1"),
+            _e("s1", "s2", src_out="item"),
+            _e("s2", "b", src_out="item"),
+            _e("b", "e2"),
+            _e("e2", "e1", src_out="results"),
+        ],
+    )
+    await execute(g, registry, on_event=collect)
+    paths = sorted(
+        ev.get("iteration_path")
+        for ev in events
+        if ev.get("type") == "node_finished" and ev.get("node_id") == "b"
+    )
+    assert paths == [[0, 0], [0, 1], [1, 0]]

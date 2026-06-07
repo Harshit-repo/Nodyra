@@ -41,3 +41,10 @@ current_node_id: ContextVar[str | None] = ContextVar(
 artifact_store: ContextVar[Any | None] = ContextVar(
     "noodle_artifact_store", default=None
 )
+
+# Loop iteration coordinates for the currently executing node, outermost first.
+# Empty tuple = not inside any loop. Set by the engine's loop driver so emitted
+# events and persisted node runs can be attributed to a specific iteration.
+iteration_path: ContextVar[tuple[int, ...]] = ContextVar(
+    "noodle_iteration_path", default=()
+)
