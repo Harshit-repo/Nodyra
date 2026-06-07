@@ -1373,7 +1373,15 @@ async def _run_loop(
             return RunStatus.error
 
     collected.sort(key=lambda t: t[0])
-    out = {"results": [v for _, v in collected], "errors": errors}
+    values = [v for _, v in collected]
+    end = nodes_by_id[region.end_id]
+    if str(end.params.get("output_mode", "records") or "records") == "dataset":
+        from noodle.datasets import dataset_from_records
+        rows = [v if isinstance(v, dict) else {"result": v} for v in values]
+        results_out: Any = dataset_from_records(rows, name="loop_output.parquet")
+    else:
+        results_out = values
+    out = {"results": results_out, "errors": errors}
     node_outputs[region.end_id] = out
     await finish(NodeRunResult(
         node_id=region.end_id, status=NodeStatus.success, outputs=out,

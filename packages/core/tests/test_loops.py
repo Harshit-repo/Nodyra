@@ -4,9 +4,22 @@ from __future__ import annotations
 import pytest
 
 import noodle_nodes  # noqa: F401 - registers loop_start/loop_end/code
+from noodle.artifacts import LocalArtifactStore
+from noodle.context import artifact_store, current_node_id
 from noodle.engine import _loop_regions, _validate_loop_regions, execute
 from noodle.models import WorkflowGraph
 from noodle.sdk import registry
+
+
+@pytest.fixture
+def store_ctx(tmp_path):
+    """Provide an artifact-store context so dataset writes have somewhere to go."""
+    store = LocalArtifactStore(tmp_path, run_id="test-run")
+    a = artifact_store.set(store)
+    n = current_node_id.set("test-node")
+    yield
+    current_node_id.reset(n)
+    artifact_store.reset(a)
 
 
 def _g(nodes, edges) -> WorkflowGraph:
@@ -260,3 +273,22 @@ async def test_nested_loops_flatten_correctly():
     result = await execute(g, registry)
     assert str(result.nodes["e1"].status) == "success"
     assert result.nodes["e1"].outputs["results"] == [[2, 4], [6]]
+
+
+async def test_loop_output_mode_dataset_returns_ref(store_ctx):
+    from noodle.datasets import is_dataset_ref
+    from noodle_nodes.datasets import dataset_to_records  # materializes back to rows
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": [10, 20]}),
+            _n("s", "loop_start"),
+            _n("b", "code", {"code": "output = {'v': input}"}),
+            _n("e", "loop_end", {"loop_start_id": "s", "output_mode": "dataset"}),
+        ],
+        [_e("trig", "s"), _e("s", "b", src_out="item"), _e("b", "e")],
+    )
+    result = await execute(g, registry)
+    ref = result.nodes["e"].outputs["results"]
+    assert is_dataset_ref(ref)
+    rows = dataset_to_records(input=ref, max_rows=10)
+    assert sorted(r["v"] for r in rows) == [10, 20]

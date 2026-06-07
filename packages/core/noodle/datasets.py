@@ -192,6 +192,31 @@ def register_materializer(fn: _Materializer) -> None:
     _materializer = fn
 
 
+_DatasetWriter = Callable[..., dict[str, Any]]
+_dataset_writer: _DatasetWriter | None = None
+
+
+def register_dataset_writer(fn: _DatasetWriter) -> None:
+    """Register the DuckDB-backed records->DatasetRef writer (called by noodle_nodes)."""
+    global _dataset_writer
+    _dataset_writer = fn
+
+
+def dataset_from_records(
+    records: list[dict[str, Any]], *, name: str = "loop_output.parquet"
+) -> dict[str, Any]:
+    """Write a list of dicts to a DatasetRef using the registered writer.
+
+    Raises if no writer has been registered (i.e. the nodes package was never
+    imported).
+    """
+    if _dataset_writer is None:
+        raise RuntimeError(
+            "no dataset writer registered; import noodle_nodes.datasets"
+        )
+    return _dataset_writer(records, name=name)
+
+
 def materialize_dataset_rows(
     ref: dict[str, Any],
     *,

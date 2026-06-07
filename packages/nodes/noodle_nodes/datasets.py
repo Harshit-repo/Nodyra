@@ -21,6 +21,7 @@ from noodle.datasets import (
     finalize_artifact_ref,
     is_dataset_ref,
     make_dataset_ref,
+    register_dataset_writer,
     register_materializer,
     remember_dataset,
     reserve_artifact_path,
@@ -30,6 +31,9 @@ from noodle.sdk import node
 _DUCKDB_ERROR = (
     "DuckDB is required for dataset nodes. Install with `uv pip install duckdb`."
 )
+_POLARS_ERROR = (
+    "Polars is required for this node. Install with `uv pip install polars`."
+)
 
 
 def _duckdb():
@@ -38,6 +42,14 @@ def _duckdb():
     except ImportError as exc:
         raise RuntimeError(_DUCKDB_ERROR) from exc
     return duckdb
+
+
+def _polars():
+    try:
+        import polars as pl  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise RuntimeError(_POLARS_ERROR) from exc
+    return pl
 
 
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -250,6 +262,17 @@ def materialize_dataset(
 # Register the DuckDB-backed materializer so the engine (core) can expand
 # DatasetRefs into rows without importing DuckDB directly.
 register_materializer(materialize_dataset)
+
+
+def _records_writer(
+    records: list[dict[str, Any]], *, name: str = "loop_output.parquet"
+) -> dict[str, Any]:
+    return records_to_dataset(records, name=name)
+
+
+# Register the DuckDB-backed writer so the engine (core) can turn a loop's
+# collected records into a DatasetRef without importing DuckDB directly.
+register_dataset_writer(_records_writer)
 
 
 # ---------------------------------------------------------------------------
@@ -647,3 +670,182 @@ def duckdb_sql(input: Any = None, sql: str = "SELECT * FROM input") -> dict[str,
     finally:
         conn.close()
     return _finalize_parquet(out_path, out_partial)
+
+
+@node(
+    name="Polars Transform",
+    id="polars_transform",
+    category="Data",
+    icon="table",
+    requirements=["polars"],
+    input_kinds={"input": "dataset"},
+    output_kinds={"main": "dataset"},
+    params={
+        "code": {
+            "multiline": True,
+            "placeholder": "output = input.filter(pl.col('amount') > 100)",
+            "description": (
+                "Polars Python over a DatasetRef. `input` (alias `lf`) is a "
+                "LazyFrame; assign a Polars DataFrame or LazyFrame to `output`."
+            ),
+        },
+    },
+)
+def polars_transform(input: Any = None, code: str = "output = input") -> dict[str, Any]:
+    """Transform a DatasetRef with Polars and return a new DatasetRef."""
+    import ast
+
+    from noodle.expr import _CodeValidator
+
+    pl = _polars()
+    ref = _ensure_dataset(input, label="input")
+    path = dataset_path_for_ref(ref)
+    lf = pl.scan_parquet(str(path))
+
+    try:
+        tree = ast.parse(code, mode="exec")
+    except SyntaxError as exc:
+        raise ValueError(f"SyntaxError in polars_transform: {exc}") from exc
+
+    visitor = _CodeValidator()
+    try:
+        visitor.visit(tree)
+    except ValueError as exc:
+        raise ValueError(f"Unsafe code: {exc}") from exc
+
+    namespace: dict[str, Any] = {"pl": pl, "input": lf, "lf": lf}
+    exec(compile(tree, "<polars_transform>", "exec"), namespace)  # noqa: S102
+
+    output = namespace.get("output")
+    if output is None:
+        raise ValueError("polars_transform: code did not assign `output`")
+    if isinstance(output, pl.LazyFrame):
+        output = output.collect()
+    if not isinstance(output, pl.DataFrame):
+        raise ValueError(
+            f"polars_transform: `output` must be a Polars DataFrame or LazyFrame, "
+            f"got {type(output).__name__}"
+        )
+
+    out_path, out_partial = reserve_artifact_path(
+        "dataset.parquet",
+        content_type="application/vnd.apache.parquet",
+        kind="dataset",
+    )
+    output.write_parquet(str(out_path))
+    return _finalize_parquet(out_path, out_partial)
+
+
+@node(
+    name="Map Dataset",
+    id="map_dataset",
+    category="Data",
+    icon="repeat",
+    requirements=["duckdb"],
+    outputs=["main", "errors"],
+    input_kinds={"input": "dataset"},
+    output_kinds={"main": "dataset"},
+    params={
+        "workflow_id": {
+            "description": "ID of the workflow to call once per row.",
+            "placeholder": "workflow id",
+        },
+        "max_rows": {
+            "description": (
+                "Maximum rows allowed before the node fails. "
+                "Increase this explicitly; the node never silently truncates."
+            ),
+        },
+        "concurrency": {
+            "description": "Maximum concurrent child workflow calls (default 5).",
+        },
+        "on_error": {
+            "description": "fail = stop on first row error; continue = collect errors on the errors output.",
+            "choices": ["fail", "continue"],
+        },
+        "output_mode": {
+            "description": "dataset = write results to a new DatasetRef; records = return a list of dicts.",
+            "choices": ["dataset", "records"],
+            "display_name": "Output",
+        },
+    },
+)
+async def map_dataset(
+    input: Any = None,
+    workflow_id: str = "",
+    max_rows: int = 10000,
+    concurrency: int = 5,
+    on_error: str = "fail",
+    output_mode: str = "dataset",
+) -> dict[str, Any]:
+    """Call a child workflow once per row of a DatasetRef and collect results."""
+    import asyncio
+
+    from noodle.context import workflow_caller
+    from noodle_nodes._map import _map_call_child
+
+    if not workflow_id:
+        raise ValueError("map_dataset: workflow_id is required")
+    caller = workflow_caller.get()
+    if caller is None:
+        raise RuntimeError("map_dataset: no host caller is configured for this run")
+
+    cap = max(1, int(max_rows or 10000))
+    ref = _ensure_dataset(input, label="input")
+    duckdb = _duckdb()
+    path = str(dataset_path_for_ref(ref)).replace("'", "''")
+    conn = duckdb.connect(":memory:")
+    try:
+        total = int(
+            conn.execute(
+                f"SELECT COUNT(*) FROM read_parquet('{path}')"
+            ).fetchone()[0]
+        )
+    finally:
+        conn.close()
+
+    if total > cap:
+        raise ValueError(
+            f"Dataset has {total} rows but max_rows is {cap}. "
+            f"Increase max_rows explicitly or reduce rows upstream before Map Dataset."
+        )
+
+    rows = materialize_dataset(ref, cap=cap, allow_truncate=False)
+    sem = asyncio.Semaphore(max(1, int(concurrency or 5)))
+
+    tasks = [
+        _map_call_child(
+            caller=caller,
+            workflow_id=workflow_id,
+            payload={"row": row, "index": i},
+            index=i,
+            sem=sem,
+        )
+        for i, row in enumerate(rows)
+    ]
+    raw = await asyncio.gather(*tasks)
+    ordered = sorted(raw, key=lambda r: r["index"])
+
+    if on_error == "fail":
+        for r in ordered:
+            if not r["ok"]:
+                raise RuntimeError(
+                    f"map_dataset: row {r['index']} failed: {r['error']}"
+                )
+
+    successful_results = [r["result"] for r in ordered if r["ok"]]
+    error_rows = [
+        {"index": r["index"], "error": r["error"], "input": r["input"]}
+        for r in ordered
+        if not r["ok"]
+    ]
+
+    if output_mode == "records":
+        main_out: Any = successful_results
+    else:
+        main_out = records_to_dataset(
+            [r if isinstance(r, dict) else {"result": r} for r in successful_results],
+            name="map_dataset_output.parquet",
+        )
+
+    return {"main": main_out, "errors": error_rows}
