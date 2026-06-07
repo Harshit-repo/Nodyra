@@ -513,6 +513,67 @@ def loop_over_items(input: Any = None, max_items: int = 0) -> dict:
     return {"item": items, "done": {"items": items, "count": len(items)}}
 
 
+@node(
+    name="Loop Start",
+    id="loop_start",
+    category="Logic",
+    icon="repeat",
+    outputs=["item", "index"],
+    params={
+        "concurrency": {
+            "description": "How many rows to process at once (default 1 = one at a time).",
+        },
+        "on_error": {
+            "description": "fail = stop the loop on the first failing row; continue = collect errors and keep going.",
+            "choices": ["fail", "continue"],
+        },
+        "max_rows": {
+            "description": "Maximum rows allowed before the loop fails (default 10000). Never silently truncates.",
+        },
+    },
+)
+def loop_start(
+    input: Any = None,
+    concurrency: int = 1,
+    on_error: str = "fail",
+    max_rows: int = 10000,
+) -> dict[str, Any]:
+    """Start of a loop region. The engine drives this node and runs the
+    nodes between it and the paired Loop End once per row; this function is
+    never called directly."""
+    raise RuntimeError(
+        "loop_start is executed by the engine's loop driver, not called directly"
+    )
+
+
+@node(
+    name="Loop End",
+    id="loop_end",
+    category="Logic",
+    icon="repeat",
+    outputs=["results", "errors"],
+    params={
+        "loop_start_id": {
+            "widget": "hidden",
+            "description": "Auto-managed id of the paired Loop Start.",
+        },
+        "output_mode": {
+            "description": "records = a list of each row's result; dataset = a DatasetRef (each result must be a dict / object).",
+            "choices": ["records", "dataset"],
+            "display_name": "Output",
+        },
+    },
+)
+def loop_end(
+    input: Any = None, loop_start_id: str = "", output_mode: str = "records"
+) -> dict[str, Any]:
+    """End of a loop region. The engine collects each row's value here; this
+    function is never called directly."""
+    raise RuntimeError(
+        "loop_end is executed by the engine's loop driver, not called directly"
+    )
+
+
 @node(name="Stop And Error", id="stop_and_error", category="Logic", icon="alert",
       params={
           "message": {
@@ -1335,6 +1396,167 @@ async def execute_workflow_node(
             "execute_workflow: no host caller is configured for this run"
         )
     return await caller(workflow_id, input)
+
+
+@node(
+    name="Map Items",
+    id="map_items",
+    category="Logic",
+    icon="repeat",
+    outputs=["main", "errors"],
+    params={
+        "workflow_id": {
+            "description": "ID of the workflow to call once per item.",
+            "placeholder": "workflow id",
+        },
+        "concurrency": {
+            "description": "Maximum concurrent child workflow calls (default 5).",
+        },
+        "on_error": {
+            "description": "fail = stop on first item error; continue = collect errors on the errors output.",
+            "choices": ["fail", "continue"],
+        },
+        "preserve_order": {
+            "description": "Return results in input order (default true).",
+        },
+    },
+)
+async def map_items(
+    input: Any = None,
+    workflow_id: str = "",
+    concurrency: int = 5,
+    on_error: str = "fail",
+    preserve_order: bool = True,
+) -> dict[str, Any]:
+    """Call a child workflow once per item in a list and collect results."""
+    import asyncio
+
+    from noodle.context import workflow_caller
+    from noodle_nodes._map import _map_call_child
+
+    if not workflow_id:
+        raise ValueError("map_items: workflow_id is required")
+    caller = workflow_caller.get()
+    if caller is None:
+        raise RuntimeError("map_items: no host caller is configured for this run")
+
+    items: list = input if isinstance(input, list) else ([] if input is None else [input])
+    sem = asyncio.Semaphore(max(1, int(concurrency or 5)))
+
+    tasks = [
+        _map_call_child(
+            caller=caller,
+            workflow_id=workflow_id,
+            payload={"item": item, "index": i},
+            index=i,
+            sem=sem,
+        )
+        for i, item in enumerate(items)
+    ]
+    raw = await asyncio.gather(*tasks)
+    ordered = sorted(raw, key=lambda r: r["index"]) if preserve_order else list(raw)
+
+    if on_error == "fail":
+        for r in ordered:
+            if not r["ok"]:
+                raise RuntimeError(
+                    f"map_items: item {r['index']} failed: {r['error']}"
+                )
+
+    successful = [r["result"] for r in ordered if r["ok"]]
+    errors = [
+        {"index": r["index"], "error": r["error"], "input": r["input"]}
+        for r in ordered
+        if not r["ok"]
+    ]
+    return {"main": successful, "errors": errors}
+
+
+@node(
+    name="Map Group",
+    id="map_group",
+    category="Logic",
+    icon="repeat",
+    outputs=["main", "errors"],
+    params={
+        "child_workflow_id": {
+            "widget": "hidden",
+            "description": "Auto-managed child workflow ID.",
+        },
+        "mode": {
+            "widget": "hidden",
+            "description": "inline or reference",
+        },
+        "concurrency": {
+            "description": "Maximum concurrent child workflow calls (default 5).",
+        },
+        "on_error": {
+            "description": "fail = stop on first item error; continue = collect errors on the errors output.",
+            "choices": ["fail", "continue"],
+        },
+        "preserve_order": {
+            "description": "Return results in input order (default true).",
+        },
+        "max_items": {
+            "description": "Maximum items allowed before the node fails (default 10000).",
+        },
+    },
+)
+async def map_group_node(
+    input: Any = None,
+    child_workflow_id: str = "",
+    mode: str = "inline",
+    concurrency: int = 5,
+    on_error: str = "fail",
+    preserve_order: bool = True,
+    max_items: int = 10000,
+) -> dict[str, Any]:
+    """Run the map body workflow once per item in the input list."""
+    import asyncio
+
+    from noodle.context import workflow_caller
+    from noodle_nodes._map import _map_call_child
+
+    if not child_workflow_id:
+        raise ValueError("map_group: child_workflow_id is not set — save the workflow first")
+    caller = workflow_caller.get()
+    if caller is None:
+        raise RuntimeError("map_group: no host caller is configured for this run")
+
+    items: list = input if isinstance(input, list) else ([] if input is None else [input])
+    cap = max(1, int(max_items or 10000))
+    if len(items) > cap:
+        raise ValueError(
+            f"Map Group received {len(items)} items but max_items is {cap}. "
+            f"Increase max_items explicitly or reduce the list upstream."
+        )
+
+    sem = asyncio.Semaphore(max(1, int(concurrency or 5)))
+    tasks = [
+        _map_call_child(
+            caller=caller,
+            workflow_id=child_workflow_id,
+            payload={"item": item, "index": i},
+            index=i,
+            sem=sem,
+        )
+        for i, item in enumerate(items)
+    ]
+    raw = await asyncio.gather(*tasks)
+    ordered = sorted(raw, key=lambda r: r["index"]) if preserve_order else list(raw)
+
+    if on_error == "fail":
+        for r in ordered:
+            if not r["ok"]:
+                raise RuntimeError(f"map_group: item {r['index']} failed: {r['error']}")
+
+    successful = [r["result"] for r in ordered if r["ok"]]
+    errors = [
+        {"index": r["index"], "error": r["error"], "input": r["input"]}
+        for r in ordered
+        if not r["ok"]
+    ]
+    return {"main": successful, "errors": errors}
 
 
 # ---- Data type conversions -----------------------------------------------
