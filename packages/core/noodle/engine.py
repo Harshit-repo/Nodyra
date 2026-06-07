@@ -343,6 +343,111 @@ def _ancestors(graph: WorkflowGraph, root: str) -> set[str]:
     return seen
 
 
+def _expand_graph_dict(data: dict[str, Any]) -> dict[str, Any]:
+    """Recursively inline every ``transparent`` metanode in a graph dict.
+
+    A metanode (``type == "meta_node"``) carries ``params.subgraph`` ({nodes,
+    edges}) and ``params.ports`` mapping its boundary ports to internal nodes.
+    Transparent metanodes are flattened: child nodes are inlined with namespaced
+    ids (``<meta_id>/<child_id>``) and boundary edges are rewired through the
+    port mapping. ``isolated`` metanodes are left intact (driven separately).
+    """
+    nodes = data.get("nodes") or []
+    edges = data.get("edges") or []
+
+    metas: dict[str, dict[str, Any]] = {}
+    for n in nodes:
+        if n.get("type") == "meta_node":
+            params = n.get("params") or {}
+            if str(params.get("execution", "transparent") or "transparent") != "isolated":
+                metas[n["id"]] = n
+    if not metas:
+        return data
+
+    # Boundary port maps: input port -> list of internal (target, target_input);
+    # output port -> single internal (source, source_output).
+    port_in: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    port_out: dict[tuple[str, str], tuple[str, str]] = {}
+    for mid, m in metas.items():
+        ports = (m.get("params") or {}).get("ports") or {}
+        for p in ports.get("inputs") or []:
+            targets = [
+                (t["target"], t.get("target_input", "input"))
+                for t in (p.get("targets") or [])
+            ]
+            port_in[(mid, p["port"])] = targets
+        for p in ports.get("outputs") or []:
+            port_out[(mid, p["port"])] = (p["source"], p.get("source_output", "main"))
+
+    out_nodes: list[dict[str, Any]] = []
+    for n in nodes:
+        if n["id"] in metas:
+            sub = (n.get("params") or {}).get("subgraph") or {"nodes": [], "edges": []}
+            sub = _expand_graph_dict(sub)  # flatten nested metanodes first
+            prefix = f"{n['id']}/"
+            for sn in sub.get("nodes") or []:
+                c = dict(sn)
+                c["id"] = prefix + sn["id"]
+                out_nodes.append(c)
+        else:
+            out_nodes.append(n)
+
+    out_edges: list[dict[str, Any]] = []
+    for n in nodes:
+        if n["id"] not in metas:
+            continue
+        sub = (n.get("params") or {}).get("subgraph") or {"nodes": [], "edges": []}
+        sub = _expand_graph_dict(sub)
+        prefix = f"{n['id']}/"
+        for se in sub.get("edges") or []:
+            e = dict(se)
+            e["source"] = prefix + se["source"]
+            e["target"] = prefix + se["target"]
+            e["id"] = prefix + str(se.get("id", f"{se['source']}->{se['target']}"))
+            out_edges.append(e)
+
+    for e in edges:
+        s_meta = e["source"] in metas
+        t_meta = e["target"] in metas
+        if not s_meta and not t_meta:
+            out_edges.append(e)
+            continue
+        # Resolve the (possibly fanned-out) target side.
+        targets: list[tuple[str, str]] = [(e["target"], e.get("target_input", "input"))]
+        if t_meta:
+            mapped = port_in.get((e["target"], e.get("target_input", "input")))
+            if not mapped:
+                continue  # unmapped boundary edge — drop
+            targets = [(f"{e['target']}/{tid}", tin) for tid, tin in mapped]
+        # Resolve the source side.
+        source = e["source"]
+        source_output = e.get("source_output", "main")
+        if s_meta:
+            mapped_src = port_out.get((e["source"], e.get("source_output", "main")))
+            if mapped_src is None:
+                continue
+            source = f"{e['source']}/{mapped_src[0]}"
+            source_output = mapped_src[1]
+        for idx, (tid, tin) in enumerate(targets):
+            ne = dict(e)
+            ne["source"] = source
+            ne["source_output"] = source_output
+            ne["target"] = tid
+            ne["target_input"] = tin
+            ne["id"] = f"{e.get('id', f'{source}->{tid}')}#{idx}" if len(targets) > 1 else e.get("id", f"{source}->{tid}")
+            out_edges.append(ne)
+
+    return {**data, "nodes": out_nodes, "edges": out_edges}
+
+
+def _expand_metanodes(graph: WorkflowGraph) -> WorkflowGraph:
+    """Return a graph with all transparent metanodes inlined (see
+    :func:`_expand_graph_dict`). A no-op when there are no metanodes."""
+    if not any(n.type == "meta_node" for n in graph.nodes):
+        return graph
+    return WorkflowGraph.model_validate(_expand_graph_dict(graph.model_dump()))
+
+
 def _loop_regions(graph: WorkflowGraph) -> dict[str, LoopRegion]:
     """Map each loop_start node id to its LoopRegion.
 
@@ -1727,6 +1832,9 @@ async def execute(
     default_timeouts = DEFAULT_NODE_TIMEOUTS if default_timeouts is None else default_timeouts
     cache = cache or {}
     agent_action_resume = agent_action_resume or {}
+    # Transparent metanodes are purely organizational: inline them before any
+    # planning so the rest of the engine sees an ordinary flat graph.
+    graph = _expand_metanodes(graph)
     target_set = set(targets) if targets is not None else None
     needed = _needed_nodes(graph, target_set, cache)
     _validate_connection_kinds(graph, registry, needed)
