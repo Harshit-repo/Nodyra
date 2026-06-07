@@ -5415,6 +5415,19 @@ th.sortable:hover { background:var(--bg-3); }
   background: color-mix(in srgb, var(--accent) 5%, var(--surface-2));
   overflow: hidden;
 }
+.chat-agent.is-live {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-2));
+  animation: chat-agent-live 1.8s ease-in-out infinite;
+}
+@keyframes chat-agent-live {
+  0%, 100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+}
 .chat-agent-summary {
   display: flex;
   align-items: center;

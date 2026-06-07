@@ -808,6 +808,64 @@ def test_agent_v2_requests_tool_and_resumes_to_final() -> None:
     assert model.requests[1].messages[-1].role == MessageRole.tool
 
 
+def test_agent_v2_returns_intermediate_steps_trace() -> None:
+    model = ScriptedChatModel(
+        [
+            ChatResponse(
+                tool_calls=[
+                    ToolCall(id="call_1", name="lookup", arguments={"query": "Ada"})
+                ],
+                model="test-model",
+                provider="test",
+            ),
+            ChatResponse(text="Ada Lovelace", model="test-model", provider="test"),
+        ]
+    )
+    fn = registry.get("ai_agent_v2").func
+
+    request = fn(input={"task": "Find Ada"}, model=model, tool=DummyTool("lookup"))
+    assert isinstance(request, AgentActionRequest)
+
+    resume = AgentResumeInput(
+        tool_results=[
+            ToolResult(tool_call_id="call_1", name="lookup", content="Ada Lovelace")
+        ],
+        messages_so_far=request.messages_so_far,
+        step=1,
+        max_steps=4,
+    )
+    output = fn(
+        input={"task": "Find Ada"},
+        model=model,
+        tool=DummyTool("lookup"),
+        agent_resume=resume,
+    )
+
+    assert output["tool_calls_count"] == 1
+    steps = output["intermediate_steps"]
+    assert len(steps) == 1
+    assert steps[0]["tool"] == "lookup"
+    assert steps[0]["arguments"] == {"query": "Ada"}
+    assert steps[0]["result"] == "Ada Lovelace"
+    assert steps[0]["status"] == "success"
+
+
+def test_agent_v2_can_disable_tool_trace() -> None:
+    model = ScriptedChatModel(
+        [ChatResponse(text="hello", model="test-model", provider="test")]
+    )
+    fn = registry.get("ai_agent_v2").func
+
+    output = fn(
+        input={"task": "Say hello"},
+        model=model,
+        return_tool_trace=False,
+    )
+
+    assert "intermediate_steps" not in output
+    assert "tool_calls_count" not in output
+
+
 def test_agent_v2_saves_final_response_to_memory() -> None:
     memory = registry.get("ai_buffer_memory").func(window=10)
     model = ScriptedChatModel(

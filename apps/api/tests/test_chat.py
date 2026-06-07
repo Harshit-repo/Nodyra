@@ -212,3 +212,127 @@ async def test_run_chat_turn_threads_session_across_turns(client: AsyncClient) -
 
     assert first.reply == "sess-keep"
     assert second.reply == "sess-keep"
+
+
+@pytest.mark.asyncio
+async def test_start_chat_turn_returns_run_id_without_awaiting(
+    client: AsyncClient,
+) -> None:
+    from app.services.chat_service import start_chat_turn
+
+    workflow_id = (
+        await client.post("/workflows", json={"name": "StreamCore"})
+    ).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": _chat_echo_graph()}
+    )
+
+    run_id, session_id = await start_chat_turn(
+        workflow_id, "ping", "sess-s", prefer_draft=True
+    )
+
+    assert run_id
+    assert session_id == "sess-s"
+
+
+@pytest.mark.asyncio
+async def test_start_chat_turn_without_chat_trigger_raises(
+    client: AsyncClient,
+) -> None:
+    from app.services.chat_service import NoChatTriggerError, start_chat_turn
+
+    workflow_id = (
+        await client.post("/workflows", json={"name": "StreamNoChat"})
+    ).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}",
+        json={"graph": {"nodes": [
+            {"id": "m", "type": "manual_trigger", "params": {},
+             "position": {"x": 0, "y": 0}}
+        ], "edges": []}},
+    )
+
+    with pytest.raises(NoChatTriggerError):
+        await start_chat_turn(workflow_id, "ping", "s", prefer_draft=True)
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_endpoint_returns_run_id(client: AsyncClient) -> None:
+    workflow_id = (
+        await client.post("/workflows", json={"name": "StreamEP"})
+    ).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": _chat_echo_graph()}
+    )
+
+    resp = await client.post(
+        f"/workflows/{workflow_id}/chat/stream",
+        json={"message": "hello", "session_id": "s-stream"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["run_id"]
+    assert body["session_id"] == "s-stream"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_then_result_returns_reply(client: AsyncClient) -> None:
+    workflow_id = (
+        await client.post("/workflows", json={"name": "StreamResult"})
+    ).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": _chat_echo_graph()}
+    )
+
+    start = await client.post(
+        f"/workflows/{workflow_id}/chat/stream",
+        json={"message": "hello", "session_id": "s-r"},
+    )
+    run_id = start.json()["run_id"]
+
+    resp = await client.get(
+        f"/workflows/{workflow_id}/chat/result/{run_id}",
+        params={"session_id": "s-r"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["reply"] == "hello"
+    assert body["session_id"] == "s-r"
+    assert body["status"] == "success"
+    assert body["run_id"] == run_id
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_endpoint_422_without_chat_trigger(
+    client: AsyncClient,
+) -> None:
+    workflow_id = (
+        await client.post("/workflows", json={"name": "StreamEP422"})
+    ).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}",
+        json={"graph": {"nodes": [
+            {"id": "m", "type": "manual_trigger", "params": {},
+             "position": {"x": 0, "y": 0}}
+        ], "edges": []}},
+    )
+
+    resp = await client.post(
+        f"/workflows/{workflow_id}/chat/stream",
+        json={"message": "x", "session_id": "s"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_endpoint_404_for_missing_workflow(
+    client: AsyncClient,
+) -> None:
+    resp = await client.post(
+        "/workflows/does-not-exist/chat/stream",
+        json={"message": "x", "session_id": "s"},
+    )
+    assert resp.status_code == 404
+

@@ -267,6 +267,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ message, session_id: sessionId }),
     }),
+  startChatTurn: (workflowId: string, message: string, sessionId: string) =>
+    request<{ run_id: string | null; session_id: string }>(
+      `/workflows/${workflowId}/chat/stream`,
+      {
+        method: "POST",
+        body: JSON.stringify({ message, session_id: sessionId }),
+      },
+    ),
+  chatTurnResult: (workflowId: string, runId: string, sessionId: string) =>
+    request<ChatTurnResponse>(
+      `/workflows/${workflowId}/chat/result/${runId}?session_id=${encodeURIComponent(sessionId)}`,
+    ),
   getPublicChatConfig: (workflowId: string) =>
     request<ChatPublicConfig>(`/chat/p/${workflowId}`),
   sendPublicChatMessage: (

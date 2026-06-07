@@ -35,3 +35,6 @@ data/
 *.db
 *.log
 .superpowers/
+
+# Bundled tool binaries (fetched at setup, not committed)
+apps/api/tools/*.exe

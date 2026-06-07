@@ -150,12 +150,47 @@ def _messages_from_resume(resume: AgentResumeInput) -> list[AIMessage]:
     return messages
 
 
+def _intermediate_steps(messages: list[AIMessage]) -> list[dict[str, Any]]:
+    """Reconstruct an ordered tool-call trace from the conversation history.
+
+    Pairs each assistant ``tool_calls`` entry with its matching ``role=tool``
+    result message so downstream nodes (and the chat UI) can render exactly
+    what the agent did without replaying the run's event stream.
+    """
+    results_by_id: dict[str, AIMessage] = {
+        message.tool_call_id: message
+        for message in messages
+        if message.role == MessageRole.tool and message.tool_call_id
+    }
+    steps: list[dict[str, Any]] = []
+    index = 0
+    for message in messages:
+        if message.role != MessageRole.assistant or not message.tool_calls:
+            continue
+        for call in message.tool_calls:
+            result = results_by_id.get(call.id)
+            steps.append(
+                {
+                    "index": index,
+                    "tool": call.name,
+                    "tool_call_id": call.id,
+                    "arguments": dict(call.arguments),
+                    "result": result.content if result is not None else None,
+                    "status": "pending" if result is None else "success",
+                }
+            )
+            index += 1
+    return steps
+
+
 def _final_output(
     response: ChatResponse,
     *,
     parser: Any,
     step: int,
     stopped_reason: str = "",
+    messages: list[AIMessage] | None = None,
+    include_steps: bool = True,
 ) -> dict[str, Any]:
     checked = response
     parsed: Any = None
@@ -172,6 +207,10 @@ def _final_output(
         output["parsed"] = parsed
     if stopped_reason:
         output["stopped_reason"] = stopped_reason
+    if include_steps:
+        steps = _intermediate_steps(messages or [])
+        output["intermediate_steps"] = steps
+        output["tool_calls_count"] = len(steps)
     return output
 
 
@@ -200,6 +239,7 @@ def _final_output(
             "temperature",
             "max_tokens",
             "response_format",
+            "return_tool_trace",
             "timeout_seconds",
         ],
     },
@@ -239,6 +279,12 @@ def _final_output(
             "display_name": "Tool approval",
             "description": "Require manual approval or automatically approve write-capable tools.",
         },
+        "return_tool_trace": {
+            "widget": "toggle",
+            "display_name": "Return tool trace",
+            "description": "Include the ordered tool-call trace (intermediate_steps) in the output.",
+            "group": "Options",
+        },
         "timeout_seconds": {
             "description": "HTTP timeout per model call.",
             "group": "Options",
@@ -260,6 +306,7 @@ def ai_agent_v2(
     max_tokens: int | None = None,
     response_format: str = "text",
     side_effect_approval: str = "require_approval",
+    return_tool_trace: bool = True,
     timeout_seconds: int = 75,
     **runtime: Any,
 ) -> dict[str, Any] | AgentActionRequest:
@@ -311,6 +358,8 @@ def ai_agent_v2(
                 parser=None,
                 step=step,
                 stopped_reason="max_steps",
+                messages=messages,
+                include_steps=return_tool_trace,
             )
         legacy_allow = bool(runtime.get("allow_side_effects"))
         auto_approve_side_effects = (
@@ -331,4 +380,10 @@ def ai_agent_v2(
     sid = _session_id(input, session_id)
     if isinstance(memory, MemoryAdapter):
         memory.save(session_id=sid, messages=_without_tool_instruction(messages))
-    return _final_output(response, parser=parser, step=step)
+    return _final_output(
+        response,
+        parser=parser,
+        step=step,
+        messages=messages,
+        include_steps=return_tool_trace,
+    )

@@ -1424,6 +1424,7 @@ export function EditorPage() {
               onRun={(runId) => connectRunStream(runId)}
               onClose={closeChat}
               onViewRun={(runId) => viewRun(runId)}
+              live
             />
           );
         })()

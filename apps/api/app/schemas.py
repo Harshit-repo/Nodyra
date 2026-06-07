@@ -977,6 +977,18 @@ class ChatTurnResponse(BaseModel):
     status: str
 
 
+class ChatStreamStart(BaseModel):
+    """Returned when a chat turn is started but not yet awaited.
+
+    The caller subscribes to ``/ws/runs/{run_id}`` to stream the agent's live
+    tool calls and node progress, then fetches the final reply once the run
+    reaches a terminal state.
+    """
+
+    run_id: str | None
+    session_id: str
+
+
 class ChatPublicConfig(BaseModel):
     workflow_id: str
     title: str
