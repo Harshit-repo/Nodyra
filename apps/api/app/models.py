@@ -170,7 +170,10 @@ class Workflow(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     environment_id: Mapped[str | None] = mapped_column(
-        ForeignKey("environments.id"), nullable=True
+        # ALM-2: SET NULL so deleting an environment leaves the workflow on the
+        # default env (the runner already treats a NULL env_id as the default)
+        # rather than blocking the delete or orphaning a dead reference.
+        ForeignKey("environments.id", ondelete="SET NULL"), nullable=True
     )
     default_runner_pool_id: Mapped[str | None] = mapped_column(
         String(32), nullable=True

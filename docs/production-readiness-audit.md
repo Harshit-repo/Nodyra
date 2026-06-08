@@ -194,6 +194,7 @@ and fixes in `test_statistical_analysis.py` / `test_map_nodes.py`.
 | RUN-1 | Approval decision missing `workflow:run` (viewer escalation) | Medium | ✅ fixed + test |
 | DEP-1 | Active deployment version-repoint skips unsafe-node gate | Medium | ✅ fixed + test |
 | ALM-1 | Migration timestamp cols nullable (model says NOT NULL) | Low | ✅ fixed (migration 0038) |
+| ALM-2 | Prod schema missing 9 FK constraints + an index (vs models) | Medium | ✅ fixed (migration 0039 + CI gate) |
 | RD-2 | Dockerfile cmd injection via package names | Low | ✅ fixed + test |
 | RP-1 | Runner registration token multi-use (now revocable) | Low/Med | ✅ fixed + test |
 | RP-2 | Runner artifact-upload not run-bound | Low | ✅ fixed + test |
@@ -257,7 +258,7 @@ next `⏳ pending` row.
 | packages/nodes/noodle_nodes/datasets.py | ✅ | DSQ-2 (duckdb_sql latch; polars_transform already AST-validated) |
 | **packages/nodes/noodle_nodes/** (other node modules ~40) | ⏳ pending | sampled only |
 | **apps/web/src/** (deep correctness/UX/a11y) | ⏳ pending | see docs/frontend-audit.md (handoff) |
-| apps/api/alembic/ (env + 37 migrations) | ✅ | ALM-1; chain linear, up/down/up verified; render_as_batch added |
+| apps/api/alembic/ (env + 39 migrations) | ✅ | ALM-1, ALM-2; chain linear, up/down/up on PG+SQLite; `alembic check` clean on Postgres + CI gate |
 
 ---
 
@@ -624,12 +625,36 @@ next `⏳ pending` row.
   existing default guarantees no NULL rows). Verified `alembic check` no longer
   reports them and the migration reverses cleanly.
 - **Status:** `fixed` — migration `0038`.
-- **Not fixed (noted):** the pinned-data index is named `ix_pinned_workflow_id`
-  in `0006` vs the SQLAlchemy-default `ix_pinned_data_workflow_id` — purely
-  cosmetic (index exists & functions), not worth a rename migration. The FK
-  "drift" `alembic check` reports is **SQLite reflection noise** (FKs added via
-  batch don't reflect reliably on SQLite); run `alembic check` against
-  **Postgres** in CI for an authoritative drift signal.
+
+### ALM-2 — Missing FK constraints + index on the production (Postgres) schema (Medium)
+- **Correction:** the FK "drift" was **NOT** SQLite reflection noise — running
+  `alembic check` against **Postgres** (a throwaway container) confirmed it is
+  real. The ORM models declare 9 `ForeignKey`s (with `ondelete`) and the
+  `ix_runs_batch_id` index that earlier migrations never created, so prod
+  Postgres had **no DB-level referential integrity** for those relations and the
+  declared cascades were unenforced.
+- **Evidence (Postgres `alembic check`):** missing FKs on `credentials`
+  (`workflow_id`, `environment_id` → CASCADE), `deployments`
+  (`workflow_version_id`, `error_workflow_id` → SET NULL), `runs`
+  (`workflow_version_id`, `deployment_id`, `triggered_by_error_run_id` → SET
+  NULL), `workflows` (`environment_id`, `error_workflow_id` → SET NULL); missing
+  index `ix_runs_batch_id`; index name `ix_pinned_workflow_id` vs the model's
+  `ix_pinned_data_workflow_id`.
+- **Fix:** migration `0039_fk_and_index_alignment` — renames the pinned index,
+  adds `ix_runs_batch_id`, and adds all 9 FKs (orphan refs NULLed first so it's
+  safe on populated data; all SET NULL/CASCADE so no delete ever blocks).
+  `workflows.environment_id` model changed to `ondelete="SET NULL"` (the runner
+  already treats NULL env as the default — `runner._build_env_payload_for_run`).
+  FK adds run on non-SQLite only (SQLite can't ADD CONSTRAINT without a fragile
+  rebuild, doesn't enforce FK ondelete, and tests build via `create_all`). After
+  0039, **`alembic check` on Postgres reports no drift**; verified up/down/up on
+  both dialects.
+- **CI:** added a **required** "Alembic migration drift check (Postgres)" step to
+  `.github/workflows/ci.yml` (dedicated `noodle_alembic` DB) so future
+  model/migration divergence fails the build. SQLite `alembic check` still shows
+  the FKs as missing **by design** — Postgres is the authoritative signal.
+- **Status:** `fixed` — migration `0039` + CI gate. (The pinned index name is now
+  aligned too, so no cosmetic residue remains.)
 
 ## TEST-1 — Pre-existing failing tests — RESOLVED
 All 11 now pass:

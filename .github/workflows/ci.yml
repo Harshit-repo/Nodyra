@@ -62,6 +62,33 @@ jobs:
           python-version: "3.12"
       - run: uv sync --all-packages
 
+      # Authoritative schema-drift check: the migrations must produce a schema
+      # that matches the ORM models on Postgres. SQLite can't reflect FKs /
+      # constraints reliably, so this is the source of truth (it caught ALM-1
+      # nullable drift and ALM-2 missing FK constraints + index). Runs against a
+      # dedicated DB so it never collides with the pytest test database.
+      - name: Alembic migration drift check (Postgres, required)
+        working-directory: apps/api
+        env:
+          DATABASE_URL: postgresql+asyncpg://noodle:noodle@localhost:5432/noodle_alembic
+        run: |
+          uv run python - <<'PY'
+          import asyncio, asyncpg
+          async def main():
+              conn = await asyncpg.connect(
+                  host="localhost", user="noodle", password="noodle", database="noodle"
+              )
+              try:
+                  await conn.execute("CREATE DATABASE noodle_alembic")
+              except asyncpg.DuplicateDatabaseError:
+                  pass
+              finally:
+                  await conn.close()
+          asyncio.run(main())
+          PY
+          uv run alembic upgrade head
+          uv run alembic check
+
       # REQUIRED — verified green on Postgres. Gates the lane.
       #   * test_run_queue: the durable queue incl. the Postgres-only
       #     SKIP LOCKED lease path (the crown jewel that SQLite can't cover).
