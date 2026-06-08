@@ -7,6 +7,8 @@ check is performed (convenient for local dev where only your machine
 reaches the API).
 """
 
+import hmac
+
 from fastapi import APIRouter, HTTPException, Request, status
 
 from app.config import settings
@@ -21,7 +23,10 @@ def _check_token(request: Request) -> None:
     expected = settings.internal_api_token
     if not expected:
         return
-    if request.headers.get(_HEADER) != expected:
+    presented = request.headers.get(_HEADER) or ""
+    # Constant-time comparison so the shared secret can't be recovered by
+    # timing the response to header guesses.
+    if not hmac.compare_digest(presented, expected):
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "invalid internal token"
         )

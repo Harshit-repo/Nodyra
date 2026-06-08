@@ -3,6 +3,7 @@ from time import monotonic
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -39,21 +40,27 @@ require_user_manage = require_permission("user:manage")
 
 
 # Per-(bucket, IP) sliding-window rate limiter for unauthenticated endpoints.
-# Kept in-process to avoid adding a Redis hop on every login attempt; a
-# multi-replica deployment behind a load balancer effectively gets N*limit
-# attempts, which is still enough to block naive brute-force from a single IP.
-# Operators wanting strict cross-replica limits should add a WAF in front.
+# When Redis is the queue backend, uses INCR+EXPIRE so all replicas share one
+# counter. Falls back to the in-process deque if Redis is unavailable.
 _AUTH_RATE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
 
+# Evict stale _AUTH_RATE_BUCKETS keys once the dict exceeds this size.
+# Below the threshold the overhead of a full-dict scan is unwarranted — the
+# leak is bounded by unique IPs in the sliding window, which is negligible
+# for typical self-hosted deployments.  Above it a sweep runs after every
+# request so the dict stays roughly capped.
+_AUTH_RATE_BUCKET_EVICT_THRESHOLD = 10_000
 
-def _enforce_auth_rate_limit(request: Request, bucket: str) -> None:
-    if not settings.auth_rate_limit_enabled:
-        return
-    limit = settings.auth_rate_limit_per_minute
-    if limit <= 0:
-        return
-    ip = request.client.host if request.client else "anon"
-    key = f"{bucket}:{ip}"
+
+def _sweep_rate_buckets(now: float) -> None:
+    """Remove dict entries whose full 60-second window has expired."""
+    cutoff = now - 60.0
+    stale = [k for k, v in list(_AUTH_RATE_BUCKETS.items()) if not v or v[-1] < cutoff]
+    for k in stale:
+        _AUTH_RATE_BUCKETS.pop(k, None)
+
+
+def _in_process_rate_limit(key: str, limit: int, bucket: str) -> None:
     history = _AUTH_RATE_BUCKETS[key]
     now = monotonic()
     cutoff = now - 60.0
@@ -65,6 +72,37 @@ def _enforce_auth_rate_limit(request: Request, bucket: str) -> None:
             f"Too many {bucket} attempts; try again in a minute.",
         )
     history.append(now)
+    # Lazily evict stale keys once the dict grows large enough to matter.
+    if len(_AUTH_RATE_BUCKETS) > _AUTH_RATE_BUCKET_EVICT_THRESHOLD:
+        _sweep_rate_buckets(now)
+
+
+async def _enforce_auth_rate_limit(request: Request, bucket: str) -> None:
+    if not settings.auth_rate_limit_enabled:
+        return
+    limit = settings.auth_rate_limit_per_minute
+    if limit <= 0:
+        return
+    ip = request.client.host if request.client else "anon"
+    key = f"{bucket}:{ip}"
+    if settings.queue_backend == "redis":
+        import app.redis_client as _rc
+        rl_key = f"noodle:rl:{key}"
+        try:
+            count = await _rc.redis_client.incr(rl_key)
+            if count == 1:
+                await _rc.redis_client.expire(rl_key, 60)
+            if count > limit:
+                raise HTTPException(
+                    status.HTTP_429_TOO_MANY_REQUESTS,
+                    f"Too many {bucket} attempts; try again in a minute.",
+                )
+            return
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # Redis unavailable — fall through to in-process
+    _in_process_rate_limit(key, limit, bucket)
 
 
 
@@ -145,7 +183,7 @@ async def register(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ):
-    _enforce_auth_rate_limit(request, "register")
+    await _enforce_auth_rate_limit(request, "register")
     email = _email(body.email)
     existing = await session.scalar(select(User).where(User.email == email))
     if existing is not None:
@@ -168,7 +206,10 @@ async def register(
     )
     session.add(user)
     await log_audit(session, "register", "user", detail=f"{email} ({role})")
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
     return _token_response(user)
 
 
@@ -178,7 +219,7 @@ async def login(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ):
-    _enforce_auth_rate_limit(request, "login")
+    await _enforce_auth_rate_limit(request, "login")
     user = await session.scalar(select(User).where(User.email == _email(body.email)))
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(

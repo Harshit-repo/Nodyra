@@ -86,14 +86,24 @@ _BLOCKED_NAMES = frozenset({
 
 
 class _ExprValidator(ast.NodeVisitor):
-    """Walk AST and reject any disallowed node type or dangerous name."""
+    """Walk AST and reject any disallowed node type or dangerous name.
 
-    def visit(self, node: ast.AST) -> None:
+    SECURITY (EXPR-1): the node-type allowlist must run via ``generic_visit``,
+    NOT by overriding ``visit``. Overriding ``visit`` to do the check + call
+    ``generic_visit`` bypasses ``NodeVisitor``'s name-based dispatch, so
+    ``visit_Name``/``visit_Attribute`` never fire and the ``_BLOCKED_NAMES``
+    guard becomes dead code — letting ``x.__class__.__bases__[0].__subclasses__()``
+    and ``__import__`` slip through (full sandbox escape). Putting the type check
+    in ``generic_visit`` (which the default ``visit`` always reaches) keeps both
+    the type allowlist AND the blocked-name dispatch active.
+    """
+
+    def generic_visit(self, node: ast.AST) -> None:
         if type(node) not in _ALLOWED_EXPR_NODES:
             raise ValueError(
                 f"Expression contains disallowed construct: {type(node).__name__}"
             )
-        self.generic_visit(node)
+        super().generic_visit(node)
 
     def visit_Name(self, node: ast.Name) -> None:
         if node.id in _BLOCKED_NAMES:

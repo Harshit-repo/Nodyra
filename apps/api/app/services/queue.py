@@ -467,7 +467,7 @@ DISPATCH_SHUTDOWN_TIMEOUT = 5.0
 def _worker_id() -> str:
     """A stable-ish identifier for the current process so leases can be
     attributed to a specific replica when diagnosing lost workers."""
-    return f"{socket.gethostname()}:{id(asyncio.get_event_loop())}"
+    return f"{socket.gethostname()}:{id(asyncio.get_running_loop())}"
 
 
 async def run_queue_dispatch_loop() -> None:

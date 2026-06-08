@@ -234,6 +234,7 @@ async def update_deployment(
         deployment.default_parameters = body.default_parameters
     if body.environment_id is not None:
         deployment.environment_id = body.environment_id
+    version_changed = False
     if body.workflow_version_id is not None:
         workflow = await session.scalar(
             select(Workflow)
@@ -245,26 +246,29 @@ async def update_deployment(
         version = await _version_for_deployment(
             session, workflow, body.workflow_version_id
         )
+        version_changed = deployment.workflow_version_id != version.id
         deployment.workflow_version_id = version.id
+    becoming_active = bool(body.active) and not deployment.active
     if body.active is not None:
-        # When flipping from inactive → active we must re-evaluate the
-        # unsafe-node policy against the version that *will* run after the
-        # commit (post any workflow_version_id update above).
-        if body.active and not deployment.active:
-            workflow = await session.scalar(
-                select(Workflow)
-                .where(Workflow.id == deployment.workflow_id)
-                .options(selectinload(Workflow.versions))
-            )
-            if workflow is None:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
-            version = await _version_for_deployment(
-                session, workflow, deployment.workflow_version_id
-            )
-            _enforce_unsafe_node_policy(
-                version, approved=body.approve_unsafe_nodes
-            )
         deployment.active = body.active
+
+    # DEP-1: re-evaluate the unsafe-node policy whenever an ACTIVE deployment's
+    # effective version could start running risky nodes — i.e. on
+    # inactive → active OR when the running version is repointed while already
+    # active. Without the latter, an operator could bypass the activation gate by
+    # changing an active deployment's ``workflow_version_id`` to a risky version.
+    if deployment.active and (becoming_active or version_changed):
+        workflow = await session.scalar(
+            select(Workflow)
+            .where(Workflow.id == deployment.workflow_id)
+            .options(selectinload(Workflow.versions))
+        )
+        if workflow is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
+        version = await _version_for_deployment(
+            session, workflow, deployment.workflow_version_id
+        )
+        _enforce_unsafe_node_policy(version, approved=body.approve_unsafe_nodes)
     if body.error_workflow_id is not None:
         if await session.get(Workflow, body.error_workflow_id) is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Error workflow not found")

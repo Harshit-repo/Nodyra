@@ -258,4 +258,103 @@ describe("ChatPanel", () => {
     await waitFor(() => expect(screen.getByText("All done")).toBeTruthy());
     expect(closeSpy).toHaveBeenCalled();
   });
+
+  it("surfaces an approval prompt on run_waiting and resumes after approve", async () => {
+    let handlers:
+      | { onMessage: (d: unknown) => void; onClosed?: () => void }
+      | null = null;
+    vi.spyOn(apiModule, "subscribeToRunEvents").mockImplementation(
+      (_runId, h) => {
+        handlers = h;
+        return { close: vi.fn() };
+      },
+    );
+    vi.spyOn(api, "startChatTurn").mockResolvedValue({
+      run_id: "rL",
+      session_id: "sL",
+    });
+    vi.spyOn(api, "chatTurnResult").mockResolvedValue({
+      run_id: "rL",
+      reply: "All done",
+      session_id: "sL",
+      status: "success",
+    });
+    const approval = {
+      id: "ap1",
+      run_id: "rL",
+      approval_key: "agent|0|c1|send_email",
+      status: "pending",
+      node_id: "agent",
+      agent_node_id: "agent",
+      step: 0,
+      max_steps: 3,
+      tool_call_id: "c1",
+      tool_name: "send_email",
+      arguments: { to: "ada@example.com" },
+      message: "Approval needed",
+      requested_at: "2025-01-01T00:00:00Z",
+      resolved_at: null as string | null,
+      resolved_by: null as string | null,
+      reason: "",
+    };
+    // The fetched approval flips to "approved" once the operator decides, so a
+    // post-decision refresh clears the inline buttons.
+    let current = { ...approval };
+    vi.spyOn(api, "runApprovals").mockImplementation(async () => [current]);
+    const decideSpy = vi
+      .spyOn(api, "decideRunApproval")
+      .mockImplementation(async () => {
+        current = { ...approval, status: "approved" };
+        return current;
+      });
+
+    render(
+      <ChatPanel
+        workflowId="wf1"
+        title="Chat"
+        placeholder="Type…"
+        initialMessage=""
+        onRun={() => {}}
+        onClose={() => {}}
+        live
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Type…"), {
+      target: { value: "send the email" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    await waitFor(() => expect(handlers).not.toBeNull());
+
+    // The agent pauses on a side-effecting tool and the run signals a
+    // (non-terminal) waiting state.
+    act(() => {
+      handlers!.onMessage({
+        type: "agent_tool_approval_required",
+        tool_call_id: "c1",
+        tool_name: "send_email",
+        step: 0,
+        arguments: { to: "ada@example.com" },
+      });
+    });
+    act(() => {
+      handlers!.onMessage({ type: "run_waiting", status: "waiting" });
+    });
+
+    // Approve/Reject buttons appear; the turn is NOT finalized (no reply yet).
+    const approveBtn = await screen.findByRole("button", { name: /approve/i });
+    expect(screen.getByRole("button", { name: /reject/i })).toBeTruthy();
+    expect(screen.queryByText("All done")).toBeNull();
+
+    fireEvent.click(approveBtn);
+    await waitFor(() =>
+      expect(decideSpy).toHaveBeenCalledWith("rL", "ap1", "approve"),
+    );
+
+    // The resumed run completes on the SAME socket and finalizes the turn.
+    act(() => {
+      handlers!.onMessage({ type: "run_finished", status: "success" });
+    });
+    await waitFor(() => expect(screen.getByText("All done")).toBeTruthy());
+  });
 });

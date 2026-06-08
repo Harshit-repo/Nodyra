@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -42,6 +44,7 @@ from app.services.oauth import (
 from app.services.redaction import invalidate_secret_cache
 
 router = APIRouter(prefix="/credentials", tags=["credentials"])
+logger = logging.getLogger(__name__)
 
 SCOPES = {"global", "environment", "workflow", "runner_pool"}
 
@@ -436,14 +439,32 @@ async def list_credential_test_handlers() -> list[str]:
     return available_test_services()
 
 
+_LIST_CREDENTIALS_HARD_CAP = 500
+
+
 @router.get(
     "",
     response_model=list[CredentialInfo],
     dependencies=[Depends(require_permission("credential:read"))],
 )
 async def list_credentials(session: AsyncSession = Depends(get_session)):
-    result = await session.scalars(select(Credential).order_by(Credential.name))
-    return [_info(c) for c in result.all()]
+    result = await session.scalars(
+        select(Credential)
+        .order_by(Credential.name)
+        .limit(_LIST_CREDENTIALS_HARD_CAP + 1)
+    )
+    rows = result.all()
+    if len(rows) > _LIST_CREDENTIALS_HARD_CAP:
+        logger.warning(
+            "list_credentials: result truncated to %d rows; "
+            "add pagination to serve all credentials",
+            _LIST_CREDENTIALS_HARD_CAP,
+        )
+        rows = rows[:_LIST_CREDENTIALS_HARD_CAP]
+    # _info decrypts each credential (synchronous Fernet); with up to 500 rows
+    # that's enough CPU to stall the event loop. The ORM column attributes are
+    # already loaded, so building the response off-loop is safe (no lazy DB I/O).
+    return await asyncio.to_thread(lambda: [_info(c) for c in rows])
 
 
 @router.get(

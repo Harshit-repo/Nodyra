@@ -785,6 +785,11 @@ class AiWorkflowDraftRequest(BaseModel):
     failed_node_id: str | None = None
     error: str | None = Field(default=None, max_length=8000)
     fix_strategy: str = Field(default="minimal", pattern="^(minimal|replacement)$")
+    # Optional planner overrides used by the app-wide assistant so the operator
+    # can pick which BYOK provider/model builds the draft. ``None`` keeps the
+    # server's existing env/credential auto-resolution.
+    planner_provider: str | None = Field(default=None, max_length=40)
+    planner_model: str | None = Field(default=None, max_length=120)
 
 
 class AiWorkflowDraftResponse(BaseModel):

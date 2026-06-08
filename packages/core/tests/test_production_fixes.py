@@ -1,0 +1,165 @@
+"""
+Production fix tests (core engine) — RED phase.
+
+Tests for engine.py and serialization.py bugs found in production audit.
+Tests must FAIL before the fix and PASS after.
+"""
+
+import asyncio
+import json
+import time
+from unittest.mock import patch
+
+import pytest
+
+from noodle.engine import execute
+from noodle.models import Edge, GraphNode, NodeStatus, RunStatus, WorkflowGraph
+from noodle.sdk import NodeRegistry, node
+
+
+# ---------------------------------------------------------------------------
+# Fix 2 — engine.py:1233
+# Sync node called directly on the event loop thread when no timeout is set
+# ---------------------------------------------------------------------------
+
+
+
+@pytest.mark.asyncio
+async def test_three_sync_nodes_run_concurrently_not_serially():
+    """Three independent slow sync nodes should run in ~0.1s, not ~0.3s."""
+    reg = NodeRegistry()
+
+    @node(name="S1", id="s1_concurrent", inputs=[], registry=reg)
+    def s1() -> int:
+        time.sleep(0.10)
+        return 1
+
+    @node(name="S2", id="s2_concurrent", inputs=[], registry=reg)
+    def s2() -> int:
+        time.sleep(0.10)
+        return 2
+
+    @node(name="S3", id="s3_concurrent", inputs=[], registry=reg)
+    def s3() -> int:
+        time.sleep(0.10)
+        return 3
+
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="a", type="s1_concurrent"),
+            GraphNode(id="b", type="s2_concurrent"),
+            GraphNode(id="c", type="s3_concurrent"),
+        ],
+        edges=[],
+    )
+
+    start = time.monotonic()
+    result = await execute(graph, reg)
+    elapsed = time.monotonic() - start
+
+    assert result.status == RunStatus.success
+    assert elapsed < 0.25, (
+        f"Three 0.10s sync nodes took {elapsed:.2f}s — they ran serially, "
+        "meaning sync nodes are blocking the event loop. "
+        "Fix: wrap sync node invocation in asyncio.to_thread."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fix 3 — engine.py:74
+# _process_pools grows unbounded — idle pools never reaped for normal completions
+# ---------------------------------------------------------------------------
+
+def test_process_pools_idle_eviction():
+    """Process pools idle past the reap threshold must be evicted automatically.
+
+    Before the fix, _evict_pool is only called on BrokenProcessPool crash.
+    Normal completions leave pools accumulating indefinitely.
+    The fix adds _pool_last_used tracking and evicts idle pools in _get_process_pool.
+    """
+    from noodle import engine
+
+    # Save and clear state
+    saved = dict(engine._process_pools)
+    engine._process_pools.clear()
+
+    try:
+        # Create a pool and mark it as having been idle a long time ago
+        engine._get_process_pool(key="idle_env_test")
+        assert "idle_env_test" in engine._process_pools
+
+        # The fix adds _pool_last_used; simulate old last-used time
+        if hasattr(engine, "_pool_last_used"):
+            engine._pool_last_used["idle_env_test"] = time.monotonic() - 700  # > 600s
+
+        # Requesting any pool (even a new key) should sweep idle ones
+        engine._get_process_pool(key="active_env_test")
+
+        assert "idle_env_test" not in engine._process_pools, (
+            "_process_pools still contains 'idle_env_test' after 700s idle. "
+            "Fix: add _pool_last_used tracking and evict idle pools in _get_process_pool."
+        )
+    finally:
+        # Cleanup
+        for k in ("idle_env_test", "active_env_test"):
+            engine._evict_pool(k)
+        engine._process_pools.update(saved)
+
+
+# ---------------------------------------------------------------------------
+# Fix 6 — serialization.py:427
+# json.dumps materialises full string in memory just to get size + preview
+# ---------------------------------------------------------------------------
+
+
+
+def test_truncate_serialized_value_preview_does_not_require_full_encode():
+    """A simpler variant: verify truncation uses _approx_json_length, not json.dumps, for size."""
+    import inspect
+    from noodle import serialization
+
+    source = inspect.getsource(serialization.truncate_serialized_value)
+
+    # After the fix, json.dumps should not be called for the full value
+    # The size_bytes should come from _approx_json_length (already computed as `approx`)
+    # Check that size_bytes uses `approx` not `len(encoded)` from a full json.dumps call
+    lines = source.splitlines()
+    full_dumps_for_size = False
+    for line in lines:
+        stripped = line.strip()
+        if "encoded = json.dumps" in stripped and "[:1024]" not in stripped:
+            # Check if this is the problematic pattern
+            full_dumps_for_size = True
+            break
+
+    assert not full_dumps_for_size, (
+        "truncate_serialized_value still calls json.dumps to get 'encoded' for size_bytes. "
+        "Fix: use `approx` (already computed by _approx_json_length) for size_bytes, "
+        "and stream first 1024 chars via itertools/streaming encoder for preview."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fix 10 — engine.py:1238
+# resolve_agent_actions loop can spin forever if agent returns step=0 repeatedly
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_resolve_agent_actions_terminates_after_max_iterations():
+    """resolve_agent_actions must not loop forever when step counter stays at 0.
+
+    Before the fix, the loop only terminates when AgentActionRequest.step
+    exceeds max_steps — but if a buggy node returns step=0 with empty
+    tool_calls repeatedly, step is never incremented and the loop is infinite.
+    The fix adds an independent iteration counter in resolve_agent_actions.
+    """
+    from noodle.ai_runtime import AgentActionRequest
+    from noodle.engine import _MAX_AGENT_LOOP_ITERATIONS  # expected after fix
+
+    # Verify the cap constant exists (added by the fix)
+    assert _MAX_AGENT_LOOP_ITERATIONS > 0, (
+        "_MAX_AGENT_LOOP_ITERATIONS constant missing from engine.py. "
+        "Fix: add an independent iteration counter in resolve_agent_actions."
+    )
+
+

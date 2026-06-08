@@ -662,13 +662,31 @@ def duckdb_sql(input: Any = None, sql: str = "SELECT * FROM input") -> dict[str,
     )
     conn = duckdb.connect(":memory:")
     try:
-        conn.execute(f"CREATE VIEW input AS SELECT * FROM read_parquet('{src}')")
-        conn.execute(
-            f"COPY ({query}) TO '{str(out_path).replace(chr(39), chr(39) * 2)}' "
+        # DSQ-2: eagerly materialize the wired dataset into an in-memory TABLE
+        # (not a lazy view), then latch OFF all external access before the
+        # author's SELECT runs. This is the real guard against server-side file
+        # reads via DuckDB table functions (read_csv_auto/parquet_scan/… — a
+        # name blocklist can't enumerate every alias). ``enable_external_access``
+        # is one-way in DuckDB, so once false the query cannot touch the host
+        # filesystem or network. Mirrors the dataset-explorer fix (DSQ-1).
+        conn.execute(f"CREATE TABLE input AS SELECT * FROM read_parquet('{src}')")
+        conn.execute("SET enable_external_access=false")
+        result = conn.execute(query).arrow()
+    finally:
+        conn.close()
+
+    # Write the result out with a fresh connection: external access is needed to
+    # write the output parquet, but the (sandboxed) author query already ran
+    # above against the in-memory table, so this connection never sees it.
+    writer = duckdb.connect(":memory:")
+    try:
+        writer.register("_dsq_result", result)
+        writer.execute(
+            f"COPY _dsq_result TO '{str(out_path).replace(chr(39), chr(39) * 2)}' "
             "(FORMAT PARQUET, COMPRESSION ZSTD)"
         )
     finally:
-        conn.close()
+        writer.close()
     return _finalize_parquet(out_path, out_partial)
 
 

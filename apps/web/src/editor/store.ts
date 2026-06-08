@@ -318,6 +318,32 @@ function buildBodyEdgeIndex(childWorkflows: Record<string, ChildWorkflowState>):
   return index;
 }
 
+// Module-level cache so body indices are rebuilt only when childWorkflows
+// reference changes (not on every node drag). Keyed by the childWorkflows
+// object reference itself — a new reference (from any state update that
+// touches childWorkflows) automatically invalidates both caches.
+let _cachedCwRef: Record<string, ChildWorkflowState> | null = null;
+let _cachedBodyIndex: Record<string, string> = {};
+let _cachedBodyEdgeIndex: Record<string, string> = {};
+
+function getBodyIndex(childWorkflows: Record<string, ChildWorkflowState>): Record<string, string> {
+  if (childWorkflows !== _cachedCwRef) {
+    _cachedCwRef = childWorkflows;
+    _cachedBodyIndex = buildBodyIndex(childWorkflows);
+    _cachedBodyEdgeIndex = buildBodyEdgeIndex(childWorkflows);
+  }
+  return _cachedBodyIndex;
+}
+
+function getBodyEdgeIndex(childWorkflows: Record<string, ChildWorkflowState>): Record<string, string> {
+  if (childWorkflows !== _cachedCwRef) {
+    _cachedCwRef = childWorkflows;
+    _cachedBodyIndex = buildBodyIndex(childWorkflows);
+    _cachedBodyEdgeIndex = buildBodyEdgeIndex(childWorkflows);
+  }
+  return _cachedBodyEdgeIndex;
+}
+
 function nodeChangeId(change: NodeChange<NoodleNode>): string {
   return change.type === "add" ? change.item.id : change.id;
 }
@@ -469,7 +495,90 @@ function disabledAgentDependencySourceIds(
 
 export type NoodleNode = Node<NoodleNodeData, string>;
 
-interface EditorStore {
+// ---------------------------------------------------------------------------
+// Agent live activity (n8n-style sub-node highlighting)
+// ---------------------------------------------------------------------------
+// While an AI Agent node runs it consults its connected model / memory and
+// fires individual tool nodes. The engine streams flat agent_tool_* events over
+// the run socket; we fold those into `agentActive` so the canvas can pulse each
+// sub-node exactly when it is in use, instead of leaving them as a static
+// "running" spinner for the whole turn.
+export type AgentActivityStatus = "running" | "done" | "error";
+
+const AGENT_MANIFEST_IDS = new Set(["ai_agent", "ai_agent_v2"]);
+const AGENT_SUBNODE_HANDLES = ["model", "memory", "tool"];
+
+function collectAgentIds(nodes: NoodleNode[]): Set<string> {
+  return new Set(
+    nodes
+      .filter((n) => AGENT_MANIFEST_IDS.has(n.data.manifest.id))
+      .map((n) => n.id),
+  );
+}
+
+/** A node is an agent "sub-node" when it feeds an agent's model/memory/tool
+ *  port, or is configured as a callable tool. Such nodes are driven by live
+ *  agent events rather than the normal node lifecycle, so they should not show
+ *  the generic upstream "running" spinner for the whole turn. */
+function isAgentSubNode(
+  node: NoodleNode,
+  edges: Edge[],
+  agentIds: Set<string>,
+): boolean {
+  if (node.data.toolMode) return true;
+  return edges.some(
+    (e) =>
+      e.source === node.id &&
+      agentIds.has(e.target) &&
+      AGENT_SUBNODE_HANDLES.includes(e.targetHandle ?? ""),
+  );
+}
+
+function agentProviderNodeIds(
+  edges: Edge[],
+  agentId: string,
+  handles: string[],
+): string[] {
+  const ids: string[] = [];
+  for (const e of edges) {
+    if (e.target === agentId && handles.includes(e.targetHandle ?? "")) {
+      ids.push(e.source);
+    }
+  }
+  return ids;
+}
+
+/** Map a live ``tool_name`` from an agent event back to the canvas node that
+ *  provides it, so we can pulse the right tile. Prefers tools wired to the
+ *  agent's tool port, then any tool-mode node, then a sole connected tool. */
+function resolveAgentToolNodeId(
+  nodes: NoodleNode[],
+  edges: Edge[],
+  agentId: string,
+  toolName: string,
+): string | undefined {
+  const want = toolName.trim().toLowerCase();
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const connected = edges
+    .filter((e) => e.target === agentId && (e.targetHandle ?? "") === "tool")
+    .map((e) => byId.get(e.source))
+    .filter((n): n is NoodleNode => Boolean(n));
+  const derive = (n: NoodleNode) =>
+    String(n.data.toolName || n.data.manifest.id).trim().toLowerCase();
+  for (const n of connected) {
+    if (derive(n) === want) return n.id;
+  }
+  for (const n of connected) {
+    if (String(n.data.manifest.name).trim().toLowerCase() === want) return n.id;
+  }
+  for (const n of nodes) {
+    if (n.data.toolMode && derive(n) === want) return n.id;
+  }
+  if (connected.length === 1) return connected[0].id;
+  return undefined;
+}
+
+export interface EditorStore {
   manifests: NodeManifest[];
   manifestsById: Record<string, NodeManifest>;
   nodes: NoodleNode[];
@@ -483,6 +592,13 @@ interface EditorStore {
   runOutputs: Record<string, unknown>;
   runMeta: Record<string, NodeRunMeta>;
   runError: string | null;
+
+  // Live agent sub-node activity: nodeId -> status. Driven by agent_tool_*
+  // events so connected model / memory / tool tiles light up as they're used.
+  agentActive: Record<string, AgentActivityStatus>;
+  // Maps an in-flight tool_call_id -> the node providing that tool, so a
+  // finish event can release the right tile (ref-counted for parallel calls).
+  agentToolCalls: Record<string, string>;
 
   // Current run-environment context, mirrored from EditorPage so the NDV can
   // warn when a node needs a package the workflow's env doesn't have.
@@ -518,6 +634,7 @@ interface EditorStore {
   cutSelection: () => ClipboardResult;
   pasteSelection: () => ClipboardResult;
   clipboardNodeCount: number;
+  _clipboard: EditorClipboard | null;
   updateParams: (id: string, params: Record<string, unknown>) => void;
   replaceNodeManifest: (id: string, manifest: NodeManifest) => void;
   setSelected: (id: string | null) => void;
@@ -604,7 +721,9 @@ interface EditorClipboard {
   pasteCount: number;
 }
 
-let editorClipboard: EditorClipboard | null = null;
+// editorClipboard is now kept in the store state (_clipboard) so each editor
+// instance has its own clipboard and tabs don't bleed into each other.
+// This declaration is intentionally removed; references below use get()._clipboard.
 
 function randomSlug(): string {
   return Math.random().toString(36).slice(2, 8);
@@ -661,13 +780,13 @@ function selectedNodes(nodes: NoodleNode[], selectedId: string | null): NoodleNo
   return fallback ? [fallback] : [];
 }
 
-function copyNodesToClipboard(nodes: NoodleNode[], edges: Edge[]): ClipboardResult {
-  if (nodes.length === 0) return { nodeCount: 0, edgeCount: 0 };
+function buildClipboard(nodes: NoodleNode[], edges: Edge[]): EditorClipboard | null {
+  if (nodes.length === 0) return null;
   const copiedIds = new Set(nodes.map((node) => node.id));
   const copiedEdges = edges.filter(
     (edge) => copiedIds.has(edge.source) && copiedIds.has(edge.target),
   );
-  editorClipboard = {
+  return {
     nodes: nodes.map((node) => ({
       ...cloneNode(node),
       selected: false,
@@ -678,7 +797,6 @@ function copyNodesToClipboard(nodes: NoodleNode[], edges: Edge[]): ClipboardResu
     })),
     pasteCount: 0,
   };
-  return { nodeCount: nodes.length, edgeCount: copiedEdges.length };
 }
 
 function layoutPositions(
@@ -768,11 +886,15 @@ export const useEditor = create<EditorStore>((set, get) => ({
   runMeta: {},
   runError: null,
 
+  agentActive: {},
+  agentToolCalls: {},
+
   workflowId: null,
   pinned: {},
 
   devMode: false,
   clipboardNodeCount: 0,
+  _clipboard: null,
   childWorkflows: {},
 
   envId: null,
@@ -906,7 +1028,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
   onNodesChange: (changes) => {
     const state = get();
-    const bodyIndex = buildBodyIndex(state.childWorkflows);
+    const bodyIndex = getBodyIndex(state.childWorkflows);
 
     const parentChanges: NodeChange<NoodleNode>[] = [];
     const byGroup: Record<string, NodeChange<NoodleNode>[]> = {};
@@ -945,7 +1067,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
   onEdgesChange: (changes) => {
     const state = get();
-    const bodyEdgeIndex = buildBodyEdgeIndex(state.childWorkflows);
+    const bodyEdgeIndex = getBodyEdgeIndex(state.childWorkflows);
 
     const parentChanges: EdgeChange[] = [];
     const byGroup: Record<string, EdgeChange[]> = {};
@@ -991,7 +1113,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
     const check = validateConnection(allNodes, connection);
     if (!check.ok) return check;
 
-    const bodyIndex = buildBodyIndex(state.childWorkflows);
+    const bodyIndex = getBodyIndex(state.childWorkflows);
     const sourceGroupId = bodyIndex[connection.source!];
     const targetGroupId = bodyIndex[connection.target!];
 
@@ -1419,36 +1541,38 @@ export const useEditor = create<EditorStore>((set, get) => ({
   copySelection: () => {
     const state = get();
     const copiedNodes = selectedNodes(state.nodes, state.selectedId);
-    const result = copyNodesToClipboard(copiedNodes, state.edges);
-    if (result.nodeCount > 0) set({ clipboardNodeCount: result.nodeCount });
-    return result;
+    const clipboard = buildClipboard(copiedNodes, state.edges);
+    if (!clipboard) return { nodeCount: 0, edgeCount: 0 };
+    set({ _clipboard: clipboard, clipboardNodeCount: clipboard.nodes.length });
+    return { nodeCount: clipboard.nodes.length, edgeCount: clipboard.edges.length };
   },
 
   cutSelection: () => {
     const state = get();
     const cutNodes = selectedNodes(state.nodes, state.selectedId);
-    const result = copyNodesToClipboard(cutNodes, state.edges);
-    if (result.nodeCount === 0) return result;
+    const clipboard = buildClipboard(cutNodes, state.edges);
+    if (!clipboard) return { nodeCount: 0, edgeCount: 0 };
     const cutIds = new Set(cutNodes.map((node) => node.id));
     set({
+      _clipboard: clipboard,
       nodes: state.nodes.filter((node) => !cutIds.has(node.id)),
       edges: state.edges.filter((edge) => !cutIds.has(edge.source) && !cutIds.has(edge.target)),
       selectedId: state.selectedId && cutIds.has(state.selectedId) ? null : state.selectedId,
       ndvOpenId: state.ndvOpenId && cutIds.has(state.ndvOpenId) ? null : state.ndvOpenId,
-      clipboardNodeCount: result.nodeCount,
+      clipboardNodeCount: clipboard.nodes.length,
       dirty: true,
       _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
       _future: [],
     });
-    return result;
+    return { nodeCount: clipboard.nodes.length, edgeCount: clipboard.edges.length };
   },
 
   pasteSelection: () => {
-    const clipboard = editorClipboard;
-    if (!clipboard || clipboard.nodes.length === 0 || get().clipboardNodeCount === 0) {
+    const state = get();
+    const clipboard = state._clipboard;
+    if (!clipboard || clipboard.nodes.length === 0 || state.clipboardNodeCount === 0) {
       return { nodeCount: 0, edgeCount: 0 };
     }
-    const state = get();
     clipboard.pasteCount += 1;
     const offset = clipboard.pasteCount * 48;
     const idMap = new Map<string, string>();
@@ -1735,12 +1859,23 @@ export const useEditor = create<EditorStore>((set, get) => ({
           Object.entries(runStatus).filter(([id]) => planned.has(id)),
         )
       : { ...runStatus };
-    for (const id of planned) nextStatus[id] = "running";
+    // Agent sub-nodes (model / memory / tools) are driven by live agent events,
+    // not the normal node lifecycle, so don't pin them to a "running" spinner
+    // for the whole turn — they'll pulse individually as the agent uses them.
+    const agentIds = collectAgentIds(nodes);
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    for (const id of planned) {
+      const node = nodeById.get(id);
+      if (node && isAgentSubNode(node, edges, agentIds)) continue;
+      nextStatus[id] = "running";
+    }
     set({
       runId,
       running: true,
       runStatus: nextStatus,
       runError: null,
+      agentActive: {},
+      agentToolCalls: {},
     });
   },
 
@@ -1752,33 +1887,113 @@ export const useEditor = create<EditorStore>((set, get) => ({
         delete nextOutputs[nid];
         const nextMeta = { ...state.runMeta };
         delete nextMeta[nid];
+        // When an agent node starts, light up its model + memory sub-nodes —
+        // the agent consults them throughout the turn.
+        let agentActive = state.agentActive;
+        const node = state.nodes.find((n) => n.id === nid);
+        if (node && AGENT_MANIFEST_IDS.has(node.data.manifest.id)) {
+          const providers = agentProviderNodeIds(state.edges, nid, [
+            "model",
+            "memory",
+          ]);
+          if (providers.length) {
+            agentActive = { ...agentActive };
+            for (const pid of providers) agentActive[pid] = "running";
+          }
+        }
         return {
           runStatus: { ...state.runStatus, [nid]: "running" },
           runOutputs: nextOutputs,
           runMeta: nextMeta,
+          agentActive,
+        };
+      });
+    } else if (event.type === "agent_tool_started") {
+      const agentId = event.agent_node_id;
+      const toolName = event.tool_name;
+      const callId = event.tool_call_id;
+      if (!agentId || !toolName || !callId) return;
+      set((state) => {
+        const toolNodeId = resolveAgentToolNodeId(
+          state.nodes,
+          state.edges,
+          agentId,
+          toolName,
+        );
+        if (!toolNodeId) return {};
+        return {
+          agentActive: { ...state.agentActive, [toolNodeId]: "running" },
+          agentToolCalls: { ...state.agentToolCalls, [callId]: toolNodeId },
+        };
+      });
+    } else if (event.type === "agent_tool_finished") {
+      const callId = event.tool_call_id;
+      if (!callId) return;
+      set((state) => {
+        const toolNodeId = state.agentToolCalls[callId];
+        if (!toolNodeId) return {};
+        const agentToolCalls = { ...state.agentToolCalls };
+        delete agentToolCalls[callId];
+        // Keep the tile "running" if another in-flight call still uses it.
+        const stillBusy = Object.values(agentToolCalls).includes(toolNodeId);
+        const nextStatus: AgentActivityStatus = stillBusy
+          ? "running"
+          : event.status === "error"
+            ? "error"
+            : "done";
+        return {
+          agentActive: { ...state.agentActive, [toolNodeId]: nextStatus },
+          agentToolCalls,
         };
       });
     } else if (event.type === "node_finished" && event.node_id) {
       const nid = event.node_id;
-      set((state) => ({
-        runStatus: { ...state.runStatus, [nid]: event.status ?? "success" },
-        runOutputs: { ...state.runOutputs, [nid]: event.outputs },
-        runMeta: {
-          ...state.runMeta,
-          [nid]: {
-            logs: event.logs ?? [],
-            error: event.error ?? null,
-            debug: event.debug ?? null,
-            durationMs: event.duration_ms ?? null,
-            startedAt: event.started_at ?? null,
-            finishedAt: event.finished_at ?? null,
+      set((state) => {
+        // When an agent node finishes, release all of its sub-nodes.
+        let agentActive = state.agentActive;
+        let agentToolCalls = state.agentToolCalls;
+        const node = state.nodes.find((n) => n.id === nid);
+        if (node && AGENT_MANIFEST_IDS.has(node.data.manifest.id)) {
+          const subs = new Set(
+            agentProviderNodeIds(
+              state.edges,
+              nid,
+              AGENT_SUBNODE_HANDLES,
+            ),
+          );
+          agentActive = Object.fromEntries(
+            Object.entries(agentActive).filter(([id]) => !subs.has(id)),
+          );
+          agentToolCalls = Object.fromEntries(
+            Object.entries(agentToolCalls).filter(
+              ([, tnid]) => !subs.has(tnid),
+            ),
+          );
+        }
+        return {
+          runStatus: { ...state.runStatus, [nid]: event.status ?? "success" },
+          runOutputs: { ...state.runOutputs, [nid]: event.outputs },
+          runMeta: {
+            ...state.runMeta,
+            [nid]: {
+              logs: event.logs ?? [],
+              error: event.error ?? null,
+              debug: event.debug ?? null,
+              durationMs: event.duration_ms ?? null,
+              startedAt: event.started_at ?? null,
+              finishedAt: event.finished_at ?? null,
+            },
           },
-        },
-      }));
+          agentActive,
+          agentToolCalls,
+        };
+      });
     } else if (event.type === "run_error") {
       set((state) => ({
         running: false,
         runError: event.error ?? "Run failed",
+        agentActive: {},
+        agentToolCalls: {},
         runStatus: Object.fromEntries(
           Object.entries(state.runStatus).map(([id, status]) => [
             id,
@@ -1790,6 +2005,8 @@ export const useEditor = create<EditorStore>((set, get) => ({
       set((state) => ({
         running: false,
         runError: event.error ?? "Run cancelled",
+        agentActive: {},
+        agentToolCalls: {},
         runStatus: Object.fromEntries(
           Object.entries(state.runStatus).map(([id, status]) => [
             id,
@@ -1814,6 +2031,8 @@ export const useEditor = create<EditorStore>((set, get) => ({
             : event.status === "cancelled"
               ? (state.runError ?? "Run cancelled")
               : state.runError,
+        agentActive: {},
+        agentToolCalls: {},
         runStatus: Object.fromEntries(
           Object.entries(state.runStatus).map(([id, status]) => [
             id,
@@ -1832,6 +2051,8 @@ export const useEditor = create<EditorStore>((set, get) => ({
       runOutputs: {},
       runMeta: {},
       runError: null,
+      agentActive: {},
+      agentToolCalls: {},
     }),
 
   setNodeOutput: (nodeId, outputs, status) =>

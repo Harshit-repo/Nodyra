@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     runtime_allow_insecure: bool = False
 
     database_url: str = "postgresql+asyncpg://noodle:noodle@localhost:5432/noodle"
+    # SQLAlchemy async connection pool tuning. Ignored for SQLite (NullPool).
+    # pool_size: steady-state connections kept open; max_overflow adds burst
+    # headroom; pool_recycle prevents stale connections after long idle periods.
+    db_pool_size: int = 5
+    db_pool_max_overflow: int = 10
+    db_pool_recycle_seconds: int = 1800
     redis_url: str = "redis://localhost:6379/0"
     cors_origins: str = "http://localhost:5173"
     envs_dir: str = "./envs"
@@ -222,6 +228,29 @@ class Settings(BaseSettings):
                 "webhook bursts share the API/editor process. Prefer "
                 "webhook_role=ingress (the default) so webhook intake is a "
                 "dedicated, queue-backed tier."
+            )
+        if "*" in self.cors_origin_list:
+            warnings.append(
+                "CORS is configured with a wildcard origin ('*'); any browser "
+                "origin can make credentialed requests. Set cors_origins to the "
+                "explicit list of allowed frontend URLs."
+            )
+        if self.secret_key == "noodle-dev-secret-change-me-in-production":
+            warnings.append(
+                "SECRET_KEY is the default development value; set a strong "
+                "random secret in production to prevent token forgery."
+            )
+        if not self.auth_required:
+            warnings.append(
+                "auth_required=False in production mode means any request is "
+                "accepted without authentication. Set auth_required=True to "
+                "enforce login."
+            )
+        if not self.internal_api_token:
+            warnings.append(
+                "internal_api_token is empty; any caller that can reach the "
+                "/internal/* endpoints has full worker-level access. Set a "
+                "strong shared secret for production deployments."
             )
         return warnings
 

@@ -15,6 +15,7 @@ at ``WEBHOOK_CAPTURE_MAX_ENTRIES`` with oldest-first eviction.
 import json
 import logging
 import time
+import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request
@@ -154,6 +155,7 @@ async def capture_webhook(path: str, request: Request) -> dict:
     using their draft graph (so unpublished credential refs and auth changes
     apply). Workflow ``active`` is ignored on this path; auth IS still
     checked, so the user can validate their Basic/Header/Query setup."""
+    req_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     payload, raw_body = await _payload(request)
     _record_capture(path, _redacted_payload(payload))
     result = await dispatch_webhook(
@@ -161,8 +163,8 @@ async def capture_webhook(path: str, request: Request) -> dict:
         client_ip=request.client.host if request.client else None,
     )
     logger.info(
-        "webhook test path=%s matched=%s runs=%d",
-        path, result.any_match, len(result.run_ids),
+        "webhook test path=%s matched=%s runs=%d req_id=%s",
+        path, result.any_match, len(result.run_ids), req_id,
     )
     if result.reject_status is not None:
         raise HTTPException(
@@ -172,6 +174,7 @@ async def capture_webhook(path: str, request: Request) -> dict:
         "message": "Noodle test webhook received",
         "path": path,
         "runs": result.run_ids,
+        "x_request_id": req_id,
     }
 
 
@@ -197,6 +200,7 @@ async def trigger_webhook(path: str, request: Request) -> dict:
     routes like ``/webhook/customers/42/orders`` reach a webhook node whose
     ``path`` template is ``customers/{id}/orders``.
     """
+    req_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     payload, raw_body = await _payload(request)
     _record_capture(path, _redacted_payload(payload))
     result = await dispatch_webhook(
@@ -204,8 +208,8 @@ async def trigger_webhook(path: str, request: Request) -> dict:
         client_ip=request.client.host if request.client else None,
     )
     logger.info(
-        "webhook prod path=%s matched=%s runs=%d",
-        path, result.any_match, len(result.run_ids),
+        "webhook prod path=%s matched=%s runs=%d req_id=%s",
+        path, result.any_match, len(result.run_ids), req_id,
     )
     if result.reject_status is not None:
         # Path matched at least one workflow, but every candidate was rejected:
@@ -232,4 +236,5 @@ async def trigger_webhook(path: str, request: Request) -> dict:
         "message": message,
         "path": path,
         "runs": result.run_ids,
+        "x_request_id": req_id,
     }

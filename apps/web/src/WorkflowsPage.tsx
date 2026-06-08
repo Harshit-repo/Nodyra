@@ -208,17 +208,24 @@ export function WorkflowsPage() {
   const navigate = useNavigate();
   const { notify } = useToast();
 
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
+
   function load() {
     setError("");
     api
       .listWorkflows()
-      .then(setWorkflows)
-      .catch((err) => setError(String(err)));
+      .then((wfs) => { if (isMountedRef.current) setWorkflows(wfs); })
+      .catch((err) => { if (isMountedRef.current) setError(String(err)); });
     void Promise.allSettled([
       api.listDeployments(),
       api.listCredentials(),
       api.listEnvironments(),
     ]).then(([deploymentResult, credentialResult, environmentResult]) => {
+      if (!isMountedRef.current) return;
       if (deploymentResult.status === "fulfilled") {
         setDeployments(deploymentResult.value);
       }
@@ -243,6 +250,31 @@ export function WorkflowsPage() {
   }
 
   useEffect(load, []);
+
+  // Poll while any workflow's most recent run is still in-flight so the
+  // "Running runs" counter and per-card badges stay fresh without a manual
+  // page refresh.
+  const hasRunning = useMemo(
+    () => workflows?.some((wf) => wf.last_run_status === "running") ?? false,
+    [workflows],
+  );
+  useEffect(() => {
+    if (!hasRunning) return;
+    let consecutiveErrors = 0;
+    const timer = window.setInterval(() => {
+      api
+        .listWorkflows()
+        .then((wfs) => {
+          consecutiveErrors = 0;
+          if (isMountedRef.current) setWorkflows(wfs);
+        })
+        .catch(() => {
+          consecutiveErrors += 1;
+          if (consecutiveErrors >= 3) window.clearInterval(timer);
+        });
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [hasRunning]);
 
   async function remove(id: string) {
     setDeleteBusy(true);
@@ -441,6 +473,7 @@ export function WorkflowsPage() {
           <div className="home-search-row">
             <input
               className="field-input"
+              aria-label="Search workflows"
               placeholder="Search workflows..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -538,7 +571,16 @@ export function WorkflowsPage() {
                 <article
                   key={wf.id}
                   className={`wf-card${viewMode === "list" ? " wf-card--row" : ""}`}
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`Open workflow: ${wf.name}`}
                   onClick={() => navigate(`/workflows/${wf.id}`)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      navigate(`/workflows/${wf.id}`);
+                    }
+                  }}
                 >
                   <div className="wf-card-top">
                     <span className={`wf-status ${wf.active ? "on" : "off"}`}>

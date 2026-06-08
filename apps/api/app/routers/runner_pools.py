@@ -267,14 +267,17 @@ async def create_registration_token(
     body: RegistrationTokenRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> RegistrationTokenResponse:
-    """Generate a one-time registration token for a new agent runner.
+    """Generate a registration token for a new agent runner.
 
     The optional body lets the operator capture machine details (name, max
     concurrent runs, free-form capability labels) up-front so the placeholder
     row is already populated when the agent connects.
 
-    The agent uses this token to connect to /ws/runners/{runner_id} and
-    authenticate. On first connect, the API hashes and stores the token.
+    The agent uses this token to connect to /ws/runners/{runner_id} and to
+    upload artifacts. The token is a *reusable* runner credential valid for its
+    TTL (24h) — not single-use — because an SSH-onboarded agent reuses the same
+    token across restarts. It is bound to one runner (``sub`` = runner id) and is
+    revocable: deleting the runner row invalidates the token everywhere (RP-1).
     """
     pool = await session.get(RunnerPool, pool_id)
     if pool is None:
@@ -452,10 +455,33 @@ async def upload_artifact(
     if payload is None or payload.get("kind") != "runner_registration":
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid runner token")
 
+    # RP-1: deleting a runner row revokes its registration token everywhere. The
+    # WebSocket path already rejects unknown runners; mirror that here so a
+    # leaked/rotated token can be revoked immediately (by deleting the runner)
+    # instead of staying valid until its 24h expiry.
+    runner = await session.get(Runner, payload.get("sub"))
+    if runner is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Runner has been revoked")
+
     try:
         path = _artifact_path(storage_key)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    # RP-2: bind the upload to the run's assigned runner. Once a run has been
+    # dispatched to a specific agent (remote_dispatch sets ``run.runner_id``),
+    # only that runner's token may write its artifacts — a different connected
+    # runner with a valid registration token must not be able to inject
+    # artifacts into someone else's run. Runs not yet assigned have
+    # ``runner_id is None`` (assignment happens before execution, so artifacts
+    # always arrive after) and are not bound here.
+    run = await session.get(Run, run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
+    if run.runner_id is not None and run.runner_id != payload.get("sub"):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Runner is not assigned to this run"
+        )
 
     body = await data.read()
     path.parent.mkdir(parents=True, exist_ok=True)

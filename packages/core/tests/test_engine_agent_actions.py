@@ -457,6 +457,68 @@ async def test_agent_pauses_and_resumes_after_tool_approval() -> None:
     assert tool.calls == [{"text": "write"}]
 
 
+async def test_agent_resumes_with_rejected_tool() -> None:
+    reg = NodeRegistry()
+    tool = EchoTool(side_effecting=True)
+
+    @node(
+        name="Tool",
+        id="tool",
+        inputs=[],
+        outputs=["tool"],
+        output_kinds={"tool": "ai_tool"},
+        registry=reg,
+    )
+    def tool_node() -> ToolAdapter:
+        return tool
+
+    @node(
+        name="Agent",
+        id="agent",
+        inputs=["tool"],
+        input_kinds={"tool": "ai_tool"},
+        registry=reg,
+    )
+    def agent(tool: ToolAdapter | None = None, **runtime: Any) -> Any:  # noqa: ARG001
+        resume = runtime.get("agent_resume")
+        if isinstance(resume, AgentResumeInput):
+            return resume.tool_results[0].model_dump()
+        return AgentActionRequest(
+            tool_calls=[
+                ToolCall(id="call_1", name="echo", arguments={"text": "write"})
+            ],
+            messages_so_far=[AIMessage.user("go")],
+            step=0,
+            max_steps=3,
+        )
+
+    graph = WorkflowGraph(
+        nodes=[GraphNode(id="t", type="tool"), GraphNode(id="a", type="agent")],
+        edges=[
+            Edge(source="t", source_output="tool", target="a", target_input="tool")
+        ],
+    )
+
+    waiting = await execute(graph, reg, pause_on_approval=True)
+    state = waiting.nodes["a"].debug["agent_approval_state"]
+    request = AgentActionRequest.model_validate(state["request"])
+    request.rejected_tool_call_ids = ["call_1"]
+
+    resumed = await execute(
+        graph,
+        reg,
+        pause_on_approval=True,
+        agent_action_resume={"a": request},
+    )
+    output = resumed.nodes["a"].outputs["main"]
+    # A denied call resolves the run (no longer waiting) and feeds an error
+    # tool result back to the agent without invoking the side-effecting tool.
+    assert resumed.status == RunStatus.success
+    assert output["is_error"] is True
+    assert "denied by the operator" in output["content"]
+    assert tool.calls == []
+
+
 async def test_agent_tool_dispatch_propagates_cancellation() -> None:
     reg = NodeRegistry()
     tool = SlowTool()

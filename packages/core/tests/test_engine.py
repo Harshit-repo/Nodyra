@@ -541,3 +541,32 @@ async def test_branch_order_depends_on_insertion_not_position() -> None:
     # Insertion order wins; lexical id sort would have placed "a_second" before "z_first".
     assert order_a == ["src", "z_first", "a_second"]
     assert order_a == order_b
+
+
+# ---------------------------------------------------------------------------
+# Per-key process pool isolation
+# ---------------------------------------------------------------------------
+
+
+def test_process_pool_returns_same_pool_for_same_key() -> None:
+    """The same key always returns the same pool object (reuse)."""
+    import noodle.engine as _eng
+    pool_a1 = _eng._get_process_pool(key="env-alpha")
+    pool_a2 = _eng._get_process_pool(key="env-alpha")
+    assert pool_a1 is pool_a2
+
+
+def test_process_pool_returns_different_pools_for_different_keys() -> None:
+    """Different keys get different pool objects (isolation)."""
+    import noodle.engine as _eng
+    pool_a = _eng._get_process_pool(key="env-x")
+    pool_b = _eng._get_process_pool(key="env-y")
+    assert pool_a is not pool_b
+
+
+def test_process_pool_none_key_is_its_own_pool() -> None:
+    """key=None (default/no env) has its own pool, distinct from named envs."""
+    import noodle.engine as _eng
+    pool_none = _eng._get_process_pool(key=None)
+    pool_named = _eng._get_process_pool(key="env-z")
+    assert pool_none is not pool_named

@@ -30,6 +30,13 @@ UNCONDITIONAL_UNSAFE: dict[str, str] = {
     "code": "code",
     "execute_command": "execute_command",
     "ssh_execute": "ssh",
+    # DSQ-2: these run author-supplied SQL / Python on the runner host. DuckDB
+    # SQL can read arbitrary server files (``read_csv_auto('/etc/passwd')``) and
+    # Polars code is arbitrary Python — same class as a Code node, so they go
+    # under the same deploy-time policy gate. (duckdb_sql also has a runtime
+    # ``enable_external_access=false`` latch as defence-in-depth.)
+    "duckdb_sql": "code",
+    "polars_transform": "code",
 }
 
 # Node type ids whose params get conditionally inspected.

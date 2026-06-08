@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
@@ -9,9 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
+from sqlalchemy.exc import IntegrityError
+
 from app.config import settings
 from app.db import SessionLocal, engine
-from app.models import Environment, Run
+from app.models import Environment, Run, RunQueueEntry
 from app.redis_client import redis_client
 from app.routers import (
     artifacts,
@@ -54,12 +57,21 @@ from app.services.triggers import scheduler_loop
 
 async def _ensure_global_environment() -> None:
     """Make sure exactly one global environment exists."""
+    logger = logging.getLogger("noodle")
     try:
         async with SessionLocal() as session:
-            result = await session.scalars(
-                select(Environment).where(Environment.is_global.is_(True))
-            )
-            if result.first() is None:
+            existing = (
+                await session.scalars(
+                    select(Environment).where(Environment.is_global.is_(True))
+                )
+            ).all()
+            if len(existing) > 1:
+                logger.warning(
+                    "_ensure_global_environment: found %d global environments; "
+                    "expected exactly one. Multi-replica startup race likely.",
+                    len(existing),
+                )
+            if not existing:
                 session.add(
                     Environment(
                         name="Global",
@@ -68,26 +80,84 @@ async def _ensure_global_environment() -> None:
                         status="pending",
                     )
                 )
-                await session.commit()
-    except Exception:  # noqa: BLE001 - DB may not be migrated yet; not fatal
-        pass
+                try:
+                    await session.commit()
+                except IntegrityError:
+                    pass  # Concurrent replica inserted first — benign
+    except Exception:
+        logger.debug("_ensure_global_environment failed; DB may not be migrated yet", exc_info=True)
 
 
 async def _mark_interrupted_runs() -> None:
-    """Clear run records that were left running by a previous API process."""
+    """Clear run records that were left running by a previous API process.
+
+    Also cancels the corresponding RunQueueEntry rows so the dispatch loop
+    does not attempt to re-lease entries whose runs are already gone.
+    Covers both ``running`` (actively executing) and ``waiting`` (paused for
+    operator approval) — neither can be resumed after a process restart.
+    """
+    logger = logging.getLogger("noodle")
     try:
         async with SessionLocal() as session:
-            result = await session.scalars(select(Run).where(Run.status == "running"))
+            result = await session.scalars(
+                select(Run).where(Run.status.in_(("running", "waiting")))
+            )
             runs = result.all()
             if not runs:
                 return
+            run_ids = [r.id for r in runs]
             now = datetime.now(UTC)
             for run in runs:
                 run.status = "cancelled"
                 run.finished_at = now
+
+            # Cancel matching queue entries so they are not re-dispatched.
+            queue_entries = (
+                await session.scalars(
+                    select(RunQueueEntry).where(RunQueueEntry.run_id.in_(run_ids))
+                )
+            ).all()
+            for entry in queue_entries:
+                entry.status = "cancelled"
+                entry.leased_by = None
+                entry.lease_expires_at = None
+
             await session.commit()
+            logger.warning(
+                "startup: cancelled %d interrupted run(s): %s",
+                len(runs),
+                run_ids,
+            )
+
+        # Also clean up any run_queue rows stuck as "running" whose
+        # corresponding run is already in a terminal state.  This can
+        # happen when a previous restart cancelled the Run record but
+        # crashed before updating the queue entry.
+        async with SessionLocal() as session:
+            orphaned = (
+                await session.scalars(
+                    select(RunQueueEntry)
+                    .join(Run, RunQueueEntry.run_id == Run.id)
+                    .where(
+                        RunQueueEntry.status == "running",
+                        Run.status.in_(("cancelled", "error", "success")),
+                    )
+                )
+            ).all()
+            if orphaned:
+                for entry in orphaned:
+                    entry.status = "cancelled"
+                    entry.leased_by = None
+                    entry.lease_expires_at = None
+                await session.commit()
+                logger.warning(
+                    "startup: cancelled %d orphaned queue entry(ies) with terminal runs",
+                    len(orphaned),
+                )
     except Exception:  # noqa: BLE001 - DB may not be migrated yet; not fatal
-        pass
+        logging.getLogger("noodle").exception(
+            "startup: _mark_interrupted_runs failed — stale 'running' rows may persist"
+        )
 
 
 def _detect_local_timezone() -> str:
@@ -221,13 +291,74 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Noodle API", version="0.0.1", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# NOTE: CORSMiddleware is added LAST (see bottom of this block) so it is the
+# OUTERMOST middleware. Starlette's add_middleware prepends, so the last call
+# wins the outer position. CORS must be outermost so that short-circuit error
+# responses from auth_gate (401) and _body_size_limit (413) still carry the
+# Access-Control-Allow-Origin header — otherwise the browser reports an opaque
+# CORS failure instead of the real status and the SPA can't react (e.g. redirect
+# to login on session expiry).
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Return a structured JSON error for any unhandled exception instead of a
+    plain-text 500, so clients can always parse the response body."""
+    logger = logging.getLogger("noodle")
+    req_id = request.headers.get("x-request-id", "")
+    logger.exception("Unhandled exception on %s %s (req=%s)", request.method, request.url.path, req_id)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "request_id": req_id},
+    )
+
+
+_MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MiB — generous for graph payloads
+
+
+@app.middleware("http")
+async def _body_size_limit(request: Request, call_next):
+    """Reject requests whose Content-Length header exceeds the cap.
+
+    Large unchecked bodies (e.g. a deeply-nested graph with huge embedded
+    blobs) could exhaust memory before FastAPI parses the JSON. This guard
+    uses the declared Content-Length; a chunked request with no
+    Content-Length header gets through but is still bounded by the OS
+    TCP receive buffer and the client's connection, so it's an acceptable
+    trade-off without adding streaming body inspection overhead.
+    """
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > _MAX_BODY_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": "Request body too large"},
+                )
+        except ValueError:
+            pass
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    """Attach X-Request-ID and Content-Security-Policy to every response."""
+    req_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = req_id
+    # Tight CSP for the API (no HTML rendered here, only JSON).  Relaxed for
+    # the docs UI so Swagger/ReDoc can load their CDN assets.
+    if request.url.path.startswith(("/docs", "/redoc")):
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self' https://cdn.jsdelivr.net https://unpkg.com; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com"
+        )
+    else:
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; frame-ancestors 'none'"
+        )
+    return response
 
 _AUTH_EXEMPT_PREFIXES = (
     "/auth",
@@ -237,6 +368,11 @@ _AUTH_EXEMPT_PREFIXES = (
     "/provider-webhook",
     "/internal",
     "/runner-pools/ws",  # agent runner WS — uses its own token query param
+    # OAuth provider redirect lands here via top-level browser navigation with
+    # no bearer token. The callback is authenticated by the HMAC-signed `state`
+    # param (see app.services.oauth.decode_oauth_state), so it is safe to exempt
+    # — without this, OAuth credential connect is broken whenever auth_required.
+    "/credentials/oauth/callback",
 )
 # Public surface: landing page + OpenAPI schema/docs (so unauthenticated users
 # can discover the API), and a favicon for browsers. /metrics and
@@ -286,6 +422,18 @@ async def auth_gate(request: Request, call_next):
             {"detail": "Invalid or expired token"}, status_code=401
         )
     return await call_next(request)
+
+
+# Registered last → outermost middleware (Starlette prepends each add_middleware).
+# This guarantees CORS headers are present even on error responses produced by
+# the middlewares above. See the note next to FastAPI(...) construction.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origin_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(health.router)
 app.include_router(nodes.router)

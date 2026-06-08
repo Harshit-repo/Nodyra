@@ -10,10 +10,31 @@ Sets up the runtime context (``noodle.context.workflow_caller`` and
 import asyncio
 import logging
 import uuid
+from collections import deque
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+
+# ContextVar that carries the current run_id into every log record emitted
+# while _execute_run is active, without requiring callers to pass it explicitly.
+_log_run_id: ContextVar[str] = ContextVar("noodle_log_run_id", default="")
+
+
+class _RunIdFilter(logging.Filter):
+    """Inject ``run_id`` from the ContextVar into every log record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.run_id = _log_run_id.get("")  # type: ignore[attr-defined]
+        return True
+
+
+def _install_run_id_filter() -> None:
+    root = logging.getLogger("noodle")
+    for f in root.filters:
+        if isinstance(f, _RunIdFilter):
+            return
+    root.addFilter(_RunIdFilter())
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +42,13 @@ from sqlalchemy.orm import selectinload
 
 import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
 from app.config import settings
+
+# Bound on in-memory agent/guardrail events accumulated per run. Each event is
+# capped at max_output_bytes by _cap_output, so worst-case RSS per run is
+# MAX_RUN_EVENTS * max_output_bytes. Default: 2000 * 256KB = ~500MB ceiling,
+# but in practice most events are tiny. A run that hits this cap gets a
+# sentinel warning event appended so the user knows events were dropped.
+_MAX_RUN_EVENTS = 2_000
 from app.db import SessionLocal
 from app.models import (
     CodeModule,
@@ -60,7 +88,7 @@ from app.services.remote_dispatch import (
 from app.services.runtime_pool import pool as runtime_pool
 from noodle.ai_runtime import AgentActionRequest
 from noodle.context import artifact_store, call_chain, workflow_caller
-from noodle.engine import DEFAULT_NODE_TIMEOUTS, execute
+from noodle.engine import DEFAULT_NODE_TIMEOUTS, execute, pool_key as engine_pool_key
 from noodle.models import WorkflowGraph
 from noodle.sdk import (
     register_module_functions,
@@ -310,6 +338,8 @@ async def _load_workflow_graph(
     )
     if workflow is None:
         raise ValueError(f"workflow '{workflow_id}' not found")
+    if not workflow.versions:
+        raise ValueError(f"workflow '{workflow_id}' has no published versions")
     latest = workflow.versions[-1]
     pinned_rows = await session.scalars(
         select(PinnedData).where(PinnedData.workflow_id == workflow_id)
@@ -663,8 +693,10 @@ async def start_run(
                 raise ValueError(format_missing(missing))
 
         if wf_obj is not None and wf_obj.allow_concurrent is False:
-            # Single-flight gate — return 409 (via RuntimeError surfaced by
-            # the router) when another run is already running or queued.
+            # Single-flight gate — lock the workflow row to serialize concurrent
+            # start_run calls; prevents two requests both seeing no active run
+            # and both proceeding (TOCTOU). with_for_update is a no-op on SQLite.
+            await session.get(Workflow, workflow_id, with_for_update=True)
             existing = await session.scalar(
                 select(Run.id)
                 .where(Run.workflow_id == workflow_id)
@@ -768,7 +800,7 @@ async def resume_waiting_run_from_approval(run_id: str, approval_id: str) -> boo
         if (
             approval is None
             or run is None
-            or approval.status != "approved"
+            or approval.status not in {"approved", "rejected"}
             or run.status != "waiting"
             or not isinstance(approval.resume_state, dict)
         ):
@@ -785,9 +817,14 @@ async def resume_waiting_run_from_approval(run_id: str, approval_id: str) -> boo
             return False
 
         request = AgentActionRequest.model_validate(request_state)
-        approved_ids = set(request.approved_tool_call_ids or [])
-        approved_ids.add(approval.tool_call_id)
-        request.approved_tool_call_ids = sorted(approved_ids)
+        if approval.status == "approved":
+            approved_ids = set(request.approved_tool_call_ids or [])
+            approved_ids.add(approval.tool_call_id)
+            request.approved_tool_call_ids = sorted(approved_ids)
+        else:
+            rejected_ids = set(request.rejected_tool_call_ids or [])
+            rejected_ids.add(approval.tool_call_id)
+            request.rejected_tool_call_ids = sorted(rejected_ids)
 
         workflow = await session.scalar(
             select(Workflow)
@@ -981,11 +1018,13 @@ async def _execute_run(
     # iteration. node_events stays keyed by node_id (last-wins) for back-compat
     # consumers (webhook response, error handlers, guardrails).
     node_run_records: dict[tuple[str, tuple], dict] = {}
-    run_events: list[dict[str, Any]] = []
+    run_events: deque[dict[str, Any]] = deque()
     run_event_sequence = 0
     artifact_refs: list[dict] = []
     secret_values: list[str] = []
     prefer_draft_token = _prefer_draft_graphs.set(prefer_draft)
+    run_id_token = _log_run_id.set(run_id)
+    _install_run_id_filter()
 
     async def on_event(event: dict) -> None:
         nonlocal run_event_sequence
@@ -1022,23 +1061,25 @@ async def _execute_run(
                         "node_status": clean.get("status"),
                     }
                     run_event_sequence += 1
-                    run_events.append(
-                        {
-                            "sequence": run_event_sequence,
-                            "ts": datetime.now(UTC),
-                            "event": payload,
-                        }
-                    )
+                    if len(run_events) < _MAX_RUN_EVENTS:
+                        run_events.append(
+                            {
+                                "sequence": run_event_sequence,
+                                "ts": datetime.now(UTC),
+                                "event": _cap_output(payload, output_cap),
+                            }
+                        )
                     broker.publish(run_id, payload)
         if clean.get("type") in AGENT_EVENT_TYPES:
             run_event_sequence += 1
-            run_events.append(
-                {
-                    "sequence": run_event_sequence,
-                    "ts": datetime.now(UTC),
-                    "event": clean,
-                }
-            )
+            if len(run_events) < _MAX_RUN_EVENTS:
+                run_events.append(
+                    {
+                        "sequence": run_event_sequence,
+                        "ts": datetime.now(UTC),
+                        "event": _cap_output(clean, output_cap),
+                    }
+                )
 
     broker.publish(run_id, {"type": "run_started", "run_id": run_id})
     status = "success"
@@ -1088,10 +1129,13 @@ async def _execute_run(
         # global + this workflow's env + this workflow. Lives INSIDE the
         # cancellation try block so a cancel during this DB read still
         # routes through the outer except and marks the run cancelled.
+        env_id: str | None = None
+        run_timeout: float | None = None
         try:
             async with SessionLocal() as session:
                 workflow = await session.get(Workflow, workflow_id)
                 env_id = workflow.environment_id if workflow else None
+                run_timeout = workflow.run_timeout_seconds if workflow else None
                 stmt = select(CodeModule).where(
                     or_(
                         CodeModule.scope == "global",
@@ -1118,13 +1162,6 @@ async def _execute_run(
             workflow_modules = []
 
         if settings.use_subprocess_runner:
-            env_id: str | None = None
-            run_timeout: float | None = None
-            async with SessionLocal() as session:
-                workflow = await session.get(Workflow, workflow_id)
-                if workflow is not None:
-                    env_id = workflow.environment_id
-                    run_timeout = workflow.run_timeout_seconds
             chain_token = call_chain.set(frozenset({workflow_id}))
             caller_token = workflow_caller.set(_call_sub_workflow)
             try:
@@ -1175,6 +1212,7 @@ async def _execute_run(
                                     run.finished_at = datetime.now(UTC)
                             await session.commit()
                         _prefer_draft_graphs.reset(prefer_draft_token)
+                        _log_run_id.reset(run_id_token)
                         return
                 else:
                     status = await runtime_pool.dispatch(
@@ -1230,6 +1268,7 @@ async def _execute_run(
                     )
             chain_token = call_chain.set(frozenset({workflow_id}))
             caller_token = workflow_caller.set(_call_sub_workflow)
+            pool_key_token = engine_pool_key.set(env_id)
             artifact_token = artifact_store.set(
                 make_artifact_store(
                     run_id,
@@ -1245,8 +1284,11 @@ async def _execute_run(
                 # reached via ``workflow_caller``/``_call_sub_workflow`` call
                 # ``execute`` directly WITHOUT this slot, so a parent waiting
                 # on a child never deadlocks (mirrors the subprocess split).
+                _eff_timeout = run_timeout if (run_timeout and run_timeout > 0) else (
+                    settings.workflow_run_timeout_seconds or None
+                )
                 async with runtime_pool.global_slot():
-                    result = await execute(
+                    coro = execute(
                         graph,
                         node_registry,
                         cache=deserialize_value(cache),
@@ -1256,9 +1298,15 @@ async def _execute_run(
                         pause_on_approval=True,
                         agent_action_resume=agent_action_resume,
                     )
+                    result = await (
+                        asyncio.wait_for(coro, timeout=_eff_timeout)
+                        if _eff_timeout
+                        else coro
+                    )
                 status = str(result.status)
             finally:
                 artifact_store.reset(artifact_token)
+                engine_pool_key.reset(pool_key_token)
                 workflow_caller.reset(caller_token)
                 call_chain.reset(chain_token)
                 for module_id in loaded_module_ids:
@@ -1274,6 +1322,7 @@ async def _execute_run(
         )
     except Exception as exc:  # noqa: BLE001 - report any execution failure
         status = "error"
+        logger.exception("run_id=%s execution failed: %s", run_id, exc)
         broker.publish(
             run_id,
             redact_value(
@@ -1285,14 +1334,27 @@ async def _execute_run(
             ),
         )
 
-    async with SessionLocal() as session:
-        run = await session.get(Run, run_id)
-        if run is not None:
-            run.status = status
-            run.finished_at = None if status == "waiting" else datetime.now(UTC)
-            webhook_response = _extract_webhook_response(graph_dict, node_events)
-            if webhook_response is not None:
-                run.webhook_response = webhook_response
+    # Publish the terminal event BEFORE the DB session so that a DB failure
+    # (e.g. a connection reset during the persist below) never leaves the
+    # client's WebSocket waiting indefinitely for a run_finished that won't come.
+    if status == "waiting":
+        broker.publish(
+            run_id, {"type": "run_waiting", "run_id": run_id, "status": status}
+        )
+    else:
+        broker.publish(
+            run_id, {"type": "run_finished", "run_id": run_id, "status": status}
+        )
+
+    try:
+        async with SessionLocal() as session:
+            run = await session.get(Run, run_id)
+            if run is not None:
+                run.status = status
+                run.finished_at = None if status == "waiting" else datetime.now(UTC)
+                webhook_response = _extract_webhook_response(graph_dict, node_events)
+                if webhook_response is not None:
+                    run.webhook_response = webhook_response
             for (node_id, _path), event in node_run_records.items():
                 session.add(
                     NodeRun(
@@ -1364,13 +1426,30 @@ async def _execute_run(
                 )
             await session.commit()
 
-    await persist_artifact_refs(run_id, artifact_refs)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "run_id=%s DB persist failed; attempting minimal status update", run_id
+        )
+        try:
+            async with SessionLocal() as _s:
+                _r = await _s.get(Run, run_id)
+                if _r is not None and _r.status not in ("success", "error", "cancelled", "waiting"):
+                    _r.status = status
+                    _r.finished_at = datetime.now(UTC)
+                    await _s.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception("run_id=%s minimal status fallback also failed", run_id)
+
+    try:
+        await persist_artifact_refs(run_id, artifact_refs)
+    except Exception:  # noqa: BLE001 - artifact refs are best-effort
+        logger.exception("run_id=%s failed to persist artifact refs", run_id)
 
     if status == "error":
         await _dispatch_error_handlers(run_id, node_events, secret_values)
 
-    broker.publish(run_id, {"type": "run_finished", "run_id": run_id, "status": status})
     _prefer_draft_graphs.reset(prefer_draft_token)
+    _log_run_id.reset(run_id_token)
 
 
 async def _execute_queued_entry(run_id: str) -> None:

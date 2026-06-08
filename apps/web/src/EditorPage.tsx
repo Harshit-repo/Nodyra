@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 
 import { api, type RunStreamHandle, subscribeToRunEvents } from "./api";
 import { AiDraftModal } from "./AiDraftModal";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { Canvas } from "./editor/Canvas";
 import { ChatPanel } from "./editor/ChatPanel";
 import { CommandPalette } from "./editor/CommandPalette";
@@ -16,6 +17,7 @@ import { WorkflowHistory } from "./editor/WorkflowHistory";
 import {
   childToGraph,
   pickEditorRunTrigger,
+  type EditorStore,
   type PinnedOutput,
   type RunOptions,
   useEditor,
@@ -97,10 +99,6 @@ function triggerTypes(graph: WorkflowGraph | null | undefined): string[] {
     .sort();
 }
 
-function chatTriggerNode(graph: WorkflowGraph | null | undefined) {
-  return graph?.nodes?.find((n) => n.type === "chat_trigger") ?? null;
-}
-
 function pinnedPayload(pin: PinnedOutput | undefined): unknown {
   return pin?.payload;
 }
@@ -126,6 +124,17 @@ function buildPublishSummary(
     environmentChanged: (baseEnvironmentId ?? "") !== (currentEnvironmentId ?? ""),
   };
 }
+
+// Stable selectors defined outside the component so their references never
+// change between renders, preventing needless Zustand re-subscriptions.
+const selectHasTrigger = (s: EditorStore) => pickEditorRunTrigger(s.nodes) !== null;
+const selectHasChatTrigger = (s: EditorStore) =>
+  s.nodes.some((n) => n.data.manifest?.id === "chat_trigger");
+const selectChatTriggerParams = (s: EditorStore) => {
+  const node = s.nodes.find((n) => n.data.manifest?.id === "chat_trigger");
+  if (!node) return null;
+  return node.data.params as Record<string, string>;
+};
 
 export function EditorPage() {
   const { id } = useParams<{ id: string }>();
@@ -159,6 +168,7 @@ export function EditorPage() {
   const [publishUpdateDeployments, setPublishUpdateDeployments] = useState(false);
   const [publishSummary, setPublishSummary] = useState<PublishSummary | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [restoreGraph, setRestoreGraph] = useState<WorkflowGraph | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
   const chatOpen = useEditor((s) => s.chatOpen);
@@ -167,6 +177,9 @@ export function EditorPage() {
   const { notify } = useToast();
   const wsRef = useRef<RunStreamHandle | null>(null);
   const webhookTimerRef = useRef<number | null>(null);
+  const runsMenuRef = useRef<HTMLDivElement | null>(null);
+  const aiAbortRef = useRef<AbortController | null>(null);
+  const saveInProgressRef = useRef(false);
 
   const setManifests = useEditor((s) => s.setManifests);
   const setEnvContext = useEditor((s) => s.setEnvContext);
@@ -176,8 +189,8 @@ export function EditorPage() {
   const markClean = useEditor((s) => s.markClean);
   const dirty = useEditor((s) => s.dirty);
   const nodeCount = useEditor((s) => s.nodes.length);
-  const hasTrigger = useEditor((s) => pickEditorRunTrigger(s.nodes) !== null);
-  const hasChatTrigger = useEditor((s) => s.nodes.some((n) => n.data.manifest?.id === "chat_trigger"));
+  const hasTrigger = useEditor(selectHasTrigger);
+  const hasChatTrigger = useEditor(selectHasChatTrigger);
   const selectedId = useEditor((s) => s.selectedId);
   const deleteSelection = useEditor((s) => s.deleteSelection);
   const duplicateNode = useEditor((s) => s.duplicateNode);
@@ -206,6 +219,7 @@ export function EditorPage() {
   const updateParams = useEditor((s) => s.updateParams);
   const manifestsById = useEditor((s) => s.manifestsById);
   const editorNodes = useEditor((s) => s.nodes);
+  const chatTriggerParams = useEditor(selectChatTriggerParams);
   // Map Group nodes that need a child workflow created.
   const mapGroupsNeedingChild = useMemo(
     () =>
@@ -410,6 +424,8 @@ export function EditorPage() {
     options: { notifySuccess?: boolean } = {},
   ): Promise<WorkflowDetail | null> {
     if (!id) return null;
+    if (saveInProgressRef.current) return null;
+    saveInProgressRef.current = true;
     const notifySuccess = options.notifySuccess ?? true;
     setSaving(true);
     setMessage("");
@@ -448,6 +464,7 @@ export function EditorPage() {
       return null;
     } finally {
       setSaving(false);
+      saveInProgressRef.current = false;
     }
   }
 
@@ -488,6 +505,10 @@ export function EditorPage() {
 
   async function previewAiDraft(): Promise<void> {
     if (!id || aiBusy || !aiPrompt.trim()) return;
+    aiAbortRef.current?.abort();
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
+    const timeoutId = window.setTimeout(() => controller.abort(), 60_000);
     setAiBusy(true);
     setMessage("");
     try {
@@ -500,14 +521,21 @@ export function EditorPage() {
         failed_node_id: aiMode === "fix" ? aiFailedNodeId : undefined,
         error: aiMode === "fix" ? aiFailedError : undefined,
         fix_strategy: aiFixStrategy,
-      });
+      }, controller.signal);
       setAiPreview(draft);
       notify("AI draft preview ready.", "success");
     } catch (err) {
-      setMessage(String(err));
-      notify("Could not build AI draft.", "error");
+      if (controller.signal.aborted) {
+        setMessage("AI draft request timed out. Please try again.");
+        notify("AI draft timed out.", "error");
+      } else {
+        setMessage(String(err));
+        notify("Could not build AI draft.", "error");
+      }
     } finally {
+      window.clearTimeout(timeoutId);
       setAiBusy(false);
+      aiAbortRef.current = null;
     }
   }
 
@@ -926,6 +954,17 @@ export function EditorPage() {
     return () => window.removeEventListener("noodle:open-shortcuts", onOpenShortcuts);
   }, []);
 
+  useEffect(() => {
+    if (!runsOpen) return;
+    function onClickOutside(e: MouseEvent) {
+      if (runsMenuRef.current && !runsMenuRef.current.contains(e.target as Node)) {
+        setRunsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [runsOpen]);
+
   async function openRuns(): Promise<void> {
     if (!id) return;
     if (runsOpen) {
@@ -976,7 +1015,9 @@ export function EditorPage() {
           <input
             className="toolbar-name"
             value={name}
+            aria-label="Workflow name"
             onChange={(e) => setName(e.target.value)}
+            onBlur={() => { if (dirty) void save({ notifySuccess: false }); }}
             spellCheck={false}
           />
           <span className="toolbar-meta">
@@ -1020,14 +1061,13 @@ export function EditorPage() {
             <span className="active-track" />
             <span>{active ? "Active" : "Inactive"}</span>
           </label>
-          <div className="runs-menu">
+          <div className="runs-menu" ref={runsMenuRef}>
             <button className="btn" onClick={() => void openRuns()}>
               Runs ▾
             </button>
             {runsOpen && (
               <div
                 className="runs-dropdown"
-                onMouseLeave={() => setRunsOpen(false)}
               >
                 {runsList.length === 0 && (
                   <p className="runs-empty muted">No runs yet.</p>
@@ -1412,22 +1452,16 @@ export function EditorPage() {
       )}
 
       {chatOpen && workflow ? (
-        (() => {
-          const node = chatTriggerNode(toGraph());
-          const params = (node?.params ?? {}) as Record<string, string>;
-          return (
-            <ChatPanel
-              workflowId={workflow.id}
-              title={params.title ?? "Chat"}
-              placeholder={params.input_placeholder ?? "Type a message…"}
-              initialMessage={params.initial_message ?? ""}
-              onRun={(runId) => connectRunStream(runId)}
-              onClose={closeChat}
-              onViewRun={(runId) => viewRun(runId)}
-              live
-            />
-          );
-        })()
+        <ChatPanel
+          workflowId={workflow.id}
+          title={chatTriggerParams?.title ?? "Chat"}
+          placeholder={chatTriggerParams?.input_placeholder ?? "Type a message…"}
+          initialMessage={chatTriggerParams?.initial_message ?? ""}
+          onRun={(runId) => connectRunStream(runId)}
+          onClose={closeChat}
+          onViewRun={(runId) => viewRun(runId)}
+          live
+        />
       ) : null}
 
       {functionsOpen && id && (
@@ -1454,7 +1488,19 @@ export function EditorPage() {
           workflowId={id}
           onClose={() => setShowHistory(false)}
           onRestore={(graph) => {
-            loadGraph(graph, { dirty: true });
+            setRestoreGraph(graph);
+          }}
+        />
+      )}
+      {restoreGraph && (
+        <ConfirmDialog
+          title="Restore this version?"
+          body="This will replace your current draft. Any unsaved changes will be lost."
+          confirmLabel="Restore"
+          onCancel={() => setRestoreGraph(null)}
+          onConfirm={() => {
+            loadGraph(restoreGraph, { dirty: true });
+            setRestoreGraph(null);
             setShowHistory(false);
           }}
         />

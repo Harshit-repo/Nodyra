@@ -1,6 +1,8 @@
 """Engine-level loop region detection, validation, and execution."""
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 import noodle_nodes  # noqa: F401 - registers loop_start/loop_end/code
@@ -275,6 +277,46 @@ async def test_loop_concurrency_preserves_order():
     )
     result = await execute(g, registry)
     assert result.nodes["e"].outputs["results"] == [0, 1, 2, 3, 4]
+
+
+async def test_loop_fail_cancels_inflight_iterations_eng1():
+    """ENG-1: with concurrency>1 and on_error='fail', a fast-failing row must
+    cancel the still-in-flight iterations instead of leaving them running
+    detached. Orphaned iterations keep executing body nodes (emitting events,
+    burning compute) for a run already marked failed — the REL-2 class of bug.
+    """
+    from noodle.sdk import node
+    from noodle.sdk import registry as global_reg
+
+    started: list = []
+    finished: list = []
+
+    @node(name="ENG1 Slow", id="eng1_slow", registry=global_reg)
+    async def eng1_slow(input=None):
+        started.append(input)
+        if input == "fail":
+            raise ValueError("boom")
+        await asyncio.sleep(0.1)
+        finished.append(input)
+        return input
+
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": ["slowA", "fail", "slowB"]}),
+            _n("s", "loop_start", {"concurrency": 3, "on_error": "fail"}),
+            _n("b", "eng1_slow"),
+            _n("e", "loop_end", {"loop_start_id": "s"}),
+        ],
+        [_e("trig", "s"), _e("s", "b", src_out="item"), _e("b", "e")],
+    )
+    result = await execute(g, registry)
+    assert str(result.nodes["e"].status) == "error"
+    # All three iterations got far enough to start...
+    assert set(started) == {"slowA", "fail", "slowB"}
+    # ...but the two slow ones must have been cancelled before completing. Give
+    # any orphaned (un-cancelled) iterations time to wake from their sleep.
+    await asyncio.sleep(0.3)
+    assert finished == [], f"orphaned loop iterations completed after fail: {finished}"
 
 
 async def test_loop_empty_input_yields_empty_results():

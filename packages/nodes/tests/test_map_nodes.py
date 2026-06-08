@@ -133,13 +133,14 @@ async def test_map_items_missing_caller_raises(store_ctx) -> None:
         await map_items(input=[{}], workflow_id="wf-1")
 
 
-def test_map_items_workflow_id_required(store_ctx) -> None:
-    import asyncio
-
+async def test_map_items_workflow_id_required(store_ctx) -> None:
+    # Was using asyncio.get_event_loop().run_until_complete, which raises
+    # "no current event loop" on 3.12; the suite runs asyncio_mode=auto so an
+    # async test awaits directly (TEST-1).
     from noodle_nodes.builtin import map_items
 
     with pytest.raises(ValueError, match="workflow_id"):
-        asyncio.get_event_loop().run_until_complete(map_items(input=[{}]))
+        await map_items(input=[{}])
 
 
 async def test_map_items_artifact_ref_passes_through(store_ctx) -> None:

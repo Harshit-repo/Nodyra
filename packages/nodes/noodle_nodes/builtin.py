@@ -955,6 +955,56 @@ def discover_code_output_ports(code: str) -> list[str]:
     return (["main"] if has_main else []) + ports
 
 
+# Footgun guard, NOT a security boundary. These blocks raise ImportError to
+# steer users toward Noodle's built-in nodes for process/FFI work and to catch
+# accidental misuse. They do NOT contain a determined caller: `os.system`,
+# `os.popen`, `open`, importable C-extension libs, and getattr-based reach all
+# remain available by design (Code nodes are "arbitrary code on the runner
+# host", see app.services.unsafe_nodes — they are flagged unconditionally unsafe
+# and gated by `unsafe_node_policy`). The real isolation boundaries are:
+#   1. process isolation (PROCESS_ISOLATED_NODE_TYPES → ProcessPoolExecutor /
+#      the per-env runtime subprocess), and
+#   2. the deployment-time `unsafe_node_policy` gate (warn/require_approval/block).
+# Hardening toward an actual sandbox (container/seccomp per run) is tracked in
+# docs/production-readiness-audit.md (SEC-1).
+_CODE_NODE_BLOCKED_IMPORTS: frozenset[str] = frozenset({
+    "subprocess",
+    "pty",
+    "ctypes",
+    "cffi",
+    "multiprocessing",
+})
+
+
+def _make_sandboxed_import(original_import: Any) -> Any:
+    """Return an __import__ replacement that blocks the footgun modules.
+
+    See ``_CODE_NODE_BLOCKED_IMPORTS`` — this is a guard, not a sandbox.
+    """
+    def _safe_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        root = name.split(".")[0]
+        if root in _CODE_NODE_BLOCKED_IMPORTS:
+            raise ImportError(
+                f"Module '{name}' is not available in the code sandbox. "
+                "Use Noodle's built-in nodes for process execution."
+            )
+        return original_import(name, *args, **kwargs)
+    return _safe_import
+
+
+def _build_safe_builtins() -> dict:
+    import builtins as _builtins
+    b = vars(_builtins).copy()
+    b["__import__"] = _make_sandboxed_import(_builtins.__import__)
+    return b
+
+
+# Computed once per worker process — reused across all code node executions
+# in the same ProcessPoolExecutor worker to avoid re-copying ~155 builtins
+# entries on every task.
+_SAFE_BUILTINS: dict = _build_safe_builtins()
+
+
 def _run_code_isolated(input: Any, code: str) -> Any:
     """Top-level picklable worker for ProcessPoolExecutor.
 
@@ -978,7 +1028,7 @@ def _run_code_isolated(input: Any, code: str) -> Any:
     except ValueError as exc:
         raise ValueError(f"Unsafe code: {exc}") from exc
 
-    namespace: dict[str, Any] = {"input": input}
+    namespace: dict[str, Any] = {"input": input, "__builtins__": _SAFE_BUILTINS}
     try:
         exec(compile(tree, "<code_node>", "exec"), namespace)  # noqa: S102
     except Exception as exc:  # noqa: BLE001

@@ -68,7 +68,21 @@ DATASET_PASSTHROUGH_NODE_TYPES: frozenset[str] = frozenset({"code"})
 # upstream — datasets are meant to stay artifact-backed, not materialized whole.
 DATASET_AUTO_EXPAND_CAP: int = 50_000
 
-_process_pool: concurrent.futures.ProcessPoolExecutor | None = None
+# Per-environment-key pool dict. Keyed by an opaque string (env id) so that
+# code nodes from different environments cannot share worker state. None is the
+# default bucket used when no key is set (in-process tests, legacy callers).
+_process_pools: dict[str | None, concurrent.futures.ProcessPoolExecutor] = {}
+# Tracks the last time each pool was actually used so idle pools can be reaped.
+_pool_last_used: dict[str | None, float] = {}
+# Seconds a process pool is allowed to be idle before the next _get_process_pool
+# call evicts it. Mirrors runner_idle_seconds (default 600s) at the engine layer.
+_POOL_IDLE_SECONDS: float = 600.0
+
+# Hard cap on the number of agent-loop iterations that resolve_agent_actions
+# will attempt before raising RuntimeError.  Guards against a buggy node that
+# always returns AgentActionRequest(step=0) with no tool_calls — the existing
+# max_steps check only fires when the node itself increments the step counter.
+_MAX_AGENT_LOOP_ITERATIONS: int = 200
 
 
 class _LengthCountingSink:
@@ -95,12 +109,53 @@ def _approx_encoded_length(value: Any) -> int:
     return sink.length
 
 
-def _get_process_pool(max_workers: int = 4) -> concurrent.futures.ProcessPoolExecutor:
-    global _process_pool
-    if _process_pool is None:
-        _process_pool = concurrent.futures.ProcessPoolExecutor(max_workers=max_workers)
-    return _process_pool
+def _get_process_pool(
+    max_workers: int = 4,
+    *,
+    key: str | None = None,
+) -> concurrent.futures.ProcessPoolExecutor:
+    """Return (or create) the process pool for the given isolation key.
 
+    Each distinct key gets its own pool so worker state (imported modules,
+    patched globals) cannot leak between environments. ``key=None`` is the
+    shared default used by tests and the in-process dev path.
+
+    Idle pools (no activity for ``_POOL_IDLE_SECONDS``) are evicted before
+    returning a pool so the dict does not accumulate indefinitely — one pool
+    per environment-id means O(envs * max_workers) background processes on a
+    busy server, quickly exhausting process/FD limits.
+    """
+    now = time.monotonic()
+    # Sweep idle pools before potentially creating a new one.
+    idle_keys = [
+        k for k, last in _pool_last_used.items()
+        if now - last > _POOL_IDLE_SECONDS and k != key
+    ]
+    for k in idle_keys:
+        _evict_pool(k)
+
+    pool = _process_pools.get(key)
+    if pool is None:
+        pool = concurrent.futures.ProcessPoolExecutor(max_workers=max_workers)
+        _process_pools[key] = pool
+    _pool_last_used[key] = now
+    return pool
+
+
+def _evict_pool(key: str | None) -> None:
+    """Shutdown and remove the pool for ``key`` so the next use gets a fresh one."""
+    pool = _process_pools.pop(key, None)
+    _pool_last_used.pop(key, None)
+    if pool is not None:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+# Callers (runner.py) set this to the workflow's environment id so each
+# environment gets its own ProcessPoolExecutor and worker state cannot
+# bleed across environments. Defaults to None (shared pool, legacy path).
+pool_key: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "noodle_pool_key", default=None
+)
 
 # Per-node-type default timeouts (seconds). ``code`` is intentionally
 # *absent* so heavy/long-running Python isn't capped by an arbitrary default;
@@ -858,11 +913,22 @@ async def _dispatch_agent_action_request(
         tool = tools.get(call.name)
         approval_key = _agent_approval_key(agent_node_id, step, call.name, call.id)
         approved_call_ids = set(request.approved_tool_call_ids or [])
+        rejected_call_ids = set(request.rejected_tool_call_ids or [])
         if tool is None:
             result = ToolResult(
                 tool_call_id=call.id,
                 name=call.name,
                 content=f"Unknown tool: {call.name}",
+                is_error=True,
+            )
+        elif call.id in rejected_call_ids:
+            # An operator denied this side-effecting call. Feed the denial back
+            # to the agent as a tool error so it can recover gracefully (e.g.
+            # apologise or pick another approach) instead of the run hanging.
+            result = ToolResult(
+                tool_call_id=call.id,
+                name=call.name,
+                content=f"Tool {call.name!r} was denied by the operator.",
                 is_error=True,
             )
         elif (
@@ -1162,7 +1228,6 @@ async def _run_one_node(
         }
 
     async def invoke_node(current_kwargs: dict[str, Any]) -> Any:
-        global _process_pool
         if node_def.is_async:
             if timeout is not None:
                 return await asyncio.wait_for(
@@ -1170,23 +1235,20 @@ async def _run_one_node(
                 )
             return await node_def.func(**current_kwargs)
         if graph_node.type in PROCESS_ISOLATED_NODE_TYPES:
-            loop = asyncio.get_event_loop()
+            _key = pool_key.get()
+            loop = asyncio.get_running_loop()  # MINOR: always inside a running loop
             fn_with_kwargs = functools.partial(node_def.func, **current_kwargs)
-            fut = loop.run_in_executor(_get_process_pool(), fn_with_kwargs)
+            fut = loop.run_in_executor(_get_process_pool(key=_key), fn_with_kwargs)
             try:
                 return await asyncio.wait_for(fut, timeout)
             except TimeoutError:
-                if _process_pool is not None:
-                    _process_pool.shutdown(wait=False, cancel_futures=True)
-                    _process_pool = None
+                _evict_pool(_key)
                 raise
             except concurrent.futures.process.BrokenProcessPool as exc:
                 # Child died (segfault / OOM / unpicklable arg). Recycle
                 # the pool so the next attempt gets a fresh one and
                 # re-raise as a normal ValueError so the node fails cleanly.
-                if _process_pool is not None:
-                    _process_pool.shutdown(wait=False, cancel_futures=True)
-                    _process_pool = None
+                _evict_pool(_key)
                 raise ValueError(
                     "code node crashed: subprocess died (possible "
                     "out-of-memory, segfault, or unpicklable value)"
@@ -1195,11 +1257,15 @@ async def _run_one_node(
             return await asyncio.wait_for(
                 asyncio.to_thread(node_def.func, **current_kwargs), timeout
             )
-        return node_def.func(**current_kwargs)
+        # Always run synchronous nodes in a thread — even without a timeout.
+        # Calling node_def.func() directly blocks the event loop for the
+        # node's full duration, stalling all concurrent runs and heartbeats.
+        return await asyncio.to_thread(node_def.func, **current_kwargs)
 
     async def resolve_agent_actions(raw: Any, current_kwargs: dict[str, Any]) -> Any:
         next_raw = raw
         call_kwargs = current_kwargs
+        _loop_iter = 0
         while isinstance(next_raw, AgentActionRequest):
             response = await _dispatch_agent_action_request(
                 next_raw,
@@ -1212,6 +1278,13 @@ async def _run_one_node(
                 node_def.accepts_var_keyword or "agent_resume" in node_def.param_names
             ):
                 return response
+            _loop_iter += 1
+            if _loop_iter >= _MAX_AGENT_LOOP_ITERATIONS:
+                raise RuntimeError(
+                    f"agent node {nid!r} exceeded {_MAX_AGENT_LOOP_ITERATIONS} "
+                    "resolve iterations — the node appears to return an "
+                    "AgentActionRequest without advancing its step counter"
+                )
             call_kwargs = dict(call_kwargs)
             call_kwargs["agent_resume"] = response.as_resume_input()
             next_raw = await invoke_node(call_kwargs)
@@ -1533,6 +1606,7 @@ async def _run_loop(
             if end_in is not None:
                 esrc, eout = end_in
                 acc = (iter_outputs.get(esrc) or {}).get(eout)
+            iter_outputs.clear()
         out = {"results": acc, "errors": []}
         node_outputs[region.end_id] = out
         await finish(NodeRunResult(
@@ -1571,6 +1645,9 @@ async def _run_loop(
                     esrc, eout = end_in
                     value = (iter_outputs.get(esrc) or {}).get(eout)
                 collected.append((i, value))
+                # Release refs to upstream outputs so concurrent iterations
+                # don't hold N copies of large upstream values simultaneously.
+                iter_outputs.clear()
             finally:
                 iteration_path.reset(path_token)
 
@@ -1586,11 +1663,24 @@ async def _run_loop(
                 ))
                 return RunStatus.error
     else:
+        # ENG-1: drive iterations as explicit tasks so an on_error="fail" abort
+        # can CANCEL the still-in-flight ones. A bare ``asyncio.gather`` raises
+        # the first _LoopRowError to us but leaves the other iteration coroutines
+        # running detached — they keep executing body nodes (emitting events,
+        # consuming compute, mutating shared state) for a run we've already marked
+        # failed. Same orphaned-task class as REL-2.
+        tasks = [
+            asyncio.ensure_future(_one_iteration(i, it))
+            for i, it in enumerate(items)
+        ]
         try:
-            await asyncio.gather(
-                *[_one_iteration(i, it) for i, it in enumerate(items)]
-            )
+            await asyncio.gather(*tasks)
         except _LoopRowError as exc:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+            # Drain the cancellations so no iteration runs past this point.
+            await asyncio.gather(*tasks, return_exceptions=True)
             node_outputs[region.end_id] = {"results": [], "errors": errors}
             await finish(NodeRunResult(
                 node_id=region.end_id, status=NodeStatus.error,
@@ -1727,7 +1817,9 @@ async def _run_conditional_loop(
             esrc, eout = end_in
             new_state = (iter_outputs.get(esrc) or {}).get(eout)
         state = new_state
-        states.append(state)
+        if conditional_output == "all_states":
+            states.append(state)
+        iter_outputs.clear()
         i += 1
 
     logs: list[str] = []

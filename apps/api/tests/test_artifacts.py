@@ -448,6 +448,22 @@ async def test_dataset_sql_query_rejects_file_access_functions(client: AsyncClie
     assert "disallowed" in resp.json()["detail"].lower()
 
 
+async def test_dataset_query_blocks_external_file_read(client: AsyncClient) -> None:
+    """DSQ-1: the external-access latch blocks file reads even via table
+
+    functions the keyword regex doesn't enumerate (e.g. parquet_metadata).
+    """
+    _workflow_id, artifact_id = await _make_dataset_run(client)
+    resp = await client.post(
+        f"/artifacts/{artifact_id}/query",
+        json={"sql": "SELECT * FROM parquet_metadata('/etc/hosts')", "limit": 10},
+    )
+    assert resp.status_code == 400, resp.text
+    # Either the regex (defence-in-depth) or the DuckDB permission error from the
+    # latch — both are acceptable; the file must never be read.
+    assert "TOPSECRET" not in resp.text
+
+
 async def test_dataset_sql_query_caps_rows(client: AsyncClient) -> None:
     _workflow_id, artifact_id = await _make_dataset_run(client)
     resp = await client.post(

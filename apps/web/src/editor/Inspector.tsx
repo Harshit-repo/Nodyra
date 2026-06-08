@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { NodeDetails } from "./NodeDetails";
@@ -10,6 +10,18 @@ const MAX_WIDTH = 720;
 export function Inspector() {
   const selectedId = useEditor((s) => s.selectedId);
   const [width, setWidth] = useState(320);
+  const activeListenersRef = useRef<{ move: (ev: MouseEvent) => void; up: () => void } | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (activeListenersRef.current) {
+        window.removeEventListener("mousemove", activeListenersRef.current.move);
+        window.removeEventListener("mouseup", activeListenersRef.current.up);
+        document.body.classList.remove("is-resizing");
+        activeListenersRef.current = null;
+      }
+    };
+  }, []);
 
   function startResize(event: ReactMouseEvent<HTMLDivElement>) {
     event.preventDefault();
@@ -23,7 +35,9 @@ export function Inspector() {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
       document.body.classList.remove("is-resizing");
+      activeListenersRef.current = null;
     };
+    activeListenersRef.current = { move, up };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
     document.body.classList.add("is-resizing");

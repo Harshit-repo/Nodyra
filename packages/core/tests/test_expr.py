@@ -10,6 +10,36 @@ def test_plain_string_is_unchanged() -> None:
     assert evaluate("hello", build_context()) == "hello"
 
 
+def test_expression_validator_blocks_sandbox_escape() -> None:
+    """EXPR-1: dunder/attribute-walk escapes must be rejected, not executed.
+
+    Regression for the bug where overriding NodeVisitor.visit() disabled
+    visit_Name/visit_Attribute dispatch, leaving _BLOCKED_NAMES unenforced.
+    """
+    import ast
+
+    from noodle.expr import _ExprValidator
+
+    escapes = [
+        "x.__class__",
+        "().__class__.__bases__[0].__subclasses__()",
+        "__import__",
+        "[c for c in ().__class__.__bases__[0].__subclasses__()]",
+    ]
+    for expr in escapes:
+        tree = ast.parse(expr, mode="eval")
+        try:
+            _ExprValidator().visit(tree)
+        except ValueError:
+            continue
+        raise AssertionError(f"escape expression was not blocked: {expr!r}")
+
+    # End-to-end: a templated escape must not execute; evaluate() returns the
+    # safe error sentinel string instead of a live Python object.
+    out = evaluate("{{ ().__class__ }}", build_context())
+    assert isinstance(out, str) and "expr error" in out
+
+
 def test_whole_value_expression_returns_raw_type() -> None:
     ctx = build_context(first_input={"count": 7})
     assert evaluate("{{ $json.count }}", ctx) == 7

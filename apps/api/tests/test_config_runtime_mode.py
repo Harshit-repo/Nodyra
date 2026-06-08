@@ -68,6 +68,10 @@ def test_production_fully_configured_has_no_warnings():
         artifact_storage_backend="s3",
         artifact_s3_bucket="prod-noodle-artifacts",
         queue_backend="redis",
+        secret_key="a-strong-random-production-secret-key-xyz",
+        cors_origins="https://app.example.com",
+        auth_required=True,
+        internal_api_token="a-strong-internal-token-xyz",
     )
     assert s.runtime_warnings() == []
 

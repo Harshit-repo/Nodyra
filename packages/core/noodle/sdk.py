@@ -672,6 +672,21 @@ def register_module_functions(
     This executes uploaded Python. Do not call it from API preview or palette
     manifest endpoints; use ``discover_module_function_manifests`` there.
     """
+    import ast as _ast
+
+    from noodle.expr import _CodeValidator
+
+    try:
+        tree = _ast.parse(source, mode="exec")
+    except SyntaxError as exc:
+        raise ValueError(f"SyntaxError in module code: {exc}") from exc
+
+    validator = _CodeValidator()
+    try:
+        validator.visit(tree)
+    except ValueError as exc:
+        raise ValueError(f"Unsafe module code: {exc}") from exc
+
     module_globals: dict[str, Any] = {
         "__name__": f"user_module_{module_id}",
         "__builtins__": __builtins__,

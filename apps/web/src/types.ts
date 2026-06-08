@@ -439,6 +439,12 @@ export interface RunEvent {
   started_at?: number | null;
   finished_at?: number | null;
   duration_ms?: number | null;
+  // Agent tool-call events (flat fields emitted by the engine) used to light up
+  // the agent's connected model / memory / tool sub-nodes live on the canvas.
+  agent_node_id?: string;
+  tool_name?: string;
+  tool_call_id?: string;
+  step?: number;
 }
 
 export interface Credential {
@@ -518,6 +524,8 @@ export interface AiWorkflowDraftRequest {
   failed_node_id?: string | null;
   error?: string | null;
   fix_strategy?: AiFixStrategy;
+  planner_provider?: string | null;
+  planner_model?: string | null;
 }
 
 export interface AiWorkflowDraftResponse {

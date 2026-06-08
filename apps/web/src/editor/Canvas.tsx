@@ -474,10 +474,14 @@ export function Canvas() {
     window.setTimeout(() => void fitView({ padding: 0.24, duration: 220 }), 30);
   }
 
-  const labeledEdges = edges.map((e) =>
-    e.sourceHandle && e.sourceHandle !== "main" && e.sourceHandle !== "output"
-      ? { ...e, label: e.sourceHandle }
-      : e,
+  const labeledEdges = useMemo(
+    () =>
+      edges.map((e) =>
+        e.sourceHandle && e.sourceHandle !== "main" && e.sourceHandle !== "output"
+          ? { ...e, label: e.sourceHandle }
+          : e,
+      ),
+    [edges],
   );
 
   // Auto-frames behind each loop's body. Derived from the graph (never

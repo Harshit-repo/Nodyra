@@ -293,6 +293,7 @@ class AgentActionRequest(BaseModel):
     max_steps: int = 10
     allow_side_effects: bool = False
     approved_tool_call_ids: list[str] = Field(default_factory=list)
+    rejected_tool_call_ids: list[str] = Field(default_factory=list)
 
 
 class AgentResumeInput(BaseModel):

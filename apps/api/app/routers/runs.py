@@ -1,14 +1,17 @@
 import asyncio
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, WebSocket, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import noload, selectinload
 
 from app.config import settings
 from app.db import get_session
+
+logger = logging.getLogger(__name__)
 from app.models import (
     NodeRun,
     PinnedData,
@@ -63,6 +66,11 @@ async def _graph_for_run(
         version = await session.get(WorkflowVersion, run.workflow_version_id)
         if version is not None:
             return version.graph or EMPTY_GRAPH, version.version, version.id
+        logger.warning(
+            "run %s: pinned version %s not found; falling back to draft graph",
+            run.id,
+            run.workflow_version_id,
+        )
     latest = workflow.versions[-1]
     return _draft_graph(workflow), latest.version, None
 
@@ -134,7 +142,7 @@ async def list_runs(
     result = await session.scalars(
         select(Run)
         .where(Run.workflow_id == workflow_id)
-        .options(selectinload(Run.node_runs))
+        .options(noload(Run.node_runs))
         .order_by(Run.started_at.desc())
         .offset(offset)
         .limit(limit)
@@ -650,6 +658,10 @@ async def run_approvals(
 @router.post(
     "/runs/{run_id}/approvals/{approval_id}/decision",
     response_model=RunApprovalInfo,
+    # RUN-1: approving a side-effecting AI tool call (and resuming the run) is at
+    # least as sensitive as cancelling/replaying a run — all of which require
+    # ``workflow:run``. Without this a ``viewer`` could authorize tool execution.
+    dependencies=[Depends(require_permission("workflow:run"))],
 )
 async def decide_run_approval(
     run_id: str,
@@ -709,8 +721,10 @@ async def decide_run_approval(
     await session.commit()
     await session.refresh(approval)
     broker.publish(run_id, event_payload)
-    if body.decision == "approve":
-        await resume_waiting_run_from_approval(run_id, approval.id)
+    # Resume the waiting run for both decisions: approval lets the tool run,
+    # rejection feeds a denial back to the agent so it can wrap up gracefully
+    # instead of leaving the run stuck in "waiting" forever.
+    await resume_waiting_run_from_approval(run_id, approval.id)
     return approval
 
 

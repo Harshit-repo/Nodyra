@@ -8,6 +8,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import time
 
@@ -15,14 +16,27 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from app.config import settings
 
+_logger = logging.getLogger(__name__)
+
 _PBKDF2_ROUNDS = 200_000
 
 
+# Cache the derived Fernet keyed on the secret it was built from. Deriving the
+# key (sha256 + base64) and constructing Fernet on every encrypt/decrypt/wrap
+# is pure waste; the cache keys on the current secret so tests that monkeypatch
+# ``settings.secret_key`` transparently rebuild it.
+_fernet_cache: tuple[str, Fernet] | None = None
+
+
 def _fernet() -> Fernet:
-    key = base64.urlsafe_b64encode(
-        hashlib.sha256(settings.secret_key.encode()).digest()
-    )
-    return Fernet(key)
+    global _fernet_cache
+    secret = settings.secret_key
+    if _fernet_cache is not None and _fernet_cache[0] == secret:
+        return _fernet_cache[1]
+    key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
+    fernet = Fernet(key)
+    _fernet_cache = (secret, fernet)
+    return fernet
 
 
 def encrypt_data(data: dict) -> str:
@@ -99,6 +113,7 @@ def decrypt_credential(encrypted_data: str, encrypted_dek: str | None) -> dict:
         dek = unwrap_dek(encrypted_dek)
         return decrypt_with_dek(encrypted_data, dek)
     except (InvalidToken, ValueError):
+        _logger.warning("decrypt_credential: failed to decrypt credential data (invalid token or key)")
         return {}
 
 
@@ -139,7 +154,11 @@ def _decode_body(body: str) -> dict | None:
 
 def create_token(user_id: str, ttl_seconds: int | None = None) -> str:
     ttl = ttl_seconds if ttl_seconds is not None else settings.auth_token_ttl_seconds
-    payload = {"sub": user_id, "exp": int(time.time()) + ttl}
+    # ``typ`` discriminates a user *session* token from the other signed tokens
+    # minted with the same key (runner registration, OAuth state, k8s run).
+    # ``verify_token`` requires typ=="session" so a purpose token can never be
+    # replayed as a session credential through the auth gate (see TOK-1).
+    payload = {"sub": user_id, "exp": int(time.time()) + ttl, "typ": "session"}
     body = _encode_body(payload)
     return f"{body}.{_sign(body)}"
 
@@ -153,7 +172,7 @@ def create_payload_token(payload: dict, ttl_seconds: int) -> str:
 
 def verify_token(token: str) -> str | None:
     try:
-        body, signature = token.split(".")
+        body, signature = token.split(".", maxsplit=1)
     except ValueError:
         return None
     if not hmac.compare_digest(signature, _sign(body)):
@@ -161,13 +180,19 @@ def verify_token(token: str) -> str | None:
     payload = _decode_body(body)
     if payload is None or payload.get("exp", 0) < time.time():
         return None
+    # Only genuine session tokens authenticate a user. Tokens minted for other
+    # purposes (runner registration, OAuth state, k8s run) carry a different/no
+    # ``typ`` and must be decoded via ``decode_payload_token`` by their own
+    # handlers — never accepted here (TOK-1).
+    if payload.get("typ") != "session":
+        return None
     return payload.get("sub")
 
 
 def decode_payload_token(token: str) -> dict | None:
     """Verify and decode a payload token, returning the full payload dict or None."""
     try:
-        body, signature = token.split(".")
+        body, signature = token.split(".", maxsplit=1)
     except ValueError:
         return None
     if not hmac.compare_digest(signature, _sign(body)):

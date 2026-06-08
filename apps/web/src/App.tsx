@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+
+const AUTH_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000, 30000, 60000];
+const AUTH_MAX_RETRIES = AUTH_RETRY_DELAYS_MS.length;
 import { Route, Routes, useLocation } from "react-router-dom";
 
 import { api, onUnauthorized, setToken, setUser } from "./api";
 import { NO_AUTH_FALLBACK, shouldRetryAuthError } from "./authBootstrap";
 import { BackendLoading } from "./BackendLoading";
 import { ActivityPage } from "./ActivityPage";
+// AppAssistant is temporarily unmounted from the UI (see Routes below) but kept
+// in the codebase for continued iteration.
+// import { AppAssistant } from "./AppAssistant";
 import { ChatPublicPage } from "./ChatPublicPage";
 import { CodeLibraryPage } from "./CodeLibraryPage";
 import { CredentialsPage } from "./CredentialsPage";
@@ -27,21 +33,25 @@ export default function App() {
   // come up; flips back true the moment a bootstrap attempt succeeds.
   const [apiReachable, setApiReachable] = useState(true);
   const retryRef = useRef<number | null>(null);
+  const retryCountRef = useRef(0);
 
-  // Bootstrap the auth state, retrying while the backend is still starting
-  // (network error / 5xx) instead of falling through to render against a dead
-  // API — which previously left the whole app on a black screen.
+  // Bootstrap the auth state, retrying with exponential backoff while the backend
+  // is still starting (network error / 5xx). Gives up after AUTH_MAX_RETRIES to
+  // prevent infinite request storms on persistent server failures.
   const loadAuth = useCallback(() => {
     api
       .authRequired()
       .then((state) => {
+        retryCountRef.current = 0;
         setAuth(state);
         setApiReachable(true);
       })
       .catch((err: unknown) => {
-        if (shouldRetryAuthError(err)) {
+        if (shouldRetryAuthError(err) && retryCountRef.current < AUTH_MAX_RETRIES) {
           setApiReachable(false);
-          retryRef.current = window.setTimeout(loadAuth, 2000);
+          const delay = AUTH_RETRY_DELAYS_MS[retryCountRef.current] ?? 60000;
+          retryCountRef.current += 1;
+          retryRef.current = window.setTimeout(loadAuth, delay);
         } else {
           setAuth(NO_AUTH_FALLBACK);
           setApiReachable(true);
@@ -72,7 +82,7 @@ export default function App() {
     }));
   }
 
-  function signOut(): void {
+  const signOut = useCallback((): void => {
     setToken(null);
     setUser(null);
     setAuth((current) =>
@@ -82,7 +92,7 @@ export default function App() {
       .authRequired()
       .then(setAuth)
       .catch(() => setAuth(NO_AUTH_FALLBACK));
-  }
+  }, []);
 
   useEffect(() => {
     if (auth?.user) setUser(auth.user);
@@ -97,7 +107,7 @@ export default function App() {
         delete target.__noodle_sign_out;
       }
     };
-  });
+  }, [signOut]);
 
   // Chat pages are outside the auth gate: ChatPublicPage manages its own
   // login check based on the workflow's require_login param. (Placed after all
@@ -139,6 +149,10 @@ export default function App() {
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/workflows/:id" element={<EditorPage />} />
       </Routes>
+      {/* App-wide AI assistant (floating dock). Temporarily disabled in the UI
+          while it is iterated on — the component and its backend wiring remain
+          in the codebase (apps/web/src/AppAssistant.tsx). To re-enable, restore:
+          {location.pathname.startsWith("/workflows/") ? null : <AppAssistant />} */}
     </ToastProvider>
   );
 }

@@ -256,6 +256,9 @@ class Credential(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
+    def __repr__(self) -> str:
+        return f"<Credential id={self.id!r} name={self.name!r} type={self.type!r}>"
+
 
 class AuditEvent(Base):
     """A record of a mutating action, for the activity log."""

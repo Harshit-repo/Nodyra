@@ -1,7 +1,9 @@
 import { Key, Lock, Warning } from "@phosphor-icons/react";
 import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
+
+import { ConfirmDialog } from "../ConfirmDialog";
 
 import { categoryColor } from "../categories";
 import { isBrandIconName, NodeIcon } from "../NodeIcon";
@@ -176,12 +178,10 @@ function ErrorCallout({ error }: { error: string }) {
     <div
       className="node-error-callout nodrag nopan"
       tabIndex={0}
+      title={error}
       aria-label={`Node error: ${error}`}
     >
       <span>{preview}</span>
-      <span className="node-error-tooltip" role="tooltip">
-        {error}
-      </span>
     </div>
   );
 }
@@ -232,6 +232,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const runStatus = useEditor((s) => s.runStatus[id]);
   const runMeta = useEditor((s) => s.runMeta[id]);
   const running = useEditor((s) => s.running);
+  const agentActive = useEditor((s) => s.agentActive[id]);
   const isPinned = useEditor((s) => Boolean(s.pinned[id]));
   const envPackages = useEditor((s) => s.envPackages);
   const platform = useServerPlatform();
@@ -274,20 +275,26 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const isTrigger = manifest.category === "Triggers";
   const devMode = useEditor((s) => s.devMode);
   const [sdkModalOpen, setSdkModalOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Read only the structural data needed for BFS — stable identity when
+  // unchanged so the useMemo below doesn't re-run on unrelated state updates.
+  const storeEdges = useEditor((s) => s.edges);
+  const storeNodes = useEditor((s) => s.nodes);
 
   // A non-trigger node may only be run individually when it is wired
-  // (directly or transitively) to a trigger. Otherwise stray action nodes
-  // like Execute Command could fire on their own with no trigger context.
-  const hasTriggerUpstream = useEditor((s) => {
+  // (directly or transitively) to a trigger. BFS is memoized so it only runs
+  // when the graph edges/nodes actually change, not on every store update.
+  const hasTriggerUpstream = useMemo(() => {
     if (isTrigger) return true;
     const bySource = new Map<string, string[]>();
-    for (const e of s.edges) {
+    for (const e of storeEdges) {
       const arr = bySource.get(e.target);
       if (arr) arr.push(e.source);
       else bySource.set(e.target, [e.source]);
     }
     const catById = new Map(
-      s.nodes.map((n) => [n.id, n.data.manifest?.category]),
+      storeNodes.map((n) => [n.id, n.data.manifest?.category]),
     );
     const visited = new Set<string>([id]);
     const queue = [id];
@@ -301,7 +308,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       }
     }
     return false;
-  });
+  }, [isTrigger, storeEdges, storeNodes, id]);
   const canRunStep = isTrigger || hasTriggerUpstream;
 
   const tileClass = ["node-tile"];
@@ -312,6 +319,10 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   if (hasMissingCredential) tileClass.push("missing-credential");
   if (hasInlineSecret) tileClass.push("inline-secret");
   if (runStatus) tileClass.push(`run-${runStatus}`);
+  if (agentActive) {
+    tileClass.push("agent-active", `agent-active-${agentActive}`);
+    if (data.toolMode) tileClass.push("agent-active-tool");
+  }
   const nodeClass = ["node"];
   if (isAgentV2) nodeClass.push("agent-node");
   if (toolbarVisible) nodeClass.push("is-toolbar-visible");
@@ -352,6 +363,15 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
     >
       <button
         type="button"
+        aria-label={
+          !canRunStep
+            ? "Connect a trigger upstream to run this node"
+            : isWebhook
+              ? "Listen for test event"
+              : isTrigger
+                ? "Run this trigger and its downstream nodes"
+                : "Run step using current upstream data"
+        }
         title={
           !canRunStep
             ? "Connect a trigger upstream to run this node"
@@ -372,6 +392,13 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       </button>
       <button
         type="button"
+        aria-label={
+          !canRunStep
+            ? "Connect a trigger upstream to run this node"
+            : isTrigger
+              ? "Run this trigger and its downstream nodes"
+              : "Run step fresh, recomputing upstream nodes"
+        }
         title={
           !canRunStep
             ? "Connect a trigger upstream to run this node"
@@ -390,6 +417,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       </button>
       <button
         type="button"
+        aria-label="Open details"
         title="Open details"
         onClick={(e) => {
           stop(e);
@@ -402,6 +430,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
         <button
           type="button"
           className="toolbar-chat"
+          aria-label="Open chat"
           title="Open chat"
           onClick={(e) => {
             stop(e);
@@ -414,6 +443,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       <button
         type="button"
         className={`toolbar-disable${disabled ? " is-on" : ""}`}
+        aria-label={disabled ? "Enable node" : "Disable node"}
         title={disabled ? "Enable node" : "Disable node"}
         onClick={(e) => {
           stop(e);
@@ -425,10 +455,11 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       <button
         type="button"
         className="toolbar-delete"
+        aria-label="Delete node"
         title="Delete node"
         onClick={(e) => {
           stop(e);
-          deleteNode(id);
+          setConfirmDelete(true);
         }}
       >
         ×
@@ -437,6 +468,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
         <button
           type="button"
           className="toolbar-sdk"
+          aria-label="Python SDK snippet"
           title="Python SDK snippet"
           onClick={(e) => {
             stop(e);
@@ -536,7 +568,9 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
           </div>
           <div className="agent-node-title">{manifest.name}</div>
           <div
-            className={`agent-model-pill${agentModelLabel ? "" : " is-empty"}`}
+            className={`agent-model-pill${agentModelLabel ? "" : " is-empty"}${
+              runStatus === "running" ? " is-active" : ""
+            }`}
             title={agentModelLabel || "Connect an AI Chat Model to the model port"}
           >
             <NodeIcon name="ai" size={16} />
@@ -685,108 +719,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       onMouseEnter={showToolbar}
       onMouseLeave={scheduleToolbarHide}
     >
-      <div
-        className="node-toolbar nodrag"
-        onMouseEnter={showToolbar}
-        onMouseLeave={scheduleToolbarHide}
-      >
-        <button
-          type="button"
-          title={
-            !canRunStep
-              ? "Connect a trigger upstream to run this node"
-              : isWebhook
-                ? "Listen for test event"
-                : isTrigger
-                  ? "Run this trigger and its downstream nodes"
-                  : "Run step using current upstream data"
-          }
-          onClick={(e) => {
-            stop(e);
-            if (isTrigger) runFromTrigger(id);
-            else runFromNode(id);
-          }}
-          disabled={running || !canRunStep}
-        >
-          ▶
-        </button>
-        <button
-          type="button"
-          title={
-            !canRunStep
-              ? "Connect a trigger upstream to run this node"
-              : isTrigger
-                ? "Run this trigger and its downstream nodes"
-                : "Run step fresh, recomputing upstream nodes"
-          }
-          onClick={(e) => {
-            stop(e);
-            if (isTrigger) runFromTrigger(id);
-            else runFromNode(id, { reuseUpstream: false });
-          }}
-          disabled={running || !canRunStep}
-        >
-          ↻
-        </button>
-        <button
-          type="button"
-          title="Open details"
-          onClick={(e) => {
-            stop(e);
-            openNdv(id);
-          }}
-        >
-          ⤢
-        </button>
-        {isChatTrigger && (
-          <button
-            type="button"
-            className="toolbar-chat"
-            title="Open chat"
-            onClick={(e) => {
-              stop(e);
-              openChat();
-            }}
-          >
-            💬
-          </button>
-        )}
-        <button
-          type="button"
-          className={`toolbar-disable${disabled ? " is-on" : ""}`}
-          title={disabled ? "Enable node" : "Disable node"}
-          onClick={(e) => {
-            stop(e);
-            toggleDisabled(id);
-          }}
-        >
-          {disabled ? "●" : "◐"}
-        </button>
-        <button
-          type="button"
-          className="toolbar-delete"
-          title="Delete node"
-          onClick={(e) => {
-            stop(e);
-            deleteNode(id);
-          }}
-        >
-          ×
-        </button>
-        {devMode && (
-          <button
-            type="button"
-            className="toolbar-sdk"
-            title="Python SDK snippet"
-            onClick={(e) => {
-              stop(e);
-              setSdkModalOpen(true);
-            }}
-          >
-            {"</>"}
-          </button>
-        )}
-      </div>
+      {toolbar}
 
       {sdkModalOpen && (
         <SdkModal
@@ -809,6 +742,27 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
               <span className="node-spinner" />
             ) : (
               STATUS_GLYPH[runStatus] ?? ""
+            )}
+          </span>
+        )}
+
+        {!runStatus && agentActive && (
+          <span
+            className={`node-status status-agent-${agentActive}`}
+            title={
+              agentActive === "running"
+                ? "In use by agent"
+                : agentActive === "error"
+                  ? "Agent tool failed"
+                  : "Used by agent"
+            }
+          >
+            {agentActive === "running" ? (
+              <span className="node-pulse-dot" />
+            ) : agentActive === "error" ? (
+              "!"
+            ) : (
+              "✓"
             )}
           </span>
         )}
@@ -952,6 +906,18 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
             ? `${Math.round(runMeta.durationMs)}ms`
             : `${(runMeta.durationMs / 1000).toFixed(1)}s`}
         </div>
+      )}
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete node?"
+          body={`Remove "${data.label || manifest.name}" and all its connections. This cannot be undone.`}
+          confirmLabel="Delete"
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={() => {
+            setConfirmDelete(false);
+            deleteNode(id);
+          }}
+        />
       )}
     </div>
   );

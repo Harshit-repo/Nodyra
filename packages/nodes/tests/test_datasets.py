@@ -118,6 +118,17 @@ def test_duckdb_sql_rejects_non_select(store_ctx) -> None:
         duckdb_sql(input=ref, sql="DELETE FROM input")
 
 
+def test_duckdb_sql_blocks_server_file_read(store_ctx, tmp_path) -> None:
+    """DSQ-2: the external-access latch must block reading arbitrary server
+    files via DuckDB table functions, even though it's a valid SELECT."""
+    ref = csv_parse(text="x\n1\n", has_header=True)
+    secret = tmp_path / "secret.csv"
+    secret.write_text("token\nhunter2\n")
+    escaped = str(secret).replace("'", "''")
+    with pytest.raises(Exception):  # noqa: B017 - DuckDB raises on disabled FS access
+        duckdb_sql(input=ref, sql=f"SELECT * FROM read_csv_auto('{escaped}')")
+
+
 def test_dataset_filter_input_kind_validation_via_engine(store_ctx) -> None:
     # filter expects DatasetRef on its input
     from noodle.engine import _validate_input_kinds

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
@@ -240,10 +240,12 @@ async def _detail(session: AsyncSession, workflow: Workflow) -> WorkflowDetail:
 
 @router.get("", response_model=PageResponse[WorkflowSummary])
 async def list_workflows(
+    response: Response,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
 ):
+    response.headers["Cache-Control"] = "no-store"
     count = await session.scalar(select(func.count()).select_from(Workflow))
     result = await session.scalars(
         select(Workflow)

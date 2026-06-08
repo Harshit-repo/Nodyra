@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Credential, Workflow
 from app.schemas import AiWorkflowDraftRequest, AiWorkflowDraftResponse
 from app.services.credentials import CREDENTIAL_REF_MARKER, credential_ref
-from app.services.crypto import decrypt_data
+from app.services.crypto import decrypt_credential
 from noodle.models import Edge, GraphNode, Position, WorkflowGraph
 
 _ALLOWED_NODE_TYPES = {
@@ -469,25 +469,38 @@ async def _resolve_llm_provider(
     *,
     workflow_id: str,
     environment_id: str | None,
+    provider_hint: str | None = None,
+    model_hint: str | None = None,
 ) -> tuple[str, str, str]:
-    provider = (os.getenv("NOODLE_AI_PROVIDER") or "").strip().lower()
-    model = os.getenv("NOODLE_AI_MODEL") or ""
+    default_models = {
+        "anthropic": "claude-3-5-haiku-latest",
+        "openai": "gpt-4.1-mini",
+    }
+    # An explicit caller hint (assistant picker) wins over env configuration;
+    # only the two network planners we support are honoured.
+    hint = (provider_hint or "").strip().lower()
+    if hint not in default_models:
+        hint = ""
+    provider = hint or (os.getenv("NOODLE_AI_PROVIDER") or "").strip().lower()
+    model = (model_hint or "").strip() or os.getenv("NOODLE_AI_MODEL") or ""
     api_key = ""
 
-    if provider == "anthropic" or os.getenv("ANTHROPIC_API_KEY"):
+    if provider == "anthropic" or (not provider and os.getenv("ANTHROPIC_API_KEY")):
         provider = "anthropic"
         api_key = os.getenv("ANTHROPIC_API_KEY") or ""
-        model = model or "claude-3-5-haiku-latest"
-    elif provider == "openai" or os.getenv("OPENAI_API_KEY"):
+        model = model or default_models["anthropic"]
+    elif provider == "openai" or (not provider and os.getenv("OPENAI_API_KEY")):
         provider = "openai"
         api_key = os.getenv("OPENAI_API_KEY") or ""
-        model = model or "gpt-4.1-mini"
+        model = model or default_models["openai"]
 
     if not api_key:
-        for cred_type, default_model in (
-            ("openai", "gpt-4.1-mini"),
-            ("anthropic", "claude-3-5-haiku-latest"),
-        ):
+        # Prefer the hinted provider's stored credential, then the other one.
+        order = ["openai", "anthropic"]
+        if hint == "anthropic":
+            order = ["anthropic", "openai"]
+        for cred_type in order:
+            default_model = default_models[cred_type]
             cred = await _find_credential(
                 session,
                 cred_type,
@@ -496,13 +509,18 @@ async def _resolve_llm_provider(
             )
             if cred is None:
                 continue
-            data = decrypt_data(cred.encrypted_data)
+            data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek)
             key = str(data.get("api_key") or "")
             # Stored credentials are allowed as planner credentials only when
             # they look like real provider keys. Test/demo placeholders remain
             # normal node credentials and do not trigger network planner calls.
             if len(key) >= 16:
-                return cred_type, model or default_model, key
+                # Honour the requested model only when it matches the provider
+                # we actually fell back to; otherwise use that provider default.
+                use_model = (
+                    model if (hint and hint == cred_type and model) else default_model
+                )
+                return cred_type, use_model, key
 
     if not provider or not api_key:
         raise RuntimeError("No AI planner provider configured")
@@ -576,6 +594,8 @@ async def _call_llm_json(
         session,
         workflow_id=workflow_id,
         environment_id=environment_id,
+        provider_hint=body.planner_provider,
+        model_hint=body.planner_model,
     )
     messages = _llm_messages(body, current_graph)
     if provider == "anthropic":

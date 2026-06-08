@@ -495,3 +495,85 @@ async def test_ai_fix_replacement_can_return_new_valid_graph(
         "edit_fields",
     ]
     assert "Replaced custom code" in response["change_summary"][0]
+
+
+async def test_resolve_llm_provider_honours_provider_hint(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The assistant's provider/model picker must steer which stored BYOK
+    credential the planner uses, overriding the default OpenAI-first order."""
+    # The conftest ``client`` fixture points each service module's
+    # ``SessionLocal`` at the per-test database, so a session opened here reads
+    # the same rows the API just wrote. This is robust across test ordering —
+    # unlike reaching into FastAPI's ``dependency_overrides`` internals, whose
+    # identity/lifecycle is order-dependent.
+    from app.services import triggers
+
+    for var in (
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "NOODLE_AI_PROVIDER",
+        "NOODLE_AI_MODEL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Planner picker"})
+    ).json()["id"]
+    openai_key = "sk-openai-1234567890abcd"
+    anthropic_key = "sk-ant-1234567890abcdef"
+    created_openai = await client.post(
+        "/credentials",
+        json={
+            "name": "OpenAI planner",
+            "type": "openai",
+            "scope": "global",
+            "data": {"api_key": openai_key},
+        },
+    )
+    assert created_openai.status_code == 201, created_openai.text
+    created_anthropic = await client.post(
+        "/credentials",
+        json={
+            "name": "Anthropic planner",
+            "type": "anthropic",
+            "scope": "global",
+            "data": {"api_key": anthropic_key},
+        },
+    )
+    assert created_anthropic.status_code == 201, created_anthropic.text
+
+    async with triggers.SessionLocal() as session:
+        # Hint wins: pick the Anthropic credential and the requested model.
+        provider, model, key = await ai_builder_module._resolve_llm_provider(
+            session,
+            workflow_id=workflow_id,
+            environment_id=None,
+            provider_hint="anthropic",
+            model_hint="claude-haiku-4-5",
+        )
+        assert (provider, model, key) == (
+            "anthropic",
+            "claude-haiku-4-5",
+            anthropic_key,
+        )
+
+        # Hint to OpenAI returns the OpenAI credential.
+        provider, _model, key = await ai_builder_module._resolve_llm_provider(
+            session,
+            workflow_id=workflow_id,
+            environment_id=None,
+            provider_hint="openai",
+        )
+        assert provider == "openai"
+        assert key == openai_key
+
+        # No hint falls back to the default OpenAI-first ordering.
+        provider, _model, key = await ai_builder_module._resolve_llm_provider(
+            session,
+            workflow_id=workflow_id,
+            environment_id=None,
+        )
+        assert provider == "openai"
+        assert key == openai_key

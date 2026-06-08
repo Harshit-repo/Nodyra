@@ -29,10 +29,25 @@ export function NoodleEdge({
   const onEdgesChange = useEditor((s) => s.onEdgesChange);
   const runHandler = useEditor((s) => s.runHandler);
   const running = useEditor((s) => s.running);
+  // While an agent uses a connected sub-node, animate the wire so data appears
+  // to flow from the model / memory / tool into the agent (n8n-style).
+  const agentFlowClass = useEditor((s) => {
+    if (s.agentActive[source] !== "running") return undefined;
+    const node = s.nodes.find((n) => n.id === source);
+    return node?.data.toolMode
+      ? "edge-agent-flow is-tool"
+      : "edge-agent-flow";
+  });
 
   return (
     <>
-      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={style} />
+      <BaseEdge
+        id={id}
+        path={edgePath}
+        markerEnd={markerEnd}
+        style={style}
+        className={agentFlowClass}
+      />
       <EdgeLabelRenderer>
         <div
           className={`noodle-edge-mid nodrag nopan${selected ? " is-selected" : ""}`}

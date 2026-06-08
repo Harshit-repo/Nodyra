@@ -105,7 +105,10 @@ async def _active_workflows() -> list[Workflow]:
 
 
 async def _resolve_node_auth(
-    params: dict, workflow_id: str, environment_id: str | None
+    params: dict,
+    workflow_id: str,
+    environment_id: str | None,
+    session=None,
 ) -> dict:
     """Pre-resolve credential refs inside the webhook node's auth params.
 
@@ -113,6 +116,9 @@ async def _resolve_node_auth(
     references replaced by their decrypted values. Auth comparison happens
     in :func:`dispatch_webhook` against the resolved strings, never against
     the stored references.
+
+    Pass a shared ``session`` to avoid opening a new DB connection per node
+    when called in a loop (e.g. during webhook dispatch).
     """
     from app.services.credentials import resolve_credential_refs
 
@@ -130,14 +136,20 @@ async def _resolve_node_auth(
         "hmac_secret",
     )
     snapshot = {key: params.get(key) for key in auth_keys}
-    async with SessionLocal() as session:
-        resolved = await resolve_credential_refs(
+    if session is not None:
+        return await resolve_credential_refs(
             session,
             snapshot,
             workflow_id=workflow_id,
             environment_id=environment_id,
         )
-    return resolved
+    async with SessionLocal() as _session:
+        return await resolve_credential_refs(
+            _session,
+            snapshot,
+            workflow_id=workflow_id,
+            environment_id=environment_id,
+        )
 
 
 def _matches_basic_auth(
@@ -485,7 +497,7 @@ async def _await_run_terminal(run_id: str, timeout: float) -> str | None:
 
     from app.services.events import broker
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     deadline = loop.time() + max(0.0, timeout)
 
     async def _broker_finished() -> None:
@@ -704,6 +716,7 @@ async def dispatch_webhook(
     run_ids: list[str] = []
     any_match = False
     ip_rejected = False
+    auth_rejected = False
     deduped = False
     shaped_response: dict | None = None
     sync_info: dict | None = None
@@ -712,148 +725,153 @@ async def dispatch_webhook(
     workflows = (
         await _all_workflows() if prefer_draft else await _active_workflows()
     )
-    for workflow in workflows:
-        graph: dict | None = None
-        version_number: int = 1
-        version_id: str | None = None
-        if prefer_draft and getattr(workflow, "draft_graph", None):
-            graph = workflow.draft_graph
-            # Anchor the run to the latest known version for history sanity,
-            # but we never bump the version — drafts are not snapshots.
-            if workflow.versions:
-                version_number = workflow.versions[-1].version
-                version_id = workflow.versions[-1].id
-        else:
-            if not workflow.versions:
-                continue
-            latest = workflow.versions[-1]
-            graph = latest.graph or {}
-            version_number = latest.version
-            version_id = latest.id
-        if not graph:
-            continue
-        for node in graph.get("nodes", []):
-            node_type = node.get("type")
-            node_params = node.get("params") or {}
-            # Resolve which trigger output to seed and what path params it
-            # captured. `webhook_trigger` is a single endpoint; `api_endpoint`
-            # routes the request to one of its named branches.
-            if node_type == "webhook_trigger":
-                node_path = str(node_params.get("path", ""))
-                matched_params = _match_webhook_path(node_path, path)
-                if matched_params is None:
-                    continue
-                # Method-aware routing: when the node pins an HTTP method, only
-                # the matching request method fires it, so e.g. `GET /items/{id}`
-                # and `DELETE /items/{id}` can live in separate workflows. A node
-                # with no method set matches any method (back-compat).
-                node_method = str(node_params.get("http_method") or "").upper()
-                req_method = str(request_payload.get("method") or "").upper()
-                if node_method and req_method and node_method != req_method:
-                    continue
-                seed_output = "main"
-            elif node_type == "api_endpoint":
-                route_match = _match_api_route(
-                    str(node_params.get("base_path") or ""),
-                    node_params.get("routes") or [],
-                    str(request_payload.get("method") or ""),
-                    path,
-                )
-                if route_match is None:
-                    continue
-                seed_output, matched_params = route_match
+    async with SessionLocal() as dispatch_session:
+        for workflow in workflows:
+            graph: dict | None = None
+            version_number: int = 1
+            version_id: str | None = None
+            if prefer_draft and getattr(workflow, "draft_graph", None):
+                graph = workflow.draft_graph
+                # Anchor the run to the latest known version for history sanity,
+                # but we never bump the version — drafts are not snapshots.
+                if workflow.versions:
+                    version_number = workflow.versions[-1].version
+                    version_id = workflow.versions[-1].id
             else:
+                if not workflow.versions:
+                    continue
+                latest = workflow.versions[-1]
+                graph = latest.graph or {}
+                version_number = latest.version
+                version_id = latest.id
+            if not graph:
                 continue
-            any_match = True
-            # Perimeter first: IP allowlist gates before any auth work so an
-            # unlisted caller never reaches credential comparison. Distinct 403.
-            if not _webhook_ip_allowed(node_params, client_ip, headers):
-                ip_rejected = True
-                continue
-            resolved_auth = await _resolve_node_auth(
-                node_params, workflow.id, workflow.environment_id
-            )
-            if not _webhook_auth_passes(node_params, resolved_auth, headers, query):
-                continue
-            if not _webhook_hmac_passes(node_params, resolved_auth, headers, raw_body):
-                continue
-            # Idempotency: a repeat key for this workflow is acknowledged
-            # without starting a second run. Production only — the editor test
-            # URL should re-fire freely while iterating.
-            dedup_key = _webhook_dedup_key(node_params, request_payload)
-            if dedup_key is not None and not prefer_draft:
-                async with SessionLocal() as session:
-                    seen = await session.scalar(
+            for node in graph.get("nodes", []):
+                node_type = node.get("type")
+                node_params = node.get("params") or {}
+                # Resolve which trigger output to seed and what path params it
+                # captured. `webhook_trigger` is a single endpoint; `api_endpoint`
+                # routes the request to one of its named branches.
+                if node_type == "webhook_trigger":
+                    node_path = str(node_params.get("path", ""))
+                    matched_params = _match_webhook_path(node_path, path)
+                    if matched_params is None:
+                        continue
+                    # Method-aware routing: when the node pins an HTTP method, only
+                    # the matching request method fires it, so e.g. `GET /items/{id}`
+                    # and `DELETE /items/{id}` can live in separate workflows. A node
+                    # with no method set matches any method (back-compat).
+                    node_method = str(node_params.get("http_method") or "").upper()
+                    req_method = str(request_payload.get("method") or "").upper()
+                    if node_method and req_method and node_method != req_method:
+                        continue
+                    seed_output = "main"
+                elif node_type == "api_endpoint":
+                    route_match = _match_api_route(
+                        str(node_params.get("base_path") or ""),
+                        node_params.get("routes") or [],
+                        str(request_payload.get("method") or ""),
+                        path,
+                    )
+                    if route_match is None:
+                        continue
+                    seed_output, matched_params = route_match
+                else:
+                    continue
+                any_match = True
+                # Perimeter first: IP allowlist gates before any auth work so an
+                # unlisted caller never reaches credential comparison. Distinct 403.
+                if not _webhook_ip_allowed(node_params, client_ip, headers):
+                    ip_rejected = True
+                    continue
+                resolved_auth = await _resolve_node_auth(
+                    node_params, workflow.id, workflow.environment_id,
+                    session=dispatch_session,
+                )
+                if not _webhook_auth_passes(node_params, resolved_auth, headers, query):
+                    auth_rejected = True
+                    continue
+                if not _webhook_hmac_passes(node_params, resolved_auth, headers, raw_body):
+                    auth_rejected = True
+                    continue
+                # Idempotency: a repeat key for this workflow is acknowledged
+                # without starting a second run. Production only — the editor test
+                # URL should re-fire freely while iterating.
+                dedup_key = _webhook_dedup_key(node_params, request_payload)
+                if dedup_key is not None and not prefer_draft:
+                    seen = await dispatch_session.scalar(
                         select(Run.id)
                         .where(Run.workflow_id == workflow.id)
                         .where(Run.deduplication_key == dedup_key)
                         .limit(1)
                     )
-                if seen is not None:
-                    deduped = True
-                    continue
-            # Raw-body capture: when on, write the exact bytes as a run-scoped
-            # artifact and expose the ref on the payload so binary/multipart
-            # uploads reach the workflow without bloating the DB. Requires a
-            # pre-generated run id so the artifact lives under runs/<run_id>/.
-            # Expose the captured path params (e.g. `{{ $json.params.id }}`).
-            # Built per node since each template captures different segments.
-            node_payload = {**request_payload, "params": matched_params}
-            raw_ref: dict | None = None
-            pre_run_id: str | None = None
-            if (
-                str(node_params.get("raw_body") or "off").lower() == "on"
-                and raw_body
-            ):
-                from uuid import uuid4
+                    if seen is not None:
+                        deduped = True
+                        continue
+                # Raw-body capture: when on, write the exact bytes as a run-scoped
+                # artifact and expose the ref on the payload so binary/multipart
+                # uploads reach the workflow without bloating the DB. Requires a
+                # pre-generated run id so the artifact lives under runs/<run_id>/.
+                # Expose the captured path params (e.g. `{{ $json.params.id }}`).
+                # Built per node since each template captures different segments.
+                node_payload = {**request_payload, "params": matched_params}
+                raw_ref: dict | None = None
+                pre_run_id: str | None = None
+                if (
+                    str(node_params.get("raw_body") or "off").lower() == "on"
+                    and raw_body
+                ):
+                    from uuid import uuid4
 
-                pre_run_id = uuid4().hex
-                raw_ref = _capture_raw_body_artifact(
-                    raw_body, headers, pre_run_id, node["id"]
-                )
-                if raw_ref is not None:
-                    node_payload = {**node_payload, "raw_body": raw_ref}
-                else:
-                    pre_run_id = None
-            run_id = await start_run(
-                workflow.id,
-                graph,
-                version_number,
-                workflow_version_id=version_id,
-                mode="test" if prefer_draft else "production",
-                trigger_type="webhook",
-                cache={node["id"]: {seed_output: node_payload}},
-                trigger_node_id=node["id"],
-                deduplication_key=dedup_key,
-                run_id=pre_run_id,
-            )
-            run_ids.append(run_id)
-            if raw_ref is not None:
-                # Create the Artifact row (and rehome to the configured backend)
-                # even if no downstream node carries the ref, so it's tracked by
-                # retention and downloadable. Idempotent with the engine's own
-                # persistence of refs that flow through node outputs.
-                from app.services.artifacts import persist_artifact_refs
-
-                await persist_artifact_refs(run_id, [raw_ref])
-            # The first dispatched node owns the response. On Received shapes an
-            # immediate ack; Last Node / Respond Node ask the caller to wait for
-            # the run to finish (handled in the production webhook route).
-            if shaped_response is None and sync_info is None:
-                mode = str(node_params.get("response_mode") or "On Received")
-                if mode in ("Last Node", "Respond Node") and not prefer_draft:
-                    sync_info = {
-                        "run_id": run_id,
-                        "mode": mode,
-                        "response_code": _int_or(node_params.get("response_code"), 200),
-                    }
-                else:
-                    shaped_response = _webhook_on_received_response(
-                        node_params, request_payload
+                    pre_run_id = uuid4().hex
+                    raw_ref = _capture_raw_body_artifact(
+                        raw_body, headers, pre_run_id, node["id"]
                     )
+                    if raw_ref is not None:
+                        node_payload = {**node_payload, "raw_body": raw_ref}
+                    else:
+                        pre_run_id = None
+                run_id = await start_run(
+                    workflow.id,
+                    graph,
+                    version_number,
+                    workflow_version_id=version_id,
+                    mode="test" if prefer_draft else "production",
+                    trigger_type="webhook",
+                    cache={node["id"]: {seed_output: node_payload}},
+                    trigger_node_id=node["id"],
+                    deduplication_key=dedup_key,
+                    run_id=pre_run_id,
+                )
+                run_ids.append(run_id)
+                if raw_ref is not None:
+                    # Create the Artifact row (and rehome to the configured backend)
+                    # even if no downstream node carries the ref, so it's tracked by
+                    # retention and downloadable. Idempotent with the engine's own
+                    # persistence of refs that flow through node outputs.
+                    from app.services.artifacts import persist_artifact_refs
+
+                    await persist_artifact_refs(run_id, [raw_ref])
+                # The first dispatched node owns the response. On Received shapes an
+                # immediate ack; Last Node / Respond Node ask the caller to wait for
+                # the run to finish (handled in the production webhook route).
+                if shaped_response is None and sync_info is None:
+                    mode = str(node_params.get("response_mode") or "On Received")
+                    if mode in ("Last Node", "Respond Node") and not prefer_draft:
+                        sync_info = {
+                            "run_id": run_id,
+                            "mode": mode,
+                            "response_code": _int_or(node_params.get("response_code"), 200),
+                        }
+                    else:
+                        shaped_response = _webhook_on_received_response(
+                            node_params, request_payload
+                        )
     reject_status: int | None = None
     if not run_ids and any_match and not deduped:
-        reject_status = 403 if ip_rejected else 401
+        # 403 only when every failure was IP-based (no auth was attempted).
+        # If any workflow made it past the IP check but failed auth, return 401.
+        reject_status = 403 if (ip_rejected and not auth_rejected) else 401
     return WebhookDispatch(
         run_ids=run_ids,
         any_match=any_match,
@@ -1023,7 +1041,9 @@ async def _tick() -> None:
     async with SessionLocal() as session:
         workflows = (
             await session.scalars(
-                select(Workflow).options(selectinload(Workflow.versions))
+                select(Workflow)
+                .where(Workflow.active.is_(True))
+                .options(selectinload(Workflow.versions))
             )
         ).all()
         deployments = (
@@ -1100,6 +1120,8 @@ async def _tick() -> None:
                 continue
             if deployments_by_workflow.get(workflow.id):
                 continue  # deployment(s) own this workflow's schedule
+            if not workflow.versions:
+                continue  # no version yet — skip rather than IndexError
             latest = workflow.versions[-1]
             graph = latest.graph or {}
             schedule = next(
@@ -1177,9 +1199,12 @@ async def _tick() -> None:
 
 async def scheduler_loop() -> None:
     """Background loop that fires schedule triggers. Started from the lifespan."""
+    _backoff: float = 0.0
     while True:
         try:
             await _tick()
-        except Exception:  # noqa: BLE001 - a bad workflow must not kill the loop
-            pass
-        await asyncio.sleep(30)
+            _backoff = 0.0
+        except Exception:
+            logger.exception("scheduler tick failed")
+            _backoff = min(_backoff * 2 if _backoff else 5.0, 300.0)
+        await asyncio.sleep(30 + _backoff)

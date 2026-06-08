@@ -157,10 +157,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  aiWorkflowDraft: (id: string, body: AiWorkflowDraftRequest) =>
+  aiWorkflowDraft: (id: string, body: AiWorkflowDraftRequest, signal?: AbortSignal) =>
     request<AiWorkflowDraftResponse>(`/workflows/${id}/ai-draft`, {
       method: "POST",
       body: JSON.stringify(body),
+      signal,
     }),
   deleteWorkflow: (id: string) =>
     request<void>(`/workflows/${id}`, { method: "DELETE" }),

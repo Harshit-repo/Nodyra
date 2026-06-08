@@ -136,6 +136,10 @@ class _RuntimeProcess:
         self.process = process
         self.env_id = env_id
         self.dead = False
+        # Wall-clock time this worker was last returned to the idle pool. Used by
+        # the idle reaper. Declared here (not just set dynamically in release) so
+        # the reaper has a stable attribute regardless of release ordering.
+        self.idle_since = time.time()
         self._run_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
 
@@ -161,7 +165,18 @@ class _RuntimeProcess:
         )
         if process.stdout is None or process.stdin is None:
             raise RuntimeError("runtime subprocess pipes were not opened")
-        line = await process.stdout.readline()
+        _startup_timeout = 30.0
+        try:
+            line = await asyncio.wait_for(
+                process.stdout.readline(), timeout=_startup_timeout
+            )
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            raise RuntimeError(
+                f"runtime for env {env_id!r} timed out waiting for ready event "
+                f"({_startup_timeout}s)"
+            )
         if not line:
             raise RuntimeError(
                 f"runtime for env {env_id!r} did not emit a ready event"
@@ -313,10 +328,20 @@ class _RuntimeProcess:
                         recycle_after_run = True
                     await on_event(clean)
             except asyncio.CancelledError:
-                for task in callbacks:
-                    task.cancel()
                 await self.close()
                 raise
+            finally:
+                # Never leave sub-workflow callback tasks running detached. On a
+                # clean result they were already awaited above; on any error
+                # (e.g. the runtime emitted an "error" event, or stdout closed)
+                # they would otherwise keep writing to this worker's stdin while
+                # it gets recycled into the idle pool — corrupting the next run's
+                # stdio. Cancel and drain whatever remains.
+                pending = [t for t in callbacks if not t.done()]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
 
     async def close(self) -> None:
         if self.process.returncode is not None:

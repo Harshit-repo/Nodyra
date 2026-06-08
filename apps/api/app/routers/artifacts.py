@@ -11,7 +11,11 @@ from app.db import get_session
 from app.models import Artifact, Run
 from app.schemas import ArtifactInfo, DatasetQueryRequest, DatasetQueryResult
 from app.security import require_permission
-from app.services.artifact_backends import _artifact_base_dir, get_backend
+from app.services.artifact_backends import (
+    _artifact_base_dir,
+    _resolve_local_path,
+    get_backend,
+)
 from app.services.artifacts import delete_artifact_files
 from app.services.datasets_query import DatasetQueryError, run_dataset_query
 
@@ -176,12 +180,16 @@ async def upload_artifact(
             f"File exceeds maximum upload size of {max_bytes} bytes",
         )
 
-    filename = file.filename or "upload"
+    # SECURITY: the uploaded filename is attacker-controlled. Reduce it to a
+    # bare basename so directory components and ``..`` segments can't escape the
+    # per-upload folder, then resolve through the same containment guard the
+    # read/delete paths use as defence-in-depth (ART-1).
+    filename = Path(file.filename or "upload").name or "upload"
     content_type = file.content_type or "application/octet-stream"
     artifact_id = uuid.uuid4().hex
 
     storage_key = f"uploads/{artifact_id}/{filename}"
-    artifact_path = _artifact_base_dir() / storage_key
+    artifact_path = _resolve_local_path(storage_key)
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_bytes(content)
 
