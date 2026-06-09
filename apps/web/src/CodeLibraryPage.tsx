@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "./api";
 import { HomeHeader } from "./HomeHeader";
+import { useModalA11y } from "./useModalA11y";
 import type {
   CodeModule,
   CodeModuleFunctionPreview,
@@ -206,6 +207,9 @@ function CodeModuleDialog({
   const [preview, setPreview] = useState<CodeModuleFunctionPreview | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // trapFocus:false — the body embeds a code textarea that owns Tab.
+  useModalA11y(dialogRef, onClose, { trapFocus: false });
 
   async function save(): Promise<void> {
     setError("");
@@ -247,9 +251,17 @@ function CodeModuleDialog({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal modal-wide"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="code-module-dialog-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="modal-head">
-          <h2>{initial ? `Edit ${initial.name}` : "New file"}</h2>
+          <h2 id="code-module-dialog-title">{initial ? `Edit ${initial.name}` : "New file"}</h2>
           <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>

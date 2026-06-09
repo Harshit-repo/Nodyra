@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { api, ApiError } from "./api";
 import { HomeHeader } from "./HomeHeader";
 import { useToast } from "./ToastProvider";
+import { useModalA11y } from "./useModalA11y";
 import type { Deployment, WorkflowSummary } from "./types";
 
 interface UnsafeFinding {
@@ -274,15 +275,20 @@ function UnsafeNodesDialog({
   onApprove: () => void;
 }) {
   const blocked = state.policy === "block";
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onCancel);
   return (
     <div className="modal-overlay" onClick={onCancel}>
       <div
         className="modal"
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
+        aria-labelledby="unsafe-nodes-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2>Risky nodes detected</h2>
+        <h2 id="unsafe-nodes-title">Risky nodes detected</h2>
         <p className="muted">{state.message}</p>
         <ul className="ops-warnings">
           {state.findings.map((f) => (
@@ -350,6 +356,8 @@ function DeploymentDialog({
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const { notify } = useToast();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
   async function save(): Promise<void> {
     setErr("");
@@ -405,9 +413,17 @@ function DeploymentDialog({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal modal-wide"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="deployment-dialog-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="modal-head">
-          <h2>{initial ? "Edit deployment" : "New deployment"}</h2>
+          <h2 id="deployment-dialog-title">{initial ? "Edit deployment" : "New deployment"}</h2>
           <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>

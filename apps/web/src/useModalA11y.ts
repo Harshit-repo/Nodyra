@@ -24,10 +24,14 @@ const FOCUSABLE_SELECTOR = [
 export function useModalA11y(
   ref: RefObject<HTMLElement | null>,
   onClose: () => void,
-  options: { trapFocus?: boolean } = {},
+  options: { trapFocus?: boolean; enabled?: boolean } = {},
 ): void {
-  const { trapFocus = true } = options;
+  const { trapFocus = true, enabled = true } = options;
   useEffect(() => {
+    // `enabled` lets a modal rendered inline in an always-mounted parent call
+    // this hook unconditionally and only activate while the dialog is open —
+    // otherwise the global Esc handler would linger when the dialog is closed.
+    if (!enabled) return;
     const node = ref.current;
     const previouslyFocused = document.activeElement as HTMLElement | null;
 
@@ -61,5 +65,5 @@ export function useModalA11y(
       document.removeEventListener("keydown", onKeyDown, true);
       previouslyFocused?.focus?.();
     };
-  }, [ref, onClose, trapFocus]);
+  }, [ref, onClose, trapFocus, enabled]);
 }

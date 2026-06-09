@@ -8,6 +8,7 @@ import {
   visibleCredentialFields,
 } from "./llmProviders";
 import { useToast } from "./ToastProvider";
+import { useModalA11y } from "./useModalA11y";
 import type { Credential, CredentialTestResponse, CredentialTypeInfo } from "./types";
 
 interface Field {
@@ -595,6 +596,8 @@ function CreateCredentialModal({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [oauthStarted, setOauthStarted] = useState("");
   const oauthPopupRef = useRef<Window | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
   // Listen for popup postMessage and call onCreated on success
   useEffect(() => {
@@ -914,11 +917,16 @@ function CreateCredentialModal({
     <div className="modal-overlay" onClick={onClose}>
       <div
         className="modal credential-modal"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-credential-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="credential-modal-head">
           <div>
-            <h2>New credential</h2>
+            <h2 id="new-credential-title">New credential</h2>
             <p className="muted">
               Choose the service first. Noodle only asks for fields this
               credential type uses.

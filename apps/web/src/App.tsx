@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 
 const AUTH_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000, 30000, 60000];
 const AUTH_MAX_RETRIES = AUTH_RETRY_DELAYS_MS.length;
-import { Route, Routes, useLocation } from "react-router-dom";
+import { Link, Route, Routes, useLocation } from "react-router-dom";
 
 import { api, onUnauthorized, setToken, setUser } from "./api";
 import { NO_AUTH_FALLBACK, shouldRetryAuthError } from "./authBootstrap";
@@ -37,6 +37,20 @@ const RunnerPoolsPage = lazy(named(() => import("./RunnerPoolsPage"), "RunnerPoo
 const SecurityPage = lazy(named(() => import("./SecurityPage"), "SecurityPage"));
 const SettingsPage = lazy(named(() => import("./SettingsPage"), "SettingsPage"));
 const WorkflowsPage = lazy(named(() => import("./WorkflowsPage"), "WorkflowsPage"));
+
+// Catch-all for unknown URLs. Without this, an unmatched path renders an empty
+// <Routes> — a blank screen with no way back (the "black screen" class FE-9).
+function NotFound() {
+  return (
+    <div className="screen-center">
+      <h2>Page not found</h2>
+      <p className="muted">That page doesn’t exist or may have moved.</p>
+      <Link className="btn" to="/">
+        Back to workflows
+      </Link>
+    </div>
+  );
+}
 
 export default function App() {
   const location = useLocation();
@@ -166,6 +180,7 @@ export default function App() {
             <Route path="/security" element={<SecurityPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/workflows/:id" element={<EditorPage />} />
+            <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>
       </ErrorBoundary>

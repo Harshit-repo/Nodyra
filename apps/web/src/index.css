@@ -10,7 +10,9 @@
 
   --ink: #e9eef6;
   --ink-2: #98a4ba;
-  --ink-3: #5d6878;
+  /* FE-14: lightened from #5d6878 (was ~3.0:1) so `.muted` text clears WCAG AA
+     4.5:1 on every dark surface (now ≥4.9:1). */
+  --ink-3: #8a93a6;
 
   --accent: #4c9eff;
   --accent-2: #79b6ff;
@@ -62,7 +64,9 @@
 
   --ink: #111827;
   --ink-2: #485568;
-  --ink-3: #79869a;
+  /* FE-14: darkened from #79869a (was ~3.0:1) so `.muted` text clears WCAG AA
+     4.5:1 on every light surface (now ≥4.7:1). */
+  --ink-3: #5a6577;
 
   --accent: #246bdb;
   --accent-2: #3d82f3;

@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { useModalA11y } from "../useModalA11y";
 import type { WorkflowGraph, WorkflowVersionInfo } from "../types";
 
 interface Props {
@@ -13,6 +14,8 @@ export function WorkflowHistory({ workflowId, onClose, onRestore }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<WorkflowVersionInfo | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
   useEffect(() => {
     setLoading(true);
@@ -72,9 +75,12 @@ export function WorkflowHistory({ workflowId, onClose, onRestore }: Props) {
       <div
         className="modal modal-wide"
         style={{ maxWidth: 560 }}
+        ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
+        aria-modal="true"
         aria-labelledby="history-title"
+        tabIndex={-1}
       >
         <header className="modal-head">
           <h2 id="history-title">Version History</h2>

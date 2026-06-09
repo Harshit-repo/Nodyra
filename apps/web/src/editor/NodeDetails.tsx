@@ -9,6 +9,7 @@ import {
   visibleCredentialFields,
 } from "../llmProviders";
 import { isBrandIconName, NodeIcon } from "../NodeIcon";
+import { useModalA11y } from "../useModalA11y";
 import { useToast } from "../ToastProvider";
 import type {
   Credential,
@@ -29,6 +30,36 @@ const PACKAGE_INSTALL_POLL_MS = 2000;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+/**
+ * Re-seed a field's local editing buffer when the upstream `value` changes
+ * *externally* — undo/redo, an applied AI fix, or a pin restore — without
+ * clobbering the user's in-progress typing. Fields like `JsonField` /
+ * `KeyValueField` / `RoutesField` keep local state (parsed text, row arrays)
+ * seeded once at mount; `ParamField` is keyed by `node.id:spec.name` so a
+ * node *switch* remounts them, but a value change to the *same* mounted node
+ * would otherwise leave the buffer stale (FE-11).
+ *
+ * `apply` runs only when the new value differs from what this field last saw
+ * AND the field isn't currently focused (so a value update caused by the
+ * field's own `onChange` while typing is absorbed, never reapplied).
+ */
+function useExternalValueSync(
+  value: unknown,
+  isFocused: () => boolean,
+  apply: () => void,
+): void {
+  const serialized = JSON.stringify(value ?? null);
+  const lastSeen = useRef(serialized);
+  useEffect(() => {
+    if (serialized === lastSeen.current) return;
+    lastSeen.current = serialized;
+    if (isFocused()) return;
+    apply();
+    // `apply`/`isFocused` are recreated each render; `serialized` is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serialized]);
 }
 
 function formatPinnedAt(value: string | null): string {
@@ -141,9 +172,19 @@ function JsonField({
     value === null || value === undefined ? "" : JSON.stringify(value, null, 2),
   );
   const [invalid, setInvalid] = useState(false);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  useExternalValueSync(
+    value,
+    () => document.activeElement === taRef.current,
+    () => {
+      setText(value === null || value === undefined ? "" : JSON.stringify(value, null, 2));
+      setInvalid(false);
+    },
+  );
 
   return (
     <textarea
+      ref={taRef}
       className={`field-input field-json${invalid ? " field-invalid" : ""}`}
       value={text}
       spellCheck={false}
@@ -216,6 +257,17 @@ function KeyValueField({
     value === null || value === undefined ? "" : JSON.stringify(value, null, 2),
   );
   const [invalid, setInvalid] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  // Resync from an external value change (undo/redo, AI fix) — FE-11.
+  useExternalValueSync(
+    value,
+    () => Boolean(wrapRef.current?.contains(document.activeElement)),
+    () => {
+      setRows(rowsFromValue(value));
+      setJsonText(value === null || value === undefined ? "" : JSON.stringify(value, null, 2));
+      setInvalid(false);
+    },
+  );
 
   function commitRows(next: KvRow[]): void {
     setRows(next);
@@ -250,7 +302,7 @@ function KeyValueField({
   }
 
   return (
-    <div className="kv-field">
+    <div className="kv-field" ref={wrapRef}>
       <div className="kv-toolbar">
         <button
           type="button"
@@ -618,6 +670,8 @@ function CredentialCreateModal({
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState("");
   const { notify } = useToast();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
   const refKey = fields.length > 1 ? "*" : (fields[0] ?? credType);
   const variant = isLlm ? getLlmVariant(fieldValues.provider) : null;
@@ -697,11 +751,16 @@ function CredentialCreateModal({
     <div className="modal-overlay" onClick={onClose}>
       <div
         className="modal cred-quick-modal"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cred-quick-modal-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="cred-quick-modal-head">
           <div>
-            <h2>New credential</h2>
+            <h2 id="cred-quick-modal-title">New credential</h2>
             <p className="muted">{displayLabel}</p>
           </div>
           <button
@@ -720,11 +779,9 @@ function CredentialCreateModal({
             className="field-input"
             placeholder="My credential"
             value={name}
-            autoFocus
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") void handleCreate();
-              if (e.key === "Escape") onClose();
             }}
           />
         </label>
@@ -1258,6 +1315,9 @@ function ExpressionEditorModal({
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // trapFocus:false — the editor + autocomplete drive their own Tab handling.
+  useModalA11y(dialogRef, onClose, { trapFocus: false });
 
   function updateSuggestions(val: string) {
     const pos = taRef.current?.selectionStart ?? val.length;
@@ -1360,10 +1420,15 @@ function ExpressionEditorModal({
     <div className="modal-overlay" onClick={onClose}>
       <div
         className="modal modal-wide expr-modal"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="expr-modal-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <header className="modal-head">
-          <h2>
+          <h2 id="expr-modal-title">
             Editing <span className="expr-modal-label">{label}</span>
           </h2>
           <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
@@ -1684,6 +1749,13 @@ function RoutesField({
   onChange: (v: unknown) => void;
 }) {
   const [rows, setRows] = useState<RouteRow[]>(() => routeRowsFromValue(value));
+  const wrapRef = useRef<HTMLDivElement>(null);
+  // Resync from an external value change (undo/redo, AI fix) — FE-11.
+  useExternalValueSync(
+    value,
+    () => Boolean(wrapRef.current?.contains(document.activeElement)),
+    () => setRows(routeRowsFromValue(value)),
+  );
 
   function commit(next: RouteRow[]): void {
     setRows(next);
@@ -1696,7 +1768,7 @@ function RoutesField({
   }
 
   return (
-    <div className="routes-field">
+    <div className="routes-field" ref={wrapRef}>
       {rows.length === 0 && (
         <p className="routes-empty">
           No routes yet. Add one to create an endpoint branch.
@@ -2452,6 +2524,9 @@ function CodeEditorModal({
 }) {
   const [name, setName] = useState(defaultName);
   const [view, setView] = useState<"text" | "html" | "json">("text");
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // trapFocus:false — the code editor owns Tab for indentation.
+  useModalA11y(dialogRef, onClose, { trapFocus: false });
   const drop = exprDropHandlers(draft, onChange);
   const hasInput = inputData !== undefined && Object.keys(inputData).length > 0;
 
@@ -2524,10 +2599,15 @@ function CodeEditorModal({
     <div className="modal-overlay" onClick={onClose}>
       <div
         className="modal modal-wide code-modal"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="code-modal-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <header className="modal-head">
-          <h2>
+          <h2 id="code-modal-title">
             Editing code <span className="expr-modal-label">{label}</span>
           </h2>
           <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
@@ -3052,6 +3132,15 @@ export function NodeDetails({
   const [pkgDone, setPkgDone] = useState(false);
   const { notify } = useToast();
   useEffect(() => setMode("inspector"), [nodeId]);
+  // Guards the imperative install poller (addMissingToEnv) — it can run for up
+  // to PACKAGE_INSTALL_TIMEOUT_MS, well past an NDV close / node switch (FE-12).
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
 
   async function pin(): Promise<void> {
     if (!workflowId || runOutput === undefined) return;
@@ -3119,6 +3208,12 @@ export function NodeDetails({
       // Poll until env is ready, errored, or clearly stuck.
       while (Date.now() - startedAt < PACKAGE_INSTALL_TIMEOUT_MS) {
         await delay(PACKAGE_INSTALL_POLL_MS);
+        // The NDV closed / node switched mid-install — stop polling and
+        // ticking rather than leaking calls + setState on an unmounted tree.
+        if (!aliveRef.current) {
+          clearInterval(ticker);
+          return;
+        }
         const env = await api.getEnvironment(envId);
         if (env.status === "ready") {
           clearInterval(ticker);

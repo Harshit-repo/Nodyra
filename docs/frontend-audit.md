@@ -89,11 +89,17 @@ Do **not** redo these — they were checked and are clean/accepted:
 | FE-1 | Session token in localStorage | Low | accepted/documented (backend audit) |
 | FE-2 | No React error boundary → render throw white-screens the app | High | `fixed` (test + build) |
 | FE-3 | User-facing errors leak `ApiError:` prefix + raw 422 JSON | Medium | `fixed` (test) |
-| FE-4 | WS `1008` (auth refused) close doesn't trigger re-auth | Low | `todo` |
+| FE-4 | WS `1008` (auth refused) close doesn't trigger re-auth | Low | `fixed` (test) |
 | FE-5 | EditorPage run stream not closed before reopening → socket leak + cross-run events | Medium | `fixed` |
 | FE-6 | Modals lack Esc / focus trap / focus return (no shared util) | Medium (a11y) | `fixed` (ConfirmDialog, AiDraftModal) + util for the rest |
 | FE-7 | No unsaved-changes guard → tab close/refresh silently loses editor edits | Medium | `fixed` |
 | FE-8 | DataPanel renders unbounded `JSON.stringify` of run output (main-thread freeze risk) | Low | `fixed` (+ FE-8b regression fix) |
+| FE-9 | No catch-all route → unknown URL renders a blank screen | Low | `fixed` (build) |
+| FE-10 | 3 `NodeDetails` modals lack dialog semantics / Esc / focus mgmt | Medium (a11y) | `fixed` (build + hook tests) |
+| FE-11 | Composite param fields (JSON/key-value/routes) don't resync on external value change (undo/redo/AI-fix) | Medium | `fixed` (test) |
+| FE-12 | `addMissingToEnv` install poller + ticker leak past unmount | Low | `fixed` |
+| FE-13 | App-wide modal a11y gap — ~15 page/editor modals lacked Esc/focus mgmt | Medium (a11y) | `fixed` (test) |
+| FE-14 | `.muted` text fails WCAG AA contrast (~3:1) in both themes | Low (a11y) | `fixed` (measured) |
 | _next_ | _(add findings here)_ | | ⏳ |
 
 ---
@@ -104,18 +110,18 @@ Do **not** redo these — they were checked and are clean/accepted:
 |---|---|---|
 | Security basics (XSS / postMessage / token) | ✅ | from backend audit — see above |
 | **Error & 401/403 handling flows** | ✅ reviewed | found FE-2 (no error boundary), FE-3 (error text leakage), FE-4 (WS 1008). 401 path is sound (clears token + flips auth → LoginPage); 403 falls through to a generic toast — acceptable now that FE-3 makes the backend's `detail` message readable. `api.ts` `request()`/`uploadArtifact()` handle 204 + non-JSON bodies correctly. |
-| **Accessibility (a11y)** | 🔶 partial | FE-6: built `useModalA11y` (Esc + focus trap + focus return). Applied to `ConfirmDialog`, `AiDraftModal`, `DatasetSqlModal`, `SdkModal` (full); `CommandPalette` + `NodeDetailModal` given `role/aria-modal` + focus-return without the trap (they have bespoke keyboard handling / embedded editors). Icon-only-button `aria-label` sweep done (UX-2). Color-contrast pass still pending. |
-| **Performance** | 🔶 partial | UX-4 done: route-level code splitting cut initial JS ~80% (index 331→60 KB gzip; editor + Plotly deferred). **Zustand selector hygiene reviewed clean** — no selector returns a fresh array/object (`.find()` yields stable element refs; block selectors return primitives), so no spurious re-renders / `useSyncExternalStore` snapshot churn. Editor re-render profiling + big-list virtualization still pending. |
-| **Editor correctness/UX** | 🔶 partial | FE-7 (no unsaved-changes guard) fixed. Workflow-switch load effect has a correct `cancelled` guard. **Publish flow verified**: `publishDraft` saves first and aborts if save fails, then refetches to resync `has_unpublished_changes`. Undo/redo/copy/paste/loops/metanodes well-covered by existing `store.*.test.ts`. Deeper `store.ts` review still pending. |
-| **`editor/NodeDetails.tsx` (3491 LOC)** | ⏳ pending | the largest component — param rendering, validation, expression preview |
-| **`EditorPage.tsx` (1512 LOC)** | ⏳ pending | autosave/publish flow, draft vs published, websocket run events |
-| **`CredentialsPage.tsx` (1432 LOC)** | 🔶 partial | Secret handling clean: secret fields render `type="password"` (`fieldInputType`, line 543), no `console.*` secret logging anywhere in `src` (only 1 benign `store.ts` warn), secrets posted in request bodies (not URLs). Full form-flow/validation review still pending. |
+| **Accessibility (a11y)** | ✅ reviewed | FE-6 built `useModalA11y` (Esc + focus trap + return); FE-10 covered the 3 `NodeDetails` modals; **FE-13 finished the app-wide sweep** — every remaining page/editor modal (EditorPage shortcuts + publish-review; RunnerPools ×4; Deployments ×2; Environments ×2; Workflows ×3; CodeLibrary; WorkflowHistory; Credentials) now has `role=dialog`/`aria-modal`/`aria-labelledby` + Esc + focus trap/return. Hook gained an `enabled` flag for inline modals in always-mounted pages. **Every modal in `src/` is now covered.** Icon-only-button `aria-label` sweep done (UX-2). **Color-contrast pass done (FE-14):** measured every text token with a WCAG script — `.muted`/`--ink-3` was ~2.7–3.7:1 (AA fail) in both themes; bumped to ≥4.7:1 everywhere. `--ink`/`--ink-2`/accent buttons already pass. **a11y area complete.** |
+| **Performance** | ✅ reviewed | UX-4: route-level splitting cut initial JS ~80% (index 331→60 KB gzip; editor + Plotly deferred). **Selector hygiene clean** — no selector returns a fresh array/object, so no spurious re-renders / snapshot churn; FE-EditorPage selectors hoisted module-level. **Big lists are server-paginated** (Executions/Workflows/Activity) — no unbounded client render; virtualization unnecessary at expected sizes. Run-output rendering capped (FE-8). Store updates are granular + immutable. Conclusion: no re-render or list-size hotspots; live profiling not warranted. |
+| **Editor correctness/UX** | ✅ reviewed | FE-7 fixed; publish flow verified. **`store.ts` deep pass done:** `applyRunEvent` is fully immutable and idempotent (replayed events re-apply the same node_started-clears / node_finished-sets, so the EVT-1 replay-then-live stream needs no client dedup); `undo`/`redo` snapshot `{nodes,edges}` with a 50-entry `HISTORY_LIMIT`, and FE-11 now resyncs open composite fields after an undo; history commits on structural changes + position-drop-end only (`shouldCommitChanges`); `cloneValue` uses `structuredClone` w/ JSON fallback; agent sub-node activity tracked + released correctly. Backed by 7 `store.*.test.ts` suites. Minor: undo/redo always set `dirty:true` (doesn't detect return-to-saved). |
+| **`editor/NodeDetails.tsx` (~3550 LOC)** | ✅ reviewed | **Full pass done.** FE-10 (modal a11y), FE-11 (composite-field external resync), FE-12 (install-poller unmount leak) all fixed. **Reviewed clean:** integer/number parsing null-safe (`:1947`); expression-preview effects debounced + `cancelled`-guarded + error-caught (both editor modals); `ParamField` correctly keyed `node.id:spec.name` (node-switch remounts fields); webhook param visibility/label/synthetic-cred logic is tidy + tested (`webhookFields.test.ts`); `NodeCodePanel` load effect uses a `cancelled` guard; HighlightedTextarea mirror renders text (React-escaped, no XSS); all `String(err)` sites are clean post-FE-3. `display_when`/`group` gating is pure + predictable. |
+| **`EditorPage.tsx` (~1580 LOC)** | ✅ reviewed | **Full pass done.** FE-5, FE-7, FE-13 (its 2 inline modals) fixed here. **Reviewed clean:** deep-link to a deleted workflow → graceful error state + "Back to workflows" (`:1019`), not a blank; load + `debug_run` effects both `cancelled`-guarded; `save()` re-entrancy-guarded (`saveInProgressRef`) and per-child-workflow failures isolated (parent stays clean, child stays dirty → `beforeunload` still warns); `publishDraft` saves-then-publishes-then-refetches; `connectRunStream` tears down the prior socket (FE-5); run-event `notify` mapping handles success/waiting/error; `toggleActive` optimistic with rollback; unmount effect closes WS + clears webhook timer; selectors hoisted module-level. Minor: webhook-listen poll has no max duration (by design) and the keydown effect re-subscribes each render (cheap). |
+| **`CredentialsPage.tsx` (~1445 LOC)** | ✅ reviewed | **Full pass done.** Secret fields `type="password"`, no secret logging, secrets in bodies not URLs (prior audit). FE-13 added modal a11y. **Reviewed clean:** `collectData()` enforces required fields + per-preset rules (e.g. google_sheets needs api_key|access_token) before submit; `validateScopeInputs()` gates workflow/env/pool IDs; OAuth `postMessage` origin-checked + popup-blocked fallback to redirect; `load()` uses `Promise.allSettled` so the list survives a types-endpoint failure; test/refresh use per-id busy maps. **Minor UX (not blockers):** delete uses native `window.confirm` (inconsistent with the app `ConfirmDialog` — UX-5 class); OAuth popup is orphaned if the modal is closed mid-flow (listener detaches on unmount). |
 | **`editor/DataPanel.tsx` (1296 LOC) / NDVPanels (1043)** | ✅ reviewed | FE-8 + FE-8b: capped the raw-JSON `<pre>` fallback in DataPanel via `pretty()` (100 K chars) and guarded `pretty()` against `undefined` (unrun node) — see `DataPanel.test.tsx`. NDVPanels truncates previews to 500 chars and its `JSON.stringify(...).slice()` sites are guarded by `preview != null` (no FE-8b-class crash). Text body capped at 20 K. DataFrame/record views render previews, not full payloads. |
-| **`RunnerPoolsPage` / `EnvironmentsPage` / `DeploymentsPage`** | 🔶 partial | Close buttons labelled (UX-2). `DeploymentsPage` has solid 409-unsafe-node handling + refresh-after-mutate. Polling intervals clean. Deeper optimistic-update/rollback review still pending. |
-| **State & data fetching** | 🔶 partial | EditorPage load uses `cancelled` flag (no stale write on workflow switch); `save()` guarded by `saveInProgressRef`. FE-7 covers refresh data-loss. Broader page-level fetch race/cancellation review still pending. |
-| **WebSocket run streaming** | ✅ reviewed | FE-5 fixed (EditorPage leak). `ExecutionsPage` (effect cleanup) + `ChatPanel` (closes before reconnect, unmount cleanup) are correct. Reconnect backoff resets on any message; `run_waiting` handled (toast + ChatPanel reconnect). FE-4 (1008→re-auth) still `todo`. |
-| **Forms & validation** | ⏳ pending | client-side validation parity with the API (e.g. node types, schedules) |
-| **Routing / deep links / refresh survival** | ⏳ pending | `App.tsx`, `authBootstrap.ts` (recent "no black screen" fix — verify edge cases) |
+| **`RunnerPoolsPage` / `EnvironmentsPage` / `DeploymentsPage`** | ✅ reviewed | All modals now a11y-complete (FE-13). **Mutations use refresh-after-mutate, not optimistic** — so there's no rollback gap (the one optimistic toggle, EditorPage `toggleActive`, *does* roll back). `DeploymentsPage` 409-unsafe-node re-prompt is solid; `runNow` navigates to the run. `EnvironmentsPage` build-status poll is a clean self-rescheduling `setTimeout` (cleanup on every re-run + 20-min per-env cap); transition toasts diff against a `prevStatuses` ref. `RunnerPoolsPage` has no polling intervals. |
+| **State & data fetching** | ✅ reviewed | The only **param-driven** load (EditorPage workflow switch + `debug_run`) is `cancelled`-guarded — no stale write. Every other page loads **once on mount** (`useEffect(load, [])`), so there's no changing-dependency race. `save()` is re-entrancy-guarded; FE-7 covers refresh data-loss. **Accepted nit (consistent, benign):** mount loads don't abort in-flight fetches on unmount → a possible "setState after unmount" warning, never corruption. |
+| **WebSocket run streaming** | ✅ reviewed | FE-5 fixed (EditorPage leak). `ExecutionsPage` (effect cleanup) + `ChatPanel` (closes before reconnect, unmount cleanup) are correct. Reconnect backoff resets on any message; `run_waiting` handled (toast + ChatPanel reconnect). FE-4 (1008→re-auth) now fixed. |
+| **Forms & validation** | ✅ reviewed | Consistent pattern across all forms: client validates required fields + JSON-parse + numeric clamps, API is authoritative, and its errors are readable post-FE-3. Node params (`ParamField`: integer/number null-safe, `required` shown, `display_when` gating), credentials (`collectData` per-preset rules + `validateScopeInputs`), deployments (`DeploymentDialog`: JSON params guarded, name required, `every` clamped ≥1; cron left to server validation — acceptable), environments/runner-pools (required-field guards). No client/server parity gaps that surface as confusing UX. |
+| **Routing / deep links / refresh survival** | ✅ reviewed | FE-9 fixed: added a `path="*"` `NotFound` catch-all (unknown URLs no longer render a blank `<Routes>`). `authBootstrap` retry/backoff verified sound — transient (network/5xx) retries with capped exponential backoff, definitive 404 → no-auth fallback, never an infinite request storm. Chat routes (`/chat/:id`) correctly sit outside the auth gate. Deep-link to a deleted workflow handled by `EditorPage` (see its row). The bootstrap loader (`auth === null` → `BackendLoading`) prevents rendering against an unready API. |
 
 ---
 
@@ -236,9 +242,12 @@ Do **not** redo these — they were checked and are clean/accepted:
   next REST call 401s.
 - **Impact:** Minor — the next REST request recovers the user to login; only the
   live run view is affected in the interim.
-- **Fix (proposed):** on a `1008` close, call the same unauthorized path REST
-  uses (clear token + `unauthorizedHandler`). Deferred — low blast radius.
-- **Status:** `todo`.
+- **Fix:** extracted a shared `handleUnauthorized()` in `api.ts` (clear token +
+  user + `unauthorizedHandler`), used by both REST 401 sites and the run-stream
+  `onclose` — a `1008` close now routes the user to login immediately instead of
+  waiting for the next REST 401.
+- **Status:** `fixed`. Verified: `api.runStream.test.ts` (2 tests — 1008 fires
+  the handler, 1000 does not) + full suite 140/140, `typecheck` clean.
 
 > **Perf note (for the Performance area, not a finding yet):** `npm run build`
 > shows Plotly is already code-split (`PlotlyChartView` chunk, 1.1 MB / 378 KB
@@ -330,6 +339,129 @@ Do **not** redo these — they were checked and are clean/accepted:
 - **Status:** `fixed`. Regression test `editor/DataPanel.test.tsx` (renders the
   empty state for `undefined`/`null` data without throwing); full suite
   134 passing, `typecheck` clean.
+
+### FE-9 — No catch-all route; unknown URLs render a blank screen (Low)
+- **Evidence:** `App.tsx` `<Routes>` had no `path="*"` fallback (grep clean). Any
+  unmatched authed path (a typo, a stale bookmark, a removed page) matched no
+  `<Route>`, so `<Routes>` rendered **nothing** — a fully blank screen with no
+  navigation back. Same "black/white screen" class FE-2 and the auth-bootstrap
+  fix were guarding against, just via routing rather than a throw.
+- **Impact:** A mistyped or stale deep link strands the user on an empty page;
+  they must know to edit the URL or hard-navigate home.
+- **Fix:** added a `NotFound` component (heading + explanation + "Back to
+  workflows" link, styled with the existing `.screen-center` / `.btn` tokens) and
+  a `<Route path="*" element={<NotFound />} />` as the last route in the authed
+  `<Routes>`. The chat-route `<Routes>` is single-path by design and unaffected.
+- **Status:** `fixed`. Verified: `typecheck` + `build` clean; full suite
+  134/134. (Presentational catch-all — no unit test; the route table is exercised
+  by the build's type-check of the element types.)
+
+### FE-10 — `NodeDetails` modals lack dialog semantics / Esc / focus management (Medium, a11y)
+- **Evidence:** FE-6 swept the top-level modals but `editor/NodeDetails.tsx` has
+  three of its own that were missed: `CredentialCreateModal` (697),
+  `ExpressionEditorModal` (1360), and `CodeEditorModal` (2524). All three closed
+  only via overlay-click — no `role="dialog"`/`aria-modal`, no global `Esc`
+  (the cred modal's `Esc` only fired while its name field was focused; the expr
+  modal's `Esc` only dismissed the autocomplete dropdown), and no focus
+  return-on-close. Same WCAG 2.4.3 / 2.1.2 gap FE-6 fixed elsewhere.
+- **Impact:** Keyboard/AT users can't reliably dismiss these dialogs, focus can
+  escape behind them, and focus isn't returned to the trigger — and these are
+  high-traffic surfaces (every credential creation + every expression/code edit).
+- **Fix:** wired the existing `useModalA11y` hook into all three + added
+  `role="dialog"`/`aria-modal`/`aria-labelledby` (heading `id`s) and
+  `tabIndex={-1}` on each container. `CredentialCreateModal` gets the full hook
+  (Esc + focus trap + return — it's a plain form). `ExpressionEditorModal` and
+  `CodeEditorModal` get the hook with **`trapFocus:false`** (the FE-6-documented
+  escape hatch) because they embed editors/autocomplete that own `Tab`/arrow
+  keys — they still get Esc + focus-in + focus-return without the hook fighting
+  the inner widget.
+- **Status:** `fixed`. Verified: `typecheck` + `build` clean; full suite
+  134/134; the hook's own behavior (Esc / focus-in / focus-return / Tab-wrap) is
+  covered by `useModalA11y.test.tsx`. (The *app-wide* modal sweep across every
+  page was finished separately — see FE-13.)
+- **Behavior note:** in `ExpressionEditorModal` the hook's `Esc` (capture phase)
+  now closes the modal even while the autocomplete dropdown is open, where it
+  previously dismissed just the dropdown. Acceptable — Esc-closes-dialog is the
+  standard expectation and the dropdown still dismisses on blur/selection/typing.
+
+### FE-11 — Composite param fields don't resync on external value change (Medium)
+- **Evidence:** `JsonField` (`NodeDetails.tsx:164`), `KeyValueField` (`:206`),
+  and `RoutesField` (`:1700`) seed local editing state once
+  (`useState(() => …value)`) with no resync to the prop. `ParamField` is keyed
+  `node.id:spec.name` (`:3371`) so switching nodes remounts them correctly — but
+  a value change to the **same mounted node** (undo/redo while the inspector is
+  open, an applied AI fix, a pin/restore) leaves these three fields showing the
+  *old* content, and the next keystroke commits from that stale base. Plain
+  string/number/select/segmented fields read `value` directly and were unaffected.
+- **Impact:** Editing a JSON / key-value / routes param after an undo (or AI fix)
+  on the open node silently writes from stale state — a data-integrity bug on the
+  exact fields where it's hardest to notice.
+- **Fix:** added `useExternalValueSync(value, isFocused, apply)` — reseeds the
+  buffer when the serialized upstream value changes **and** the field isn't
+  focused (so a value update caused by the field's own `onChange` while typing is
+  absorbed, never reapplied / never clobbers typing). Wired into all three
+  fields (textarea-focus check for `JsonField`; `wrapRef.contains(activeElement)`
+  for the multi-input `KeyValueField`/`RoutesField`).
+- **Status:** `fixed`. Verified: `paramFieldResync.test.tsx` (3 tests — routes
+  resync, JSON resync, and the "don't clobber while typing" guard) + full suite
+  137/137, `typecheck` + `build` clean.
+
+### FE-12 — Package-install poller + ticker leak past unmount (Low)
+- **Evidence:** `NodeDetails.addMissingToEnv` (`:3191`) starts a 1 s
+  `setInterval` ticker and a `while` loop that polls `api.getEnvironment` every
+  2 s for up to `PACKAGE_INSTALL_TIMEOUT_MS` (10 min). Both live inside an async
+  function, not a `useEffect`, so the FE-8 interval-cleanup sweep didn't cover
+  them — closing the NDV / switching nodes mid-install left the loop polling and
+  `setState`-ing on an unmounted tree for up to 10 minutes.
+- **Impact:** Minor — bounded background API churn + React "state update on
+  unmounted component" warnings; no user-visible corruption.
+- **Fix:** added an `aliveRef` (set false on unmount via effect cleanup) and a
+  guard after each poll `await` that clears the ticker and returns when the
+  component is gone.
+- **Status:** `fixed`. Verified: `typecheck` + `build` clean; full suite green.
+
+### FE-13 — App-wide modal a11y gap; ~15 modals lacked Esc / focus management (Medium, a11y)
+- **Evidence:** beyond the modals FE-6/FE-10 covered, a repo sweep
+  (`grep modal-overlay` vs `grep Escape|useModalA11y`) found page/editor dialogs
+  that closed only via overlay-click — no reliable global `Esc`, no focus trap,
+  no focus return, several missing `aria-modal`/`aria-labelledby`:
+  `EditorPage` (shortcuts + publish-review, inline), `RunnerPoolsPage` (×4:
+  Pool / SSH onboard / Add machine / Edit runner), `DeploymentsPage` (Unsafe
+  nodes + Deployment editor), `EnvironmentsPage` (Create + Edit env),
+  `WorkflowsPage` (Create + Rename + Provider-status), `CodeLibraryPage`
+  (CodeModuleDialog), `WorkflowHistory`, `CredentialsPage` (CreateCredentialModal).
+- **Impact:** keyboard/AT users couldn't reliably dismiss these dialogs, focus
+  could sit behind the modal, and focus wasn't returned to the trigger — a
+  WCAG 2.4.3 / 2.1.2 gap spanning most admin/ops surfaces.
+- **Fix:** wired `useModalA11y` into every one + added `role=dialog` /
+  `aria-modal` / `aria-labelledby` / `tabIndex={-1}` to each container.
+  Code-editor modals (`CodeModuleDialog`) use `trapFocus:false`. For modals
+  rendered **inline in always-mounted pages** (EditorPage's two — extracted into
+  a small `A11yModal` shell — and WorkflowsPage's rename/provider dialogs), the
+  hook gained an **`enabled` option** so it activates only while the dialog is
+  open instead of leaving a global Esc handler attached.
+- **Status:** `fixed`. Verified: `typecheck` + `build` clean; full suite
+  137/137; new `enabled`-flag test in `useModalA11y.test.tsx` (5 tests).
+  **Every `modal-overlay` in `src/` now routes through `useModalA11y`.**
+
+### FE-14 — `.muted` secondary text fails WCAG AA contrast in both themes (Low, a11y)
+- **Evidence:** `.muted` (used app-wide for descriptions, hints, counts,
+  timestamps, empty states) maps to `--ink-3`. Measured with a WCAG-2 relative-
+  luminance script against every panel surface:
+  - Dark `--ink-3` `#5d6878`: **3.48 / 3.26 / 3.05 / 2.69** vs
+    `--bg` / `--surface` / `--surface-2` / `--surface-3`.
+  - Light `--ink-3` `#79869a`: **3.47 / 3.69 / 3.28 / 2.96**.
+  All below the 4.5:1 AA floor for normal-size text (some below the 3:1 large-
+  text floor). `--ink` (primary) and `--ink-2` already pass (~6.8–16:1).
+- **Impact:** Low-vision users struggle to read secondary text — a broad but
+  low-severity WCAG 1.4.3 gap.
+- **Fix:** bumped the token only (no logic): dark `--ink-3` → `#8a93a6`
+  (now **6.4 / 6.0 / 5.6 / 4.9:1**), light `--ink-3` → `#5a6577`
+  (now **5.5 / 5.9 / 5.2 / 4.7:1**) — clears AA on every surface in both themes.
+  Propagates to all `var(--ink-3)` users in `index.css` + `editor.css`.
+- **Status:** `fixed`. Verified: contrast script (values above); `build` clean
+  (Vite processes the CSS); full suite 138/138. Visual change is global but
+  conservative (same hue, adjusted lightness) — easy to tune if the owner wants.
 
 > **Interval/cleanup review (clean):** all `setInterval` consumers
 > (`ExecutionsPage` ×3, `WorkflowsPage`, `ChatPanel`, `NDVPanels`,

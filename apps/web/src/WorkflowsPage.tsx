@@ -7,6 +7,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { HomeHeader } from "./HomeHeader";
 import { Logo } from "./Logo";
 import { useToast } from "./ToastProvider";
+import { useModalA11y } from "./useModalA11y";
 import type {
   Credential,
   Deployment,
@@ -97,6 +98,8 @@ function CreateModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const { notify } = useToast();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
   async function submit() {
     if (busy) return;
@@ -123,9 +126,11 @@ function CreateModal({
     <div className="modal-overlay" onClick={onClose}>
       <div
         className="modal"
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="new-workflow-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (e.key === "Escape") onClose();
@@ -357,6 +362,17 @@ export function WorkflowsPage() {
     setProviderRows(null);
     setProviderError("");
   }
+
+  // Inline dialogs in this always-mounted page: activate modal a11y only while
+  // each is open (Esc, focus trap + return, dialog ARIA).
+  const renameDialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(renameDialogRef, () => setPendingRename(null), {
+    enabled: pendingRename !== null,
+  });
+  const providerDialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(providerDialogRef, closeProviderStatus, {
+    enabled: providerModalWorkflow !== null,
+  });
 
   const visible = useMemo(() => {
     const rows = workflows ?? [];
@@ -723,11 +739,12 @@ export function WorkflowsPage() {
         <div className="modal-overlay" onClick={() => setPendingRename(null)}>
           <div
             className="modal"
+            ref={renameDialogRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="rename-workflow-title"
+            tabIndex={-1}
             onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => { if (e.key === "Escape") setPendingRename(null); }}
           >
             <h2 id="rename-workflow-title">Rename workflow</h2>
             <input
@@ -756,9 +773,11 @@ export function WorkflowsPage() {
         <div className="modal-overlay" onClick={closeProviderStatus}>
           <div
             className="modal provider-trigger-modal"
+            ref={providerDialogRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="provider-trigger-title"
+            tabIndex={-1}
             onClick={(e) => e.stopPropagation()}
           >
             <h2 id="provider-trigger-title">Provider triggers</h2>

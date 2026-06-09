@@ -68,6 +68,14 @@ export function onUnauthorized(handler: (() => void) | null): void {
   unauthorizedHandler = handler;
 }
 
+/** Clear the session and notify the app a 401-equivalent occurred. Used by the
+ *  REST 401 path and the run-stream `1008` (auth refused) close (FE-4). */
+function handleUnauthorized(): void {
+  setToken(null);
+  setUser(null);
+  unauthorizedHandler?.();
+}
+
 export class ApiError extends Error {
   status: number;
   detail: unknown;
@@ -156,9 +164,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   };
   const resp = await safeFetch(BASE + path, { ...init, headers });
   if (resp.status === 401) {
-    setToken(null);
-    setUser(null);
-    unauthorizedHandler?.();
+    handleUnauthorized();
     throw new Error("401 Unauthorized");
   }
   if (!resp.ok) {
@@ -633,9 +639,7 @@ export async function uploadArtifact(file: File): Promise<ArtifactInfo> {
     body,
   });
   if (resp.status === 401) {
-    setToken(null);
-    setUser(null);
-    unauthorizedHandler?.();
+    handleUnauthorized();
     throw new Error("401 Unauthorized");
   }
   if (!resp.ok) {
@@ -778,6 +782,10 @@ export function subscribeToRunEvents(
       }
       // 1000 (normal) or 1008 (auth refused) → no point reconnecting.
       if (event.code === 1000 || event.code === 1008) {
+        // 1008 means the session expired/was rejected mid-stream — route the
+        // user back to login instead of leaving the rest of the UI in a stale
+        // signed-in state until the next REST call 401s (FE-4).
+        if (event.code === 1008) handleUnauthorized();
         handlers.onClosed?.();
         return;
       }

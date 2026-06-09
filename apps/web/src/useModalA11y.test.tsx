@@ -4,9 +4,17 @@ import { describe, expect, it, vi } from "vitest";
 
 import { useModalA11y } from "./useModalA11y";
 
-function Dialog({ onClose, trapFocus }: { onClose: () => void; trapFocus?: boolean }) {
+function Dialog({
+  onClose,
+  trapFocus,
+  enabled,
+}: {
+  onClose: () => void;
+  trapFocus?: boolean;
+  enabled?: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
-  useModalA11y(ref, onClose, { trapFocus });
+  useModalA11y(ref, onClose, { trapFocus, enabled });
   return (
     <div ref={ref} role="dialog" tabIndex={-1}>
       <button>first</button>
@@ -48,5 +56,18 @@ describe("useModalA11y", () => {
     last.focus();
     fireEvent.keyDown(document, { key: "Tab" });
     expect(document.activeElement).toBe(first);
+  });
+
+  it("is inert when enabled is false (no Esc, no focus move)", () => {
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    trigger.focus();
+    const onClose = vi.fn();
+    render(<Dialog onClose={onClose} enabled={false} />);
+    // Focus stays on the trigger; Escape does nothing.
+    expect(document.activeElement).toBe(trigger);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    trigger.remove();
   });
 });

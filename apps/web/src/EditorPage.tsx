@@ -1,5 +1,5 @@
 import { ReactFlowProvider } from "@xyflow/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { api, type RunStreamHandle, subscribeToRunEvents } from "./api";
@@ -25,6 +25,7 @@ import {
 import { Logo } from "./Logo";
 import { useCan } from "./permissions";
 import { useToast } from "./ToastProvider";
+import { useModalA11y } from "./useModalA11y";
 import type {
   AiDraftMode,
   AiFixStrategy,
@@ -135,6 +136,56 @@ const selectChatTriggerParams = (s: EditorStore) => {
   if (!node) return null;
   return node.data.params as Record<string, string>;
 };
+
+/**
+ * Modal shell with baseline a11y (Esc, focus trap + return, dialog ARIA) for
+ * EditorPage's inline dialogs. Mounts only while open, so `useModalA11y`'s
+ * global Esc handler never lingers when the dialog is closed.
+ */
+function A11yModal({
+  className,
+  titleId,
+  title,
+  onClose,
+  closeDisabled = false,
+  children,
+}: {
+  className: string;
+  titleId: string;
+  title: string;
+  onClose: () => void;
+  closeDisabled?: boolean;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useModalA11y(ref, onClose);
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div
+        className={`modal ${className}`}
+        ref={ref}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="modal-head">
+          <h2 id={titleId}>{title}</h2>
+          <button
+            className="btn btn-sm btn-ghost"
+            onClick={onClose}
+            disabled={closeDisabled}
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </header>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 export function EditorPage() {
   const { id } = useParams<{ id: string }>();
@@ -1323,25 +1374,13 @@ export function EditorPage() {
       )}
 
       {shortcutsOpen && (
-        <div className="modal-overlay" onClick={() => setShortcutsOpen(false)}>
-          <div
-            className="modal shortcuts-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="shortcuts-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <header className="modal-head">
-              <h2 id="shortcuts-title">Keyboard shortcuts</h2>
-              <button
-                className="btn btn-sm btn-ghost"
-                onClick={() => setShortcutsOpen(false)}
-                aria-label="Close"
-              >
-                ✕
-              </button>
-            </header>
-            <div className="shortcut-grid">
+        <A11yModal
+          className="shortcuts-modal"
+          titleId="shortcuts-title"
+          title="Keyboard shortcuts"
+          onClose={() => setShortcutsOpen(false)}
+        >
+          <div className="shortcut-grid">
               <span>Save draft</span>
               <kbd>Ctrl</kbd>
               <kbd>S</kbd>
@@ -1381,31 +1420,18 @@ export function EditorPage() {
               <span>Open shortcuts</span>
               <kbd>?</kbd>
               <span />
-            </div>
           </div>
-        </div>
+        </A11yModal>
       )}
 
       {publishReviewOpen && publishSummary && (
-        <div className="modal-overlay" onClick={() => setPublishReviewOpen(false)}>
-          <div
-            className="modal publish-review-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="publish-review-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <header className="modal-head">
-              <h2 id="publish-review-title">Review release</h2>
-              <button
-                className="btn btn-sm btn-ghost"
-                onClick={() => setPublishReviewOpen(false)}
-                disabled={publishing}
-                aria-label="Close"
-              >
-                ✕
-              </button>
-            </header>
+        <A11yModal
+          className="publish-review-modal"
+          titleId="publish-review-title"
+          title="Review release"
+          onClose={() => setPublishReviewOpen(false)}
+          closeDisabled={publishing}
+        >
             <div className="publish-review-grid">
               <div>
                 <strong>{publishSummary.addedNodes}</strong>
@@ -1472,8 +1498,7 @@ export function EditorPage() {
                 {publishing ? "Publishing..." : "Publish release"}
               </button>
             </div>
-          </div>
-        </div>
+        </A11yModal>
       )}
 
       {chatOpen && workflow ? (

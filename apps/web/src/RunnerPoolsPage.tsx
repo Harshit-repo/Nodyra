@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, runnerPoolsApi } from "./api";
 import { HomeHeader } from "./HomeHeader";
 import { useCan } from "./permissions";
+import { useModalA11y } from "./useModalA11y";
 import type {
   Environment,
   RegistrationTokenResponse,
@@ -342,6 +343,8 @@ function PoolDialog({
   const [config, setConfig] = useState<Config>(pool?.provider_config ?? {});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
   const handleSave = async () => {
     if (!name.trim()) return;
@@ -372,9 +375,17 @@ function PoolDialog({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal modal-wide"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pool-dialog-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="modal-head">
-          <h2>{editing ? `Edit ${pool!.name}` : "New runner pool"}</h2>
+          <h2 id="pool-dialog-title">{editing ? `Edit ${pool!.name}` : "New runner pool"}</h2>
           <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
@@ -468,6 +479,8 @@ function SSHOnboardDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [log, setLog] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
   const submit = async () => {
     if (!host.trim() || !username.trim()) return;
@@ -500,9 +513,17 @@ function SSHOnboardDialog({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal modal-wide"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ssh-onboard-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="modal-head">
-          <h2>Onboard a machine over SSH</h2>
+          <h2 id="ssh-onboard-title">Onboard a machine over SSH</h2>
           <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
@@ -620,6 +641,8 @@ function AddMachineDialog({
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState<RegistrationTokenResponse | null>(null);
   const [copied, setCopied] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
   const submit = async () => {
     setBusy(true);
@@ -661,9 +684,17 @@ noodle-runner start`
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal modal-wide"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-machine-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="modal-head">
-          <h2>Add a machine to this pool</h2>
+          <h2 id="add-machine-title">Add a machine to this pool</h2>
           <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
@@ -739,6 +770,8 @@ function EditRunnerDialog({
   const [labelsText, setLabelsText] = useState(labelsToText(runner.capabilities));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
   const submit = async () => {
     if (!name.trim()) return;
@@ -760,9 +793,17 @@ function EditRunnerDialog({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal modal-wide"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-runner-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="modal-head">
-          <h2>Edit {runner.name}</h2>
+          <h2 id="edit-runner-title">Edit {runner.name}</h2>
           <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>

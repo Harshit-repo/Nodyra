@@ -5,6 +5,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { HomeHeader } from "./HomeHeader";
 import { PackageDrawer } from "./PackageDrawer";
 import { useToast } from "./ToastProvider";
+import { useModalA11y } from "./useModalA11y";
 import type { Environment, RunnerPoolInfo, SystemSettings } from "./types";
 
 const BACKEND_BADGE: Record<string, { label: string; color: string }> = {
@@ -322,6 +323,8 @@ function CreateEnvModal({
   pools: RunnerPoolInfo[];
 }) {
   const [name, setName] = useState("");
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
   const [python, setPython] = useState("3.12");
   const [description, setDescription] = useState("");
   const [poolId, setPoolId] = useState<string | null>(null);
@@ -368,8 +371,16 @@ function CreateEnvModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>New environment</h2>
+      <div
+        className="modal"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-env-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id="create-env-title">New environment</h2>
 
         <div className="backend-tabs">
           {(["venv", "conda", "pixi"] as BackendTab[]).map((b) => (
@@ -502,6 +513,8 @@ function EditEnvModal({
   pools: RunnerPoolInfo[];
 }) {
   const initialMode = modeFor(env);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
   const [name, setName] = useState(env.name);
   const [description, setDescription] = useState(env.description || "");
   const [poolId, setPoolId] = useState<string | null>(env.runner_pool_id);
@@ -545,8 +558,16 @@ function EditEnvModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Edit environment</h2>
+      <div
+        className="modal"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-env-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id="edit-env-title">Edit environment</h2>
         <label className="field-label">Name</label>
         <input
           className="field-input"
