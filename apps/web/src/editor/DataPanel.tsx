@@ -99,12 +99,17 @@ function formatCell(value: unknown): string {
 const MAX_JSON_CHARS = 100_000;
 
 function pretty(value: unknown): string {
-  let text: string;
+  let text: string | undefined;
   try {
     text = JSON.stringify(value, null, 2);
   } catch {
     return String(value);
   }
+  // `JSON.stringify` returns `undefined` (not a string, and without throwing)
+  // for a top-level `undefined`/function/symbol — e.g. an unrun node whose
+  // Input/Output panel data is still `undefined`. Guard before reading
+  // `.length` so the panel renders its empty state instead of crashing.
+  if (text === undefined) return value === undefined ? "" : String(value);
   if (text.length > MAX_JSON_CHARS) {
     return (
       text.slice(0, MAX_JSON_CHARS) +

@@ -93,7 +93,7 @@ Do **not** redo these — they were checked and are clean/accepted:
 | FE-5 | EditorPage run stream not closed before reopening → socket leak + cross-run events | Medium | `fixed` |
 | FE-6 | Modals lack Esc / focus trap / focus return (no shared util) | Medium (a11y) | `fixed` (ConfirmDialog, AiDraftModal) + util for the rest |
 | FE-7 | No unsaved-changes guard → tab close/refresh silently loses editor edits | Medium | `fixed` |
-| FE-8 | DataPanel renders unbounded `JSON.stringify` of run output (main-thread freeze risk) | Low | `fixed` |
+| FE-8 | DataPanel renders unbounded `JSON.stringify` of run output (main-thread freeze risk) | Low | `fixed` (+ FE-8b regression fix) |
 | _next_ | _(add findings here)_ | | ⏳ |
 
 ---
@@ -315,6 +315,21 @@ Do **not** redo these — they were checked and are clean/accepted:
   helper (with a "… output truncated (N chars)" footer) and routed both `<pre>`
   sites through `pretty()`.
 - **Status:** `fixed`. Verified: `typecheck` + `build` clean.
+
+#### FE-8b — `pretty()` crashed every node-open (regression from FE-8) (High)
+- **Evidence:** the FE-8 rewrite did `text = JSON.stringify(value, null, 2)` then
+  read `text.length`. `JSON.stringify(undefined)` returns `undefined` (not a
+  throw), so `text.length` threw `TypeError: Cannot read properties of undefined
+  (reading 'length')`. `DataPanel` computes `copyPayload = pretty(display)` on
+  **every** render, and an unrun node's Input/Output panels both pass
+  `data === undefined` → `display === undefined`. So double-clicking any node
+  that hadn't run yet crashed the render and tripped the new ErrorBoundary
+  ("Something went wrong") — every time.
+- **Fix:** guard `pretty()` for `text === undefined` (return `""` for `undefined`,
+  else `String(value)`) before the length check (`editor/DataPanel.tsx`).
+- **Status:** `fixed`. Regression test `editor/DataPanel.test.tsx` (renders the
+  empty state for `undefined`/`null` data without throwing); full suite
+  134 passing, `typecheck` clean.
 
 > **Interval/cleanup review (clean):** all `setInterval` consumers
 > (`ExecutionsPage` ×3, `WorkflowsPage`, `ChatPanel`, `NDVPanels`,
