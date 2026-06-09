@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api, errorMessage } from "./api";
+import { useConfirm } from "./ConfirmProvider";
 import { HomeHeader } from "./HomeHeader";
 import {
   LLM_PROVIDER_VARIANTS,
@@ -1181,6 +1182,7 @@ export function CredentialsPage() {
     Record<string, CredentialTestResponse>
   >({});
   const { notify } = useToast();
+  const confirm = useConfirm();
   const credentialPresets = useMemo(
     () => mergedCredentialPresets(credentialTypes),
     [credentialTypes],
@@ -1234,7 +1236,11 @@ export function CredentialsPage() {
   useEffect(load, []);
 
   async function remove(id: string, name: string) {
-    if (!window.confirm(`Delete credential “${name}”?`)) return;
+    const ok = await confirm({
+      title: "Delete credential?",
+      body: `“${name}” will be permanently removed. Nodes using it will fail until reconfigured.`,
+    });
+    if (!ok) return;
     try {
       await api.deleteCredential(id);
       notify("Credential deleted.", "success");
@@ -1295,7 +1301,17 @@ export function CredentialsPage() {
         </div>
 
         {error && <p className="error-text">{error}</p>}
-        {!credentials && !error && <p className="muted">Loading…</p>}
+        {!credentials && !error && (
+          <div className="env-grid" aria-label="Loading credentials">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <article className="env-card skeleton-card" key={index}>
+                <span className="skeleton-line short" />
+                <span className="skeleton-line title" />
+                <span className="skeleton-line" />
+              </article>
+            ))}
+          </div>
+        )}
 
         {credentials && credentials.length === 0 && (
           <div className="empty-state">

@@ -432,7 +432,33 @@ export function ExecutionsPage() {
         </div>
 
         {error && <p className="error-text">{error}</p>}
-        {!runs && !error && <p className="muted">Loading…</p>}
+        {!runs && !error && (
+          <div className="exec-table-wrap" aria-label="Loading runs">
+            <table className="exec-table">
+              <tbody>
+                {Array.from({ length: 8 }).map((_, index) => (
+                  <tr className="skeleton-row" key={index}>
+                    <td>
+                      <span className="skeleton-line" />
+                    </td>
+                    <td>
+                      <span className="skeleton-line tiny" />
+                    </td>
+                    <td>
+                      <span className="skeleton-line short" />
+                    </td>
+                    <td>
+                      <span className="skeleton-line short" />
+                    </td>
+                    <td>
+                      <span className="skeleton-line tiny" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
         {runs && runs.length === 0 && (
           <p className="muted">No runs match these filters yet.</p>
         )}
@@ -458,7 +484,10 @@ export function ExecutionsPage() {
                       onClick={() => selectRun(r.id)}
                     >
                       <td>
-                        <span className="exec-wf-name">
+                        <span
+                          className="exec-wf-name"
+                          title={r.workflow_name ?? undefined}
+                        >
                           {r.workflow_name ?? "(deleted workflow)"}
                         </span>
                         <span className="exec-wf-version">
@@ -629,7 +658,17 @@ function RunDetailPanel({
       </header>
 
       {error && <p className="error-text">{error}</p>}
-      {!run && !error && <p className="muted">Loading…</p>}
+      {!run && !error && (
+        <div className="exec-nodes" aria-label="Loading run">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div className="exec-node skeleton-row" key={index}>
+              <div className="exec-node-head">
+                <span className="skeleton-line short" />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {run && (
         <RunApprovalsPanel

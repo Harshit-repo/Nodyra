@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "./api";
+import { useConfirm } from "./ConfirmProvider";
 import { HomeHeader } from "./HomeHeader";
 import { useModalA11y } from "./useModalA11y";
 import type {
@@ -36,6 +37,7 @@ export function CodeLibraryPage() {
   const [editing, setEditing] = useState<CodeModule | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+  const confirm = useConfirm();
 
   async function refresh(): Promise<void> {
     try {
@@ -70,9 +72,11 @@ export function CodeLibraryPage() {
   }
 
   async function remove(m: CodeModule): Promise<void> {
-    if (!confirm(`Delete ${m.name}? Graphs referencing its functions will error on next run.`)) {
-      return;
-    }
+    const ok = await confirm({
+      title: `Delete ${m.name}?`,
+      body: "Graphs referencing its functions will error on next run.",
+    });
+    if (!ok) return;
     try {
       await api.deleteCodeModule(m.id);
       await refresh();
@@ -119,7 +123,18 @@ export function CodeLibraryPage() {
         </div>
 
         {error && <p className="error-text">{error}</p>}
-        {!modules && !error && <p className="muted">Loading…</p>}
+        {!modules && !error && (
+          <div className="codelib-list" aria-label="Loading files">
+            {Array.from({ length: 5 }).map((_, index) => (
+              <div className="codelib-row skeleton-row" key={index}>
+                <div className="codelib-main">
+                  <span className="skeleton-line short" />
+                  <span className="skeleton-line" />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {filtered && filtered.length === 0 && (
           <p className="muted">

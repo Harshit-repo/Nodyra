@@ -11,6 +11,7 @@ import { ErrorBoundary } from "./ErrorBoundary";
 // AppAssistant is temporarily unmounted from the UI (see Routes below) but kept
 // in the codebase for continued iteration.
 // import { AppAssistant } from "./AppAssistant";
+import { ConfirmProvider } from "./ConfirmProvider";
 import { LoginPage } from "./LoginPage";
 import { ToastProvider } from "./ToastProvider";
 import type { AuthState, UserInfo } from "./types";
@@ -166,28 +167,30 @@ export default function App() {
 
   return (
     <ToastProvider>
-      <ErrorBoundary resetKey={location.pathname}>
-        <Suspense fallback={<BackendLoading retrying={false} />}>
-          <Routes>
-            <Route path="/" element={<WorkflowsPage />} />
-            <Route path="/environments" element={<EnvironmentsPage />} />
-            <Route path="/code-library" element={<CodeLibraryPage />} />
-            <Route path="/deployments" element={<DeploymentsPage />} />
-            <Route path="/executions" element={<ExecutionsPage />} />
-            <Route path="/credentials" element={<CredentialsPage />} />
-            <Route path="/activity" element={<ActivityPage />} />
-            <Route path="/runner-pools" element={<RunnerPoolsPage />} />
-            <Route path="/security" element={<SecurityPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/workflows/:id" element={<EditorPage />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </Suspense>
-      </ErrorBoundary>
-      {/* App-wide AI assistant (floating dock). Temporarily disabled in the UI
-          while it is iterated on — the component and its backend wiring remain
-          in the codebase (apps/web/src/AppAssistant.tsx). To re-enable, restore:
-          {location.pathname.startsWith("/workflows/") ? null : <AppAssistant />} */}
+      <ConfirmProvider>
+        <ErrorBoundary resetKey={location.pathname}>
+          <Suspense fallback={<BackendLoading retrying={false} />}>
+            <Routes>
+              <Route path="/" element={<WorkflowsPage />} />
+              <Route path="/environments" element={<EnvironmentsPage />} />
+              <Route path="/code-library" element={<CodeLibraryPage />} />
+              <Route path="/deployments" element={<DeploymentsPage />} />
+              <Route path="/executions" element={<ExecutionsPage />} />
+              <Route path="/credentials" element={<CredentialsPage />} />
+              <Route path="/activity" element={<ActivityPage />} />
+              <Route path="/runner-pools" element={<RunnerPoolsPage />} />
+              <Route path="/security" element={<SecurityPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/workflows/:id" element={<EditorPage />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </Suspense>
+        </ErrorBoundary>
+        {/* App-wide AI assistant (floating dock). Temporarily disabled in the UI
+            while it is iterated on — the component and its backend wiring remain
+            in the codebase (apps/web/src/AppAssistant.tsx). To re-enable, restore:
+            {location.pathname.startsWith("/workflows/") ? null : <AppAssistant />} */}
+      </ConfirmProvider>
     </ToastProvider>
   );
 }

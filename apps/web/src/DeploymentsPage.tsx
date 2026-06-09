@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { api, ApiError, errorMessage } from "./api";
+import { useConfirm } from "./ConfirmProvider";
 import { HomeHeader } from "./HomeHeader";
 import { useToast } from "./ToastProvider";
 import { useModalA11y } from "./useModalA11y";
@@ -47,7 +48,20 @@ export function DeploymentsPage() {
   const [editing, setEditing] = useState<Deployment | null>(null);
   const [creating, setCreating] = useState(false);
   const [unsafePrompt, setUnsafePrompt] = useState<UnsafePromptState | null>(null);
+  // Deployment ids with an action (run / toggle) in flight, so their row
+  // controls disable and can't be double-fired while the request is pending.
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const { notify } = useToast();
+  const confirm = useConfirm();
+
+  function setBusy(id: string, busy: boolean): void {
+    setBusyIds((current) => {
+      const next = new Set(current);
+      if (busy) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
 
   function refresh(): void {
     api
@@ -67,12 +81,16 @@ export function DeploymentsPage() {
   }, []);
 
   async function runNow(d: Deployment): Promise<void> {
+    if (busyIds.has(d.id)) return;
+    setBusy(d.id, true);
     try {
       const { run_id } = await api.runDeployment(d.id);
       notify("Deployment run started.", "success");
       navigate(`/executions?run=${run_id}`);
     } catch (err) {
       notify(`Could not start deployment. ${errorMessage(err)}`, "error");
+    } finally {
+      setBusy(d.id, false);
     }
   }
 
@@ -81,6 +99,7 @@ export function DeploymentsPage() {
     active: boolean,
     approveUnsafe = false,
   ): Promise<void> {
+    setBusy(d.id, true);
     try {
       await api.updateDeployment(d.id, {
         active,
@@ -114,11 +133,17 @@ export function DeploymentsPage() {
         return;
       }
       notify(`Could not update deployment. ${errorMessage(err)}`, "error");
+    } finally {
+      setBusy(d.id, false);
     }
   }
 
   async function remove(d: Deployment): Promise<void> {
-    if (!confirm(`Delete deployment "${d.name}"?`)) return;
+    const ok = await confirm({
+      title: "Delete deployment?",
+      body: `“${d.name}” will be removed and will stop firing on its schedule.`,
+    });
+    if (!ok) return;
     try {
       await api.deleteDeployment(d.id);
       notify("Deployment deleted.", "success");
@@ -151,7 +176,19 @@ export function DeploymentsPage() {
         </div>
 
         {error && <p className="error-text">{error}</p>}
-        {!deployments && !error && <p className="muted">Loading…</p>}
+        {!deployments && !error && (
+          <div className="deploy-list" aria-label="Loading deployments">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <div className="deploy-row skeleton-row" key={index}>
+                <div className="deploy-main">
+                  <span className="skeleton-line short" />
+                  <span className="skeleton-line" />
+                </div>
+                <span className="skeleton-line tiny" />
+              </div>
+            ))}
+          </div>
+        )}
 
         {deployments && deployments.length === 0 && (
           <div className="empty-state">
@@ -173,7 +210,7 @@ export function DeploymentsPage() {
             {deployments.map((d) => (
               <div className="deploy-row" key={d.id}>
                 <div className="deploy-main">
-                  <div className="deploy-name">
+                  <div className="deploy-name" title={d.name}>
                     {d.name}
                     <span
                       className={`run-pill ${
@@ -202,6 +239,7 @@ export function DeploymentsPage() {
                     <input
                       type="checkbox"
                       checked={d.active}
+                      disabled={busyIds.has(d.id)}
                       onChange={(e) => void toggleActive(d, e.target.checked)}
                     />
                     <span className="active-track" />
@@ -210,6 +248,7 @@ export function DeploymentsPage() {
                     type="button"
                     className="btn btn-sm"
                     onClick={() => void runNow(d)}
+                    disabled={busyIds.has(d.id)}
                   >
                     ▶ Run now
                   </button>

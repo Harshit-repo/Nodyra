@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { api, errorMessage, getUser } from "./api";
+import { useConfirm } from "./ConfirmProvider";
 import { HomeHeader } from "./HomeHeader";
 import { useToast } from "./ToastProvider";
 import type { UserAdminInfo } from "./types";
@@ -22,6 +23,7 @@ function roleSummary(role: string): string {
 export function SecurityPage() {
   const currentUser = getUser();
   const { notify } = useToast();
+  const confirm = useConfirm();
   const [users, setUsers] = useState<UserAdminInfo[] | null>(null);
   const [error, setError] = useState("");
   const [name, setName] = useState("");
@@ -92,7 +94,11 @@ export function SecurityPage() {
   }
 
   async function deleteUser(user: UserAdminInfo): Promise<void> {
-    if (!window.confirm(`Delete ${user.email}?`)) return;
+    const ok = await confirm({
+      title: "Delete user?",
+      body: `${user.email} will lose access immediately. This cannot be undone.`,
+    });
+    if (!ok) return;
     try {
       await api.deleteUser(user.id);
       setUsers((items) => (items ?? []).filter((item) => item.id !== user.id));
@@ -191,7 +197,19 @@ export function SecurityPage() {
           ))}
         </div>
 
-        {!users && !error && <p className="muted">Loading…</p>}
+        {!users && !error && (
+          <div className="security-users" aria-label="Loading users">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <div className="security-user-row skeleton-row" key={index}>
+                <div>
+                  <span className="skeleton-line short" />
+                  <span className="skeleton-line" />
+                </div>
+                <span className="skeleton-line tiny" />
+              </div>
+            ))}
+          </div>
+        )}
 
         {users && (
           <div className="security-users">

@@ -3658,15 +3658,26 @@ kbd {
   cursor: default;
 }
 
+/* Global reduced-motion safety net. Honours the user's OS preference for every
+   animation and transition in the app — entrance pops, drawer/menu slides,
+   skeleton shimmer, spinners, hover lifts — not just the few that were called
+   out individually. Animations are allowed to run once (so single-shot reveals
+   still settle into their final state) but at near-zero duration; transitions
+   collapse to instant. Targeted `animation: none` blocks elsewhere still apply. */
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
   .assistant-fab,
   .assistant-fab:hover,
   .assistant-fab:active,
   .assistant-send:active:not(:disabled) {
     transform: none;
-  }
-  .assistant-spin {
-    animation: none;
   }
 }
 

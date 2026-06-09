@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, runnerPoolsApi } from "./api";
+import { useConfirm } from "./ConfirmProvider";
 import { HomeHeader } from "./HomeHeader";
 import { useCan } from "./permissions";
 import { useModalA11y } from "./useModalA11y";
@@ -853,6 +854,7 @@ function PoolCard({
   const [sshOpen, setSshOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editingRunner, setEditingRunner] = useState<RunnerInfo | null>(null);
+  const confirm = useConfirm();
 
   const loadRunners = useCallback(async () => {
     try {
@@ -918,12 +920,11 @@ function PoolCard({
               type="button"
               className="btn btn-sm btn-ghost"
               onClick={async () => {
-                if (
-                  !confirm(
-                    "Delete this runner pool and all its registered runners?",
-                  )
-                )
-                  return;
+                const ok = await confirm({
+                  title: "Delete runner pool?",
+                  body: "This pool and all its registered runners will be removed.",
+                });
+                if (!ok) return;
                 await runnerPoolsApi.delete(pool.id);
                 onChanged();
               }}
@@ -977,7 +978,12 @@ function PoolCard({
                         type="button"
                         className="btn btn-sm btn-ghost"
                         onClick={async () => {
-                          if (!confirm(`Remove runner "${r.name}"?`)) return;
+                          const ok = await confirm({
+                            title: "Remove runner?",
+                            body: `“${r.name}” will be removed from this pool.`,
+                            confirmLabel: "Remove",
+                          });
+                          if (!ok) return;
                           await runnerPoolsApi.deleteRunner(pool.id, r.id);
                           await loadRunners();
                           onChanged();
@@ -1123,7 +1129,20 @@ export function RunnerPoolsPage() {
         </div>
 
         {error && <p className="error-text">{error}</p>}
-        {!pools && !error && <p className="muted">Loading…</p>}
+        {!pools && !error && (
+          <div className="pool-list" aria-label="Loading runner pools">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div className="pool-card skeleton-card" key={index}>
+                <div className="pool-head">
+                  <div className="pool-main">
+                    <span className="skeleton-line short" />
+                    <span className="skeleton-line" />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {pools && pools.length === 0 && (
           <div className="empty-state">

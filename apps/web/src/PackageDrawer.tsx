@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "./api";
+import { useConfirm } from "./ConfirmProvider";
 import {
   canonicalName,
   diffPackages,
@@ -23,6 +24,7 @@ export function PackageDrawer({
   const [busy, setBusy] = useState(false);
   const [pendingImport, setPendingImport] = useState<string[] | null>(null);
   const [removeStale, setRemoveStale] = useState(false);
+  const confirm = useConfirm();
 
   useEffect(() => {
     api
@@ -89,9 +91,11 @@ export function PackageDrawer({
   async function removeOne(pkg: string) {
     const used = usageByCanon.get(canonicalName(pkg));
     if (used && used.used_by.length > 0) {
-      const ok = window.confirm(
-        `${pkg} is required by ${used.used_by.length} node(s). Remove anyway?`,
-      );
+      const ok = await confirm({
+        title: `Remove ${pkg}?`,
+        body: `It is required by ${used.used_by.length} node(s). They may fail until it is reinstalled.`,
+        confirmLabel: "Remove",
+      });
       if (!ok) return;
     }
     await commit(env.packages.filter((p) => p !== pkg));

@@ -612,7 +612,7 @@ export function WorkflowsPage() {
                       </button>
                     )}
                   </div>
-                  <h3 className="wf-name">{wf.name}</h3>
+                  <h3 className="wf-name" title={wf.name}>{wf.name}</h3>
                   <div className="wf-meta">
                     <span>
                       {wf.node_count} node{wf.node_count === 1 ? "" : "s"}

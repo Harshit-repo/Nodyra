@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../api";
+import { useConfirm } from "../ConfirmProvider";
 import type {
   CodeModule,
   CodeModuleFunctionPreview,
@@ -40,6 +41,7 @@ export function FunctionsPanel({
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [installTargetEnv, setInstallTargetEnv] = useState<string>("");
   const [installing, setInstalling] = useState<string | null>(null);
+  const confirm = useConfirm();
 
   async function refresh(): Promise<void> {
     try {
@@ -165,9 +167,11 @@ export function FunctionsPanel({
   }
 
   async function remove(m: CodeModule): Promise<void> {
-    if (!confirm(`Delete ${m.name}? Nodes in the graph that reference its functions will error on the next run.`)) {
-      return;
-    }
+    const ok = await confirm({
+      title: `Delete ${m.name}?`,
+      body: "Nodes in the graph that reference its functions will error on the next run.",
+    });
+    if (!ok) return;
     try {
       await api.deleteCodeModule(m.id);
       if (selected?.id === m.id) {
@@ -474,13 +478,12 @@ export function FunctionsPanel({
                     type="button"
                     className="btn btn-ghost"
                     onClick={async () => {
-                      if (
-                        !confirm(
-                          "Replace the current workflow graph with a starter graph derived from this file?",
-                        )
-                      ) {
-                        return;
-                      }
+                      const ok = await confirm({
+                        title: "Replace workflow graph?",
+                        body: "The current graph will be replaced with a starter graph derived from this file.",
+                        confirmLabel: "Replace",
+                      });
+                      if (!ok) return;
                       try {
                         const graph = await api.starterGraph(selected.id);
                         onApplyStarterGraph(graph);
