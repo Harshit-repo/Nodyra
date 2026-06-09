@@ -483,7 +483,23 @@ correctness bugs — triage separately from the FE-N findings.
 | ~~UX-2~~ | a11y | ✅ **Done.** Swept close/remove buttons (`✕`/`×`) across `src/` and added `aria-label` to the ones missing it (`EditorPage`×2, `CodeLibraryPage`, `DeploymentsPage`, `ExecutionsPage`, `DataPanel`, `FunctionsPanel`×2, `RunnerPoolsPage`×4, `NodeDetails`×3). | — |
 | ~~UX-3~~ | a11y | ✅ **Done.** Modal a11y rollout — see FE-6. | — |
 | ~~UX-4~~ | Perf/UX | ✅ **Done.** Route-level `React.lazy()` + `Suspense` in `App.tsx`. Main `index` chunk **1,153 KB → 187 KB** (331 → 60 KB gzip); editor (700 KB) + Plotly (1.1 MB) now load only on the editor route. | — |
-| UX-5 | Errors | Error display is split between inline banners (`setError`) and toasts (`notify`) inconsistently across pages; pick one convention per error class (transient → toast, blocking → inline) for predictability. | M |
-| UX-6 | Feedback | `run_waiting` (approval) surfaces as a transient `info` toast in EditorPage; a persistent affordance (badge/banner with an "approve" jump) would be clearer since the run is genuinely blocked. | M |
+| ~~UX-5~~ | Errors | ✅ **Done.** Adopted a consistent convention and removed every double-display (inline banner **and** toast for the same failure, ~18 handlers): **form-submission errors → inline near the form** (credential create/test, invite user, OAuth start, node code/cred modals); **item/toolbar-action errors → a single toast carrying the detail** via `errorMessage(err)` (deploy run/toggle/delete, save/publish/run/cancel/AI, role/user delete, workflow delete). Inline page banners are now reserved for blocking **load** errors. | — |
+| ~~UX-6~~ | Feedback | ✅ **Done.** Persistent EditorPage banner ("⏸ This run is paused for tool approval") with inline approve/reject (reused `RunApprovalsPanel`, extracted to its own file so the editor chunk doesn't pull ExecutionsPage) + "View run →" link + dismiss. Deciding reconnects the run stream so the editor resumes. Replaces the easy-to-miss transient toast. | — |
 | ~~UX-7~~ | Toasts | ✅ **Done.** `ToastProvider` rewritten: errors are sticky (manual dismiss), success/info auto-dismiss, all pause-on-hover; errors get `role="alert"`. Tests in `ToastProvider.test.tsx`. | — |
-| UX-8 | Editor nav | In-app route navigation away from a dirty editor isn't blocked (FE-7 only guards refresh/close). A React Router `useBlocker` (needs a data router) would prompt on in-app nav too. | M |
+| ~~UX-8~~ | Editor nav | ✅ **Done.** Migrated the root to a data router (`createBrowserRouter`/`RouterProvider` in `main.tsx`; App keeps its descendant `<Routes>` + auth gating unchanged) so EditorPage can `useBlocker` — in-app nav away from a dirty editor (Logo link, browser back, programmatic) now prompts a "Leave with unsaved changes?" ConfirmDialog. Complements FE-7 (refresh/close). Runtime-verified: deep link renders correctly, no console errors. | — |
+| ~~UX-9~~ | Polish | ✅ **Done.** EditorPage's `message` status line (publish/AI/debug-snapshot info) was rendered in the red `.toolbar-error` style — a UX-5 follow-on. Gave it a neutral `.toolbar-message` style so success/info text no longer looks like an error. | — |
+
+### Opportunity scan (this pass) — what was checked & cleared
+A sweep for additional issues found the codebase in good shape:
+- **Clean:** no `target="_blank"` missing `rel`, no `console.log/debug`, no `<img>`
+  without `alt`, no external `href` missing `rel` (all of `src/`).
+- **Index keys** (`key={i}`) appear only on render-only or *controlled* lists
+  (chart segments, preview tables, text spans, KV/routes rows) — values derive
+  from state, so no data corruption; at most a minor focus nit on reorder. Not
+  worth adding id fields.
+- **Data tables** (`PortDataViewer`, artifact/dataset previews) are
+  preview-capped (`.slice(0,3)`, bounded `shownRows`/`shownColumns`) — no
+  unbounded render (consistent with FE-8).
+- **Deferred (nice-to-have, not a strict gap):** no SPA route-change
+  announcement/focus-move for screen-reader users. Reasonable future a11y polish;
+  left out as over-reach for a trusted-team internal tool.

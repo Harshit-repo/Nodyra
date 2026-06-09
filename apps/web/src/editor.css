@@ -132,6 +132,16 @@
   padding: 7px 16px;
   border-bottom: 1px solid rgba(229, 102, 79, 0.2);
 }
+/* Neutral status line (publish/AI/debug-snapshot info) — not an error, so it
+   must not wear the red error styling. */
+.toolbar-message {
+  background: var(--accent-glow);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--line);
+}
 .production-warning {
   background: rgba(255, 212, 121, 0.1);
   color: #ffd479;
@@ -2934,6 +2944,34 @@ body.is-resizing-vertical {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+/* Run paused for tool approval (UX-6) — persistent, unlike a toast. */
+.toolbar-approval.run-approval-banner {
+  background: rgba(255, 212, 121, 0.1);
+  border-bottom: 1px solid rgba(255, 212, 121, 0.22);
+  padding: 8px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.run-approval-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #ffd479;
+  font-size: 13px;
+}
+.run-approval-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.run-approval-banner .exec-approvals {
+  margin: 0;
 }
 
 /* ---- node toolbar (per-node action buttons) ---- */

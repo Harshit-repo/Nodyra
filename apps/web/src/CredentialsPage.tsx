@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { api } from "./api";
+import { api, errorMessage } from "./api";
 import { HomeHeader } from "./HomeHeader";
 import {
   LLM_PROVIDER_VARIANTS,
@@ -726,8 +726,8 @@ function CreateCredentialModal({
       );
       notify("OAuth authorization opened.", "success");
     } catch (err) {
+      // OAuth start happens inside the create form → inline error near the form.
       setError(String(err));
-      notify("Could not start OAuth authorization.", "error");
     } finally {
       setBusy(false);
     }
@@ -1240,8 +1240,7 @@ export function CredentialsPage() {
       notify("Credential deleted.", "success");
       load();
     } catch (err) {
-      setError(String(err));
-      notify("Could not delete credential.", "error");
+      notify(`Could not delete credential. ${errorMessage(err)}`, "error");
     }
   }
 

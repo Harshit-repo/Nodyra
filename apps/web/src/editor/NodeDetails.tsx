@@ -740,8 +740,8 @@ function CredentialCreateModal({
       );
       if (!result.ok) setError(result.message);
     } catch (err) {
+      // Inside the credential modal/field → inline error (toast would duplicate).
       setError(String(err));
-      notify(String(err), "error");
     } finally {
       setTesting(false);
     }
@@ -997,8 +997,8 @@ function CredentialParamField({
       );
       if (!result.ok) setError(result.message);
     } catch (err) {
+      // Inside the credential modal/field → inline error (toast would duplicate).
       setError(String(err));
-      notify(String(err), "error");
     } finally {
       setTesting(false);
     }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { api, getUser } from "./api";
+import { api, errorMessage, getUser } from "./api";
 import { HomeHeader } from "./HomeHeader";
 import { useToast } from "./ToastProvider";
 import type { UserAdminInfo } from "./types";
@@ -72,8 +72,8 @@ export function SecurityPage() {
       setRole("viewer");
       notify("User invited.", "success");
     } catch (err) {
+      // Form submission error → inline near the form (toast would be redundant).
       setError(String(err));
-      notify("Could not invite user.", "error");
     } finally {
       setBusy(false);
     }
@@ -87,8 +87,7 @@ export function SecurityPage() {
       );
       notify("Role updated.", "success");
     } catch (err) {
-      setError(String(err));
-      notify("Could not update role.", "error");
+      notify(`Could not update role. ${errorMessage(err)}`, "error");
     }
   }
 
@@ -99,8 +98,7 @@ export function SecurityPage() {
       setUsers((items) => (items ?? []).filter((item) => item.id !== user.id));
       notify("User deleted.", "success");
     } catch (err) {
-      setError(String(err));
-      notify("Could not delete user.", "error");
+      notify(`Could not delete user. ${errorMessage(err)}`, "error");
     }
   }
 

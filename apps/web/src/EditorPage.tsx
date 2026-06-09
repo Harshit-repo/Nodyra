@@ -1,8 +1,8 @@
 import { ReactFlowProvider } from "@xyflow/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useBlocker, useParams } from "react-router-dom";
 
-import { api, type RunStreamHandle, subscribeToRunEvents } from "./api";
+import { api, errorMessage, type RunStreamHandle, subscribeToRunEvents } from "./api";
 import { AiDraftModal } from "./AiDraftModal";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Canvas } from "./editor/Canvas";
@@ -24,6 +24,7 @@ import {
 } from "./editor/store";
 import { Logo } from "./Logo";
 import { useCan } from "./permissions";
+import { RunApprovalsPanel } from "./RunApprovalsPanel";
 import { useToast } from "./ToastProvider";
 import { useModalA11y } from "./useModalA11y";
 import type {
@@ -221,6 +222,9 @@ export function EditorPage() {
   const [showHistory, setShowHistory] = useState(false);
   const [restoreGraph, setRestoreGraph] = useState<WorkflowGraph | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // Run id of a run paused awaiting tool approval (UX-6). Drives a persistent
+  // banner with inline approve/reject instead of relying on a transient toast.
+  const [waitingRunId, setWaitingRunId] = useState<string | null>(null);
   const [cmdOpen, setCmdOpen] = useState(false);
   const chatOpen = useEditor((s) => s.chatOpen);
   const openChat = useEditor((s) => s.openChat);
@@ -477,8 +481,7 @@ export function EditorPage() {
   // Warn before a tab close / refresh drops unsaved graph edits — saving is
   // manual (Cmd/Ctrl+S, Save, name blur), so without this guard a refresh
   // silently loses work. Covers the parent graph and any dirty child (map-body)
-  // workflows. (In-app route nav isn't guarded — this BrowserRouter setup has no
-  // data-router blocker; the dirty-dot indicator covers that path.)
+  // workflows.
   useEffect(() => {
     if (!dirty && !childDirty) return;
     const handler = (e: BeforeUnloadEvent) => {
@@ -488,6 +491,15 @@ export function EditorPage() {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [dirty, childDirty]);
+
+  // In-app navigation guard (UX-8): block route changes away from a dirty
+  // editor (Logo link, browser back, programmatic nav) and confirm via dialog.
+  // `beforeunload` above only covers real tab-close/refresh, not SPA nav.
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      (dirty || childDirty) &&
+      currentLocation.pathname !== nextLocation.pathname,
+  );
 
   async function save(
     options: { notifySuccess?: boolean } = {},
@@ -528,8 +540,7 @@ export function EditorPage() {
       if (notifySuccess) notify("Draft saved.", "success");
       return updated;
     } catch (err) {
-      setMessage(String(err));
-      notify("Could not save draft.", "error");
+      notify(`Could not save draft. ${errorMessage(err)}`, "error");
       return null;
     } finally {
       setSaving(false);
@@ -557,8 +568,7 @@ export function EditorPage() {
       setMessage(`Published v${published.version}.${deployNote}`);
       notify(`Published v${published.version}.`, "success");
     } catch (err) {
-      setMessage(String(err));
-      notify("Could not publish workflow.", "error");
+      notify(`Could not publish workflow. ${errorMessage(err)}`, "error");
     } finally {
       setPublishing(false);
     }
@@ -595,11 +605,9 @@ export function EditorPage() {
       notify("AI draft preview ready.", "success");
     } catch (err) {
       if (controller.signal.aborted) {
-        setMessage("AI draft request timed out. Please try again.");
-        notify("AI draft timed out.", "error");
+        notify("AI draft request timed out. Please try again.", "error");
       } else {
-        setMessage(String(err));
-        notify("Could not build AI draft.", "error");
+        notify(`Could not build AI draft. ${errorMessage(err)}`, "error");
       }
     } finally {
       window.clearTimeout(timeoutId);
@@ -626,8 +634,7 @@ export function EditorPage() {
       setMessage(`${aiPreview.explanation}${missing}`);
       notify("AI draft applied.", "success");
     } catch (err) {
-      setMessage(String(err));
-      notify("Could not apply AI draft.", "error");
+      notify(`Could not apply AI draft. ${errorMessage(err)}`, "error");
     } finally {
       setAiBusy(false);
     }
@@ -677,8 +684,7 @@ export function EditorPage() {
       notify(next ? "Workflow activated." : "Workflow deactivated.", "success");
     } catch (err) {
       setActive(!next);
-      setMessage(String(err));
-      notify("Could not update workflow state.", "error");
+      notify(`Could not update workflow state. ${errorMessage(err)}`, "error");
     } finally {
       setSaving(false);
     }
@@ -773,12 +779,17 @@ export function EditorPage() {
     // events keep mutating editor state for the wrong run.
     wsRef.current?.close();
     wsRef.current = null;
+    setWaitingRunId(null);
     startRun(runId, targets);
     wsRef.current = subscribeToRunEvents(runId, {
       onMessage: (data) => {
         const payload = data as RunEvent;
         applyRunEvent(payload);
         if (payload.type === "run_finished") {
+          // A "waiting" finish means the run paused for a tool approval. Surface
+          // it as a persistent banner (UX-6) — a transient toast is too easy to
+          // miss for a run that's genuinely blocked.
+          setWaitingRunId(payload.status === "waiting" ? (payload.run_id ?? runId) : null);
           notify(
             payload.status === "success"
               ? "Workflow run succeeded."
@@ -920,8 +931,7 @@ export function EditorPage() {
       }
       connectRunStream(run_id, targets);
     } catch (err) {
-      setMessage(String(err));
-      notify("Could not start workflow run.", "error");
+      notify(`Could not start workflow run. ${errorMessage(err)}`, "error");
     }
   }
 
@@ -944,8 +954,7 @@ export function EditorPage() {
         });
       }
     } catch (err) {
-      setMessage(String(err));
-      notify("Could not cancel run.", "error");
+      notify(`Could not cancel run. ${errorMessage(err)}`, "error");
     } finally {
       setCancellingRun(false);
     }
@@ -1278,7 +1287,7 @@ export function EditorPage() {
         </div>
       </header>
 
-      {message && <div className="toolbar-error">{message}</div>}
+      {message && <div className="toolbar-message">{message}</div>}
       {active && (dirty || workflow?.has_unpublished_changes) && (
         <div className="production-warning">
           Draft changes won't affect active production runs until you publish.
@@ -1307,6 +1316,39 @@ export function EditorPage() {
           <button className="btn btn-sm btn-ghost" onClick={openAiFixFailedRun}>
             Fix with AI
           </button>
+        </div>
+      )}
+
+      {waitingRunId && (
+        <div className="toolbar-approval run-approval-banner">
+          <div className="run-approval-head">
+            <span>⏸ This run is paused for tool approval.</span>
+            <div className="run-approval-actions">
+              <Link
+                className="btn btn-sm btn-ghost"
+                to={`/executions?run=${waitingRunId}`}
+              >
+                View run →
+              </Link>
+              <button
+                className="btn btn-sm btn-ghost"
+                aria-label="Dismiss approval banner"
+                onClick={() => setWaitingRunId(null)}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          <RunApprovalsPanel
+            runId={waitingRunId}
+            runStatus="waiting"
+            onChanged={() => {
+              // A decision was made — resume streaming so the editor reflects
+              // the run continuing (or finishing). If it pauses again, the next
+              // run_finished:"waiting" re-arms this banner.
+              connectRunStream(waitingRunId);
+            }}
+          />
         </div>
       )}
 
@@ -1540,6 +1582,15 @@ export function EditorPage() {
           onRestore={(graph) => {
             setRestoreGraph(graph);
           }}
+        />
+      )}
+      {blocker.state === "blocked" && (
+        <ConfirmDialog
+          title="Leave with unsaved changes?"
+          body="This workflow has unsaved edits. Leaving now will discard them."
+          confirmLabel="Leave"
+          onCancel={() => blocker.reset()}
+          onConfirm={() => blocker.proceed()}
         />
       )}
       {restoreGraph && (

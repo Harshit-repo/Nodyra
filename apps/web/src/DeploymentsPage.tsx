@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
-import { api, ApiError } from "./api";
+import { api, ApiError, errorMessage } from "./api";
 import { HomeHeader } from "./HomeHeader";
 import { useToast } from "./ToastProvider";
 import { useModalA11y } from "./useModalA11y";
@@ -72,8 +72,7 @@ export function DeploymentsPage() {
       notify("Deployment run started.", "success");
       navigate(`/executions?run=${run_id}`);
     } catch (err) {
-      setError(String(err));
-      notify("Could not start deployment.", "error");
+      notify(`Could not start deployment. ${errorMessage(err)}`, "error");
     }
   }
 
@@ -114,8 +113,7 @@ export function DeploymentsPage() {
         });
         return;
       }
-      setError(String(err));
-      notify("Could not update deployment.", "error");
+      notify(`Could not update deployment. ${errorMessage(err)}`, "error");
     }
   }
 
@@ -126,8 +124,7 @@ export function DeploymentsPage() {
       notify("Deployment deleted.", "success");
       refresh();
     } catch (err) {
-      setError(String(err));
-      notify("Could not delete deployment.", "error");
+      notify(`Could not delete deployment. ${errorMessage(err)}`, "error");
     }
   }
 

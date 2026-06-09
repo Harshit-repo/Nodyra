@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { DotsThreeVertical, Rows, SquaresFour } from "@phosphor-icons/react";
 
-import { api } from "./api";
+import { api, errorMessage } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { HomeHeader } from "./HomeHeader";
 import { Logo } from "./Logo";
@@ -289,8 +289,7 @@ export function WorkflowsPage() {
       setPendingDelete(null);
       load();
     } catch (err) {
-      setError(String(err));
-      notify("Could not delete workflow.", "error");
+      notify(`Could not delete workflow. ${errorMessage(err)}`, "error");
     } finally {
       setDeleteBusy(false);
     }
