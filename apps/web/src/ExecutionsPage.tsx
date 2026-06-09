@@ -735,6 +735,7 @@ function RunDetailPanel({
             type="button"
             className="btn btn-sm btn-ghost"
             onClick={onClose}
+            aria-label="Close"
           >
             ✕
           </button>

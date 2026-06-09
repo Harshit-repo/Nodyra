@@ -1366,7 +1366,7 @@ function ExpressionEditorModal({
           <h2>
             Editing <span className="expr-modal-label">{label}</span>
           </h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+          <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </header>
@@ -1795,6 +1795,7 @@ function FileUploadField({
               onChange("");
               setFilename(null);
             }}
+            aria-label="Remove file"
           >
             ×
           </button>
@@ -2529,7 +2530,7 @@ function CodeEditorModal({
           <h2>
             Editing code <span className="expr-modal-label">{label}</span>
           </h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+          <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </header>

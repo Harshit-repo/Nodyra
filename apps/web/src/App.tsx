@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 const AUTH_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000, 30000, 60000];
 const AUTH_MAX_RETRIES = AUTH_RETRY_DELAYS_MS.length;
@@ -7,24 +7,36 @@ import { Route, Routes, useLocation } from "react-router-dom";
 import { api, onUnauthorized, setToken, setUser } from "./api";
 import { NO_AUTH_FALLBACK, shouldRetryAuthError } from "./authBootstrap";
 import { BackendLoading } from "./BackendLoading";
-import { ActivityPage } from "./ActivityPage";
+import { ErrorBoundary } from "./ErrorBoundary";
 // AppAssistant is temporarily unmounted from the UI (see Routes below) but kept
 // in the codebase for continued iteration.
 // import { AppAssistant } from "./AppAssistant";
-import { ChatPublicPage } from "./ChatPublicPage";
-import { CodeLibraryPage } from "./CodeLibraryPage";
-import { CredentialsPage } from "./CredentialsPage";
-import { DeploymentsPage } from "./DeploymentsPage";
-import { EditorPage } from "./EditorPage";
-import { EnvironmentsPage } from "./EnvironmentsPage";
-import { ExecutionsPage } from "./ExecutionsPage";
 import { LoginPage } from "./LoginPage";
-import { RunnerPoolsPage } from "./RunnerPoolsPage";
-import { SecurityPage } from "./SecurityPage";
-import { SettingsPage } from "./SettingsPage";
 import { ToastProvider } from "./ToastProvider";
-import { WorkflowsPage } from "./WorkflowsPage";
 import type { AuthState, UserInfo } from "./types";
+
+// Route pages are code-split so the initial bundle doesn't carry the editor
+// (React Flow + Plotly) and every admin page. `named` adapts our named exports
+// to the default-export shape `lazy()` expects.
+function named<T extends Record<string, unknown>, K extends keyof T>(
+  loader: () => Promise<T>,
+  key: K,
+): () => Promise<{ default: T[K] }> {
+  return () => loader().then((m) => ({ default: m[key] }));
+}
+
+const ActivityPage = lazy(named(() => import("./ActivityPage"), "ActivityPage"));
+const ChatPublicPage = lazy(named(() => import("./ChatPublicPage"), "ChatPublicPage"));
+const CodeLibraryPage = lazy(named(() => import("./CodeLibraryPage"), "CodeLibraryPage"));
+const CredentialsPage = lazy(named(() => import("./CredentialsPage"), "CredentialsPage"));
+const DeploymentsPage = lazy(named(() => import("./DeploymentsPage"), "DeploymentsPage"));
+const EditorPage = lazy(named(() => import("./EditorPage"), "EditorPage"));
+const EnvironmentsPage = lazy(named(() => import("./EnvironmentsPage"), "EnvironmentsPage"));
+const ExecutionsPage = lazy(named(() => import("./ExecutionsPage"), "ExecutionsPage"));
+const RunnerPoolsPage = lazy(named(() => import("./RunnerPoolsPage"), "RunnerPoolsPage"));
+const SecurityPage = lazy(named(() => import("./SecurityPage"), "SecurityPage"));
+const SettingsPage = lazy(named(() => import("./SettingsPage"), "SettingsPage"));
+const WorkflowsPage = lazy(named(() => import("./WorkflowsPage"), "WorkflowsPage"));
 
 export default function App() {
   const location = useLocation();
@@ -114,9 +126,13 @@ export default function App() {
   // hooks so hook order stays stable across renders.)
   if (location.pathname.startsWith("/chat/")) {
     return (
-      <Routes>
-        <Route path="/chat/:workflowId" element={<ChatPublicPage />} />
-      </Routes>
+      <ErrorBoundary resetKey={location.pathname}>
+        <Suspense fallback={<BackendLoading retrying={false} />}>
+          <Routes>
+            <Route path="/chat/:workflowId" element={<ChatPublicPage />} />
+          </Routes>
+        </Suspense>
+      </ErrorBoundary>
     );
   }
 
@@ -136,19 +152,23 @@ export default function App() {
 
   return (
     <ToastProvider>
-      <Routes>
-        <Route path="/" element={<WorkflowsPage />} />
-        <Route path="/environments" element={<EnvironmentsPage />} />
-        <Route path="/code-library" element={<CodeLibraryPage />} />
-        <Route path="/deployments" element={<DeploymentsPage />} />
-        <Route path="/executions" element={<ExecutionsPage />} />
-        <Route path="/credentials" element={<CredentialsPage />} />
-        <Route path="/activity" element={<ActivityPage />} />
-        <Route path="/runner-pools" element={<RunnerPoolsPage />} />
-        <Route path="/security" element={<SecurityPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/workflows/:id" element={<EditorPage />} />
-      </Routes>
+      <ErrorBoundary resetKey={location.pathname}>
+        <Suspense fallback={<BackendLoading retrying={false} />}>
+          <Routes>
+            <Route path="/" element={<WorkflowsPage />} />
+            <Route path="/environments" element={<EnvironmentsPage />} />
+            <Route path="/code-library" element={<CodeLibraryPage />} />
+            <Route path="/deployments" element={<DeploymentsPage />} />
+            <Route path="/executions" element={<ExecutionsPage />} />
+            <Route path="/credentials" element={<CredentialsPage />} />
+            <Route path="/activity" element={<ActivityPage />} />
+            <Route path="/runner-pools" element={<RunnerPoolsPage />} />
+            <Route path="/security" element={<SecurityPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/workflows/:id" element={<EditorPage />} />
+          </Routes>
+        </Suspense>
+      </ErrorBoundary>
       {/* App-wide AI assistant (floating dock). Temporarily disabled in the UI
           while it is iterated on — the component and its backend wiring remain
           in the codebase (apps/web/src/AppAssistant.tsx). To re-enable, restore:

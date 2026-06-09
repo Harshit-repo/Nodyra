@@ -93,12 +93,25 @@ function formatCell(value: unknown): string {
   }
 }
 
+// Hard cap on the rendered JSON string. The backend caps payloads, but a
+// pathological object would still freeze the main thread in `JSON.stringify`
+// and balloon the DOM — clamp the rendered text so the panel stays responsive.
+const MAX_JSON_CHARS = 100_000;
+
 function pretty(value: unknown): string {
+  let text: string;
   try {
-    return JSON.stringify(value, null, 2);
+    text = JSON.stringify(value, null, 2);
   } catch {
     return String(value);
   }
+  if (text.length > MAX_JSON_CHARS) {
+    return (
+      text.slice(0, MAX_JSON_CHARS) +
+      `\n\n… output truncated (${text.length.toLocaleString()} chars). Open the full artifact to see everything.`
+    );
+  }
+  return text;
 }
 
 function findHtmlPreview(value: unknown): string | null {
@@ -511,7 +524,7 @@ function ColumnProfileCard({
     <div className="col-profile-pop" onClick={(e) => e.stopPropagation()}>
       <div className="col-profile-head">
         <strong>{col}</strong>
-        <button className="btn btn-xs btn-ghost" onClick={onClose}>
+        <button className="btn btn-xs btn-ghost" onClick={onClose} aria-label="Close">
           ✕
         </button>
       </div>
@@ -951,7 +964,7 @@ function DataTable({
       </div>
     );
   }
-  return <pre className="data-json">{JSON.stringify(display, null, 2)}</pre>;
+  return <pre className="data-json">{pretty(display)}</pre>;
 }
 
 function HtmlPreview({ html }: { html: string }) {
@@ -1000,7 +1013,7 @@ function VariableExplorer({
             <RecordTable data={variable.preview} />
           ) : (
             <pre className="data-json variable-preview">
-              {JSON.stringify(variable.preview ?? variable.summary ?? null, null, 2)}
+              {pretty(variable.preview ?? variable.summary ?? null)}
             </pre>
           )}
         </section>

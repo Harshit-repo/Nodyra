@@ -1,4 +1,7 @@
+import { useRef } from "react";
+
 import type { AiFixStrategy, AiWorkflowDraftResponse } from "./types";
+import { useModalA11y } from "./useModalA11y";
 
 interface AiDraftModalProps {
   mode: "draft" | "fix";
@@ -37,13 +40,28 @@ export function AiDraftModal({
       ? "Apply replacement"
       : "Apply repair"
     : "Apply draft";
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        className="modal modal-wide"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ai-draft-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="modal-head">
-          <h2>{title}</h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose} disabled={busy}>
+          <h2 id="ai-draft-title">{title}</h2>
+          <button
+            className="btn btn-sm btn-ghost"
+            onClick={onClose}
+            disabled={busy}
+            aria-label="Close"
+          >
             ✕
           </button>
         </header>
@@ -88,6 +106,7 @@ export function AiDraftModal({
             onChange={(e) => onPromptChange(e.target.value)}
             placeholder="When a GitHub issue is opened, summarize it with OpenAI and post to Slack."
             spellCheck={false}
+            aria-label={isFix ? "Fix instructions" : "Workflow description"}
           />
           {preview && (
             <div className="ai-preview">

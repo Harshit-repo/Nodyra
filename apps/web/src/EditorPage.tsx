@@ -188,6 +188,9 @@ export function EditorPage() {
   const toGraph = useEditor((s) => s.toGraph);
   const markClean = useEditor((s) => s.markClean);
   const dirty = useEditor((s) => s.dirty);
+  const childDirty = useEditor((s) =>
+    Object.values(s.childWorkflows).some((cw) => cw.dirty),
+  );
   const nodeCount = useEditor((s) => s.nodes.length);
   const hasTrigger = useEditor(selectHasTrigger);
   const hasChatTrigger = useEditor(selectHasChatTrigger);
@@ -419,6 +422,21 @@ export function EditorPage() {
     },
     [],
   );
+
+  // Warn before a tab close / refresh drops unsaved graph edits — saving is
+  // manual (Cmd/Ctrl+S, Save, name blur), so without this guard a refresh
+  // silently loses work. Covers the parent graph and any dirty child (map-body)
+  // workflows. (In-app route nav isn't guarded — this BrowserRouter setup has no
+  // data-router blocker; the dirty-dot indicator covers that path.)
+  useEffect(() => {
+    if (!dirty && !childDirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty, childDirty]);
 
   async function save(
     options: { notifySuccess?: boolean } = {},
@@ -699,6 +717,11 @@ export function EditorPage() {
   }
 
   function connectRunStream(runId: string, targets?: string[]): void {
+    // Tear down any prior run's stream before opening a new one — otherwise a
+    // rapid re-run (or starting a second run) leaks the old socket and lets its
+    // events keep mutating editor state for the wrong run.
+    wsRef.current?.close();
+    wsRef.current = null;
     startRun(runId, targets);
     wsRef.current = subscribeToRunEvents(runId, {
       onMessage: (data) => {
@@ -1313,6 +1336,7 @@ export function EditorPage() {
               <button
                 className="btn btn-sm btn-ghost"
                 onClick={() => setShortcutsOpen(false)}
+                aria-label="Close"
               >
                 ✕
               </button>
@@ -1377,6 +1401,7 @@ export function EditorPage() {
                 className="btn btn-sm btn-ghost"
                 onClick={() => setPublishReviewOpen(false)}
                 disabled={publishing}
+                aria-label="Close"
               >
                 ✕
               </button>

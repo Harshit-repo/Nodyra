@@ -92,7 +92,13 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
 
   return (
     <div className="modal-overlay ndv-overlay" onClick={closeNdv}>
-      <div className="ndv-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="ndv-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Node details"
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="ndv-head">
           <div className="ndv-title">
             <span

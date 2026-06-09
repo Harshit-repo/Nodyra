@@ -3,7 +3,9 @@ import {
   type ReactNode,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -27,15 +29,55 @@ interface ToastContextValue {
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
+// Auto-dismiss timing. Errors are sticky (manual dismiss only) so a real
+// failure can't vanish before the user reads it; transient confirmations clear
+// on their own.
+const TOAST_TTL_MS: Record<ToastTone, number | null> = {
+  error: null,
+  success: 3600,
+  info: 4200,
+};
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  // Per-toast dismiss timers, so hovering can pause/resume them.
+  const timers = useRef<Map<number, number>>(new Map());
 
-  const notify = useCallback((message: string, tone: ToastTone = "info", action?: ToastAction) => {
-    const id = Date.now() + Math.floor(Math.random() * 1000);
-    setToasts((current) => [...current, { id, tone, message, action }].slice(-4));
-    window.setTimeout(() => {
-      setToasts((current) => current.filter((toast) => toast.id !== id));
-    }, tone === "error" ? 6500 : 3600);
+  const dismiss = useCallback((id: number) => {
+    const handle = timers.current.get(id);
+    if (handle !== undefined) {
+      window.clearTimeout(handle);
+      timers.current.delete(id);
+    }
+    setToasts((current) => current.filter((t) => t.id !== id));
+  }, []);
+
+  const scheduleDismiss = useCallback(
+    (id: number, tone: ToastTone) => {
+      const ttl = TOAST_TTL_MS[tone];
+      if (ttl === null) return; // sticky (errors)
+      const handle = window.setTimeout(() => dismiss(id), ttl);
+      timers.current.set(id, handle);
+    },
+    [dismiss],
+  );
+
+  const notify = useCallback(
+    (message: string, tone: ToastTone = "info", action?: ToastAction) => {
+      const id = Date.now() + Math.floor(Math.random() * 1000);
+      setToasts((current) => [...current, { id, tone, message, action }].slice(-4));
+      scheduleDismiss(id, tone);
+    },
+    [scheduleDismiss],
+  );
+
+  // Clear any outstanding timers on unmount.
+  useEffect(() => {
+    const map = timers.current;
+    return () => {
+      for (const handle of map.values()) window.clearTimeout(handle);
+      map.clear();
+    };
   }, []);
 
   const value = useMemo(() => ({ notify }), [notify]);
@@ -45,7 +87,23 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div className="toast-stack" aria-live="polite" aria-atomic="false">
         {toasts.map((toast) => (
-          <div className={`toast toast-${toast.tone}`} key={toast.id}>
+          <div
+            className={`toast toast-${toast.tone}`}
+            key={toast.id}
+            role={toast.tone === "error" ? "alert" : undefined}
+            // Pause the countdown while the pointer is over the toast so a user
+            // reading a message isn't cut off; resume on leave.
+            onMouseEnter={() => {
+              const handle = timers.current.get(toast.id);
+              if (handle !== undefined) {
+                window.clearTimeout(handle);
+                timers.current.delete(toast.id);
+              }
+            }}
+            onMouseLeave={() => {
+              if (!timers.current.has(toast.id)) scheduleDismiss(toast.id, toast.tone);
+            }}
+          >
             <span>{toast.message}</span>
             {toast.action && (
               <button
@@ -53,7 +111,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 className="toast-action"
                 onClick={() => {
                   toast.action?.onClick();
-                  setToasts((current) => current.filter((t) => t.id !== toast.id));
+                  dismiss(toast.id);
                 }}
               >
                 {toast.action.label}
@@ -63,9 +121,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               type="button"
               className="toast-dismiss"
               aria-label="Dismiss notification"
-              onClick={() =>
-                setToasts((current) => current.filter((t) => t.id !== toast.id))
-              }
+              onClick={() => dismiss(toast.id)}
             >
               x
             </button>

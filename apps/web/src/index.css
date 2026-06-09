@@ -401,6 +401,42 @@ textarea:focus-visible {
   0%, 80%, 100% { opacity: 0.2; }
   40% { opacity: 1; }
 }
+.app-error {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--canvas, #0b0e14);
+}
+.app-error-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 420px;
+  text-align: center;
+  padding: 28px 32px;
+  border: 1px solid var(--line-2, rgba(255, 255, 255, 0.08));
+  border-radius: 12px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.03));
+}
+.app-error-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink, #e6e9ef);
+}
+.app-error-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-2, #aab1bd);
+}
+.app-error-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
 .mono-tag {
   font-family: var(--font-mono);
   font-size: 11px;

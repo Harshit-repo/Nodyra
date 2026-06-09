@@ -77,6 +77,71 @@ export class ApiError extends Error {
     this.status = status;
     this.detail = detail;
   }
+  // Many call sites surface errors with `String(err)`. Default Error
+  // stringification prepends the class name ("ApiError: …"), which leaks an
+  // internal detail into user-facing toasts/banners. Return just the message.
+  override toString(): string {
+    return this.message;
+  }
+}
+
+/**
+ * Normalise any caught value into user-facing text. For `Error` (incl.
+ * `ApiError`) this returns `.message`, which strips the class-name prefix that
+ * `String(err)` would otherwise leak (e.g. "TypeError: Failed to fetch" →
+ * "Failed to fetch", "ApiError: 403 …" → "403 …"). Use this at display sites
+ * (toasts, inline banners) instead of `String(err)`.
+ */
+export function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  return String(err);
+}
+
+/**
+ * Turn an API error `detail` payload into human-readable text.
+ *
+ * FastAPI returns validation errors as an array of `{loc, msg, type}` objects;
+ * rendering that array verbatim dumps raw JSON at the user. Custom handlers
+ * return `{message, …}` objects or plain strings. Normalise all of these to a
+ * sentence; fall back to JSON only for genuinely unexpected shapes.
+ */
+export function formatErrorDetail(detail: unknown): string {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .map((item) =>
+        item && typeof item === "object" && "msg" in item
+          ? String((item as { msg: unknown }).msg)
+          : null,
+      )
+      .filter((m): m is string => Boolean(m));
+    if (msgs.length) return msgs.join("; ");
+  }
+  if (detail && typeof detail === "object" && "message" in detail) {
+    const message = (detail as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return JSON.stringify(detail);
+}
+
+/**
+ * `fetch`, but a network-level failure (offline, DNS, CORS, server down)
+ * — which rejects with a bare `TypeError: Failed to fetch` — is converted into
+ * a clean `ApiError` so display sites show a human message instead of leaking
+ * the class name. Intentional aborts (request `signal`) are re-thrown untouched.
+ */
+async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (err) {
+    if ((err as { name?: string })?.name === "AbortError") throw err;
+    throw new ApiError(
+      0,
+      "Could not reach the server. Check your connection and try again.",
+      err,
+    );
+  }
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -89,7 +154,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...baseHeaders,
     ...((init?.headers as Record<string, string>) ?? {}),
   };
-  const resp = await fetch(BASE + path, { ...init, headers });
+  const resp = await safeFetch(BASE + path, { ...init, headers });
   if (resp.status === 401) {
     setToken(null);
     setUser(null);
@@ -104,11 +169,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       /* response had no JSON body */
     }
-    const message =
-      typeof detail === "string"
-        ? detail
-        : (detail as { message?: string })?.message ?? JSON.stringify(detail);
-    throw new ApiError(resp.status, `${resp.status} ${message}`, detail);
+    throw new ApiError(resp.status, `${resp.status} ${formatErrorDetail(detail)}`, detail);
   }
   if (resp.status === 204) return undefined as T;
   return (await resp.json()) as T;
@@ -566,7 +627,7 @@ export async function uploadArtifact(file: File): Promise<ArtifactInfo> {
   if (token) headers.Authorization = `Bearer ${token}`;
   const body = new FormData();
   body.append("file", file);
-  const resp = await fetch(`${BASE}/artifacts/upload`, {
+  const resp = await safeFetch(`${BASE}/artifacts/upload`, {
     method: "POST",
     headers,
     body,
@@ -585,11 +646,7 @@ export async function uploadArtifact(file: File): Promise<ArtifactInfo> {
     } catch {
       /* no JSON body */
     }
-    const message =
-      typeof detail === "string"
-        ? detail
-        : (detail as { message?: string })?.message ?? JSON.stringify(detail);
-    throw new ApiError(resp.status, `${resp.status} ${message}`, detail);
+    throw new ApiError(resp.status, `${resp.status} ${formatErrorDetail(detail)}`, detail);
   }
   return (await resp.json()) as ArtifactInfo;
 }

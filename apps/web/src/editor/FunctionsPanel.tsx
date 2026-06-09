@@ -187,7 +187,7 @@ export function FunctionsPanel({
     <div className="functions-panel" role="dialog" aria-label="Workflow functions">
       <header className="functions-panel-head">
         <h2>Functions</h2>
-        <button type="button" className="btn btn-sm btn-ghost" onClick={onClose}>
+        <button type="button" className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
           ✕
         </button>
       </header>
@@ -248,6 +248,7 @@ export function FunctionsPanel({
                   className="functions-item-del"
                   onClick={() => void remove(m)}
                   title="Delete"
+                  aria-label={`Delete ${m.name}`}
                 >
                   ✕
                 </button>

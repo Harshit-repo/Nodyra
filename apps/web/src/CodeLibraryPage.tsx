@@ -250,7 +250,7 @@ function CodeModuleDialog({
       <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
         <header className="modal-head">
           <h2>{initial ? `Edit ${initial.name}` : "New file"}</h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+          <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </header>

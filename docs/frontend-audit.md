@@ -87,6 +87,13 @@ Do **not** redo these — they were checked and are clean/accepted:
 | ID | Title | Severity | Status |
 |---|---|---|---|
 | FE-1 | Session token in localStorage | Low | accepted/documented (backend audit) |
+| FE-2 | No React error boundary → render throw white-screens the app | High | `fixed` (test + build) |
+| FE-3 | User-facing errors leak `ApiError:` prefix + raw 422 JSON | Medium | `fixed` (test) |
+| FE-4 | WS `1008` (auth refused) close doesn't trigger re-auth | Low | `todo` |
+| FE-5 | EditorPage run stream not closed before reopening → socket leak + cross-run events | Medium | `fixed` |
+| FE-6 | Modals lack Esc / focus trap / focus return (no shared util) | Medium (a11y) | `fixed` (ConfirmDialog, AiDraftModal) + util for the rest |
+| FE-7 | No unsaved-changes guard → tab close/refresh silently loses editor edits | Medium | `fixed` |
+| FE-8 | DataPanel renders unbounded `JSON.stringify` of run output (main-thread freeze risk) | Low | `fixed` |
 | _next_ | _(add findings here)_ | | ⏳ |
 
 ---
@@ -96,17 +103,17 @@ Do **not** redo these — they were checked and are clean/accepted:
 | Area / file | Reviewed | Notes |
 |---|---|---|
 | Security basics (XSS / postMessage / token) | ✅ | from backend audit — see above |
-| **Error & 401/403 handling flows** | ⏳ pending | `api.ts` (857 LOC), `authBootstrap.ts`, `ToastProvider.tsx`, route guards in `App.tsx` |
-| **Accessibility (a11y)** | ⏳ pending | keyboard nav, focus traps in modals, ARIA, contrast, tap targets — whole `src/` |
-| **Performance** | ⏳ pending | editor re-renders, big lists (`ExecutionsPage`, `WorkflowsPage`), Plotly/`DataPanel`, bundle size |
-| **Editor correctness/UX** | ⏳ pending | `editor/store.ts` (2258 LOC), `Canvas.tsx`, `NoodleEdge.tsx`, `LoopFrame.tsx`, undo/redo, copy/paste |
+| **Error & 401/403 handling flows** | ✅ reviewed | found FE-2 (no error boundary), FE-3 (error text leakage), FE-4 (WS 1008). 401 path is sound (clears token + flips auth → LoginPage); 403 falls through to a generic toast — acceptable now that FE-3 makes the backend's `detail` message readable. `api.ts` `request()`/`uploadArtifact()` handle 204 + non-JSON bodies correctly. |
+| **Accessibility (a11y)** | 🔶 partial | FE-6: built `useModalA11y` (Esc + focus trap + focus return). Applied to `ConfirmDialog`, `AiDraftModal`, `DatasetSqlModal`, `SdkModal` (full); `CommandPalette` + `NodeDetailModal` given `role/aria-modal` + focus-return without the trap (they have bespoke keyboard handling / embedded editors). Icon-only-button `aria-label` sweep done (UX-2). Color-contrast pass still pending. |
+| **Performance** | 🔶 partial | UX-4 done: route-level code splitting cut initial JS ~80% (index 331→60 KB gzip; editor + Plotly deferred). Editor re-render profiling + big-list virtualization review still pending. |
+| **Editor correctness/UX** | 🔶 partial | FE-7 (no unsaved-changes guard) fixed. Workflow-switch load effect has a correct `cancelled` guard. Undo/redo/copy/paste/loops/metanodes are well-covered by existing `store.*.test.ts`. Deeper `store.ts` review still pending. |
 | **`editor/NodeDetails.tsx` (3491 LOC)** | ⏳ pending | the largest component — param rendering, validation, expression preview |
 | **`EditorPage.tsx` (1512 LOC)** | ⏳ pending | autosave/publish flow, draft vs published, websocket run events |
-| **`CredentialsPage.tsx` (1432 LOC)** | ⏳ pending | beyond the OAuth-origin check: secret handling in forms, never log secrets |
-| **`editor/DataPanel.tsx` (1296 LOC) / NDVPanels (1043)** | ⏳ pending | large payload rendering, truncation, artifact/dataset value display |
-| **`RunnerPoolsPage` / `EnvironmentsPage` / `DeploymentsPage`** | ⏳ pending | admin flows, optimistic updates, error surfacing |
-| **State & data fetching** | ⏳ pending | Zustand store hygiene, stale-closure bugs, race conditions on rapid edits, request cancellation |
-| **WebSocket run streaming** | ⏳ pending | `/ws/runs/{id}` consumer: reconnect, dedupe, `run_waiting`/`run_finished` handling, leak on unmount |
+| **`CredentialsPage.tsx` (1432 LOC)** | 🔶 partial | Secret handling clean: secret fields render `type="password"` (`fieldInputType`, line 543), no `console.*` secret logging anywhere in `src` (only 1 benign `store.ts` warn), secrets posted in request bodies (not URLs). Full form-flow/validation review still pending. |
+| **`editor/DataPanel.tsx` (1296 LOC) / NDVPanels (1043)** | ✅ reviewed | FE-8: capped the raw-JSON `<pre>` fallback in DataPanel via `pretty()` (100 K chars). NDVPanels already truncates previews to 500 chars. Text body already capped at 20 K. DataFrame/record views render previews, not full payloads. |
+| **`RunnerPoolsPage` / `EnvironmentsPage` / `DeploymentsPage`** | 🔶 partial | Close buttons labelled (UX-2). `DeploymentsPage` has solid 409-unsafe-node handling + refresh-after-mutate. Polling intervals clean. Deeper optimistic-update/rollback review still pending. |
+| **State & data fetching** | 🔶 partial | EditorPage load uses `cancelled` flag (no stale write on workflow switch); `save()` guarded by `saveInProgressRef`. FE-7 covers refresh data-loss. Broader page-level fetch race/cancellation review still pending. |
+| **WebSocket run streaming** | ✅ reviewed | FE-5 fixed (EditorPage leak). `ExecutionsPage` (effect cleanup) + `ChatPanel` (closes before reconnect, unmount cleanup) are correct. Reconnect backoff resets on any message; `run_waiting` handled (toast + ChatPanel reconnect). FE-4 (1008→re-auth) still `todo`. |
 | **Forms & validation** | ⏳ pending | client-side validation parity with the API (e.g. node types, schedules) |
 | **Routing / deep links / refresh survival** | ⏳ pending | `App.tsx`, `authBootstrap.ts` (recent "no black screen" fix — verify edge cases) |
 
@@ -176,4 +183,160 @@ Do **not** redo these — they were checked and are clean/accepted:
 > - **Fix:** …
 > - **Status:** `todo` | `fixed` (+ test/how-verified)
 
-_(none yet — backend FE-1 lives in the production-readiness audit)_
+### FE-2 — No React error boundary → any render throw white-screens the whole app (High)
+- **Evidence:** No `componentDidCatch` / `getDerivedStateFromError` anywhere in
+  `apps/web/src` (grep clean). `main.tsx` rendered `<App/>` bare; `App.tsx`
+  rendered `<Routes>` with no boundary. A single render-time exception in any
+  route page (e.g. an unexpected `null` / malformed run payload) unmounts the
+  entire tree to a blank page with no recovery — exactly the "black/white
+  screen" class the recent auth-bootstrap fix was guarding against.
+- **Impact:** One bad component takes down the whole SPA; user must hard-reload
+  and may not know to.
+- **Fix:** Added `src/ErrorBoundary.tsx` (class component) with a friendly,
+  recoverable fallback ("Something went wrong" + **Reload** + **Try again**),
+  styled with existing theme tokens (`.app-error*` in `index.css`). Wired two
+  layers: an outer catch-all in `main.tsx` around `<App/>` (covers bootstrap +
+  login), and an inner boundary in `App.tsx` around the authed `<Routes>` and
+  the public chat route, keyed on `location.pathname` so **navigating away
+  auto-clears the error** without a hard reload.
+- **Status:** `fixed`. Verified: `ErrorBoundary.test.tsx` (4 tests — renders
+  children, shows fallback on throw, resets on `resetKey` change, "Try again"
+  re-renders in place). Full suite 119/119, `typecheck` clean, `build` clean.
+
+### FE-3 — User-facing error text leaks `ApiError:` prefix and raw 422 JSON (Medium)
+- **Evidence:** ~30+ call sites surface errors with `setError(String(err))` /
+  `notify(String(err))` (e.g. `EditorPage.tsx`, `CredentialsPage.tsx:876,1255,1268`,
+  `EnvironmentsPage.tsx`, `ExecutionsPage.tsx`, `ActivityPage.tsx:30`). `String()`
+  on an `Error` prepends the class name, so an `ApiError` rendered to a user read
+  `"ApiError: 422 …"`. Worse, `api.ts request()`/`uploadArtifact()` built the
+  message via `(detail as {message?}).message ?? JSON.stringify(detail)`, so a
+  FastAPI validation error (`detail` = `[{loc,msg,type},…]`) dumped raw JSON like
+  `[{"loc":["body","name"],"msg":"field required",…}]` into the toast.
+- **Impact:** Confusing, unprofessional error messages; validation failures are
+  unreadable to users.
+- **Fix (centralized, no call-site churn):** in `api.ts` (1) added
+  `formatErrorDetail(detail)` — passes strings through, joins FastAPI
+  `[{msg}]` arrays into a sentence, unwraps `{message}` objects, JSON only as a
+  last resort; used it in both `request()` and `uploadArtifact()` (also dedupes
+  the previously-duplicated parsing block). (2) Overrode `ApiError.toString()`
+  to return just `this.message` so every existing `String(err)` stops leaking
+  the class name. `err.status` / `err.detail` stay intact for callers that
+  branch on them (e.g. `DeploymentsPage` 409 handling).
+- **Status:** `fixed`. Verified: `api.errors.test.ts` (6 tests) + full suite.
+- **Follow-up (not fixed):** plain non-API errors (`TypeError: Failed to fetch`)
+  still show their class prefix via `String(err)`. A shared `errorMessage(err)`
+  helper adopted at the toast/setError sites would fully normalize this; deferred
+  as broader churn — the API-error path (the common case) is now clean.
+
+### FE-4 — WebSocket `1008` (auth refused) close doesn't trigger re-auth (Low)
+- **Evidence:** `api.ts subscribeToRunEvents` treats close code `1008` as
+  terminal (stops reconnecting, calls `onClosed`) but never invokes the global
+  `unauthorizedHandler`. If a session expires mid-run, the run stream dies
+  silently while the rest of the UI stays in a stale "signed-in" state until the
+  next REST call 401s.
+- **Impact:** Minor — the next REST request recovers the user to login; only the
+  live run view is affected in the interim.
+- **Fix (proposed):** on a `1008` close, call the same unauthorized path REST
+  uses (clear token + `unauthorizedHandler`). Deferred — low blast radius.
+- **Status:** `todo`.
+
+> **Perf note (for the Performance area, not a finding yet):** `npm run build`
+> shows Plotly is already code-split (`PlotlyChartView` chunk, 1.1 MB / 378 KB
+> gzip — good), but the main `index` chunk is ~1.15 MB / 331 KB gzip. Worth
+> revisiting route-level `lazy()` splitting when the Performance area is picked up.
+
+### FE-5 — EditorPage run stream not torn down before reopening (Medium)
+- **Evidence:** `apps/web/src/EditorPage.tsx` `connectRunStream()` did
+  `wsRef.current = subscribeToRunEvents(...)` without first closing an existing
+  handle. (`ExecutionsPage` uses effect cleanup and `ChatPanel` closes before
+  reconnect — only EditorPage was missing the guard.)
+- **Impact:** Starting a second run, or a rapid re-run before the previous run
+  finished, orphans the prior WebSocket (it keeps its own reconnect loop alive)
+  and its `onMessage` keeps calling `applyRunEvent` — mutating editor node
+  state for the *wrong* run. Socket leak + cross-run state bleed.
+- **Fix:** close + null `wsRef.current` at the top of `connectRunStream` before
+  opening the new stream.
+- **Status:** `fixed`. Verified: `typecheck` + `build` clean; existing
+  `store.*`/`ChatPanel` tests still green. (No unit test — the socket lifecycle
+  isn't currently harnessed in EditorPage; verified by code path + the symmetric
+  pattern already proven in ChatPanel/ExecutionsPage.)
+
+### FE-6 — Modals lack Esc-to-close, focus trap, and focus return (Medium, a11y)
+- **Evidence:** No shared focus-management utility existed. `ConfirmDialog.tsx`
+  (used for destructive actions across every page) had `role="dialog"` +
+  `aria-modal` but no `Esc`, no focus trap, and no focus return. `AiDraftModal`
+  had none of the dialog ARIA at all. Several modals do handle `Esc`
+  (`CommandPalette`, `NodeDetailModal`), so behaviour was inconsistent.
+- **Impact:** Keyboard users can't dismiss dialogs with `Esc`, focus can escape
+  behind the modal, and focus isn't returned to the trigger on close — a
+  WCAG 2.4.3 / 2.1.2 gap and a daily friction for power users.
+- **Fix:** added `src/useModalA11y.ts` — `Esc` to close, focus first focusable
+  on open, trap `Tab`/`Shift+Tab`, restore focus on unmount; `trapFocus:false`
+  escape hatch for dialogs embedding their own keyboard widgets. Applied to
+  `ConfirmDialog` (focuses Cancel first — safer default) and `AiDraftModal`
+  (also added `role="dialog"`/`aria-modal`/`aria-labelledby`, `aria-label` on
+  the close button and prompt textarea).
+- **Status:** `fixed` for those two. Verified: `useModalA11y.test.tsx`
+  (4 tests — Esc, focus-in, focus-return, Tab-wrap) + `typecheck`.
+- **Rollout (done this run):** full hook on `DatasetSqlModal` + `SdkModal`
+  (added `role="dialog"`/`aria-modal`/`aria-labelledby` + close-button labels).
+  `CommandPalette` (combobox with its own arrow-key nav) and `NodeDetailModal`
+  (embeds the NodeDetails code editors) kept their bespoke `Esc` handling and
+  got `aria-modal` + focus-return added, but **not** the `Tab` trap — it would
+  fight their inner controls.
+
+### FE-7 — No unsaved-changes guard; tab close / refresh silently drops edits (Medium)
+- **Evidence:** `EditorPage.tsx` saves only manually — Cmd/Ctrl+S, the Save
+  button, name-input `onBlur`, and implicitly before a run. There was no
+  `beforeunload` handler anywhere in `src` (grep clean), so a refresh or tab
+  close with a dirty graph lost the work with no prompt.
+- **Impact:** Real data loss for the app's core surface (the editor). The
+  dirty-dot indicator hints at unsaved state but nothing intercepts the unload.
+- **Fix:** added a `beforeunload` effect in `EditorPage` that arms only while
+  `dirty || childDirty` (parent graph or any dirty map-body child) so the
+  browser shows its native "leave site?" prompt. Cleaned up on change/unmount.
+- **Scope note:** in-app React Router navigation isn't blocked — this
+  `BrowserRouter` setup has no data-router `useBlocker`; adding that is a larger
+  change tracked as a UX opportunity. The refresh/close vector (the common one)
+  is covered.
+- **Status:** `fixed`. Verified: `typecheck` clean; full suite green.
+
+---
+
+### FE-8 — DataPanel renders unbounded run output JSON (Low)
+- **Evidence:** `editor/DataPanel.tsx` had two `<pre>{JSON.stringify(x, null, 2)}</pre>`
+  sites (the raw-JSON value fallback, line ~954, and the variable preview,
+  line ~1016) with no size cap. The text-body path (`slice(0, 20000)`) and
+  NDVPanels (`slice(0, 500)`) were already bounded; these two weren't.
+- **Impact:** The backend caps payloads, so this is unlikely in practice, but a
+  large object would block the main thread in `JSON.stringify` and inflate the
+  DOM with a giant `<pre>`. Defensive only.
+- **Fix:** added a `MAX_JSON_CHARS` (100 K) clamp inside the existing `pretty()`
+  helper (with a "… output truncated (N chars)" footer) and routed both `<pre>`
+  sites through `pretty()`.
+- **Status:** `fixed`. Verified: `typecheck` + `build` clean.
+
+> **Interval/cleanup review (clean):** all `setInterval` consumers
+> (`ExecutionsPage` ×3, `WorkflowsPage`, `ChatPanel`, `NDVPanels`,
+> `NodeDetails` ×2, `EditorPage` webhook poll) clear their timers on unmount /
+> dependency change (effect cleanup or a `timerRef` cleared via
+> `useEffect(() => stop, [])`). No leaks found. Console hygiene also clean —
+> only one benign `store.ts` warn, no secret logging.
+
+---
+
+## 🎨 UI/UX improvement opportunities (running list)
+
+Captured opportunistically during the audit. These are polish/UX, not
+correctness bugs — triage separately from the FE-N findings.
+
+| # | Area | Opportunity | Effort |
+|---|---|---|---|
+| ~~UX-1~~ | Errors | ✅ **Done.** `safeFetch` in `api.ts` converts network failures (`TypeError: Failed to fetch`) into a clean `ApiError(0, "Could not reach the server…")` at the source — every existing `String(err)` site is now clean, no migration needed. Also exported `errorMessage(err)` helper for explicit use. Tests in `api.errors.test.ts`. | — |
+| ~~UX-2~~ | a11y | ✅ **Done.** Swept close/remove buttons (`✕`/`×`) across `src/` and added `aria-label` to the ones missing it (`EditorPage`×2, `CodeLibraryPage`, `DeploymentsPage`, `ExecutionsPage`, `DataPanel`, `FunctionsPanel`×2, `RunnerPoolsPage`×4, `NodeDetails`×3). | — |
+| ~~UX-3~~ | a11y | ✅ **Done.** Modal a11y rollout — see FE-6. | — |
+| ~~UX-4~~ | Perf/UX | ✅ **Done.** Route-level `React.lazy()` + `Suspense` in `App.tsx`. Main `index` chunk **1,153 KB → 187 KB** (331 → 60 KB gzip); editor (700 KB) + Plotly (1.1 MB) now load only on the editor route. | — |
+| UX-5 | Errors | Error display is split between inline banners (`setError`) and toasts (`notify`) inconsistently across pages; pick one convention per error class (transient → toast, blocking → inline) for predictability. | M |
+| UX-6 | Feedback | `run_waiting` (approval) surfaces as a transient `info` toast in EditorPage; a persistent affordance (badge/banner with an "approve" jump) would be clearer since the run is genuinely blocked. | M |
+| ~~UX-7~~ | Toasts | ✅ **Done.** `ToastProvider` rewritten: errors are sticky (manual dismiss), success/info auto-dismiss, all pause-on-hover; errors get `role="alert"`. Tests in `ToastProvider.test.tsx`. | — |
+| UX-8 | Editor nav | In-app route navigation away from a dirty editor isn't blocked (FE-7 only guards refresh/close). A React Router `useBlocker` (needs a data router) would prompt on in-app nav too. | M |

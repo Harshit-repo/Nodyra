@@ -408,7 +408,7 @@ function DeploymentDialog({
       <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
         <header className="modal-head">
           <h2>{initial ? "Edit deployment" : "New deployment"}</h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+          <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </header>

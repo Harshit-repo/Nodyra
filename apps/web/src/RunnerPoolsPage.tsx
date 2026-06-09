@@ -375,7 +375,7 @@ function PoolDialog({
       <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
         <header className="modal-head">
           <h2>{editing ? `Edit ${pool!.name}` : "New runner pool"}</h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+          <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </header>
@@ -503,7 +503,7 @@ function SSHOnboardDialog({
       <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
         <header className="modal-head">
           <h2>Onboard a machine over SSH</h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+          <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </header>
@@ -664,7 +664,7 @@ noodle-runner start`
       <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
         <header className="modal-head">
           <h2>Add a machine to this pool</h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+          <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </header>
@@ -763,7 +763,7 @@ function EditRunnerDialog({
       <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
         <header className="modal-head">
           <h2>Edit {runner.name}</h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+          <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </header>

@@ -21,10 +21,16 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const addNode = useEditor((s) => s.addNode);
 
   useEffect(() => {
-    if (open) {
-      setQuery("");
-      setTimeout(() => inputRef.current?.focus(), 30);
-    }
+    if (!open) return;
+    setQuery("");
+    // Restore focus to whatever was focused before the palette opened so
+    // keyboard users aren't dumped back at the top of the document on close.
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const timer = window.setTimeout(() => inputRef.current?.focus(), 30);
+    return () => {
+      window.clearTimeout(timer);
+      previouslyFocused?.focus?.();
+    };
   }, [open]);
 
   useEffect(() => {
@@ -116,7 +122,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="cmd-palette" role="dialog" aria-label="Command palette">
+      <div className="cmd-palette" role="dialog" aria-modal="true" aria-label="Command palette">
         <input
           ref={inputRef}
           className="cmd-palette-input"

@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
+
+import { useModalA11y } from "../useModalA11y";
 
 interface SdkModalProps {
   nodeId: string;
@@ -8,6 +10,8 @@ interface SdkModalProps {
 
 export function SdkModal({ nodeId, manifestId, onClose }: SdkModalProps) {
   const [copied, setCopied] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
   const snippet = `from noodle_sdk import run_node
 
@@ -27,11 +31,14 @@ result = run_node(
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="modal"
         style={{ minWidth: 480, maxWidth: 640 }}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
+        aria-modal="true"
         aria-labelledby="sdk-modal-title"
+        tabIndex={-1}
       >
         <header className="modal-head">
           <h2 id="sdk-modal-title" className="modal-title">
