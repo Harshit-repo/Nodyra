@@ -145,7 +145,7 @@ def _credential(
     icon="message",
     hidden=True,
     deprecated=True,
-    replacement_id="slack_send_message_v2",
+    replacement_id="slack",
     params={
         "bot_token": {
             **_credential("slack_bot", "bot_token", "Slack bot token"),
@@ -332,7 +332,7 @@ def smtp_send_email(
     icon="sheet",
     hidden=True,
     deprecated=True,
-    replacement_id="google_sheets_read_v2",
+    replacement_id="google_sheets",
     params={
         "spreadsheet_id": {"placeholder": "Google Sheets spreadsheet ID"},
         "range_name": {"placeholder": "Sheet1!A1:D20"},
@@ -375,7 +375,7 @@ def google_sheets_read(
     icon="sheet",
     hidden=True,
     deprecated=True,
-    replacement_id="google_sheets_append_v2",
+    replacement_id="google_sheets",
     params={
         "spreadsheet_id": {"placeholder": "Google Sheets spreadsheet ID"},
         "range_name": {"placeholder": "Sheet1!A:D"},

@@ -6222,3 +6222,41 @@ th.sortable:hover { background:var(--bg-3); }
   height: 10px !important;
   border-radius: 50% !important;
 }
+
+/* ---- consolidated integration node: Resource / Operation selector ---- */
+.ro-selector {
+  margin-bottom: 14px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.ro-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.ro-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.ro-field .field-name {
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-3);
+}
+.ro-field select.field-input {
+  font-weight: 600;
+}
+.ro-desc {
+  margin: 9px 0 0;
+}
+@media (max-width: 460px) {
+  .ro-grid {
+    grid-template-columns: 1fr;
+  }
+}

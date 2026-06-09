@@ -125,19 +125,154 @@ export function credentialMatchesParam(
   return cred.keys.includes(targetKey);
 }
 
-/** Query params for a dynamic-options fetch: the selected credential's id plus
- *  any provider/base_url/workflow context the loader uses, skipping empties. */
+/** Query params for a dynamic-options fetch: the selected credential's id, the
+ *  standard provider/base_url/workflow context, plus any of the field's own
+ *  `depends_on` params that carry a string value (e.g. a chosen spreadsheet_id
+ *  the loader needs to list that sheet's tabs). Empties are skipped; the
+ *  credential dependency is an object ref, so it's forwarded as credential_id
+ *  above rather than a raw string. */
 export function buildLoadOptionsParams(
   credential: { id: string } | null,
   params: Record<string, unknown>,
+  dependsOn: string[] = [],
 ): Record<string, string> {
   const out: Record<string, string> = {};
   if (credential?.id) out.credential_id = credential.id;
-  for (const key of ["provider", "base_url", "workflow_id"]) {
+  for (const key of ["provider", "base_url", "workflow_id", ...dependsOn]) {
     const value = params[key];
     if (typeof value === "string" && value.trim()) out[key] = value.trim();
   }
   return out;
+}
+
+/** Evaluate a param's `display_when` against the current param values. Supports:
+ *   - `{ param, value }` / `{ param, values: [...] }` — a single equality check
+ *   - `{ conditions: [cond, ...] }` — every condition must match (AND)
+ *   - `{ any: [group, ...] }` — at least one group matches (OR of AND groups)
+ *  Consolidated integration nodes use the nested forms to gate a field on both
+ *  the selected resource and operation. Absent/non-object ⇒ always visible. */
+export function matchesDisplayWhen(
+  displayWhen: Record<string, unknown> | null | undefined,
+  params: Record<string, unknown>,
+): boolean {
+  if (!displayWhen || typeof displayWhen !== "object") return true;
+  if (Array.isArray(displayWhen.any)) {
+    return (displayWhen.any as unknown[]).some((group) =>
+      matchesDisplayWhen(group as Record<string, unknown>, params),
+    );
+  }
+  if (Array.isArray(displayWhen.conditions)) {
+    return (displayWhen.conditions as unknown[]).every((cond) =>
+      matchesDisplayWhen(cond as Record<string, unknown>, params),
+    );
+  }
+  const paramName = String(displayWhen.param ?? "");
+  if (!paramName) return true;
+  const currentVal = String(params[paramName] ?? "");
+  if (Array.isArray(displayWhen.values)) {
+    return displayWhen.values.map(String).includes(currentVal);
+  }
+  return currentVal === String(displayWhen.value ?? "");
+}
+
+/** Recompute params after a resource/operation switch on a consolidated
+ *  integration node: set the new selection and drop any param that is no longer
+ *  visible (so a saved node never carries dead config from another operation).
+ *  Params without a display_when (e.g. the shared credential) are preserved. */
+export function applyResourceOperation(
+  manifest: NodeManifest,
+  params: Record<string, unknown>,
+  resource: string,
+  operation: string,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...params, resource, operation };
+  for (const spec of manifest.params) {
+    if (spec.display_when && !matchesDisplayWhen(spec.display_when, next)) {
+      delete next[spec.name];
+    }
+  }
+  return next;
+}
+
+/** Two-level Resource → Operation selector shown at the top of a consolidated
+ *  integration node's params. Operations filter to the chosen resource; the rest
+ *  of the fields reshape via each param's display_when. */
+export function ResourceOperationSelector({
+  manifest,
+  params,
+  onChange,
+}: {
+  manifest: NodeManifest;
+  params: Record<string, unknown>;
+  onChange: (next: Record<string, unknown>) => void;
+}) {
+  const resources = manifest.integration?.resources ?? [];
+  if (resources.length === 0) return null;
+
+  const currentResource =
+    resources.find((r) => r.id === String(params.resource ?? ""))?.id ??
+    resources[0].id;
+  const resourceDef =
+    resources.find((r) => r.id === currentResource) ?? resources[0];
+  const operations = resourceDef.operations ?? [];
+  const currentOperation =
+    operations.find((o) => o.id === String(params.operation ?? ""))?.id ??
+    operations[0]?.id ??
+    "";
+  const operationDef = operations.find((o) => o.id === currentOperation);
+
+  return (
+    <div className="ro-selector">
+      <div className="ro-grid">
+        <label className="ro-field">
+          <span className="field-name">Resource</span>
+          <select
+            className="field-input"
+            value={currentResource}
+            onChange={(e) => {
+              const res = resources.find((r) => r.id === e.target.value);
+              const firstOp = res?.operations[0]?.id ?? "";
+              onChange(
+                applyResourceOperation(manifest, params, e.target.value, firstOp),
+              );
+            }}
+          >
+            {resources.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="ro-field">
+          <span className="field-name">Operation</span>
+          <select
+            className="field-input"
+            value={currentOperation}
+            onChange={(e) =>
+              onChange(
+                applyResourceOperation(
+                  manifest,
+                  params,
+                  currentResource,
+                  e.target.value,
+                ),
+              )
+            }
+          >
+            {operations.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {operationDef?.description && (
+        <p className="ro-desc field-desc">{operationDef.description}</p>
+      )}
+    </div>
+  );
 }
 
 /** Combine fetched options with the current free-text value so a typed,
@@ -1584,7 +1719,10 @@ function LoadOptionsField({
     setLoading(true);
     setErr("");
     api
-      .dynamicOptions(spec.load_options, buildLoadOptionsParams(credential, params))
+      .dynamicOptions(
+        spec.load_options,
+        buildLoadOptionsParams(credential, params, spec.depends_on ?? []),
+      )
       .then((res) => setFetched(res.options.map((o) => o.value)))
       .catch(() => setErr("Couldn't load list — type a value or retry."))
       .finally(() => setLoading(false));
@@ -1598,10 +1736,15 @@ function LoadOptionsField({
   const credentialId = credential?.id;
   const providerKey = typeof params.provider === "string" ? params.provider : "";
   const baseUrlKey = typeof params.base_url === "string" ? params.base_url : "";
+  // Refetch when any depends_on field changes too — e.g. choosing a different
+  // spreadsheet must reload that spreadsheet's sheet list.
+  const dependsKey = JSON.stringify(
+    (spec.depends_on ?? []).map((dep) => params[dep] ?? null),
+  );
   useEffect(() => {
     fetchOptions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [credentialId, providerKey, baseUrlKey]);
+  }, [credentialId, providerKey, baseUrlKey, dependsKey]);
 
   const options = mergeOptions(fetched, current);
   const filtered = query.trim()
@@ -3405,19 +3548,17 @@ export function NodeDetails({
         {manifest.params.length === 0 && (
           <p className="muted">This node has no parameters.</p>
         )}
+        {manifest.integration && (
+          <ResourceOperationSelector
+            manifest={manifest}
+            params={params}
+            onChange={(next) => updateParams(node.id, next)}
+          />
+        )}
         {manifest.params
           .filter((spec) => spec.widget !== "hidden")
           .filter((spec) => !webhookHiddenParam(manifest.id, spec.name, params))
-          .filter((spec) => {
-            const dw = spec.display_when;
-            if (!dw || typeof dw !== "object") return true;
-            const paramName = String((dw as Record<string, unknown>).param ?? "");
-            const currentVal = String(params[paramName] ?? "");
-            const matchVal = (dw as Record<string, unknown>).value;
-            const matchVals = (dw as Record<string, unknown>).values;
-            if (Array.isArray(matchVals)) return matchVals.map(String).includes(currentVal);
-            return currentVal === String(matchVal ?? "");
-          })
+          .filter((spec) => matchesDisplayWhen(spec.display_when, params))
           .map((spec) => {
             const value = params[spec.name];
             const fx = typeof value === "string" && /\{\{.+?\}\}/s.test(value);

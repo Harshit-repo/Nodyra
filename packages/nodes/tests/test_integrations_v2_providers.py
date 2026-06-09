@@ -51,24 +51,22 @@ def _mock_transport(return_value: Any):
     return m
 
 
-def test_google_sheets_v2_manifests_are_tool_compatible() -> None:
+def test_google_sheets_v2_manifest_is_tool_compatible() -> None:
     manifests = {manifest.id: manifest for manifest in registry.manifests()}
 
-    read_only = {
-        "google_sheets_read_v2",
-        "google_sheets_get_metadata_v2",
+    node = manifests["google_sheets"]
+    assert node.usable_as_tool is True
+    assert node.integration is not None
+    # Every operation the old per-op nodes exposed is still reachable via the
+    # consolidated node's resource/operation selector.
+    operations = {
+        (resource.id, op.id)
+        for resource in node.integration.resources
+        for op in resource.operations
     }
-    side_effecting = {
-        "google_sheets_append_v2",
-        "google_sheets_update_v2",
-        "google_sheets_clear_v2",
-    }
-    for node_id in read_only | side_effecting:
-        assert manifests[node_id].usable_as_tool is True
-    for node_id in read_only:
-        assert manifests[node_id].tool_side_effecting is False
-    for node_id in side_effecting:
-        assert manifests[node_id].tool_side_effecting is True
+    assert ("values", "read") in operations
+    assert ("values", "append") in operations
+    assert ("spreadsheet", "get_metadata") in operations
 
 
 class TestGoogleSheetsRead:

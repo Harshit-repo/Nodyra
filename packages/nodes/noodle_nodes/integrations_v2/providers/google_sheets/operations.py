@@ -8,8 +8,13 @@ from urllib.parse import quote
 
 from noodle.models import CredentialSpec
 from noodle_nodes.integrations_v2.providers.google import GoogleTransport
-from noodle_nodes.integrations_v2.registry import register_operation
-from noodle_nodes.integrations_v2.specs import OperationParamSpec, OperationSpec
+from noodle_nodes.integrations_v2.registry import register_integration, register_operation
+from noodle_nodes.integrations_v2.specs import (
+    IntegrationSpec,
+    OperationParamSpec,
+    OperationSpec,
+    ResourceSpec,
+)
 
 SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
 
@@ -28,6 +33,20 @@ def _credentials_param() -> OperationParamSpec:
             test_service="google_sheets",
         ),
         required_scopes=(SHEETS_SCOPE,),
+    )
+
+
+def _sheet_name_param() -> OperationParamSpec:
+    """The sheet/tab picker: a dynamic dropdown listing the chosen
+    spreadsheet's tabs. Combined with ``range_name`` at runtime so the cell
+    range stays sheet-agnostic (e.g. ``A1:Z100``)."""
+    return OperationParamSpec(
+        name="sheet_name",
+        default="Sheet1",
+        placeholder="Sheet1",
+        description="Sheet/tab to use. Pick from the list once a spreadsheet is set.",
+        load_options="google_sheets.list_sheet_names",
+        depends_on=("credentials", "spreadsheet_id"),
     )
 
 
@@ -51,10 +70,12 @@ GOOGLE_SHEETS_READ_SPEC = OperationSpec(
             required=True,
             placeholder="Spreadsheet ID",
         ),
+        _sheet_name_param(),
         OperationParamSpec(
             name="range_name",
-            default="Sheet1!A1:Z100",
-            placeholder="Sheet1!A1:D20",
+            default="A1:Z100",
+            placeholder="A1:D20",
+            description="Cell range within the sheet. Blank reads the whole sheet.",
         ),
     ),
 )
@@ -75,10 +96,12 @@ GOOGLE_SHEETS_APPEND_SPEC = OperationSpec(
             required=True,
             placeholder="Spreadsheet ID",
         ),
+        _sheet_name_param(),
         OperationParamSpec(
             name="range_name",
-            default="Sheet1!A:Z",
-            placeholder="Sheet1!A:D",
+            default="A:Z",
+            placeholder="A:D",
+            description="Cell range within the sheet to append after.",
         ),
         OperationParamSpec(
             name="values",
@@ -110,10 +133,12 @@ GOOGLE_SHEETS_UPDATE_SPEC = OperationSpec(
             required=True,
             placeholder="Spreadsheet ID",
         ),
+        _sheet_name_param(),
         OperationParamSpec(
             name="range_name",
             required=True,
-            placeholder="Sheet1!A1:D5",
+            placeholder="A1:D5",
+            description="Cell range within the sheet to overwrite.",
         ),
         OperationParamSpec(
             name="values",
@@ -145,10 +170,12 @@ GOOGLE_SHEETS_CLEAR_SPEC = OperationSpec(
             required=True,
             placeholder="Spreadsheet ID",
         ),
+        _sheet_name_param(),
         OperationParamSpec(
             name="range_name",
             required=True,
-            placeholder="Sheet1!A1:Z100",
+            placeholder="A1:Z100",
+            description="Cell range within the sheet to clear.",
         ),
     ),
 )
@@ -274,7 +301,8 @@ GOOGLE_SHEETS_LOOKUP_ROWS_SPEC = OperationSpec(
     params=(
         _credentials_param(),
         OperationParamSpec(name="spreadsheet_id", required=True, placeholder="Spreadsheet ID"),
-        OperationParamSpec(name="range_name", default="Sheet1!A1:Z100"),
+        _sheet_name_param(),
+        OperationParamSpec(name="range_name", default="A1:Z100", placeholder="A1:Z100"),
         OperationParamSpec(name="key_column", required=True, placeholder="Email"),
         OperationParamSpec(name="key_value", required=True, placeholder="ada@example.com"),
         OperationParamSpec(name="header_row_index", type="number", default=0, group="Options"),
@@ -293,7 +321,8 @@ GOOGLE_SHEETS_UPSERT_ROW_SPEC = OperationSpec(
     params=(
         _credentials_param(),
         OperationParamSpec(name="spreadsheet_id", required=True, placeholder="Spreadsheet ID"),
-        OperationParamSpec(name="range_name", default="Sheet1!A1:Z"),
+        _sheet_name_param(),
+        OperationParamSpec(name="range_name", default="A1:Z", placeholder="A1:Z"),
         OperationParamSpec(name="key_column", required=True, placeholder="Email"),
         OperationParamSpec(name="key_value", required=True, placeholder="ada@example.com"),
         OperationParamSpec(
@@ -452,6 +481,21 @@ def _quote_sheet_name(sheet: str) -> str:
     return f"'{escaped}'"
 
 
+def _combine_range(sheet_name: str, range_name: str) -> str:
+    """Qualify a sheet-agnostic A1 range with the chosen sheet/tab.
+
+    Back-compatible: if ``range_name`` already names a sheet (contains ``!``) or
+    no sheet is chosen, it is returned unchanged — so older free-text ranges
+    like ``Sheet1!A1:Z100`` keep working exactly as before.
+    """
+    sheet = (sheet_name or "").strip()
+    cell_range = (range_name or "").strip()
+    if not sheet or "!" in cell_range:
+        return range_name
+    prefix = _quote_sheet_name(sheet)
+    return f"{prefix}!{cell_range}" if cell_range else prefix
+
+
 def _row_range(range_name: str, response_row_index: int, width: int) -> str:
     sheet, start_col, start_row = _range_parts(range_name)
     row_number = start_row + response_row_index
@@ -486,8 +530,10 @@ def read_values(
     input: Any = None,  # noqa: ARG001
     credentials: dict[str, str] | None = None,
     spreadsheet_id: str = "",
-    range_name: str = "Sheet1!A1:Z100",
+    sheet_name: str = "",
+    range_name: str = "A1:Z100",
 ) -> Any:
+    range_name = _combine_range(sheet_name, range_name)
     encoded_range = quote(range_name, safe="!:'")
     return _transport(credentials).request(
         "GET",
@@ -501,10 +547,12 @@ def append_values(
     input: Any = None,
     credentials: dict[str, str] | None = None,
     spreadsheet_id: str = "",
-    range_name: str = "Sheet1!A:Z",
+    sheet_name: str = "",
+    range_name: str = "A:Z",
     values: list | None = None,
     value_input_option: str = "USER_ENTERED",
 ) -> Any:
+    range_name = _combine_range(sheet_name, range_name)
     encoded_range = quote(range_name, safe="!:'")
     return _transport(credentials).request(
         "POST",
@@ -520,12 +568,14 @@ def update_values(
     input: Any = None,
     credentials: dict[str, str] | None = None,
     spreadsheet_id: str = "",
+    sheet_name: str = "",
     range_name: str = "",
     values: list | None = None,
     value_input_option: str = "USER_ENTERED",
 ) -> Any:
     if not range_name:
         raise ValueError("google_sheets_update_v2: range_name is required")
+    range_name = _combine_range(sheet_name, range_name)
     encoded_range = quote(range_name, safe="!:'")
     return _transport(credentials).request(
         "PUT",
@@ -541,10 +591,12 @@ def clear_values(
     input: Any = None,  # noqa: ARG001
     credentials: dict[str, str] | None = None,
     spreadsheet_id: str = "",
+    sheet_name: str = "",
     range_name: str = "",
 ) -> Any:
     if not range_name:
         raise ValueError("google_sheets_clear_v2: range_name is required")
+    range_name = _combine_range(sheet_name, range_name)
     encoded_range = quote(range_name, safe="!:'")
     return _transport(credentials).request(
         "POST",
@@ -699,12 +751,14 @@ def lookup_rows(
     input: Any = None,  # noqa: ARG001
     credentials: dict[str, str] | None = None,
     spreadsheet_id: str = "",
-    range_name: str = "Sheet1!A1:Z100",
+    sheet_name: str = "",
+    range_name: str = "A1:Z100",
     key_column: str = "",
     key_value: str = "",
     header_row_index: int = 0,
     max_matches: int = 10,
 ) -> Any:
+    range_name = _combine_range(sheet_name, range_name)
     encoded_range = quote(range_name, safe="!:'")
     response = _transport(credentials).request(
         "GET",
@@ -736,13 +790,15 @@ def upsert_row(
     input: Any = None,
     credentials: dict[str, str] | None = None,
     spreadsheet_id: str = "",
-    range_name: str = "Sheet1!A1:Z",
+    sheet_name: str = "",
+    range_name: str = "A1:Z",
     key_column: str = "",
     key_value: str = "",
     row_values: dict[str, Any] | list[Any] | None = None,
     value_input_option: str = "USER_ENTERED",
     header_row_index: int = 0,
 ) -> Any:
+    range_name = _combine_range(sheet_name, range_name)
     transport = _transport(credentials)
     encoded_range = quote(range_name, safe="!:'")
     response = transport.request(
@@ -784,15 +840,73 @@ def upsert_row(
     return {"action": "appended", "result": result}
 
 
-register_operation(GOOGLE_SHEETS_READ_SPEC, read_values)
-register_operation(GOOGLE_SHEETS_APPEND_SPEC, append_values)
-register_operation(GOOGLE_SHEETS_UPDATE_SPEC, update_values)
-register_operation(GOOGLE_SHEETS_CLEAR_SPEC, clear_values)
-register_operation(GOOGLE_SHEETS_GET_METADATA_SPEC, get_spreadsheet_metadata)
-register_operation(GOOGLE_SHEETS_CREATE_SPREADSHEET_SPEC, create_spreadsheet)
-register_operation(GOOGLE_SHEETS_BATCH_UPDATE_VALUES_SPEC, batch_update_values)
-register_operation(GOOGLE_SHEETS_ADD_SHEET_SPEC, add_sheet)
-register_operation(GOOGLE_SHEETS_RENAME_SHEET_SPEC, rename_sheet)
-register_operation(GOOGLE_SHEETS_DELETE_SHEET_SPEC, delete_sheet)
-register_operation(GOOGLE_SHEETS_LOOKUP_ROWS_SPEC, lookup_rows)
-register_operation(GOOGLE_SHEETS_UPSERT_ROW_SPEC, upsert_row)
+# Register executors only (node_registry=None): the per-operation nodes are no
+# longer exposed in the palette — the consolidated GOOGLE_SHEETS_INTEGRATION node
+# below dispatches to them by (resource, operation).
+register_operation(GOOGLE_SHEETS_READ_SPEC, read_values, node_registry=None)
+register_operation(GOOGLE_SHEETS_APPEND_SPEC, append_values, node_registry=None)
+register_operation(GOOGLE_SHEETS_UPDATE_SPEC, update_values, node_registry=None)
+register_operation(GOOGLE_SHEETS_CLEAR_SPEC, clear_values, node_registry=None)
+register_operation(
+    GOOGLE_SHEETS_GET_METADATA_SPEC, get_spreadsheet_metadata, node_registry=None
+)
+register_operation(
+    GOOGLE_SHEETS_CREATE_SPREADSHEET_SPEC, create_spreadsheet, node_registry=None
+)
+register_operation(
+    GOOGLE_SHEETS_BATCH_UPDATE_VALUES_SPEC, batch_update_values, node_registry=None
+)
+register_operation(GOOGLE_SHEETS_ADD_SHEET_SPEC, add_sheet, node_registry=None)
+register_operation(GOOGLE_SHEETS_RENAME_SHEET_SPEC, rename_sheet, node_registry=None)
+register_operation(GOOGLE_SHEETS_DELETE_SHEET_SPEC, delete_sheet, node_registry=None)
+register_operation(GOOGLE_SHEETS_LOOKUP_ROWS_SPEC, lookup_rows, node_registry=None)
+register_operation(GOOGLE_SHEETS_UPSERT_ROW_SPEC, upsert_row, node_registry=None)
+
+
+GOOGLE_SHEETS_INTEGRATION = IntegrationSpec(
+    id="google_sheets",
+    name="Google Sheets",
+    description="Read, write, and manage Google Sheets spreadsheets and tabs.",
+    icon="brand:googlesheets",
+    credential_types=("google_sheets_oauth2",),
+    resources=(
+        ResourceSpec(
+            id="values",
+            name="Values",
+            operations=(
+                GOOGLE_SHEETS_READ_SPEC,
+                GOOGLE_SHEETS_APPEND_SPEC,
+                GOOGLE_SHEETS_UPDATE_SPEC,
+                GOOGLE_SHEETS_CLEAR_SPEC,
+                GOOGLE_SHEETS_BATCH_UPDATE_VALUES_SPEC,
+            ),
+        ),
+        ResourceSpec(
+            id="row",
+            name="Row",
+            operations=(
+                GOOGLE_SHEETS_LOOKUP_ROWS_SPEC,
+                GOOGLE_SHEETS_UPSERT_ROW_SPEC,
+            ),
+        ),
+        ResourceSpec(
+            id="spreadsheet",
+            name="Spreadsheet",
+            operations=(
+                GOOGLE_SHEETS_GET_METADATA_SPEC,
+                GOOGLE_SHEETS_CREATE_SPREADSHEET_SPEC,
+            ),
+        ),
+        ResourceSpec(
+            id="sheet",
+            name="Sheet",
+            operations=(
+                GOOGLE_SHEETS_ADD_SHEET_SPEC,
+                GOOGLE_SHEETS_RENAME_SHEET_SPEC,
+                GOOGLE_SHEETS_DELETE_SHEET_SPEC,
+            ),
+        ),
+    ),
+)
+
+register_integration(GOOGLE_SHEETS_INTEGRATION)

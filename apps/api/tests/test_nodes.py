@@ -11,14 +11,11 @@ async def test_list_nodes_returns_manifests(client: AsyncClient) -> None:
         "if",
         "code",
         "http_request",
-        "google_sheets_read_v2",
-        "google_sheets_append_v2",
-        "google_sheets_upsert_row_v2",
+        "google_sheets",
+        "slack",
         "github_get_repo_v2",
         "github_create_issue_v2",
         "github_put_file_contents_v2",
-        "slack_send_message_v2",
-        "slack_open_direct_message_v2",
         "stripe_create_customer_v2",
         "stripe_create_subscription_v2",
         "airtable_list_records_v2",
@@ -32,17 +29,21 @@ async def test_list_nodes_returns_manifests(client: AsyncClient) -> None:
     if_manifest = next(m for m in manifests if m["id"] == "if")
     assert [o["name"] for o in if_manifest["outputs"]] == ["true", "false"]
 
-    sheets = next(m for m in manifests if m["id"] == "google_sheets_append_v2")
+    sheets = next(m for m in manifests if m["id"] == "google_sheets")
     params = {param["name"]: param for param in sheets["params"]}
     assert params["credentials"]["credential"]["type"] == "google_sheets_oauth2"
     assert params["credentials"]["required_scopes"] == [
         "https://www.googleapis.com/auth/spreadsheets"
     ]
+    # Consolidated node carries the resource → operation descriptor.
+    assert sheets["integration"] is not None
+    resources = {r["id"] for r in sheets["integration"]["resources"]}
+    assert {"values", "spreadsheet", "sheet", "row"} <= resources
 
     legacy_sheets = next(m for m in manifests if m["id"] == "google_sheets_append")
     assert legacy_sheets["hidden"] is True
     assert legacy_sheets["deprecated"] is True
-    assert legacy_sheets["replacement_id"] == "google_sheets_append_v2"
+    assert legacy_sheets["replacement_id"] == "google_sheets"
 
     legacy_github = next(m for m in manifests if m["id"] == "github_create_issue")
     assert legacy_github["hidden"] is True
@@ -52,7 +53,7 @@ async def test_list_nodes_returns_manifests(client: AsyncClient) -> None:
     legacy_slack = next(m for m in manifests if m["id"] == "slack_send_message")
     assert legacy_slack["hidden"] is True
     assert legacy_slack["deprecated"] is True
-    assert legacy_slack["replacement_id"] == "slack_send_message_v2"
+    assert legacy_slack["replacement_id"] == "slack"
 
     legacy_stripe = next(m for m in manifests if m["id"] == "stripe_create_customer")
     assert legacy_stripe["hidden"] is True
@@ -78,15 +79,14 @@ async def test_list_nodes_returns_manifests(client: AsyncClient) -> None:
 async def test_generated_node_source_endpoint_uses_stored_source(
     client: AsyncClient,
 ) -> None:
-    resp = await client.get("/nodes/google_sheets_append_v2/source")
+    resp = await client.get("/nodes/google_sheets/source")
     assert resp.status_code == 200
     source = resp.json()
 
     assert source["kind"] == "builtin"
     assert source["editable"] is False
-    assert "def google_sheets_append_v2(" in source["source"]
-    assert "execute_registered_operation" in source["source"]
-    assert "google_sheets.values.append" in source["source"]
+    assert "def google_sheets(" in source["source"]
+    assert "execute_integration_operation" in source["source"]
     assert source["fork_source"] == source["source"]
 
 

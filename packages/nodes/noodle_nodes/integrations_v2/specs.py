@@ -26,6 +26,7 @@ class OperationParamSpec:
     display_name: str = ""
     widget: str = ""
     load_options: str | None = None
+    depends_on: Sequence[str] = field(default_factory=tuple)
     credential_type: str | None = None
     required_scopes: Sequence[str] = field(default_factory=tuple)
     advanced: bool = False
@@ -49,6 +50,7 @@ class OperationParamSpec:
             display_name=self.display_name,
             widget=self.widget,
             load_options=self.load_options,
+            depends_on=list(self.depends_on),
             credential_type=self.credential_type,
             required_scopes=[str(scope) for scope in self.required_scopes],
             advanced=self.advanced,
@@ -95,6 +97,14 @@ class IntegrationSpec:
     name: str
     credential_types: Sequence[str] = field(default_factory=tuple)
     resources: Sequence[ResourceSpec] = field(default_factory=tuple)
+    category: str = "Integrations"
+    version: str = "1.0.0"
+    description: str = ""
+    icon: str | None = None
+
+    def operations(self) -> tuple[OperationSpec, ...]:
+        """Flatten every operation across all resources, in declared order."""
+        return tuple(op for resource in self.resources for op in resource.operations)
 
 
 @dataclass(frozen=True)

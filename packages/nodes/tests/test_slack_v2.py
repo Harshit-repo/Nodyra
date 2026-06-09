@@ -15,49 +15,56 @@ def _mock_transport(return_value: Any) -> MagicMock:
     return transport
 
 
+def _run(resource: str, operation: str, **kwargs: Any) -> Any:
+    """Invoke the consolidated Slack node for a given resource + operation."""
+    return registry.get("slack").func(resource=resource, operation=operation, **kwargs)
+
+
 def test_slack_v2_node_is_registered() -> None:
     manifests = {manifest.id: manifest for manifest in registry.manifests()}
-    expected = {
-        "slack_send_message_v2": ("Slack Send Message", True),
-        "slack_reply_in_thread_v2": ("Slack Reply In Thread", True),
-        "slack_update_message_v2": ("Slack Update Message", True),
-        "slack_delete_message_v2": ("Slack Delete Message", True),
-        "slack_add_reaction_v2": ("Slack Add Reaction", True),
-        "slack_list_channels_v2": ("Slack List Channels", False),
-        "slack_list_users_v2": ("Slack List Users", False),
-        "slack_open_direct_message_v2": ("Slack Open Direct Message", True),
-    }
+    # The per-operation nodes are consolidated into a single "slack" node.
+    assert "slack_send_message_v2" not in manifests
+    assert "slack_list_users_v2" not in manifests
 
-    for node_id, (name, side_effecting) in expected.items():
-        manifest = manifests[node_id]
-        assert manifest.name == name
-        assert manifest.icon == "brand:slack"
-        assert manifest.category == "Integrations"
-        assert manifest.usable_as_tool is True
-        assert manifest.tool_side_effecting is side_effecting
+    node = manifests["slack"]
+    assert node.name == "Slack"
+    assert node.icon == "brand:slack"
+    assert node.category == "Integrations"
+    assert node.usable_as_tool is True
+    assert node.integration is not None
 
-    params = {param.name: param for param in manifests["slack_send_message_v2"].params}
+    resources = {r.id: [op.id for op in r.operations] for r in node.integration.resources}
+    assert resources["message"] == ["send", "reply_thread", "update", "delete"]
+    assert resources["channel"] == ["list"]
+    assert resources["user"] == ["list"]
+
+    params = {param.name: param for param in node.params}
     assert params["credentials"].credential is not None
     assert params["credentials"].credential.type == "slack_bot"
     assert params["credentials"].credential.multi is True
     assert params["credentials"].credential.test_service == "slack_bot"
+    # The channel field is a real dynamic dropdown driven by the credential.
+    assert params["channel"].load_options == "slack.list_channels"
+    assert "credentials" in params["channel"].depends_on
     assert params["blocks"].group == "Options"
 
 
 def test_slack_v2_generated_source_is_available() -> None:
-    source = getattr(registry.get("slack_update_message_v2").func, "__noodle_source__", "")
+    source = getattr(registry.get("slack").func, "__noodle_source__", "")
 
-    assert "def slack_update_message_v2(" in source
-    assert "credentials=None" in source
-    assert "execute_registered_operation" in source
-    assert "slack.message.update" in source
+    assert "def slack(" in source
+    assert "execute_integration_operation" in source
+    assert "resource" in source
+    assert "operation" in source
 
 
 def test_slack_send_message_v2_builds_payload(monkeypatch) -> None:
     transport = _mock_transport({"ok": True, "ts": "123.456"})
     monkeypatch.setattr(operations, "_transport", lambda _credentials: transport)
 
-    result = registry.get("slack_send_message_v2").func(
+    result = _run(
+        "message",
+        "send",
         input={"fallback": "hello"},
         credentials={"bot_token": "xoxb-token"},
         channel="C123",
@@ -83,7 +90,9 @@ def test_slack_update_message_v2_builds_payload(monkeypatch) -> None:
     transport = _mock_transport({"ok": True, "ts": "123.456"})
     monkeypatch.setattr(operations, "_transport", lambda _credentials: transport)
 
-    result = registry.get("slack_update_message_v2").func(
+    result = _run(
+        "message",
+        "update",
         input=None,
         credentials={"bot_token": "xoxb-token"},
         channel="C123",
@@ -110,7 +119,9 @@ def test_slack_reply_in_thread_v2_builds_payload(monkeypatch) -> None:
     transport = _mock_transport({"ok": True, "ts": "123.789"})
     monkeypatch.setattr(operations, "_transport", lambda _credentials: transport)
 
-    result = registry.get("slack_reply_in_thread_v2").func(
+    result = _run(
+        "message",
+        "reply_thread",
         input=None,
         credentials={"bot_token": "xoxb-token"},
         channel="C123",
@@ -137,7 +148,9 @@ def test_slack_delete_message_v2_builds_payload(monkeypatch) -> None:
     transport = _mock_transport({"ok": True, "ts": "123.456"})
     monkeypatch.setattr(operations, "_transport", lambda _credentials: transport)
 
-    result = registry.get("slack_delete_message_v2").func(
+    result = _run(
+        "message",
+        "delete",
         input={"ignored": True},
         credentials={"bot_token": "xoxb-token"},
         channel="C123",
@@ -157,7 +170,9 @@ def test_slack_add_reaction_v2_builds_payload(monkeypatch) -> None:
     transport = _mock_transport({"ok": True})
     monkeypatch.setattr(operations, "_transport", lambda _credentials: transport)
 
-    result = registry.get("slack_add_reaction_v2").func(
+    result = _run(
+        "reaction",
+        "add",
         input=None,
         credentials={"bot_token": "xoxb-token"},
         channel="C123",
@@ -190,7 +205,9 @@ def test_slack_list_channels_v2_paginates(monkeypatch) -> None:
     ]
     monkeypatch.setattr(operations, "_transport", lambda _credentials: transport)
 
-    result = registry.get("slack_list_channels_v2").func(
+    result = _run(
+        "channel",
+        "list",
         input=None,
         credentials={"bot_token": "xoxb-token"},
         max_results=3,
@@ -215,7 +232,9 @@ def test_slack_list_users_v2_filters_deleted(monkeypatch) -> None:
     )
     monkeypatch.setattr(operations, "_transport", lambda _credentials: transport)
 
-    result = registry.get("slack_list_users_v2").func(
+    result = _run(
+        "user",
+        "list",
         input=None,
         credentials={"bot_token": "xoxb-token"},
     )
@@ -230,7 +249,9 @@ def test_slack_open_direct_message_v2_builds_payload(monkeypatch) -> None:
     transport = _mock_transport({"ok": True, "channel": {"id": "D123"}})
     monkeypatch.setattr(operations, "_transport", lambda _credentials: transport)
 
-    result = registry.get("slack_open_direct_message_v2").func(
+    result = _run(
+        "conversation",
+        "open_dm",
         input=None,
         credentials={"bot_token": "xoxb-token"},
         users=["U1", "U2"],

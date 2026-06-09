@@ -36,7 +36,7 @@ _ALLOWED_NODE_TYPES = {
     "edit_fields",
     "code",
     "http_request",
-    "slack_send_message_v2",
+    "slack",
     "smtp_send_email",
     "notion_create_page_v2",
     "github_get_repo_v2",
@@ -84,9 +84,9 @@ _NODE_REGISTRY: dict[str, dict[str, Any]] = {
         "name": "HTTP Request",
         "params": ["url", "method", "headers", "query", "body", "timeout_seconds"],
     },
-    "slack_send_message_v2": {
-        "name": "Slack Send Message V2",
-        "params": ["credentials", "channel", "text", "blocks", "thread_ts"],
+    "slack": {
+        "name": "Slack",
+        "params": ["resource", "operation", "credentials", "channel", "text", "blocks", "thread_ts"],
         "credential_specs": [{"type": "slack_bot", "param": "credentials", "key": "*"}],
     },
     "smtp_send_email": {
@@ -881,6 +881,8 @@ def _fallback_draft(prompt: str) -> _DraftResult:
 
     if wants_slack:
         slack_params: dict = {
+            "resource": "message",
+            "operation": "send",
             "credentials": "",
             "channel": "#alerts",
             "text": "{{ $json }}",
@@ -890,7 +892,7 @@ def _fallback_draft(prompt: str) -> _DraftResult:
         nodes.append(
             _node(
                 "notify_slack",
-                "slack_send_message_v2",
+                "slack",
                 280 + 280 * (len(nodes) - 1),
                 0,
                 slack_params,

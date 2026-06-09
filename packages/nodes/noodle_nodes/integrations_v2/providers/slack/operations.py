@@ -7,8 +7,13 @@ from typing import Any
 
 from noodle.models import CredentialSpec
 from noodle_nodes.integrations_v2.errors import ProviderError
-from noodle_nodes.integrations_v2.registry import register_operation
-from noodle_nodes.integrations_v2.specs import OperationParamSpec, OperationSpec
+from noodle_nodes.integrations_v2.registry import register_integration, register_operation
+from noodle_nodes.integrations_v2.specs import (
+    IntegrationSpec,
+    OperationParamSpec,
+    OperationSpec,
+    ResourceSpec,
+)
 from noodle_nodes.integrations_v2.transport import ProviderTransport
 
 SLACK_API_BASE = "https://slack.com/api"
@@ -45,6 +50,8 @@ SLACK_SEND_MESSAGE_SPEC = OperationSpec(
             name="channel",
             required=True,
             placeholder="C0123456789 or #alerts",
+            load_options="slack.list_channels",
+            depends_on=("credentials",),
         ),
         OperationParamSpec(
             name="text",
@@ -74,7 +81,13 @@ SLACK_REPLY_IN_THREAD_SPEC = OperationSpec(
     icon="brand:slack",
     params=(
         _credentials_param(),
-        OperationParamSpec(name="channel", required=True, placeholder="C0123456789"),
+        OperationParamSpec(
+            name="channel",
+            required=True,
+            placeholder="C0123456789",
+            load_options="slack.list_channels",
+            depends_on=("credentials",),
+        ),
         OperationParamSpec(
             name="thread_ts",
             required=True,
@@ -114,6 +127,8 @@ SLACK_UPDATE_MESSAGE_SPEC = OperationSpec(
             required=True,
             placeholder="C0123456789",
             description="Channel containing the message.",
+            load_options="slack.list_channels",
+            depends_on=("credentials",),
         ),
         OperationParamSpec(
             name="ts",
@@ -149,6 +164,8 @@ SLACK_DELETE_MESSAGE_SPEC = OperationSpec(
             required=True,
             placeholder="C0123456789",
             description="Channel containing the message.",
+            load_options="slack.list_channels",
+            depends_on=("credentials",),
         ),
         OperationParamSpec(
             name="ts",
@@ -174,6 +191,8 @@ SLACK_ADD_REACTION_SPEC = OperationSpec(
             required=True,
             placeholder="C0123456789",
             description="Channel where the message was posted.",
+            load_options="slack.list_channels",
+            depends_on=("credentials",),
         ),
         OperationParamSpec(
             name="timestamp",
@@ -599,11 +618,57 @@ def open_direct_message(
     return _check_slack_ok(result, "open_direct_message")
 
 
-register_operation(SLACK_SEND_MESSAGE_SPEC, send_message)
-register_operation(SLACK_REPLY_IN_THREAD_SPEC, reply_in_thread)
-register_operation(SLACK_UPDATE_MESSAGE_SPEC, update_message)
-register_operation(SLACK_DELETE_MESSAGE_SPEC, delete_message)
-register_operation(SLACK_ADD_REACTION_SPEC, add_reaction)
-register_operation(SLACK_LIST_CHANNELS_SPEC, list_channels)
-register_operation(SLACK_LIST_USERS_SPEC, list_users)
-register_operation(SLACK_OPEN_DIRECT_MESSAGE_SPEC, open_direct_message)
+# Register executors only (node_registry=None): the per-operation nodes are no
+# longer exposed in the palette — the consolidated SLACK_INTEGRATION node below
+# dispatches to them by (resource, operation).
+register_operation(SLACK_SEND_MESSAGE_SPEC, send_message, node_registry=None)
+register_operation(SLACK_REPLY_IN_THREAD_SPEC, reply_in_thread, node_registry=None)
+register_operation(SLACK_UPDATE_MESSAGE_SPEC, update_message, node_registry=None)
+register_operation(SLACK_DELETE_MESSAGE_SPEC, delete_message, node_registry=None)
+register_operation(SLACK_ADD_REACTION_SPEC, add_reaction, node_registry=None)
+register_operation(SLACK_LIST_CHANNELS_SPEC, list_channels, node_registry=None)
+register_operation(SLACK_LIST_USERS_SPEC, list_users, node_registry=None)
+register_operation(SLACK_OPEN_DIRECT_MESSAGE_SPEC, open_direct_message, node_registry=None)
+
+
+SLACK_INTEGRATION = IntegrationSpec(
+    id="slack",
+    name="Slack",
+    description="Send and manage Slack messages, channels, and users.",
+    icon="brand:slack",
+    credential_types=("slack_bot",),
+    resources=(
+        ResourceSpec(
+            id="message",
+            name="Message",
+            operations=(
+                SLACK_SEND_MESSAGE_SPEC,
+                SLACK_REPLY_IN_THREAD_SPEC,
+                SLACK_UPDATE_MESSAGE_SPEC,
+                SLACK_DELETE_MESSAGE_SPEC,
+            ),
+        ),
+        ResourceSpec(
+            id="reaction",
+            name="Reaction",
+            operations=(SLACK_ADD_REACTION_SPEC,),
+        ),
+        ResourceSpec(
+            id="channel",
+            name="Channel",
+            operations=(SLACK_LIST_CHANNELS_SPEC,),
+        ),
+        ResourceSpec(
+            id="user",
+            name="User",
+            operations=(SLACK_LIST_USERS_SPEC,),
+        ),
+        ResourceSpec(
+            id="conversation",
+            name="Conversation",
+            operations=(SLACK_OPEN_DIRECT_MESSAGE_SPEC,),
+        ),
+    ),
+)
+
+register_integration(SLACK_INTEGRATION)

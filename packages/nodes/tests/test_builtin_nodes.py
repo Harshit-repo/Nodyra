@@ -82,13 +82,13 @@ def test_expected_integration_nodes_are_registered() -> None:
     assert manifests["slack_send_message"].category == "Integrations"
     assert manifests["slack_send_message"].hidden is True
     assert manifests["slack_send_message"].deprecated is True
-    assert manifests["slack_send_message"].replacement_id == "slack_send_message_v2"
+    assert manifests["slack_send_message"].replacement_id == "slack"
     assert manifests["google_sheets_read"].hidden is True
     assert manifests["google_sheets_read"].deprecated is True
-    assert manifests["google_sheets_read"].replacement_id == "google_sheets_read_v2"
+    assert manifests["google_sheets_read"].replacement_id == "google_sheets"
     assert manifests["google_sheets_append"].hidden is True
     assert manifests["google_sheets_append"].deprecated is True
-    assert manifests["google_sheets_append"].replacement_id == "google_sheets_append_v2"
+    assert manifests["google_sheets_append"].replacement_id == "google_sheets"
     assert manifests["github_get_repo"].hidden is True
     assert manifests["github_get_repo"].deprecated is True
     assert manifests["github_get_repo"].replacement_id == "github_get_repo_v2"

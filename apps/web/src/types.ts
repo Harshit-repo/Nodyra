@@ -92,6 +92,26 @@ export interface NodeManifest {
   param_output_kinds?: Record<string, Record<string, string>>;
   requirements?: string[];
   system_requirements?: SystemRequirement[];
+  // Present only on consolidated integration nodes (Google Sheets, Slack, …):
+  // drives the editor's Resource → Operation selector.
+  integration?: IntegrationManifest | null;
+}
+
+export interface IntegrationOperationManifest {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface IntegrationResourceManifest {
+  id: string;
+  name: string;
+  operations: IntegrationOperationManifest[];
+}
+
+export interface IntegrationManifest {
+  provider: string;
+  resources: IntegrationResourceManifest[];
 }
 
 export interface PackageUsageEntry {

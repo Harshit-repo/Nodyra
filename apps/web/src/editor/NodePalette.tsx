@@ -89,24 +89,24 @@ function integrationOf(node: NodeManifest): string | null {
 function recommendedIdsFor(manifest: NodeManifest | null): string[] {
   if (!manifest) return [];
   if (manifest.category === "Triggers") {
-    return ["http_request", "code", "filter", "switch", "slack_send_message_v2"];
+    return ["http_request", "code", "filter", "switch", "slack"];
   }
   if (manifest.id === "http_request") {
-    return ["records_to_dataset", "code", "filter", "limit", "google_sheets_append_v2", "slack_send_message_v2"];
+    return ["records_to_dataset", "code", "filter", "limit", "google_sheets", "slack"];
   }
   if (manifest.id === "code") {
-    return ["records_to_dataset", "filter", "switch", "google_sheets_append_v2", "notion_create_page_v2"];
+    return ["records_to_dataset", "filter", "switch", "google_sheets", "notion_create_page_v2"];
   }
   if (manifest.outputs.some((port) => port.data_kind === "dataset")) {
     return ["dataset_preview", "duckdb_sql", "dataset_filter", "dataset_to_records", "csv_write"];
   }
   if (manifest.id.includes("stripe")) {
-    return ["code", "slack_send_message_v2", "google_sheets_append_v2"];
+    return ["code", "slack", "google_sheets"];
   }
   if (manifest.outputs.length > 1) {
-    return ["merge", "code", "slack_send_message_v2"];
+    return ["merge", "code", "slack"];
   }
-  return ["code", "http_request", "slack_send_message_v2"];
+  return ["code", "http_request", "slack"];
 }
 
 function nodeBadges(node: NodeManifest): string[] {

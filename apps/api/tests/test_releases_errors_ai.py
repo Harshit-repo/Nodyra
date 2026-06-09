@@ -159,7 +159,7 @@ async def test_ai_builder_returns_and_applies_editable_graph(
     ).json()
 
     node_types = [node["type"] for node in response["graph"]["nodes"]]
-    assert node_types == ["webhook_trigger", "ai_chat", "slack_send_message_v2"]
+    assert node_types == ["webhook_trigger", "ai_chat", "slack"]
     assert "LLM provider credential" in response["missing_credentials"]
     assert "Slack bot token" in response["missing_credentials"]
 

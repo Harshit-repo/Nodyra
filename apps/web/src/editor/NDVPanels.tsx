@@ -13,7 +13,9 @@ import {
   WEBHOOK_AUTH_TYPE_OPTIONS,
   formatParamLabel,
   groupActiveByValue,
+  matchesDisplayWhen,
   paramGroup,
+  ResourceOperationSelector,
   webhookCredentialSpec,
   webhookHiddenParam,
   webhookParamLabel,
@@ -220,7 +222,10 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
         };
 
         const visible = manifest.params.filter(
-          (spec) => !webhookHiddenParam(manifest.id, spec.name, params),
+          (spec) =>
+            spec.widget !== "hidden" &&
+            !webhookHiddenParam(manifest.id, spec.name, params) &&
+            matchesDisplayWhen(spec.display_when, params),
         );
         const core = visible.filter((spec) => !paramGroup(spec));
         const visibleByGroup = new Map<string, ParamSpec[]>();
@@ -234,6 +239,13 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
 
         return (
           <>
+            {manifest.integration && (
+              <ResourceOperationSelector
+                manifest={manifest}
+                params={params}
+                onChange={(next) => updateParams(node.id, next)}
+              />
+            )}
             {core.map(renderField)}
             {groupOrder
               .filter((g) => groupIsOpen(g))
