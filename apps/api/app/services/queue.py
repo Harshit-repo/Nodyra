@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import RunnerPool, RunQueueEntry
+from app.models import Run, RunnerPool, RunQueueEntry
 
 logger = logging.getLogger(__name__)
 
@@ -519,6 +519,17 @@ async def requeue_expired_leases(
                 error="lease expired (worker lost)",
                 ts=moment,
             )
+            # The worker that held this lease is presumed dead mid-execution.
+            # Reset the user-facing Run row too: _execute_queued_entry only
+            # dispatches runs in status "queued".
+            run = await session.scalar(
+                select(Run)
+                .where(Run.id == entry.run_id, Run.status == "running")
+                .execution_options(skip_org_filter=True)
+            )
+            if run is not None:
+                run.status = "queued"
+                run.finished_at = None
         else:
             entry.status = "dead_lettered"
             entry.last_error = entry.last_error or "lease expired (worker lost)"

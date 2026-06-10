@@ -512,3 +512,35 @@ async def test_lease_filters_by_provider(session) -> None:
     # unrestricted lease (inline role) still gets the agent entry
     entry = await q.lease(session, worker_id="w")
     assert entry is not None and entry.run_id == "r-agent"
+
+
+@pytest.mark.asyncio
+async def test_requeue_expired_lease_resets_running_run(session) -> None:
+    """A lost worker leaves Run.status='running'; requeue must flip it back to
+    'queued' or _execute_queued_entry will refuse to re-dispatch (A1)."""
+    from app.models import Run
+    from app.services import queue as q
+
+    run = Run(
+        workflow_id="wf-lost", workflow_version=1, mode="production",
+        trigger_type="schedule", status="running",
+    )
+    session.add(run)
+    await session.flush()
+
+    entry = await q.enqueue(session, run_id=run.id, workflow_id="wf-lost")
+    moment = datetime.now(UTC)
+    leased = await q.lease(session, worker_id="lost-worker", now=moment)
+    assert leased is not None and leased.run_id == run.id
+    await session.commit()
+
+    acted = await q.requeue_expired_leases(
+        session, now=moment + timedelta(seconds=9999)
+    )
+    await session.commit()
+    assert acted == 1
+    await session.refresh(entry)
+    await session.refresh(run)
+    assert entry.status == "queued"
+    assert run.status == "queued"
+    assert run.finished_at is None
