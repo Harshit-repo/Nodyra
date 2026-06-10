@@ -49,6 +49,7 @@ from app.services.remote_dispatch import (
     dispatcher,
     runner_heartbeat_loop,
 )
+from app.services import expr_preview
 from app.services.retention import retention_loop
 from app.services.runner import drain_active_runs, shutdown_active_runs
 from app.services.runtime_pool import idle_reaper_loop
@@ -298,6 +299,7 @@ async def lifespan(app: FastAPI):
     await _bounded(shutdown_active_runs())
     await _bounded(dispatcher.shutdown())
     await _bounded(runtime_pool.shutdown())
+    await _bounded(expr_preview.shutdown())
     await _bounded(engine.dispose())
     await _bounded(redis_client.aclose())
     settings.queue_drain = _prior_drain
