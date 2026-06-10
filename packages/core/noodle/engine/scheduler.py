@@ -14,6 +14,7 @@ The same engine runs inside env runners and inside exported scripts.
 import asyncio
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from noodle.ai_runtime import AgentActionRequest
@@ -123,37 +124,76 @@ def _topo_order(graph: WorkflowGraph) -> list[str]:
     return order
 
 
-def _topo_levels(graph: WorkflowGraph) -> list[list[str]]:
-    """Return nodes grouped by depth level.
+@dataclass
+class _Plan:
+    """Dependency-counting schedule over a set of executable node ids.
 
-    All nodes in one level have all their predecessors in earlier levels, so
-    they can safely execute in parallel via ``asyncio.gather``. Ties within a
-    level are broken by insertion order (same rule as ``_topo_order``).
-    """
-    node_index = {n.id: i for i, n in enumerate(graph.nodes)}
-    preds = _predecessors(graph)
-    successors: dict[str, set[str]] = defaultdict(set)
-    for target, sources in preds.items():
-        for source in sources:
-            successors[source].add(target)
+    ``units`` excludes loop-owned nodes (body + end): a whole loop region is
+    one unit, represented by its ``loop_start`` node — the driver populates
+    the owned nodes' outputs before the unit completes."""
 
-    indegree = {nid: len(sources) for nid, sources in preds.items()}
-    remaining = set(indegree.keys())
-    levels: list[list[str]] = []
+    units: list[str]                      # executable ids, graph insertion order
+    deps: dict[str, set[str]]             # unit -> units it must wait for
+    dependents: dict[str, list[str]]      # unit -> units waiting on it
+    index: dict[str, int]                 # node id -> graph.nodes position
 
-    while remaining:
-        level = sorted(
-            [nid for nid in remaining if indegree[nid] == 0],
-            key=lambda nid: node_index[nid],
+
+def _owner_unit(
+    nid: str,
+    loop_regions: dict[str, "LoopRegion"],
+    unit_set: set[str],
+) -> str | None:
+    """The scheduling unit that produces ``nid``'s output when ``nid`` is
+    loop-owned: walk to the owning region's start (hopping outward through
+    nested regions) until a unit is found."""
+    cur = nid
+    while True:
+        region = next(
+            (
+                r for r in loop_regions.values()
+                if cur == r.end_id or cur in r.body_ids
+            ),
+            None,
         )
-        if not level:
-            raise GraphError("Cycle detected")
-        levels.append(level)
-        for nid in level:
-            remaining.remove(nid)
-            for succ in successors[nid]:
-                indegree[succ] -= 1
-    return levels
+        if region is None:
+            return None
+        if region.start_id in unit_set:
+            return region.start_id
+        cur = region.start_id
+
+
+def _build_plan(
+    graph: WorkflowGraph,
+    node_ids: set[str],
+    owned: set[str],
+    loop_regions: dict[str, "LoopRegion"],
+) -> _Plan:
+    """Compute the dependency graph for ``node_ids``.
+
+    Edges from nodes outside the executed set are dropped: their outputs are
+    either already present (cache / iter_outputs) or absent forever, in which
+    case the consumer's skip check ('upstream produced no output') handles it
+    at execution time — exactly as it did under level barriers."""
+    index = {n.id: i for i, n in enumerate(graph.nodes)}
+    unit_set = {nid for nid in node_ids if nid not in owned}
+    units = sorted(unit_set, key=index.__getitem__)
+    deps: dict[str, set[str]] = {u: set() for u in units}
+    for edge in graph.edges:
+        if edge.target not in unit_set or edge.source == edge.target:
+            continue
+        source = edge.source
+        if source not in unit_set:
+            if source not in owned:
+                continue
+            source = _owner_unit(source, loop_regions, unit_set)
+            if source is None or source == edge.target:
+                continue
+        deps[edge.target].add(source)
+    dependents: dict[str, list[str]] = {u: [] for u in units}
+    for target, sources in deps.items():
+        for source in sources:
+            dependents[source].append(target)
+    return _Plan(units=units, deps=deps, dependents=dependents, index=index)
 
 
 def _needed_nodes(
@@ -180,8 +220,7 @@ def _needed_nodes(
 
 async def _execute_nodes(
     *,
-    node_ids: set[str],
-    levels: list[list[str]],
+    plan: _Plan,
     graph: WorkflowGraph,
     registry: NodeRegistry,
     nodes_by_id: dict[str, Any],
@@ -196,50 +235,52 @@ async def _execute_nodes(
     agent_action_resume: dict[str, AgentActionRequest],
     loop_regions: dict[str, "LoopRegion"],
     owned: set[str],
+    node_sem: asyncio.Semaphore | None = None,
 ) -> RunStatus:
-    """Run ``node_ids`` in ``levels`` order against ``node_outputs``. Returns the
-    worst RunStatus seen. Loop Start nodes are intercepted and driven via
-    ``_run_loop``; ``owned`` nodes (loop body + end) are skipped here — their
-    loop populates them."""
+    """Run the plan's units with dependency counting: each unit starts the
+    moment its in-set predecessors complete. Simultaneously-ready units are
+    started in graph insertion order. ``node_sem`` (when set) bounds how many
+    plain nodes execute concurrently; loop/metanode *drivers* never hold a
+    slot (their body nodes acquire their own), so a capped run cannot
+    deadlock on nested regions. Returns the worst RunStatus seen."""
     # Lazy: loops.py and metanodes.py import this module at module level,
     # so importing them here (not at the top) breaks the cycle.
     from noodle.engine.loops import _run_conditional_loop, _run_loop
     from noodle.engine.metanodes import _run_metanode
 
     run_status = RunStatus.success
-    for level in levels:
-        async def _one(nid: str) -> None:
-            nonlocal run_status
-            if nid in owned:
-                return
-            gn = nodes_by_id[nid]
-            if gn.type == "meta_node":
-                st = await _run_metanode(
-                    node=gn, incoming=incoming, node_outputs=node_outputs,
-                    registry=registry, emit=emit, finish=finish,
-                    default_timeouts=default_timeouts,
-                    max_node_output_bytes=max_node_output_bytes,
-                )
-                run_status = _worse_status(run_status, st)
-                return
-            if gn.type == "loop_start" and nid in loop_regions:
-                mode = str(gn.params.get("mode", "each") or "each")
-                driver = (
-                    _run_conditional_loop
-                    if mode in ("while", "until")
-                    else _run_loop
-                )
-                st = await driver(
-                    region=loop_regions[nid],
-                    graph=graph, registry=registry, nodes_by_id=nodes_by_id,
-                    incoming=incoming, node_outputs=node_outputs, cache=cache,
-                    emit=emit, finish=finish, default_timeouts=default_timeouts,
-                    max_node_output_bytes=max_node_output_bytes,
-                    pause_on_approval=pause_on_approval,
-                    agent_action_resume=agent_action_resume,
-                    loop_regions=loop_regions, owned=owned,
-                )
-            else:
+
+    async def _one(nid: str) -> tuple[str, RunStatus]:
+        gn = nodes_by_id[nid]
+        if gn.type == "meta_node":
+            st = await _run_metanode(
+                node=gn, incoming=incoming, node_outputs=node_outputs,
+                registry=registry, emit=emit, finish=finish,
+                default_timeouts=default_timeouts,
+                max_node_output_bytes=max_node_output_bytes,
+            )
+            return nid, st
+        if gn.type == "loop_start" and nid in loop_regions:
+            mode = str(gn.params.get("mode", "each") or "each")
+            driver = (
+                _run_conditional_loop
+                if mode in ("while", "until")
+                else _run_loop
+            )
+            st = await driver(
+                region=loop_regions[nid],
+                graph=graph, registry=registry, nodes_by_id=nodes_by_id,
+                incoming=incoming, node_outputs=node_outputs, cache=cache,
+                emit=emit, finish=finish, default_timeouts=default_timeouts,
+                max_node_output_bytes=max_node_output_bytes,
+                pause_on_approval=pause_on_approval,
+                agent_action_resume=agent_action_resume,
+                loop_regions=loop_regions, owned=owned,
+                node_sem=node_sem,
+            )
+            return nid, st
+        if node_sem is not None:
+            async with node_sem:
                 st = await _run_one_node(
                     nid=nid, nodes_by_id=nodes_by_id, incoming=incoming,
                     node_outputs=node_outputs, cache=cache, registry=registry,
@@ -248,8 +289,51 @@ async def _execute_nodes(
                     pause_on_approval=pause_on_approval,
                     agent_action_resume=agent_action_resume,
                 )
-            run_status = _worse_status(run_status, st)
-        await asyncio.gather(*[_one(nid) for nid in level if nid in node_ids])
+        else:
+            st = await _run_one_node(
+                nid=nid, nodes_by_id=nodes_by_id, incoming=incoming,
+                node_outputs=node_outputs, cache=cache, registry=registry,
+                emit=emit, finish=finish, default_timeouts=default_timeouts,
+                max_node_output_bytes=max_node_output_bytes,
+                pause_on_approval=pause_on_approval,
+                agent_action_resume=agent_action_resume,
+            )
+        return nid, st
+
+    indegree = {u: len(plan.deps[u]) for u in plan.units}
+    ready = [u for u in plan.units if indegree[u] == 0]  # insertion order
+    pending: set[asyncio.Task] = set()
+    completed = 0
+    try:
+        while ready or pending:
+            for nid in ready:  # task creation order == start order
+                pending.add(asyncio.ensure_future(_one(nid)))
+            ready = []
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED
+            )
+            newly_ready: list[str] = []
+            for task in done:
+                nid, st = task.result()  # re-raises node-task exceptions
+                run_status = _worse_status(run_status, st)
+                completed += 1
+                for dep in plan.dependents[nid]:
+                    indegree[dep] -= 1
+                    if indegree[dep] == 0:
+                        newly_ready.append(dep)
+            ready = sorted(newly_ready, key=plan.index.__getitem__)
+    except BaseException:
+        # Run cancellation (or an escaped node exception) must not leave
+        # in-flight node tasks running detached (REL-2 class).
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        raise
+    if completed != len(plan.units):
+        raise GraphError(
+            "scheduler stalled: a unit's dependencies never completed"
+        )  # defensive — _topo_order() in execute() should make this unreachable
     return run_status
 
 
@@ -264,6 +348,7 @@ async def execute(
     max_node_output_bytes: int | None = None,
     pause_on_approval: bool = False,
     agent_action_resume: dict[str, AgentActionRequest] | None = None,
+    max_node_concurrency: int | None = None,
 ) -> RunResult:
     """Run a workflow graph and return per-node results."""
     # Lazy: loops.py and metanodes.py import this module at module level,
@@ -281,8 +366,13 @@ async def execute(
     target_set = set(targets) if targets is not None else None
     needed = _needed_nodes(graph, target_set, cache)
     _validate_connection_kinds(graph, registry, needed)
-    levels = _topo_levels(graph)
+    _topo_order(graph)  # cycle detection — raises GraphError
     nodes_by_id = {n.id: n for n in graph.nodes}
+    node_sem = (
+        asyncio.Semaphore(max_node_concurrency)
+        if max_node_concurrency is not None and max_node_concurrency > 0
+        else None
+    )
 
     incoming: dict[str, dict[str, tuple[str, str]]] = defaultdict(dict)
     for edge in graph.edges:
@@ -328,12 +418,13 @@ async def execute(
         owned |= set(r.body_ids)
         owned.add(r.end_id)
 
-    # Execute level by level; nodes within a level have no interdependencies
-    # and can run in parallel via asyncio.gather. Loop Start nodes are
-    # intercepted by _execute_nodes and driven over their body sub-DAG.
+    plan = _build_plan(graph, needed, owned, loop_regions)
+
+    # Dependency-counting execution: each node starts as soon as its in-set
+    # predecessors complete. Loop Start nodes are intercepted by
+    # _execute_nodes and driven over their body sub-DAG.
     run_status = await _execute_nodes(
-        node_ids=needed,
-        levels=levels,
+        plan=plan,
         graph=graph,
         registry=registry,
         nodes_by_id=nodes_by_id,
@@ -348,6 +439,7 @@ async def execute(
         agent_action_resume=agent_action_resume,
         loop_regions=loop_regions,
         owned=owned,
+        node_sem=node_sem,
     )
 
     return RunResult(status=run_status, nodes=results)

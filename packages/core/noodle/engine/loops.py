@@ -2,7 +2,6 @@
 loop drivers that re-run a body sub-DAG per iteration."""
 
 import asyncio
-from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -14,9 +13,9 @@ from noodle.sdk import NodeRegistry
 
 from noodle.engine.scheduler import (
     _ancestors,
+    _build_plan,
     _descendants,
     _execute_nodes,
-    _predecessors,
 )
 from noodle.engine.types import EventCallback, GraphError
 
@@ -115,32 +114,6 @@ class _LoopRowError(Exception):
         self.index = index
 
 
-def _restricted_levels(graph: WorkflowGraph, node_ids: frozenset[str]) -> list[list[str]]:
-    """Topo levels over the induced subgraph on ``node_ids`` only."""
-    node_index = {n.id: i for i, n in enumerate(graph.nodes)}
-    preds = {nid: set() for nid in node_ids}
-    for e in graph.edges:
-        if e.source in node_ids and e.target in node_ids:
-            preds[e.target].add(e.source)
-    indeg = {nid: len(p) for nid, p in preds.items()}
-    succ: dict[str, set[str]] = defaultdict(set)
-    for nid, p in preds.items():
-        for s in p:
-            succ[s].add(nid)
-    remaining = set(node_ids)
-    levels: list[list[str]] = []
-    while remaining:
-        level = sorted([n for n in remaining if indeg[n] == 0], key=lambda n: node_index[n])
-        if not level:
-            raise GraphError("cycle inside loop body")
-        levels.append(level)
-        for n in level:
-            remaining.remove(n)
-            for s in succ[n]:
-                indeg[s] -= 1
-    return levels
-
-
 def _as_loop_rows(value: Any, *, max_rows: int) -> list[Any]:
     """Resolve a loop_start input into an ordered list of rows (one per item)."""
     from noodle.datasets import is_dataset_ref, materialize_dataset_rows
@@ -223,6 +196,7 @@ async def _run_loop(
     agent_action_resume: dict[str, AgentActionRequest],
     loop_regions: dict[str, "LoopRegion"],
     owned: set[str],
+    node_sem: asyncio.Semaphore | None = None,
 ) -> RunStatus:
     """Drive a loop region: resolve its input into items and run the body
     sub-DAG once per item, collecting each iteration's value flowing into
@@ -280,7 +254,7 @@ async def _run_loop(
             child_owned |= set(other.body_ids)
             child_owned.add(other.end_id)
 
-    body_levels = _restricted_levels(graph, region.body_ids)
+    body_plan = _build_plan(graph, set(region.body_ids), child_owned, loop_regions)
     # The node + port feeding loop_end.input, captured per iteration.
     end_in = incoming.get(region.end_id, {}).get("input")
 
@@ -309,8 +283,7 @@ async def _run_loop(
                     "item": {"acc": acc, "item": unit}, "index": i, "state": acc,
                 }
                 st = await _execute_nodes(
-                    node_ids=set(region.body_ids),
-                    levels=body_levels, graph=graph, registry=registry,
+                    plan=body_plan, graph=graph, registry=registry,
                     nodes_by_id=nodes_by_id, incoming=incoming,
                     node_outputs=iter_outputs, cache=cache,
                     emit=emit, finish=finish, default_timeouts=default_timeouts,
@@ -318,6 +291,7 @@ async def _run_loop(
                     pause_on_approval=pause_on_approval,
                     agent_action_resume=agent_action_resume,
                     loop_regions=loop_regions, owned=child_owned,
+                    node_sem=node_sem,
                 )
             finally:
                 iteration_path.reset(path_token)
@@ -350,8 +324,7 @@ async def _run_loop(
                 iter_outputs = dict(node_outputs)  # inherit upstream values
                 iter_outputs[region.start_id] = {"item": item, "index": i}
                 st = await _execute_nodes(
-                    node_ids=set(region.body_ids),
-                    levels=body_levels, graph=graph, registry=registry,
+                    plan=body_plan, graph=graph, registry=registry,
                     nodes_by_id=nodes_by_id, incoming=incoming,
                     node_outputs=iter_outputs, cache=cache,
                     emit=emit, finish=finish, default_timeouts=default_timeouts,
@@ -359,6 +332,7 @@ async def _run_loop(
                     pause_on_approval=pause_on_approval,
                     agent_action_resume=agent_action_resume,
                     loop_regions=loop_regions, owned=child_owned,
+                    node_sem=node_sem,
                 )
                 if st is RunStatus.error:
                     if on_error == "fail":
@@ -454,6 +428,7 @@ async def _run_conditional_loop(
     agent_action_resume: dict[str, AgentActionRequest],
     loop_regions: dict[str, "LoopRegion"],
     owned: set[str],
+    node_sem: asyncio.Semaphore | None = None,
 ) -> RunStatus:
     """Drive a while/until loop: thread an accumulator (state) across iterations,
     re-checking an expression condition each time, until it stops or a safety cap
@@ -501,7 +476,7 @@ async def _run_conditional_loop(
             child_owned |= set(other.body_ids)
             child_owned.add(other.end_id)
 
-    body_levels = _restricted_levels(graph, region.body_ids)
+    body_plan = _build_plan(graph, set(region.body_ids), child_owned, loop_regions)
     end_in = incoming.get(region.end_id, {}).get("input")
 
     states: list[Any] = []
@@ -524,8 +499,7 @@ async def _run_conditional_loop(
             iter_outputs = dict(node_outputs)
             iter_outputs[region.start_id] = {"item": state, "index": i, "state": state}
             st = await _execute_nodes(
-                node_ids=set(region.body_ids),
-                levels=body_levels, graph=graph, registry=registry,
+                plan=body_plan, graph=graph, registry=registry,
                 nodes_by_id=nodes_by_id, incoming=incoming,
                 node_outputs=iter_outputs, cache=cache,
                 emit=emit, finish=finish, default_timeouts=default_timeouts,
@@ -533,6 +507,7 @@ async def _run_conditional_loop(
                 pause_on_approval=pause_on_approval,
                 agent_action_resume=agent_action_resume,
                 loop_regions=loop_regions, owned=child_owned,
+                node_sem=node_sem,
             )
         finally:
             iteration_path.reset(path_token)

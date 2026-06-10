@@ -36,9 +36,9 @@ from noodle.engine.pools import (
     pool_key,
 )
 from noodle.engine.scheduler import (
+    _build_plan,
     _execute_nodes,
     _needed_nodes,
-    _topo_levels,
     _topo_order,
     _worse_status,
     execute,
@@ -69,6 +69,7 @@ __all__ = [
     "_MAX_AGENT_LOOP_ITERATIONS",
     "_approx_encoded_length",
     "_auto_expand_dataset_inputs",
+    "_build_plan",
     "_auto_promote_outputs",
     "_dispatch_agent_action_request",
     "_evict_pool",
@@ -81,7 +82,6 @@ __all__ = [
     "_needed_nodes",
     "_pool_last_used",
     "_process_pools",
-    "_topo_levels",
     "_topo_order",
     "_validate_connection_kinds",
     "_validate_input_kinds",

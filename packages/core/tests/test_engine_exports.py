@@ -13,6 +13,7 @@ def test_engine_facade_exports():
         "DEFAULT_NODE_TIMEOUTS", "pool_key", "PROCESS_ISOLATED_NODE_TYPES",
         # test-consumed internals
         "_worse_status", "_topo_order", "_needed_nodes", "_execute_nodes",
+        "_build_plan",
         "_loop_items", "_loop_regions", "_validate_loop_regions", "LoopRegion",
         "_expand_metanodes",
         "_validate_input_kinds", "_validate_output_kinds",

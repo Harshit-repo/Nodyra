@@ -582,3 +582,62 @@ def test_worse_status_ranking() -> None:
     assert _worse_status(RunStatus.error, RunStatus.waiting) is RunStatus.error
     assert _worse_status(RunStatus.error, RunStatus.success) is RunStatus.error
     assert _worse_status(RunStatus.success, RunStatus.success) is RunStatus.success
+
+
+async def test_independent_branches_are_not_level_barriered() -> None:
+    """src→slow→c and src→fast→d: d must finish before c starts.
+
+    Under level barriers c and d share a level, so d waits for slow (0.4s)
+    even though its own parent finished at 0.05s. Dependency counting starts
+    d as soon as fast completes."""
+    reg = NodeRegistry()
+
+    @node(name="One", id="one", inputs=[], registry=reg)
+    def one() -> int:
+        return 1
+
+    @node(name="SlowEcho", id="slow_echo", registry=reg)
+    async def slow_echo(input: int = 0) -> int:
+        await asyncio.sleep(0.4)
+        return input
+
+    @node(name="FastEcho", id="fast_echo", registry=reg)
+    async def fast_echo(input: int = 0) -> int:
+        await asyncio.sleep(0.05)
+        return input
+
+    @node(name="Echo", id="echo", registry=reg)
+    def echo(input: int = 0) -> int:
+        return input
+
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="src", type="one"),
+            GraphNode(id="slow", type="slow_echo"),
+            GraphNode(id="fast", type="fast_echo"),
+            GraphNode(id="c", type="echo"),
+            GraphNode(id="d", type="echo"),
+        ],
+        edges=[
+            Edge(source="src", target="slow"),
+            Edge(source="src", target="fast"),
+            Edge(source="slow", target="c"),
+            Edge(source="fast", target="d"),
+        ],
+    )
+    events: list[dict] = []
+
+    async def on_event(event: dict) -> None:
+        events.append(event)
+
+    result = await execute(graph, reg, on_event=on_event)
+    assert result.status == RunStatus.success
+    d_finished = next(
+        i for i, e in enumerate(events)
+        if e["type"] == "node_finished" and e["node_id"] == "d"
+    )
+    c_started = next(
+        i for i, e in enumerate(events)
+        if e["type"] == "node_started" and e["node_id"] == "c"
+    )
+    assert d_finished < c_started, "d should complete before the slow branch unblocks c"
