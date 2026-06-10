@@ -1,5 +1,14 @@
 # Multi-Tenancy Phase C — Quotas, Fair Scheduling, Metering: Implementation Plan
 
+> **Status: IMPLEMENTED 2026-06-10** (C1–C6 on `feat/multi-tenancy`,
+> migrations 0045–0047). Deviations: C2 went straight to the two-pass
+> org-fair lease (grouped pre-pass + per-org SKIP LOCKED select) instead of
+> correlated subqueries; C3 counts `runs` at ADMISSION (hard daily ceiling)
+> with compute/node_runs at completion; queue `_get` now bypasses the
+> tenancy filter (internal unique-key infrastructure — scoping caused silent
+> misses from mixed org contexts). Web UI chip for `by_org` backpressure
+> remains a follow-up; the API exposes the data via /ops/queue.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** One noisy org cannot starve the others: per-org concurrency/volume quotas, org-fair queue leasing, and compute metering (the loop/map amplification countermeasure + future billing substrate).
