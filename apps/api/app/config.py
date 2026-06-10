@@ -92,8 +92,9 @@ class Settings(BaseSettings):
     # single missed pong doesn't cause flapping.
     runner_heartbeat_interval_seconds: int = 15
     runner_offline_after_seconds: int = 60
-    # Run the in-process schedule loop. Disable on multi-replica deployments
-    # that drive scheduled runs from Celery Beat instead (avoids double-fire).
+    # Run the in-process schedule loop. Multi-replica deployments keep this
+    # on and set scheduler_role=leader so one replica owns it (avoids
+    # double-fire); set false to disable scheduling in this process entirely.
     enable_inprocess_scheduler: bool = True
     # Default IANA timezone for the app. Used as the fallback when a
     # schedule_trigger has no explicit ``tz`` field set. Blank → detect the

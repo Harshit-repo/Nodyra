@@ -31,9 +31,27 @@ compose Postgres URL.
 ## docker-compose
 
 `deploy/docker-compose.yml` brings up the full stack — Postgres, Redis, the
-API (running migrations on startup), the web dev server, and optionally the
-Celery worker + Beat for scale-out scheduling. Open <http://localhost:5173>
-after the API is healthy.
+API as a control plane (running migrations on startup, `DISPATCH_ROLE=disabled`,
+leader-elected scheduler), a dispatch worker (`DISPATCH_ROLE=worker`, executes
+runs), and the web dev server. Open <http://localhost:5173> after the API is
+healthy.
+
+### Execution topology (`DISPATCH_ROLE`)
+
+| Role | Process | Leases queue entries | Needs |
+|------|---------|----------------------|-------|
+| `inline` (default) | API | all (local + agent + docker + kubernetes) | SQLite or Postgres |
+| `disabled` | API | none — enqueues only | Postgres + Redis |
+| `worker` | `python -m app.worker_main` | local + docker | Postgres + Redis |
+
+Recommended production shape: N API replicas with `DISPATCH_ROLE=disabled` +
+`SCHEDULER_ROLE=leader`, M workers, one shared Postgres + Redis. Caveat:
+agent/kubernetes runner pools need their WebSocket-terminating API replica to
+dispatch them — keep one replica with `DISPATCH_ROLE=inline` if you use those
+pools. Workers drain gracefully on SIGTERM (stop leasing, wait
+`QUEUE_DISPATCH_SHUTDOWN_TIMEOUT_SECONDS`, then cancel); a worker lost
+mid-run is recovered by lease expiry, which requeues the entry and resets the
+run for another worker.
 
 ## Kubernetes (Helm)
 
@@ -44,8 +62,8 @@ helm install noodle deploy/helm/noodle \
   --set secret.key=$(openssl rand -hex 32)
 ```
 
-The chart deploys the API, web, worker, and a Beat replica. Postgres and
-Redis are expected to be installed separately. Enable the bundled Ingress
+The chart deploys the API (control plane), web, and the dispatch worker.
+Postgres and Redis are expected to be installed separately. Enable the bundled Ingress
 with `--set ingress.enabled=true` — it routes `/api` and `/ws` to the API
 and everything else to the web app.
 
@@ -68,7 +86,7 @@ source of truth.
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
-| `ENABLE_INPROCESS_SCHEDULER` | `true` | DB-backed cron loop runs inside the API process. Disable when running Celery Beat to avoid double-fire. |
+| `ENABLE_INPROCESS_SCHEDULER` | `true` | DB-backed cron loop runs inside the API process. Set `SCHEDULER_ROLE=leader` on multi-replica deployments so one replica owns it. |
 | `APP_TIMEZONE` | OS-detected | Fallback timezone for schedules without their own `tz`. |
 
 ### Retention & limits

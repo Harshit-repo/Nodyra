@@ -4,8 +4,9 @@ Webhook ingress runs workflows whose graph contains a matching webhook node,
 and an in-process scheduler fires schedule-trigger workflows. Schedules support
 both a simple interval (every N minutes/hours/days) and full cron expressions.
 ``last_fired`` is persisted in the DB so the scheduler survives a restart
-without missing or double-firing. A multi-replica deployment can disable this
-loop (``enable_inprocess_scheduler=false``) and drive runs from Celery Beat.
+without missing or double-firing. A multi-replica deployment sets
+``scheduler_role=leader`` so exactly one replica owns this loop (or disables
+it and drives ``/internal/scheduler/tick`` externally).
 """
 
 import asyncio

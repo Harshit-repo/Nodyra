@@ -48,8 +48,9 @@ Noodle is designed for teams that need more than point-and-click integrations:
   failure workflows.
 - Enterprise data handling: typed output serialization, durable artifacts,
   output caps, retention rules, redaction, and per-node logs/debug data.
-- Self-hostable architecture: FastAPI, PostgreSQL, Redis, React/Vite, Celery,
-  and optional Kubernetes packaging.
+- Self-hostable architecture: FastAPI, PostgreSQL, Redis, React/Vite, a
+  durable run queue with standalone dispatch workers, and optional
+  Kubernetes packaging.
 
 ## Current Status
 
@@ -172,7 +173,8 @@ python -m noodle_runtime
    v
 Noodle engine + node registry
 
-Redis + Celery are used for optional worker and scheduler scale-out.
+Redis + the durable run queue power optional worker scale-out
+(``DISPATCH_ROLE=worker`` processes started via ``python -m app.worker_main``).
 Artifacts are stored outside the database through the artifact service.
 ```
 
@@ -181,8 +183,8 @@ Artifacts are stored outside the database through the artifact service.
 ```text
 apps/
   api/        FastAPI server, Alembic migrations, auth, runs, credentials
+              (also the standalone dispatch worker: python -m app.worker_main)
   web/        React 18 + Vite + React Flow application
-  worker/     Celery worker and scheduler integration
 
 packages/
   core/       execution engine, SDK, models, typed serialization, artifacts
@@ -307,9 +309,8 @@ The compose stack includes:
 - PostgreSQL
 - Redis
 - MinIO
-- FastAPI API
-- Celery worker
-- Celery beat
+- FastAPI API (control plane, `DISPATCH_ROLE=disabled`, leader-elected scheduler)
+- Dispatch worker (`DISPATCH_ROLE=worker`, executes runs)
 - Vite web app
 
 ### Local Developer Stack
@@ -375,8 +376,8 @@ Core API settings are environment variables loaded by `apps/api/app/config.py`.
 | --- | --- | --- |
 | `DATABASE_URL` | SQLAlchemy database URL | managed PostgreSQL |
 | `REDIS_URL` | Redis URL for broker/cache use | managed Redis |
-| `CELERY_BROKER_URL` | Celery broker URL | Redis DB/index |
-| `CELERY_RESULT_BACKEND` | Celery result backend | Redis DB/index |
+| `QUEUE_BACKEND` | `redis` for multi-process topologies | `redis` |
+| `DISPATCH_ROLE` | `inline` / `worker` / `disabled` execution role | `disabled` on API, `worker` on workers |
 | `CORS_ORIGINS` | Allowed web origins | public web URL |
 | `PUBLIC_API_URL` | Public API origin for provider webhook callbacks | public HTTPS API URL |
 | `AUTH_REQUIRED` | Require login | `true` |
@@ -432,7 +433,7 @@ explicitly publishes and updates deployments.
 
 - Schedule nodes use cron-style scheduling.
 - Workflow deployments can own production schedules.
-- Celery Beat can be used for scheduler scale-out.
+- `SCHEDULER_ROLE=leader` gives multi-replica deployments a single scheduler owner.
 - Webhook nodes support test-mode listening in the editor.
 - Production webhook routes return `401` when a path matches but auth fails.
 - Webhook auth modes include none, basic, header, and query.

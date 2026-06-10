@@ -16,9 +16,12 @@ every node is pure Python.
   metrics, the per-run artifacts surface, deployments (cron/interval +
   default params), code modules (upload-to-nodes), retention prune, and a
   WebSocket channel for live run events.
-- **`apps/worker`** — Celery worker. Optional scale-out scheduler (Beat) +
-  off-API workflow dispatch via HTTP. Gated by `enable_inprocess_scheduler`
-  so the in-process loop and Beat never double-fire.
+- **Dispatch worker** (`python -m app.worker_main`, lives in `apps/api`) —
+  optional standalone execution role (program A1). With `DISPATCH_ROLE=worker`
+  it runs the durable-queue dispatch loop + warm runtime pool and executes
+  local and docker-pool runs; API replicas set `DISPATCH_ROLE=disabled` and
+  only enqueue. Requires Postgres (SKIP LOCKED leasing) + Redis (cross-process
+  run events). Scheduling stays on the API via `scheduler_role=leader`.
 - **`packages/core`** — the engine, node SDK (`@node` decorator, AST-only
   module-function discovery), shared Pydantic models, typed-value
   serialization, and the artifacts runtime helpers. The same engine runs

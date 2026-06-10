@@ -35,9 +35,8 @@ D:\noodle\
 │   │   ├── app/{routers,services,models,schemas,security,config}.py
 │   │   ├── alembic/versions/0001..0016_*.py
 │   │   └── tests/test_*.py            (165 tests)
-│   ├── web/        React 18 + Vite + React Flow + TS
-│   │   └── src/{editor,*Page.tsx,api.ts,types.ts,store.ts}
-│   └── worker/     Optional Celery worker (Slice 3b — Linux only)
+│   └── web/        React 18 + Vite + React Flow + TS
+│       └── src/{editor,*Page.tsx,api.ts,types.ts,store.ts}
 ├── packages/
 │   ├── core/       noodle.engine, noodle.sdk, noodle.models, noodle.artifacts
 │   ├── nodes/      noodle_nodes.* — builtin + brand-icon HTTP nodes
