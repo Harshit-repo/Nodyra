@@ -21,13 +21,16 @@ import pytest
 def test_runner_webhook_response_inside_null_guard():
     """run.webhook_response assignment must be inside the run is not None guard.
 
-    Before the fix, line 1347 assigns run.webhook_response OUTSIDE the guard,
-    causing AttributeError when the run was deleted mid-execution.
+    Before the fix, runner.py assigned run.webhook_response OUTSIDE the guard,
+    causing AttributeError when the run was deleted mid-execution. The terminal
+    persistence block now lives in run_persistence.persist_run_outcome (A2
+    split); the invariant is unchanged.
     """
     import inspect
-    from app.services import runner as runner_module
 
-    source = inspect.getsource(runner_module._execute_run)
+    from app.services import run_persistence
+
+    source = inspect.getsource(run_persistence.persist_run_outcome)
     lines = source.splitlines()
 
     in_run_none_guard = False

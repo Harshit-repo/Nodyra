@@ -42,13 +42,6 @@ from sqlalchemy.orm import selectinload
 
 import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
 from app.config import settings
-
-# Bound on in-memory agent/guardrail events accumulated per run. Each event is
-# capped at max_output_bytes by _cap_output, so worst-case RSS per run is
-# MAX_RUN_EVENTS * max_output_bytes. Default: 2000 * 256KB = ~500MB ceiling,
-# but in practice most events are tiny. A run that hits this cap gets a
-# sentinel warning event appended so the user knows events were dropped.
-_MAX_RUN_EVENTS = 2_000
 from app.db import SessionLocal
 from app.models import (
     CodeModule,
@@ -64,6 +57,7 @@ from app.models import (
     WorkflowVersion,
 )
 from app.services import queue as run_queue
+from app.services import run_alerts, run_persistence
 from app.services.artifacts import (
     collect_artifact_refs,
     make_artifact_store,
@@ -71,6 +65,9 @@ from app.services.artifacts import (
 )
 from app.services.credentials import resolve_credential_refs
 from app.services.events import broker
+from app.services.executors.base import RunExecutionContext
+from app.services.executors.local import LocalExecutor
+from app.services.executors.remote import RemoteExecutor
 from app.services.graph_utils import (
     first_trigger_node,
     forward_descendants,
@@ -85,9 +82,6 @@ from app.services.remote_dispatch import (
     build_env_payload,
     dispatcher,
 )
-from app.services.executors.base import RunExecutionContext
-from app.services.executors.local import LocalExecutor
-from app.services.executors.remote import RemoteExecutor
 from app.services.runtime_pool import _org_run_limits_for, _resolve_run_org
 from app.services.runtime_pool import pool as runtime_pool
 from noodle.ai_runtime import AgentActionRequest
@@ -96,6 +90,8 @@ from noodle.engine import DEFAULT_NODE_TIMEOUTS, execute
 from noodle.models import WorkflowGraph
 from noodle.process_isolation import (
     PooledProcessIsolator,
+)
+from noodle.process_isolation import (
     pool_key as engine_pool_key,
 )
 from noodle.sdk import (
@@ -108,7 +104,6 @@ from noodle.sdk import (
 from noodle.serialization import (
     deserialize_value,
     serialize_value,
-    truncate_serialized_value,
 )
 
 logger = logging.getLogger(__name__)
@@ -120,94 +115,20 @@ process_isolator = PooledProcessIsolator()
 
 _active_runs: dict[str, asyncio.Task[None]] = {}
 
-AGENT_EVENT_TYPES: frozenset[str] = frozenset(
-    {
-        "agent_action_requested",
-        "agent_tool_started",
-        "agent_tool_approval_required",
-        "agent_tool_auto_approved",
-        "agent_tool_finished",
-        "agent_action_completed",
-        "agent_tool_approval_decided",
-    }
-)
-GUARDRAIL_EVENT_TYPES: frozenset[str] = frozenset(
-    {"guardrail_blocked", "guardrail_redacted"}
-)
-
-
-def _approval_key(event: dict[str, Any]) -> str:
-    """Stable key for idempotent approval rows across local/remote streams."""
-    raw = "|".join(
-        [
-            str(event.get("agent_node_id") or event.get("node_id") or ""),
-            str(event.get("step") or 0),
-            str(event.get("tool_call_id") or ""),
-            str(event.get("tool_name") or ""),
-        ]
-    )
-    return raw[:240]
-
-
-async def _upsert_run_approval(
-    session: AsyncSession,
-    *,
-    run_id: str,
-    event: dict[str, Any],
-    event_ts: datetime,
-) -> None:
-    """Create/update the operator approval record represented by an agent event."""
-    event_type = str(event.get("type") or "")
-    if event_type not in {"agent_tool_approval_required", "agent_tool_auto_approved"}:
-        return
-
-    key = _approval_key(event)
-    approval = await session.scalar(
-        select(RunApproval).where(
-            RunApproval.run_id == run_id,
-            RunApproval.approval_key == key,
-        )
-    )
-    arguments = event.get("arguments")
-    if not isinstance(arguments, dict):
-        arguments = {}
-    status = "approved" if event_type == "agent_tool_auto_approved" else "pending"
-    max_steps_raw = event.get("max_steps")
-    max_steps = int(max_steps_raw) if max_steps_raw is not None else None
-    reason = (
-        "Auto-approved by AI Agent setting."
-        if event_type == "agent_tool_auto_approved"
-        else ""
-    )
-
-    if approval is None:
-        approval = RunApproval(
-            run_id=run_id,
-            approval_key=key,
-            status=status,
-            node_id=event.get("node_id"),
-            agent_node_id=event.get("agent_node_id"),
-            step=int(event.get("step") or 0),
-            max_steps=max_steps,
-            tool_call_id=str(event.get("tool_call_id") or ""),
-            tool_name=str(event.get("tool_name") or ""),
-            arguments=arguments,
-            message=str(event.get("message") or ""),
-            requested_at=event_ts,
-            resolved_at=event_ts if status == "approved" else None,
-            resolved_by="auto" if status == "approved" else None,
-            reason=reason,
-        )
-        session.add(approval)
-        return
-
-    approval.arguments = arguments
-    approval.message = str(event.get("message") or approval.message or "")
-    if approval.status == "pending" and status == "approved":
-        approval.status = "approved"
-        approval.resolved_at = event_ts
-        approval.resolved_by = "auto"
-        approval.reason = reason
+# Back-compat aliases — these moved to run_persistence (A2 split) but are part
+# of this module's established surface (on_event closure, resume path, lazy
+# importers, tests).
+_MAX_RUN_EVENTS = run_persistence._MAX_RUN_EVENTS
+AGENT_EVENT_TYPES = run_persistence.AGENT_EVENT_TYPES
+GUARDRAIL_EVENT_TYPES = run_persistence.GUARDRAIL_EVENT_TYPES
+_approval_key = run_persistence._approval_key
+_upsert_run_approval = run_persistence._upsert_run_approval
+_maybe_truncate = run_persistence._maybe_truncate
+_cap_output = run_persistence._cap_output
+_cap_logs = run_persistence._cap_logs
+_contains_unrestorable_object = run_persistence._contains_unrestorable_object
+_graph_node_types = run_persistence._graph_node_types
+_extract_webhook_response = run_persistence._extract_webhook_response
 
 
 def _build_ctx(
@@ -253,99 +174,6 @@ def _engine_default_timeouts() -> dict[str, float]:
 _prefer_draft_graphs: ContextVar[bool] = ContextVar(
     "noodle_prefer_draft_graphs", default=False
 )
-
-
-def _maybe_truncate(value: Any, cap: int) -> Any:
-    if value is None:
-        return value
-    return truncate_serialized_value(value, cap)
-
-
-def _cap_output(value: Any, cap: int | None = None) -> Any:
-    """Bound the size of a persisted NodeRun.output payload.
-
-    Outputs are ``{port: value}`` dicts; cap each port independently so a
-    single fat port doesn't drop the others. Anything past ``cap`` becomes
-    ``{_truncated, size_bytes, preview}``. Falls back to
-    ``settings.max_output_bytes`` when no explicit cap is supplied.
-    """
-    if cap is None:
-        cap = settings.max_output_bytes
-    if not cap or cap <= 0 or value is None:
-        return value
-    if isinstance(value, dict):
-        return {port: _maybe_truncate(v, cap) for port, v in value.items()}
-    return _maybe_truncate(value, cap)
-
-
-def _contains_unrestorable_object(value: Any) -> bool:
-    if isinstance(value, dict):
-        if (
-            value.get("__noodle_typed__") is True
-            and value.get("type") == "object"
-            and value.get("restorable") is False
-        ):
-            return True
-        return any(_contains_unrestorable_object(item) for item in value.values())
-    if isinstance(value, list):
-        return any(_contains_unrestorable_object(item) for item in value)
-    return False
-
-
-def _graph_node_types(graph: dict) -> dict[str, str]:
-    nodes = graph.get("nodes") if isinstance(graph, dict) else []
-    out: dict[str, str] = {}
-    if not isinstance(nodes, list):
-        return out
-    for node in nodes:
-        if not isinstance(node, dict):
-            continue
-        node_id = node.get("id")
-        node_type = node.get("type")
-        if isinstance(node_id, str) and isinstance(node_type, str):
-            out[node_id] = node_type
-    return out
-
-
-def _extract_webhook_response(
-    graph: dict, node_events: dict[str, dict]
-) -> dict | None:
-    """Pull the response a respond_to_webhook node recorded, if any.
-
-    Returns the ``{status, headers, body, content_type}`` dict from the first
-    executed ``respond_to_webhook`` node, or ``None``. Persisted to
-    ``runs.webhook_response`` so a waiting webhook handler (Respond Node mode)
-    can return it from any replica (the DB is shared).
-    """
-    for node in (graph or {}).get("nodes", []):
-        if node.get("type") != "respond_to_webhook":
-            continue
-        event = node_events.get(node.get("id"))
-        if not event:
-            continue
-        outputs = event.get("outputs") or {}
-        response = outputs.get("main")
-        if isinstance(response, dict):
-            return response
-    return None
-
-
-def _cap_logs(logs: Any, cap: int | None = None) -> Any:
-    """Bound the total bytes of persisted logs the same way as outputs."""
-    if cap is None:
-        cap = settings.max_output_bytes
-    if not cap or cap <= 0 or not isinstance(logs, list):
-        return logs
-    total = 0
-    kept: list[str] = []
-    for line in logs:
-        s = line if isinstance(line, str) else str(line)
-        total += len(s) + 1  # newline overhead
-        if total > cap:
-            kept.append(f"… (log truncated at {cap} bytes)")
-            break
-        kept.append(s)
-    return kept
 
 
 async def _load_workflow_graph(
@@ -1457,108 +1285,14 @@ async def _execute_run(
             run_id, {"type": "run_finished", "run_id": run_id, "status": status}
         )
 
-    try:
-        async with SessionLocal() as session:
-            run = await session.get(Run, run_id)
-            if run is not None:
-                run.status = status
-                run.finished_at = None if status == "waiting" else datetime.now(UTC)
-                webhook_response = _extract_webhook_response(graph_dict, node_events)
-                if webhook_response is not None:
-                    run.webhook_response = webhook_response
-            for (node_id, _path), event in node_run_records.items():
-                session.add(
-                    NodeRun(
-                        run_id=run_id,
-                        node_id=node_id,
-                        status=event.get("status", "unknown"),
-                        output=_cap_output(event.get("outputs"), output_cap),
-                        error=event.get("error"),
-                        logs=_cap_logs(event.get("logs"), output_cap),
-                        debug=event.get("debug"),
-                        started_at=event.get("started_at"),
-                        finished_at=event.get("finished_at"),
-                        duration_ms=event.get("duration_ms"),
-                        iteration_path=event.get("iteration_path"),
-                    )
-                )
-            for item in run_events:
-                event = item["event"]
-                event_ts = item["ts"]
-                session.add(
-                    RunEvent(
-                        run_id=run_id,
-                        event_type=str(event.get("type") or ""),
-                        sequence=int(item["sequence"]),
-                        ts=event_ts,
-                        node_id=event.get("node_id"),
-                        agent_node_id=event.get("agent_node_id"),
-                        payload=_cap_output(event, output_cap),
-                    )
-                )
-                await _upsert_run_approval(
-                    session,
-                    run_id=run_id,
-                    event=event,
-                    event_ts=event_ts,
-                )
-            for event in node_events.values():
-                debug = event.get("debug")
-                if not isinstance(debug, dict):
-                    continue
-                resume_state = debug.get("agent_approval_state")
-                if not isinstance(resume_state, dict):
-                    continue
-                approval_key = str(resume_state.get("approval_key") or "")
-                if not approval_key:
-                    continue
-                approval = await session.scalar(
-                    select(RunApproval).where(
-                        RunApproval.run_id == run_id,
-                        RunApproval.approval_key == approval_key,
-                    )
-                )
-                if approval is not None:
-                    approval.resume_state = resume_state
-            # Mirror the run outcome onto the durable queue entry so the
-            # queue is the single source of truth for orchestration state.
-            if status == "success":
-                await run_queue.complete(session, run_id=run_id)
-            elif status == "waiting":
-                await run_queue.wait_for_approval(session, run_id=run_id)
-            elif status == "cancelled":
-                await run_queue.cancel(session, run_id=run_id)
-            else:
-                await run_queue.fail(
-                    session,
-                    run_id=run_id,
-                    retryable=False,
-                    error=f"run finished with status={status}",
-                )
-            # C3: accumulate compute seconds + node_runs for terminal runs
-            # ("waiting" resumes later and lands here again at the real end).
-            if settings.multi_tenancy_enabled and status != "waiting":
-                from app.services import metering
-
-                try:
-                    await metering.record_run_completion(session, run_id)
-                except Exception:  # noqa: BLE001 - metering never fails a run
-                    logger.exception("run_id=%s metering failed", run_id)
-            await session.commit()
-
-    except Exception:  # noqa: BLE001
-        logger.exception(
-            "run_id=%s DB persist failed; attempting minimal status update", run_id
-        )
-        try:
-            async with SessionLocal() as _s:
-                _r = await _s.get(Run, run_id)
-                if _r is not None and _r.status not in ("success", "error", "cancelled", "waiting"):
-                    _r.status = status
-                    _r.finished_at = datetime.now(UTC)
-                    await _s.commit()
-        except Exception:  # noqa: BLE001
-            logger.exception("run_id=%s minimal status fallback also failed", run_id)
+    # SessionLocal / start_run are resolved from this module's globals at call
+    # time so the test-suite swaps (conftest, monkeypatch) keep applying.
+    await run_persistence.persist_run_outcome(
+        SessionLocal,
+        run_id=run_id, status=status, graph_dict=graph_dict,
+        node_events=node_events, node_run_records=node_run_records,
+        run_events=run_events, output_cap=output_cap,
+    )
 
     try:
         await persist_artifact_refs(run_id, artifact_refs)
@@ -1566,7 +1300,10 @@ async def _execute_run(
         logger.exception("run_id=%s failed to persist artifact refs", run_id)
 
     if status == "error":
-        await _dispatch_error_handlers(run_id, node_events, secret_values)
+        await run_alerts.dispatch_error_handlers(
+            SessionLocal, start_run,
+            run_id=run_id, node_events=node_events, secret_values=secret_values,
+        )
 
     _prefer_draft_graphs.reset(prefer_draft_token)
     _log_run_id.reset(run_id_token)
@@ -1674,118 +1411,3 @@ async def _execute_queued_entry(run_id: str) -> None:
     )
 
 
-def _first_failed_event(node_events: dict[str, dict]) -> dict | None:
-    for event in node_events.values():
-        if event.get("status") == "error":
-            return event
-    return None
-
-
-def _webhook_urls(alerts: dict | None) -> list[str]:
-    if not isinstance(alerts, dict):
-        return []
-    urls: list[str] = []
-    value = alerts.get("webhook_url")
-    if isinstance(value, str) and value.strip():
-        urls.append(value.strip())
-    values = alerts.get("webhook_urls")
-    if isinstance(values, list):
-        urls.extend(str(item).strip() for item in values if str(item).strip())
-    return urls
-
-
-async def _post_error_webhooks(alerts: dict | None, payload: dict) -> None:
-    urls = _webhook_urls(alerts)
-    if not urls:
-        return
-    try:
-        import httpx
-    except ImportError:
-        return
-    async with httpx.AsyncClient(timeout=10) as client:
-        for url in urls:
-            try:
-                await client.post(url, json=payload)
-            except Exception:  # noqa: BLE001 - alerts must not fail the run
-                continue
-
-
-async def _dispatch_error_handlers(
-    run_id: str,
-    node_events: dict[str, dict],
-    secret_values: list[str],
-) -> None:
-    async with SessionLocal() as session:
-        run = await session.get(Run, run_id)
-        if (
-            run is None
-            or run.status != "error"
-            or run.triggered_by_error_run_id is not None
-        ):
-            return
-        workflow = await session.scalar(
-            select(Workflow)
-            .where(Workflow.id == run.workflow_id)
-            .options(selectinload(Workflow.versions))
-        )
-        if workflow is None:
-            return
-        deployment = (
-            await session.get(Deployment, run.deployment_id)
-            if run.deployment_id
-            else None
-        )
-        error_workflow_id = (
-            deployment.error_workflow_id if deployment else None
-        ) or workflow.error_workflow_id
-        alerts = (deployment.error_alerts if deployment else None) or workflow.error_alerts
-        failed = _first_failed_event(node_events)
-        payload = redact_value(
-            {
-                "workflow_id": run.workflow_id,
-                "workflow_name": workflow.name,
-                "run_id": run.id,
-                "status": run.status,
-                "trigger_type": run.trigger_type,
-                "deployment_id": run.deployment_id,
-                "workflow_version": run.workflow_version,
-                "workflow_version_id": run.workflow_version_id,
-                "failed_node_id": failed.get("node_id") if failed else None,
-                "error": failed.get("error") if failed else None,
-                "logs": failed.get("logs") if failed else [],
-                "retry_path": f"/executions?run={run.id}",
-                "started_at": run.started_at.isoformat() if run.started_at else None,
-                "finished_at": (
-                    run.finished_at.isoformat() if run.finished_at else None
-                ),
-            },
-            secret_values,
-        )
-
-        error_graph: dict | None = None
-        error_version: int | None = None
-        error_version_id: str | None = None
-        if error_workflow_id and error_workflow_id != run.workflow_id:
-            error_workflow = await session.scalar(
-                select(Workflow)
-                .where(Workflow.id == error_workflow_id)
-                .options(selectinload(Workflow.versions))
-            )
-            if error_workflow is not None and error_workflow.versions:
-                version: WorkflowVersion = error_workflow.versions[-1]
-                error_graph = version.graph or {"nodes": [], "edges": []}
-                error_version = version.version
-                error_version_id = version.id
-
-    await _post_error_webhooks(alerts, payload)
-    if error_graph is not None and error_version is not None:
-        await start_run(
-            error_workflow_id,
-            error_graph,
-            error_version,
-            workflow_version_id=error_version_id,
-            triggered_by_error_run_id=run_id,
-            mode="production",
-            trigger_type="error",
-            parameters=payload,
-        )
