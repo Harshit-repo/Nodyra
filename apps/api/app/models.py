@@ -75,6 +75,12 @@ class Environment(Base):
     __tablename__ = "environments"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     is_global: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     python_version: Mapped[str] = mapped_column(String(16), default="3.12", nullable=False)
@@ -118,6 +124,12 @@ class RunnerPool(Base):
     __tablename__ = "runner_pools"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     provider: Mapped[str] = mapped_column(String(20), nullable=False, default="agent")
     provider_config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
@@ -185,6 +197,12 @@ class RunBatch(Base):
     __tablename__ = "run_batches"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     workflow_id: Mapped[str] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"), index=True, nullable=False
     )
@@ -208,6 +226,12 @@ class Workflow(Base):
     __tablename__ = "workflows"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     environment_id: Mapped[str | None] = mapped_column(
@@ -273,6 +297,12 @@ class Credential(Base):
     __tablename__ = "credentials"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     type: Mapped[str] = mapped_column(String(40), nullable=False, default="generic")
     scope: Mapped[str] = mapped_column(String(20), nullable=False, default="global")
@@ -310,6 +340,12 @@ class AuditEvent(Base):
     __tablename__ = "audit_events"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     action: Mapped[str] = mapped_column(String(40), nullable=False)
     target_type: Mapped[str] = mapped_column(String(40), nullable=False)
     target_id: Mapped[str] = mapped_column(String(120), nullable=False, default="")
@@ -332,6 +368,12 @@ class PinnedData(Base):
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     workflow_id: Mapped[str] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"),
         index=True,
@@ -353,6 +395,12 @@ class Run(Base):
     __tablename__ = "runs"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     workflow_id: Mapped[str] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"), index=True, nullable=False
     )
@@ -545,6 +593,12 @@ class CodeModule(Base):
     __tablename__ = "code_modules"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     scope: Mapped[str] = mapped_column(String(20), nullable=False, default="workflow")
     workflow_id: Mapped[str | None] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"), nullable=True, index=True
@@ -582,6 +636,12 @@ class Deployment(Base):
     __tablename__ = "deployments"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     workflow_id: Mapped[str] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"), index=True, nullable=False
     )
@@ -628,6 +688,12 @@ class ProviderTriggerSubscription(Base):
     __tablename__ = "provider_trigger_subscriptions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     workflow_id: Mapped[str] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"), index=True, nullable=False
     )
@@ -684,6 +750,12 @@ class ScheduleState(Base):
     workflow_id: Mapped[str] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"), primary_key=True
     )
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     last_fired: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
@@ -695,6 +767,12 @@ class WorkflowVersion(Base):
     __tablename__ = "workflow_versions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     workflow_id: Mapped[str] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"), index=True, nullable=False
     )
@@ -765,6 +843,12 @@ class RunQueueEntry(Base):
     __tablename__ = "run_queue"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     run_id: Mapped[str] = mapped_column(
         ForeignKey("runs.id", ondelete="CASCADE"), unique=True, nullable=False
     )

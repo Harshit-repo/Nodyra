@@ -95,6 +95,14 @@ def install_org_filter() -> None:
                 )
             )
 
+    @event.listens_for(Session, "before_flush")
+    def _stamp_new_org_rows(session, flush_context, instances) -> None:
+        # Systematic stamping: every new org-scoped object gets its org_id
+        # from the request context at flush time, so no creation site can
+        # forget. Flag off -> everything lands in the default org.
+        for obj in session.new:
+            stamp(obj)
+
     @event.listens_for(Session, "after_begin")
     def _set_postgres_guc(session, transaction, connection) -> None:
         org_id = active_org_id()
