@@ -41,6 +41,7 @@ from app.services.oauth import (
     scopes_from_credential_data,
     token_payload_to_credential_data,
 )
+from app.services import org_keys
 from app.services.redaction import invalidate_secret_cache
 
 router = APIRouter(prefix="/credentials", tags=["credentials"])
@@ -49,8 +50,8 @@ logger = logging.getLogger(__name__)
 SCOPES = {"global", "environment", "workflow", "runner_pool"}
 
 
-def _info(cred: Credential) -> CredentialInfo:
-    data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek)
+def _info(cred: Credential, org_kek: bytes | None = None) -> CredentialInfo:
+    data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek, org_kek=org_kek)
     type_spec = get_credential_type(cred.type)
     return CredentialInfo(
         id=cred.id,
@@ -296,7 +297,7 @@ async def oauth_callback(
         str(environment_id) if environment_id else None,
         str(runner_pool_id) if runner_pool_id else None,
     )
-    _enc_data, _enc_dek = encrypt_credential(data)
+    _enc_data, _enc_dek = await org_keys.encrypt_credential_current(data, session)
     cred = Credential(
         name=str(payload["name"]),
         type=credential_type,
@@ -404,9 +405,9 @@ async def refresh_credential(
     actor: User | None = Depends(optional_current_user),
 ) -> CredentialInfo:
     cred = await _load(session, cred_id)
-    data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek)
+    data = await org_keys.decrypt_credential_for(cred, session)
     try:
-        await refresh_stored_credential(cred, data)
+        await refresh_stored_credential(cred, data, session)
     except OAuthError as exc:
         raise _oauth_http_error(exc) from exc
     await log_audit(
@@ -421,7 +422,7 @@ async def refresh_credential(
     await session.commit()
     await session.refresh(cred)
     invalidate_secret_cache()
-    return _info(cred)
+    return _info(cred, await org_keys.get_org_kek(cred.org_id, session))
 
 
 @router.get(
@@ -464,7 +465,15 @@ async def list_credentials(session: AsyncSession = Depends(get_session)):
     # _info decrypts each credential (synchronous Fernet); with up to 500 rows
     # that's enough CPU to stall the event loop. The ORM column attributes are
     # already loaded, so building the response off-loop is safe (no lazy DB I/O).
-    return await asyncio.to_thread(lambda: [_info(c) for c in rows])
+    # Org KEKs are resolved on-loop first (they need the session); rows can
+    # span orgs only when multi-tenancy is off, but the dict handles both.
+    keks: dict[str, bytes | None] = {}
+    for c in rows:
+        if c.org_id not in keks:
+            keks[c.org_id] = await org_keys.get_org_kek(c.org_id, session)
+    return await asyncio.to_thread(
+        lambda: [_info(c, keks.get(c.org_id)) for c in rows]
+    )
 
 
 @router.get(
@@ -494,7 +503,7 @@ async def resolve_credential(
     # ``last_used_at`` at workflow dispatch time, which is the real "used"
     # event. Keeping GET /credentials/resolve side-effect-free avoids
     # surprising last_used_at writes from caches / retries / prefetchers.
-    return _info(cred)
+    return _info(cred, await org_keys.get_org_kek(cred.org_id, session))
 
 
 @router.post(
@@ -515,7 +524,7 @@ async def create_credential(
         body.environment_id,
         body.runner_pool_id,
     )
-    _enc_data, _enc_dek = encrypt_credential(body.data)
+    _enc_data, _enc_dek = await org_keys.encrypt_credential_current(body.data, session)
     cred = Credential(
         name=body.name,
         type=body.type,
@@ -534,7 +543,7 @@ async def create_credential(
     await session.commit()
     await session.refresh(cred)
     invalidate_secret_cache()
-    return _info(cred)
+    return _info(cred, await org_keys.get_org_kek(cred.org_id, session))
 
 
 @router.put(
@@ -577,7 +586,9 @@ async def update_credential(
     if body.description is not None:
         cred.description = body.description
     if body.data is not None:
-        cred.encrypted_data, cred.encrypted_dek = encrypt_credential(body.data)
+        cred.encrypted_data, cred.encrypted_dek = await org_keys.encrypt_credential_for(
+            cred.org_id, body.data, session
+        )
     await log_audit(session, "update", "credential", cred.id, cred.name,
                     actor_id=actor.id if actor else None,
                     actor_email=actor.email if actor else None)
@@ -585,7 +596,7 @@ async def update_credential(
     await session.refresh(cred)
     if body.data is not None:
         invalidate_secret_cache()
-    return _info(cred)
+    return _info(cred, await org_keys.get_org_kek(cred.org_id, session))
 
 
 @router.post(
@@ -612,7 +623,7 @@ async def test_credential(
             status.HTTP_403_FORBIDDEN,
             "Credential is not visible for the supplied workflow/environment scope.",
         )
-    data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek)
+    data = await org_keys.decrypt_credential_for(cred, session)
     type_spec = get_credential_type(cred.type)
     test_service = type_spec.test_service if type_spec and type_spec.test_service else cred.type
     result = await test_credential_connection(test_service, data, body.context)

@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Credential, Workflow
 from app.schemas import AiWorkflowDraftRequest, AiWorkflowDraftResponse
 from app.services.credentials import CREDENTIAL_REF_MARKER, credential_ref
-from app.services.crypto import decrypt_credential
+from app.services.org_keys import decrypt_credential_for
 from noodle.models import Edge, GraphNode, Position, WorkflowGraph
 
 _ALLOWED_NODE_TYPES = {
@@ -509,7 +509,7 @@ async def _resolve_llm_provider(
             )
             if cred is None:
                 continue
-            data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek)
+            data = await decrypt_credential_for(cred, session)
             key = str(data.get("api_key") or "")
             # Stored credentials are allowed as planner credentials only when
             # they look like real provider keys. Test/demo placeholders remain

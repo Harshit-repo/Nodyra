@@ -10,7 +10,7 @@ from app.db import get_session
 from app.models import CodeModule, Credential
 from app.routers.credentials import _scope_rank
 from app.security import require_permission
-from app.services.crypto import decrypt_credential
+from app.services.org_keys import decrypt_credential_for
 from noodle.models import NodeManifest
 from noodle.sdk import registry
 from noodle_nodes.integrations_v2.dynamic_options import call_loader, list_loader_ids
@@ -198,7 +198,7 @@ async def get_dynamic_options(
                 status.HTTP_403_FORBIDDEN,
                 "Credential is not visible for the supplied scope.",
             )
-        kwargs["credentials"] = decrypt_credential(cred.encrypted_data, cred.encrypted_dek)
+        kwargs["credentials"] = await decrypt_credential_for(cred, session)
 
     try:
         options = await asyncio.to_thread(call_loader, loader_id, **kwargs)

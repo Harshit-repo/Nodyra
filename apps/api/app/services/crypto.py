@@ -90,25 +90,75 @@ def decrypt_with_dek(token: str, dek: bytes) -> dict:
         return {}
 
 
-def encrypt_credential(data: dict) -> tuple[str, str]:
+# ---------------------------------------------------------------------------
+# Per-org KEK (Phase E of the multi-tenancy plan)
+#
+# Envelope chain: data <- DEK <- org KEK <- master KEK (or external KMS).
+# Each organization gets its own KEK; the DEK of every credential in that org
+# is wrapped by it, so one tenant's bug or key exposure never unlocks
+# another's secrets, and rotation per org only rewraps that org's DEKs.
+# ---------------------------------------------------------------------------
+
+def generate_org_kek() -> bytes:
+    """Return a fresh random Fernet key suitable as an org KEK."""
+    return Fernet.generate_key()
+
+
+def wrap_org_kek(org_kek: bytes) -> str:
+    """Encrypt an org KEK with the master KEK (env/KMS provider)."""
+    return _fernet().encrypt(org_kek).decode()
+
+
+def unwrap_org_kek(wrapped: str) -> bytes:
+    """Decrypt a wrapped org KEK using the master KEK."""
+    return _fernet().decrypt(wrapped.encode())
+
+
+def rewrap_dek(encrypted_dek: str, org_kek: bytes) -> str:
+    """Move a master-wrapped DEK under an org KEK (the Phase E migration).
+
+    Raises InvalidToken when the input isn't a master-wrapped DEK — callers
+    decide whether that means "already org-wrapped" (skip) or corruption.
+    """
+    dek = unwrap_dek(encrypted_dek)
+    return Fernet(org_kek).encrypt(dek).decode()
+
+
+def encrypt_credential(data: dict, org_kek: bytes | None = None) -> tuple[str, str]:
     """Encrypt credential data with a fresh DEK.
 
-    Returns (encrypted_data, wrapped_dek) — both should be stored on the
-    Credential row.
+    The DEK is wrapped by ``org_kek`` when given (Phase E envelope), else by
+    the master KEK (legacy/single-tenant path). Returns
+    (encrypted_data, wrapped_dek) — both stored on the Credential row.
     """
     dek = generate_dek()
-    return encrypt_with_dek(data, dek), wrap_dek(dek)
+    if org_kek is not None:
+        wrapped = Fernet(org_kek).encrypt(dek).decode()
+    else:
+        wrapped = wrap_dek(dek)
+    return encrypt_with_dek(data, dek), wrapped
 
 
-def decrypt_credential(encrypted_data: str, encrypted_dek: str | None) -> dict:
+def decrypt_credential(
+    encrypted_data: str,
+    encrypted_dek: str | None,
+    org_kek: bytes | None = None,
+) -> dict:
     """Decrypt credential data.
 
-    Falls back to legacy KEK-direct decryption when ``encrypted_dek`` is None
-    (rows created before the DEK migration).
+    Unwrap chain (newest first): org KEK -> master KEK -> legacy KEK-direct
+    ciphertext (``encrypted_dek is None``). Fernet's HMAC guarantees only the
+    right key succeeds, so trying in order is safe.
     """
     if encrypted_dek is None:
         # Legacy path: data was encrypted directly with the master KEK.
         return decrypt_data(encrypted_data)
+    if org_kek is not None:
+        try:
+            dek = Fernet(org_kek).decrypt(encrypted_dek.encode())
+            return decrypt_with_dek(encrypted_data, dek)
+        except (InvalidToken, ValueError):
+            pass  # not org-wrapped; fall through to the master unwrap
     try:
         dek = unwrap_dek(encrypted_dek)
         return decrypt_with_dek(encrypted_data, dek)
