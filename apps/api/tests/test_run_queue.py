@@ -477,3 +477,38 @@ async def test_lease_uses_config_lease_seconds(session) -> None:
         assert 5 <= delta.total_seconds() <= 9
     finally:
         app_settings.queue_lease_seconds = original
+
+
+@pytest.mark.asyncio
+async def test_lease_filters_by_provider(session) -> None:
+    """A worker may only lease local + docker entries; agent/k8s entries need
+    the WS-holding API process (program A1)."""
+    from app.models import RunnerPool
+    from app.services import queue as q
+
+    agent_pool = RunnerPool(name="agents", provider="agent")
+    docker_pool = RunnerPool(name="dockers", provider="docker")
+    session.add_all([agent_pool, docker_pool])
+    await session.flush()
+
+    await q.enqueue(session, run_id="r-local", workflow_id="w1")
+    await q.enqueue(
+        session, run_id="r-agent", workflow_id="w1", runner_pool_id=agent_pool.id
+    )
+    await q.enqueue(
+        session, run_id="r-docker", workflow_id="w1", runner_pool_id=docker_pool.id
+    )
+    await session.commit()
+
+    worker_caps = frozenset({"local", "docker"})
+    leased = set()
+    while True:
+        entry = await q.lease(session, worker_id="w", providers=worker_caps)
+        if entry is None:
+            break
+        leased.add(entry.run_id)
+    assert leased == {"r-local", "r-docker"}
+
+    # unrestricted lease (inline role) still gets the agent entry
+    entry = await q.lease(session, worker_id="w")
+    assert entry is not None and entry.run_id == "r-agent"

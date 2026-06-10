@@ -26,12 +26,12 @@ import logging
 import socket
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import RunQueueEntry
+from app.models import RunnerPool, RunQueueEntry
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +214,7 @@ async def lease(
     worker_id: str,
     lease_seconds: int | None = None,
     now: datetime | None = None,
+    providers: frozenset[str] | None = None,
 ) -> RunQueueEntry | None:
     """Claim the next eligible queued entry for ``worker_id``.
 
@@ -241,6 +242,23 @@ async def lease(
             .limit(1)
             .execution_options(skip_org_filter=True)
         )
+        # Provider capability filter (program A1): a standalone worker can run
+        # entries whose execution it can actually host — "local" (no pool) and
+        # pools whose provider doesn't need a WS terminating in another
+        # process. None = no filter (inline single-process role).
+        if providers is not None:
+            clauses = []
+            if "local" in providers:
+                clauses.append(RunQueueEntry.runner_pool_id.is_(None))
+            remote = providers - {"local"}
+            if remote:
+                pool_ids = (
+                    select(RunnerPool.id)
+                    .where(RunnerPool.provider.in_(sorted(remote)))
+                    .scalar_subquery()
+                )
+                clauses.append(RunQueueEntry.runner_pool_id.in_(pool_ids))
+            stmt = stmt.where(or_(*clauses))
         # Postgres: lock the candidate row and skip ones already locked by a
         # peer worker so concurrent leases don't hand the same entry out
         # twice. SQLite has no row locking, so only request it where
