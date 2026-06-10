@@ -36,7 +36,7 @@ def _install_run_id_filter() -> None:
             return
     root.addFilter(_RunIdFilter())
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -47,17 +47,14 @@ from app.models import (
     CodeModule,
     Deployment,
     Environment,
-    NodeRun,
     PinnedData,
     Run,
-    RunApproval,
-    RunEvent,
     RunQueueEntry,
     Workflow,
     WorkflowVersion,
 )
 from app.services import queue as run_queue
-from app.services import run_alerts, run_persistence
+from app.services import run_alerts, run_persistence, run_resume
 from app.services.artifacts import (
     collect_artifact_refs,
     make_artifact_store,
@@ -70,7 +67,6 @@ from app.services.executors.local import LocalExecutor
 from app.services.executors.remote import RemoteExecutor
 from app.services.graph_utils import (
     first_trigger_node,
-    forward_descendants,
     resolve_trigger_targets,
     targets_have_trigger,
 )
@@ -738,139 +734,11 @@ async def start_run(
 
 async def resume_waiting_run_from_approval(run_id: str, approval_id: str) -> bool:
     """Requeue a waiting run using the stored approved agent action request."""
-    async with SessionLocal() as session:
-        approval = await session.scalar(
-            select(RunApproval).where(
-                RunApproval.run_id == run_id,
-                RunApproval.id == approval_id,
-            )
-        )
-        run = await session.get(Run, run_id)
-        if (
-            approval is None
-            or run is None
-            or approval.status not in {"approved", "rejected"}
-            or run.status != "waiting"
-            or not isinstance(approval.resume_state, dict)
-        ):
-            return False
-
-        agent_node_id = str(
-            approval.resume_state.get("agent_node_id")
-            or approval.agent_node_id
-            or approval.node_id
-            or ""
-        )
-        request_state = approval.resume_state.get("request")
-        if not agent_node_id or not isinstance(request_state, dict):
-            return False
-
-        request = AgentActionRequest.model_validate(request_state)
-        if approval.status == "approved":
-            approved_ids = set(request.approved_tool_call_ids or [])
-            approved_ids.add(approval.tool_call_id)
-            request.approved_tool_call_ids = sorted(approved_ids)
-        else:
-            rejected_ids = set(request.rejected_tool_call_ids or [])
-            rejected_ids.add(approval.tool_call_id)
-            request.rejected_tool_call_ids = sorted(rejected_ids)
-
-        workflow = await session.scalar(
-            select(Workflow)
-            .where(Workflow.id == run.workflow_id)
-            .options(selectinload(Workflow.versions))
-        )
-        if workflow is None or not workflow.versions:
-            return False
-
-        graph_dict: dict | None = None
-        if run.workflow_version_id:
-            version_row = await session.scalar(
-                select(WorkflowVersion).where(
-                    WorkflowVersion.id == run.workflow_version_id
-                )
-            )
-            if version_row is not None:
-                graph_dict = version_row.graph
-        if not graph_dict:
-            graph_dict = workflow.draft_graph or workflow.versions[-1].graph
-        if not graph_dict:
-            return False
-
-        cache: dict[str, dict] = {}
-        skipped_cache_nodes: list[dict[str, Any]] = []
-        node_types = _graph_node_types(graph_dict)
-        node_runs = (
-            await session.scalars(
-                select(NodeRun).where(
-                    NodeRun.run_id == run_id,
-                    NodeRun.status == "success",
-                )
-            )
-        ).all()
-        for node_run in node_runs:
-            if node_run.node_id == agent_node_id:
-                continue
-            output = node_run.output
-            if not isinstance(output, dict):
-                continue
-            if _contains_unrestorable_object(output):
-                skipped_cache_nodes.append(
-                    {
-                        "node_id": node_run.node_id,
-                        "node_type": node_types.get(node_run.node_id, ""),
-                        "reason": "unrestorable_output",
-                        "output_ports": sorted(str(port) for port in output.keys()),
-                    }
-                )
-                continue
-            cache[node_run.node_id] = output
-
-        resume_targets = sorted(forward_descendants(graph_dict, {agent_node_id}))
-        replay_seed = {
-            "cache": cache,
-            "targets": resume_targets,
-            "skipped_cache_nodes": skipped_cache_nodes,
-            "agent_action_resume": {
-                agent_node_id: request.model_dump(mode="json"),
-            },
-        }
-        max_sequence = await session.scalar(
-            select(func.max(RunEvent.sequence)).where(RunEvent.run_id == run_id)
-        )
-        resume_event = {
-            "type": "agent_resume_prepared",
-            "approval_id": approval.id,
-            "approval_key": approval.approval_key,
-            "agent_node_id": agent_node_id,
-            "tool_call_id": approval.tool_call_id,
-            "tool_name": approval.tool_name,
-            "cached_node_ids": sorted(cache.keys()),
-            "skipped_cache_nodes": skipped_cache_nodes,
-            "targets": resume_targets,
-        }
-        session.add(
-            RunEvent(
-                run_id=run_id,
-                event_type="agent_resume_prepared",
-                sequence=int(max_sequence or 0) + 1,
-                ts=datetime.now(UTC),
-                node_id=approval.node_id,
-                agent_node_id=agent_node_id,
-                payload=resume_event,
-            )
-        )
-        entry = await run_queue.resume_waiting(
-            session,
-            run_id=run_id,
-            replay_seed=replay_seed,
-        )
-        if entry is None:
-            return False
-        run.status = "queued"
-        run.finished_at = None
-        await session.commit()
-
+    resume_event = await run_resume.resume_waiting_run_from_approval(
+        SessionLocal, run_id=run_id, approval_id=approval_id
+    )
+    if resume_event is None:
+        return False
     broker.publish(run_id, resume_event)
     if settings.run_synchronously:
         await _execute_queued_entry(run_id)
