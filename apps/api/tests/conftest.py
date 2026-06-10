@@ -114,6 +114,9 @@ def _reset_run_dispatch_state():
             settings.max_concurrent_subworkflows or settings.max_concurrent_runs
         )
         pool._subworkflow_sem = asyncio.Semaphore(max(1, sub_cap))
+        # Per-org sub-workflow semaphores (C4) are loop-bound too — drop them
+        # so a later test's loop never touches a prior loop's primitives.
+        pool._org_subworkflow_sems.clear()
         pool._rss_budget = runtime_pool_mod._RssBudget()
 
     _reset()

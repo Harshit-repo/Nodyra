@@ -173,6 +173,31 @@ def _worker_env() -> dict[str, str]:
     return env
 
 
+async def _org_subworkflow_cap(org_id: str) -> int:
+    """The org's max in-flight sub-workflow spawns (C4).
+
+    Org override via org_settings; 0/unset falls back to the global
+    ``max_concurrent_subworkflows`` (itself falling back to
+    ``max_concurrent_runs``). Degrades to the global cap if the DB is
+    unreachable — a throttle must never block dispatch outright.
+    """
+    fallback = max(
+        1, settings.max_concurrent_subworkflows or settings.max_concurrent_runs
+    )
+    try:
+        from app.services.org_limits import effective_limits
+        from app.tenancy import run_as_system
+
+        with run_as_system():
+            async with SessionLocal() as session:
+                limits = await effective_limits(session, org_id)
+        return max(1, limits.max_inflight_subworkflows) if (
+            limits.max_inflight_subworkflows
+        ) else fallback
+    except Exception:  # noqa: BLE001
+        return fallback
+
+
 async def _resolve_run_org(run_id: str) -> str:
     """The org a run belongs to, for artifact key namespacing (Phase F).
 
@@ -617,6 +642,10 @@ class RuntimePool:
         # those). See ``subworkflow_slot`` for why it's a soft cap.
         sub_cap = settings.max_concurrent_subworkflows or settings.max_concurrent_runs
         self._subworkflow_sem = asyncio.Semaphore(max(1, sub_cap))
+        # C4: with multi-tenancy on, each org throttles its own sub-workflow
+        # fan-out (a wide map in one org must not exhaust the shared spawn
+        # budget). Lazily populated per org; cleared by the test reset hook.
+        self._org_subworkflow_sems: dict[str, asyncio.Semaphore] = {}
         # Soft memory ceiling across concurrent top-level runs. See _RssBudget.
         self._rss_budget = _RssBudget()
 
@@ -668,10 +697,19 @@ class RuntimePool:
         anyway: wide fan-out gets throttled (siblings queue briefly) while
         legitimate nesting never blocks indefinitely.
         """
+        sem = self._subworkflow_sem
+        if settings.multi_tenancy_enabled:
+            from app.tenancy import active_org_id
+
+            org_key = active_org_id() or "default"
+            sem = self._org_subworkflow_sems.get(org_key)
+            if sem is None:
+                sem = asyncio.Semaphore(await _org_subworkflow_cap(org_key))
+                self._org_subworkflow_sems[org_key] = sem
         acquired = False
         try:
             await asyncio.wait_for(
-                self._subworkflow_sem.acquire(),
+                sem.acquire(),
                 timeout=settings.subworkflow_spawn_timeout_seconds,
             )
             acquired = True
@@ -685,7 +723,7 @@ class RuntimePool:
             yield
         finally:
             if acquired:
-                self._subworkflow_sem.release()
+                sem.release()
 
     async def _env_pool(self, env_id: str | None) -> _EnvPool:
         key = env_id or "_default"

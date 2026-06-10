@@ -98,6 +98,35 @@ async def test_subworkflow_slot_soft_cap_proceeds_on_timeout() -> None:
 
 
 @pytest.mark.asyncio
+async def test_subworkflow_slot_is_per_org_under_multi_tenancy(monkeypatch) -> None:
+    """C4: one org exhausting its sub-workflow budget must not consume the
+    spawn budget of another org."""
+    from app.services import runtime_pool as rp_module
+    from app.tenancy import current_org_id
+
+    monkeypatch.setattr(settings, "multi_tenancy_enabled", True)
+
+    async def _cap(org_id: str) -> int:
+        return 1  # every org gets exactly one slot
+
+    monkeypatch.setattr(rp_module, "_org_subworkflow_cap", _cap)
+    pool = RuntimePool()
+
+    token = current_org_id.set("org-a")
+    try:
+        async with pool.subworkflow_slot():
+            assert pool._org_subworkflow_sems["org-a"].locked()  # noqa: SLF001
+            # org-b's budget is untouched while org-a is saturated.
+            current_org_id.set("org-b")
+            async with pool.subworkflow_slot():
+                assert pool._org_subworkflow_sems["org-b"].locked()  # noqa: SLF001
+            assert not pool._org_subworkflow_sems["org-b"].locked()  # noqa: SLF001
+    finally:
+        current_org_id.reset(token)
+    assert not pool._org_subworkflow_sems["org-a"].locked()  # noqa: SLF001
+
+
+@pytest.mark.asyncio
 async def test_global_slot_bounds_concurrency() -> None:
     """``global_slot`` exposes the ``max_concurrent_runs`` ceiling."""
     orig = settings.max_concurrent_runs
