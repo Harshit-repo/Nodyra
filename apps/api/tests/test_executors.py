@@ -76,3 +76,45 @@ async def test_local_executor_delegates_to_pool_and_cancels_task():
     await asyncio.sleep(0)
     assert task.cancelled()
     assert await ex.cancel("missing") is False
+
+
+async def test_remote_executor_delegates_to_dispatcher():
+    from app.services.executors.base import RunOutcome
+    from app.services.executors.remote import RemoteExecutor
+
+    calls: dict = {}
+
+    class FakeDispatcher:
+        async def assign_run(self, run_id, pool_id, env_payload, graph, cache,
+                             targets, workflow_modules, on_event,
+                             pause_on_approval=False, agent_action_resume=None):
+            calls["assign"] = (run_id, pool_id, env_payload)
+            return "success"
+
+        async def cancel_remote_run(self, run_id, runner_id):
+            calls["cancel"] = (run_id, runner_id)
+
+    async def fake_runner_id(run_id):
+        return "runner-7"
+
+    ex = RemoteExecutor(dispatcher=FakeDispatcher(), runner_id_for=fake_runner_id)
+
+    async def on_event(_event: dict) -> None: ...
+
+    out = await ex.execute(
+        {
+            "run_id": "r1", "workflow_id": "w1",
+            "graph": {"nodes": [], "edges": []},
+            "cache": None, "targets": None,
+            "environment_id": None, "runner_pool_id": "pool-1",
+            "env_payload": {"id": "default"}, "workflow_modules": [],
+            "run_timeout": None, "default_timeouts": {},
+            "pause_on_approval": True, "agent_action_resume": None,
+        },
+        on_event,
+    )
+    assert out == RunOutcome(status="success")
+    assert calls["assign"] == ("r1", "pool-1", {"id": "default"})
+
+    assert await ex.cancel("r1") is True
+    assert calls["cancel"] == ("r1", "runner-7")

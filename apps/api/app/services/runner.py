@@ -87,6 +87,7 @@ from app.services.remote_dispatch import (
 )
 from app.services.executors.base import RunExecutionContext
 from app.services.executors.local import LocalExecutor
+from app.services.executors.remote import RemoteExecutor
 from app.services.runtime_pool import _org_run_limits_for, _resolve_run_org
 from app.services.runtime_pool import pool as runtime_pool
 from noodle.ai_runtime import AgentActionRequest
@@ -601,6 +602,15 @@ local_executor = LocalExecutor(
 )
 
 
+async def _runner_id_for(run_id: str) -> str | None:
+    async with SessionLocal() as session:
+        run = await session.get(Run, run_id)
+        return run.runner_id if run else None
+
+
+remote_executor = RemoteExecutor(dispatcher=dispatcher, runner_id_for=_runner_id_for)
+
+
 def _seed_parameters(
     graph: dict,
     cache: dict[str, dict] | None,
@@ -1046,14 +1056,10 @@ async def cancel_run(run_id: str) -> str | None:
     subprocess (otherwise it keeps executing and later resolves a dead future),
     then cancel the local awaiting task.
     """
-    async with SessionLocal() as session:
-        run = await session.get(Run, run_id)
-        runner_id = run.runner_id if run else None
-    if runner_id:
-        try:
-            await dispatcher.cancel_remote_run(run_id, runner_id)
-        except Exception:  # noqa: BLE001 - notifying the agent is best-effort
-            pass
+    try:
+        await remote_executor.cancel(run_id)  # no-op when the run has no runner
+    except Exception:  # noqa: BLE001 - notifying the agent is best-effort
+        pass
 
     task = _active_runs.get(run_id)
     if task is not None and not task.done():
@@ -1280,25 +1286,20 @@ async def _execute_run(
                     # Remote runner path — build env descriptor and dispatch.
                     env_payload = await _build_env_payload_for_run(env_id)
                     try:
-                        status = await dispatcher.assign_run(
-                            run_id,
-                            runner_pool_id,
-                            env_payload,
-                            graph_dict,
-                            cache,
-                            targets,
-                            workflow_modules,
-                            on_event,
-                            pause_on_approval=True,
-                            agent_action_resume=(
-                                {
-                                    node_id: request.model_dump(mode="json")
-                                    for node_id, request in agent_action_resume.items()
-                                }
-                                if agent_action_resume
-                                else None
+                        outcome = await remote_executor.execute(
+                            _build_ctx(
+                                run_id=run_id, workflow_id=workflow_id,
+                                graph=graph_dict, cache=cache, targets=targets,
+                                environment_id=env_id,
+                                runner_pool_id=runner_pool_id,
+                                env_payload=env_payload,
+                                workflow_modules=workflow_modules,
+                                run_timeout=run_timeout,
+                                agent_action_resume=agent_action_resume,
                             ),
+                            on_event,
                         )
+                        status = outcome.status
                     except _QueuedError as queued_exc:
                         # No runner capacity right now. Reset both ledgers
                         # to "queued" so the durable queue's dispatch loop
