@@ -790,10 +790,21 @@ Endpoints (all `Depends(require_feature("git_versioning"))` from Task L4):
 > end in `test_org_ingress.py`); web UI gained an org switcher in HomeHeader,
 > X-Org-Id on every api.ts request, and org member API methods.
 >
+> **Status update 3: X4 is IMPLEMENTED** — `organizations.execution_isolation`
+> (migration 0044), dispatch-time gate in `start_run` (dedicated orgs refuse
+> any run not resolving to their own docker/k8s pool; agent pools don't
+> qualify), owner-only PATCH. The full decided bundle (X1, A, E, F, B core,
+> X4) is now on `feat/multi-tenancy`; only **Phase C** (quotas/fair
+> scheduling/metering — write its own plan first) remains from the
+> multi-tenancy workstream.
+>
 > **Remaining for Phase B (deferred):** SSO/OIDC + SCIM (Enterprise-gated —
 > needs Workstream 1 licensing first); org members management page in the web
 > UI (API + switcher exist; page is a stub); dropping `User.role` once MT is
-> the only mode.
+> the only mode; write-time validation of pool overrides against
+> execution_isolation (the dispatch gate is the security boundary; write-time
+> checks are UX); remote-runner sub-workflow placement audit for dedicated
+> orgs.
 >
 > **Known follow-ups (MT-on only, no flag-off impact):**
 > 1. Production deployments must use a non-superuser DB role (RLS bypass —
