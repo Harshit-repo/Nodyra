@@ -21,6 +21,7 @@ from app.tenancy import (
     current_org_id,
     install_org_filter,
     org_scoped_models,
+    run_as_system,
 )
 
 
@@ -100,6 +101,20 @@ async def test_flag_on_scopes_to_current_org(session, mt_enabled):
 async def test_flag_on_unset_context_scopes_to_default_org(session, mt_enabled):
     rows = (await session.scalars(select(OrgWidget))).all()
     assert {r.id for r in rows} == {"w3"}
+
+
+def test_run_as_system_disables_scoping(mt_enabled):
+    assert active_org_id() == DEFAULT_ORG_ID
+    with run_as_system():
+        assert active_org_id() is None
+    assert active_org_id() == DEFAULT_ORG_ID
+
+
+@pytest.mark.asyncio
+async def test_background_services_see_all_orgs(session, mt_enabled):
+    with run_as_system():
+        rows = (await session.scalars(select(OrgWidget))).all()
+        assert {r.id for r in rows} == {"w1", "w2", "w3"}
 
 
 @pytest.mark.asyncio

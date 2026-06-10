@@ -17,6 +17,7 @@ With ``multi_tenancy_enabled`` off, ``active_org_id()`` is ``None`` and both
 hooks are no-ops: single-tenant behaviour is bit-for-bit unchanged.
 """
 
+from contextlib import contextmanager
 from contextvars import ContextVar
 
 from sqlalchemy import event, text
@@ -32,16 +33,38 @@ DEFAULT_ORG_ID = "default"
 current_org_id: ContextVar[str | None] = ContextVar("current_org_id", default=None)
 
 
+# Explicit opt-out for cross-org background services (queue dispatch loop,
+# scheduler, retention sweep): with multi-tenancy on, an unset context falls
+# back to the *default org* (fail-closed for request paths), so loops that
+# legitimately operate across all orgs must declare it via run_as_system().
+SYSTEM_CONTEXT = "__system__"
+
+
 def active_org_id() -> str | None:
     """The org every data access in this task must be scoped to.
 
-    ``None`` means "no scoping" — only ever when multi-tenancy is disabled.
-    With the flag on, an unset context falls back to the default org rather
-    than to no filtering, so a missed ``resolve_org`` can never widen access.
+    ``None`` means "no scoping": multi-tenancy disabled, or an explicit
+    ``run_as_system()`` scope. With the flag on, an unset context falls back
+    to the default org rather than to no filtering, so a missed
+    ``resolve_org`` can never widen access.
     """
     if not settings.multi_tenancy_enabled:
         return None
-    return current_org_id.get() or DEFAULT_ORG_ID
+    value = current_org_id.get()
+    if value == SYSTEM_CONTEXT:
+        return None
+    return value or DEFAULT_ORG_ID
+
+
+@contextmanager
+def run_as_system():
+    """Run a block unscoped (all orgs). For background services only —
+    never call from a request handler."""
+    token = current_org_id.set(SYSTEM_CONTEXT)
+    try:
+        yield
+    finally:
+        current_org_id.reset(token)
 
 
 def org_scoped_models() -> list[type]:
