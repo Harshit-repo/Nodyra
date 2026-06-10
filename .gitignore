@@ -38,3 +38,7 @@ data/
 
 # Bundled tool binaries (fetched at setup, not committed)
 apps/api/tools/*.exe
+
+# Playwright e2e artifacts
+apps/web/test-results/
+apps/web/playwright-report/
