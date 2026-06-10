@@ -198,6 +198,19 @@ async def _bounded(coro, timeout: float = 5.0) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Split-topology misconfigurations abort startup (program A1) — a control
+    # plane that silently executed runs, or used in-process events, would
+    # corrupt the worker topology rather than degrade it.
+    topology_errors = settings.dispatch_topology_errors()
+    if settings.dispatch_role == "worker":
+        topology_errors.append(
+            "dispatch_role=worker is the standalone worker entrypoint "
+            "(python -m app.worker_main); API replicas use inline or disabled."
+        )
+    if topology_errors:
+        raise RuntimeError("startup aborted:\n  - " + "\n  - ".join(topology_errors))
+    dispatch_inline = settings.dispatch_role == "inline"
+
     # Pin the app's default timezone — explicit .env override wins, otherwise
     # ask the OS. This becomes the fallback for any schedule_trigger that
     # doesn't set its own ``tz``.
@@ -208,7 +221,10 @@ async def lifespan(app: FastAPI):
     )
 
     await _ensure_global_environment()
-    await _mark_interrupted_runs()
+    if dispatch_inline:
+        # Only the process that owns execution may declare runs interrupted;
+        # in split topologies workers own runs and lease-expiry recovers them.
+        await _mark_interrupted_runs()
     # Register the configured artifact backend. ``local`` self-registers on
     # first use; ``s3`` needs an explicit hook so a missing boto3 install or
     # bad bucket name surfaces at startup rather than on the first download.
@@ -261,7 +277,9 @@ async def lifespan(app: FastAPI):
     # because every replica should reap its own pool.
     reaper = (
         asyncio.create_task(_as_system(idle_reaper_loop)())
-        if settings.use_subprocess_runner and settings.runner_idle_seconds > 0
+        if dispatch_inline
+        and settings.use_subprocess_runner
+        and settings.runner_idle_seconds > 0
         else None
     )
     # Pin the run-event broker transport once: Redis (fans out across
@@ -274,7 +292,16 @@ async def lifespan(app: FastAPI):
     # Broker reaper: every replica owns its own pub/sub buffer, so it
     # always runs (independent of the scheduler flag).
     broker_reaper = asyncio.create_task(broker_reaper_loop())
-    queue_loop = asyncio.create_task(_as_system(run_queue_dispatch_loop)())
+    # The dispatch loop only runs where execution is owned (dispatch_role=
+    # inline). Control-plane replicas (disabled) enqueue only; workers run
+    # their own loop via app.worker_main. The agent-WS heartbeat and cloud
+    # idle-terminate loops stay on the API regardless — agent connections
+    # terminate here.
+    queue_loop = (
+        asyncio.create_task(_as_system(run_queue_dispatch_loop)())
+        if dispatch_inline
+        else None
+    )
     cloud_idle = asyncio.create_task(_as_system(cloud_idle_terminate_loop)())
     heartbeat = asyncio.create_task(_as_system(runner_heartbeat_loop)())
     yield
