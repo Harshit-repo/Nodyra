@@ -16,7 +16,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.models import Environment, Membership, Organization, OrgSettings, User
+from app.models import (
+    Environment,
+    Membership,
+    Organization,
+    OrgSettings,
+    RunMeter,
+    User,
+)
 from app.schemas import (
     OrgCreate,
     OrgInfo,
@@ -26,6 +33,7 @@ from app.schemas import (
     OrgSettingsInfo,
     OrgSettingsUpdate,
     OrgUpdate,
+    OrgUsageDay,
 )
 from app.security import current_user, normalize_role
 from app.services import org_keys
@@ -291,6 +299,27 @@ async def update_org_settings(
     await session.commit()
     invalidate_limits_cache()
     return await _settings_info(session, org_id)
+
+
+@router.get("/orgs/{org_id}/usage", response_model=list[OrgUsageDay])
+async def get_org_usage(
+    org_id: str,
+    days: int = 30,
+    actor: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[OrgUsageDay]:
+    """Daily run/compute usage for the org (billing + abuse visibility)."""
+    await _require_org_role(session, actor, org_id, "admin")
+    rows = (
+        await session.scalars(
+            select(RunMeter)
+            .where(RunMeter.org_id == org_id)
+            .order_by(RunMeter.day.desc())
+            .limit(max(1, min(days, 365)))
+            .execution_options(skip_org_filter=True)
+        )
+    ).all()
+    return [OrgUsageDay.model_validate(row) for row in rows]
 
 
 @router.get("/orgs/current/members", response_model=list[OrgMemberInfo])

@@ -1,12 +1,13 @@
 """SQLAlchemy ORM models."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -100,6 +101,34 @@ class OrgSettings(Base):
         Integer, nullable=True
     )
     storage_quota_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class RunMeter(Base):
+    """Per-org, per-UTC-day usage rollup (multi-tenancy Phase C3).
+
+    ``runs`` increments at admission (start_run) so executions/day is a hard
+    daily ceiling; ``compute_seconds`` and ``node_runs`` accumulate at run
+    completion — the latter is the loop-amplification meter (a 10k-iteration
+    loop is one run but ~10k node_runs rows). Billing/abuse detection reads
+    this table; one row per (org, day) keeps it tiny.
+    """
+
+    __tablename__ = "run_meters"
+    __table_args__ = (
+        UniqueConstraint("org_id", "day", name="uq_run_meters_org_day"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    compute_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    node_runs: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

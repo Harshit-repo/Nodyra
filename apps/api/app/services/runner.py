@@ -728,6 +728,24 @@ async def start_run(
                             "to the workflow, environment, or deployment."
                         )
 
+        # C3: executions/day quota — checked and counted at ADMISSION so the
+        # ceiling is hard (a burst of starts can't outrun completion-time
+        # accounting). Day boundary is UTC.
+        if settings.multi_tenancy_enabled and wf_obj is not None:
+            from app.services import metering
+            from app.services.org_limits import effective_limits
+
+            limits = await effective_limits(session, wf_obj.org_id)
+            if limits.executions_per_day:
+                used = await metering.runs_today(session, wf_obj.org_id)
+                if used >= limits.executions_per_day:
+                    raise ValueError(
+                        "Daily execution quota reached for this organization "
+                        f"({used}/{limits.executions_per_day}). Runs resume "
+                        "at midnight UTC, or an owner can raise the quota."
+                    )
+            await metering.record_run_started(session, wf_obj.org_id)
+
         # Preflight: block the run if a node needs a package the env lacks.
         preflight_env = None
         if wf_obj and wf_obj.environment_id:
@@ -1474,6 +1492,15 @@ async def _execute_run(
                     retryable=False,
                     error=f"run finished with status={status}",
                 )
+            # C3: accumulate compute seconds + node_runs for terminal runs
+            # ("waiting" resumes later and lands here again at the real end).
+            if settings.multi_tenancy_enabled and status != "waiting":
+                from app.services import metering
+
+                try:
+                    await metering.record_run_completion(session, run_id)
+                except Exception:  # noqa: BLE001 - metering never fails a run
+                    logger.exception("run_id=%s metering failed", run_id)
             await session.commit()
 
     except Exception:  # noqa: BLE001

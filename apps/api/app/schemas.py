@@ -1,6 +1,6 @@
 """Pydantic request/response schemas for the API."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
@@ -540,6 +540,15 @@ class OrgSettingsUpdate(BaseModel):
     max_loop_iterations: int | None = Field(default=None, ge=-1)
     max_inflight_subworkflows: int | None = Field(default=None, ge=-1)
     storage_quota_bytes: int | None = Field(default=None, ge=-1)
+
+
+class OrgUsageDay(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    day: date
+    runs: int
+    compute_seconds: float
+    node_runs: int
 
 
 class OrgSettingsInfo(BaseModel):
