@@ -85,6 +85,8 @@ from app.services.remote_dispatch import (
     build_env_payload,
     dispatcher,
 )
+from app.services.executors.base import RunExecutionContext
+from app.services.executors.local import LocalExecutor
 from app.services.runtime_pool import _org_run_limits_for, _resolve_run_org
 from app.services.runtime_pool import pool as runtime_pool
 from noodle.ai_runtime import AgentActionRequest
@@ -205,6 +207,28 @@ async def _upsert_run_approval(
         approval.resolved_at = event_ts
         approval.resolved_by = "auto"
         approval.reason = reason
+
+
+def _build_ctx(
+    *, run_id: str, workflow_id: str, graph: dict, cache: dict | None,
+    targets: list[str] | None, environment_id: str | None,
+    runner_pool_id: str | None, env_payload: dict | None,
+    workflow_modules: list[dict], run_timeout: float | None,
+    agent_action_resume: dict[str, AgentActionRequest] | None,
+) -> RunExecutionContext:
+    return {
+        "run_id": run_id, "workflow_id": workflow_id, "graph": graph,
+        "cache": cache, "targets": targets, "environment_id": environment_id,
+        "runner_pool_id": runner_pool_id, "env_payload": env_payload,
+        "workflow_modules": workflow_modules, "run_timeout": run_timeout,
+        "default_timeouts": _engine_default_timeouts(),
+        "pause_on_approval": True,
+        "agent_action_resume": (
+            {nid: req.model_dump(mode="json")
+             for nid, req in agent_action_resume.items()}
+            if agent_action_resume else None
+        ),
+    }
 
 
 def _engine_default_timeouts() -> dict[str, float]:
@@ -565,6 +589,16 @@ async def _call_sub_workflow(
         return _extract_sub_leaf(sources, node_status, node_outputs)
     finally:
         call_chain.reset(chain_token)
+
+
+# A2: the local executor wraps the warm-subprocess pool path. Constructed
+# after _call_sub_workflow so the caller reference binds; _active_runs is
+# shared by reference, so conftest's reset (which .clear()s it) covers both.
+local_executor = LocalExecutor(
+    pool=runtime_pool,
+    sub_workflow_caller=_call_sub_workflow,
+    active_runs=_active_runs,
+)
 
 
 def _seed_parameters(
@@ -1292,26 +1326,18 @@ async def _execute_run(
                         _log_run_id.reset(run_id_token)
                         return
                 else:
-                    status = await runtime_pool.dispatch(
-                        run_id,
-                        env_id,
-                        graph_dict,
-                        cache,
-                        targets,
-                        on_event,
-                        sub_workflow_caller=_call_sub_workflow,
-                        workflow_modules=workflow_modules,
-                        run_timeout=run_timeout,
-                        pause_on_approval=True,
-                        agent_action_resume=(
-                            {
-                                node_id: request.model_dump(mode="json")
-                                for node_id, request in agent_action_resume.items()
-                            }
-                            if agent_action_resume
-                            else None
+                    outcome = await local_executor.execute(
+                        _build_ctx(
+                            run_id=run_id, workflow_id=workflow_id,
+                            graph=graph_dict, cache=cache, targets=targets,
+                            environment_id=env_id, runner_pool_id=None,
+                            env_payload=None, workflow_modules=workflow_modules,
+                            run_timeout=run_timeout,
+                            agent_action_resume=agent_action_resume,
                         ),
+                        on_event,
                     )
+                    status = outcome.status
             finally:
                 workflow_caller.reset(caller_token)
                 call_chain.reset(chain_token)
