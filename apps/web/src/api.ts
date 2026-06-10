@@ -25,6 +25,8 @@ import type {
   RunBatchInfo,
   RunInfo,
   RunListItem,
+  OrgInfo,
+  OrgMemberInfo,
   RunnerInfo,
   RunnerPoolInfo,
   RegistrationTokenResponse,
@@ -41,6 +43,17 @@ import type {
 const BASE = "/api";
 const TOKEN_KEY = "noodle_token";
 const USER_KEY = "noodle_user";
+const ORG_KEY = "noodle_org";
+
+/** Selected organization (multi-tenancy). Sent as X-Org-Id on every request;
+ *  null means the server default org. */
+export function getOrgId(): string | null {
+  return localStorage.getItem(ORG_KEY);
+}
+export function setOrgId(orgId: string | null): void {
+  if (orgId) localStorage.setItem(ORG_KEY, orgId);
+  else localStorage.removeItem(ORG_KEY);
+}
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -158,6 +171,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     "Content-Type": "application/json",
   };
   if (token) baseHeaders.Authorization = `Bearer ${token}`;
+  const orgId = getOrgId();
+  if (orgId) baseHeaders["X-Org-Id"] = orgId;
   const headers = {
     ...baseHeaders,
     ...((init?.headers as Record<string, string>) ?? {}),
@@ -576,6 +591,22 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  listMyOrgs: () => request<OrgInfo[]>("/me/orgs"),
+  createOrg: (body: { name: string; slug?: string }) =>
+    request<OrgInfo>("/orgs", { method: "POST", body: JSON.stringify(body) }),
+  listOrgMembers: () => request<OrgMemberInfo[]>("/orgs/current/members"),
+  addOrgMember: (body: { email: string; role: string }) =>
+    request<OrgMemberInfo>("/orgs/current/members", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateOrgMember: (userId: string, role: string) =>
+    request<OrgMemberInfo>(`/orgs/current/members/${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ role }),
+    }),
+  removeOrgMember: (userId: string) =>
+    request<void>(`/orgs/current/members/${userId}`, { method: "DELETE" }),
   listUsers: () => request<UserAdminInfo[]>("/auth/users"),
   createUser: (body: {
     name?: string;

@@ -779,14 +779,27 @@ Endpoints (all `Depends(require_feature("git_versioning"))` from Task L4):
 > reads are row-driven (storage_key per artifact row), so old keys keep
 > working and only new writes are namespaced.
 >
-> **Known follow-ups for Phase B/C (MT-on only, no flag-off impact):**
-> 1. Webhook/public ingress must derive the org from the triggered workflow
->    (`run_as_system()` + re-scope) instead of the X-Org-Id header.
-> 2. Background loops (queue dispatch, scheduler, retention, provider trigger
->    refresh) must wrap their sessions in `run_as_system()` — audit each.
-> 3. `GET /me/orgs` and org switching need the Membership filter escape.
-> 4. Production deployments must use a non-superuser DB role (RLS bypass —
+> **Status update 2: Phase B core is IMPLEMENTED** (B1-B5 + X2): org CRUD +
+> member management with owner guards (`routers/orgs.py`); `GET /me/orgs` via
+> the new `skip_org_filter` execution option; org creation provisions an
+> org-owned default Environment (X2) and mints the org KEK; all lifespan
+> background loops wrapped in `run_as_system()` (single seam in main.py);
+> webhook/provider-webhook/public-chat ingress run cross-org lookups under
+> `run_as_system()` and `start_run` pins every run to its WORKFLOW's org
+> (covers scheduler/queue/deployment/error-workflow paths too — proven end to
+> end in `test_org_ingress.py`); web UI gained an org switcher in HomeHeader,
+> X-Org-Id on every api.ts request, and org member API methods.
+>
+> **Remaining for Phase B (deferred):** SSO/OIDC + SCIM (Enterprise-gated —
+> needs Workstream 1 licensing first); org members management page in the web
+> UI (API + switcher exist; page is a stub); dropping `User.role` once MT is
+> the only mode.
+>
+> **Known follow-ups (MT-on only, no flag-off impact):**
+> 1. Production deployments must use a non-superuser DB role (RLS bypass —
 >    documented in docs/deployment.md security checklist).
+> 2. Remote runner artifact-upload endpoint should validate the reported
+>    storage_key org prefix against the run's org (Tier-2/X4 territory).
 
 All locked decisions from `docs/multi-tenancy-plan.md` §11 apply: RLS **and** session scoping from day one, `X-Org-Id` header routing, mandatory Postgres CI lane, E+F pulled forward while data is single-default-org, compute/iteration metering, per-org `subworkflow_slot`.
 

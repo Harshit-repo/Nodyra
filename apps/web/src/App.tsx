@@ -105,6 +105,7 @@ export default function App() {
       auth_required: true,
       signed_in: true,
       registration_open: current?.registration_open ?? false,
+      multi_tenancy: current?.multi_tenancy ?? false,
       user,
     }));
   }

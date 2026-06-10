@@ -222,6 +222,19 @@ async def lifespan(app: FastAPI):
     #   leader    -> run only while we hold the DB advisory lock
     #   disabled  -> never run
     from app.services.leader_election import run_with_leader_election
+    from app.tenancy import run_as_system
+
+    def _as_system(loop_fn):
+        """Background loops operate across ALL orgs: with multi-tenancy on,
+        an unscoped task would otherwise be pinned to the default org by the
+        fail-closed context fallback and silently skip every other tenant's
+        schedules/queue entries/retention. No-op while the flag is off."""
+
+        async def system_loop():
+            with run_as_system():
+                await loop_fn()
+
+        return system_loop
 
     def _make_loop_task(loop_fn, lock_name: str):
         if not settings.enable_inprocess_scheduler:
@@ -230,9 +243,9 @@ async def lifespan(app: FastAPI):
             return None
         if settings.scheduler_role == "leader":
             return asyncio.create_task(
-                run_with_leader_election(loop_fn, name=lock_name)
+                run_with_leader_election(_as_system(loop_fn), name=lock_name)
             )
-        return asyncio.create_task(loop_fn())
+        return asyncio.create_task(_as_system(loop_fn)())
 
     scheduler = _make_loop_task(scheduler_loop, "noodle.scheduler")
     # Retention prune is gated on the same flag — it's another in-process
@@ -242,7 +255,7 @@ async def lifespan(app: FastAPI):
     # unused past ``runner_idle_seconds``. Independent of the scheduler flag
     # because every replica should reap its own pool.
     reaper = (
-        asyncio.create_task(idle_reaper_loop())
+        asyncio.create_task(_as_system(idle_reaper_loop)())
         if settings.use_subprocess_runner and settings.runner_idle_seconds > 0
         else None
     )
@@ -256,9 +269,9 @@ async def lifespan(app: FastAPI):
     # Broker reaper: every replica owns its own pub/sub buffer, so it
     # always runs (independent of the scheduler flag).
     broker_reaper = asyncio.create_task(broker_reaper_loop())
-    queue_loop = asyncio.create_task(run_queue_dispatch_loop())
-    cloud_idle = asyncio.create_task(cloud_idle_terminate_loop())
-    heartbeat = asyncio.create_task(runner_heartbeat_loop())
+    queue_loop = asyncio.create_task(_as_system(run_queue_dispatch_loop)())
+    cloud_idle = asyncio.create_task(_as_system(cloud_idle_terminate_loop)())
+    heartbeat = asyncio.create_task(_as_system(runner_heartbeat_loop)())
     yield
     # Graceful drain on shutdown: stop the dispatch loop from leasing new
     # entries, give in-flight runs a bounded window to finish, then

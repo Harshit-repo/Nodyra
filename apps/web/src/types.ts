@@ -593,7 +593,24 @@ export interface AuthState {
   auth_required: boolean;
   signed_in: boolean;
   registration_open: boolean;
+  multi_tenancy: boolean;
   user: UserInfo | null;
+}
+
+export interface OrgInfo {
+  id: string;
+  name: string;
+  slug: string;
+  status: string;
+  /** The signed-in user's role within this org. */
+  role: string | null;
+}
+
+export interface OrgMemberInfo {
+  user_id: string;
+  email: string;
+  name: string;
+  role: string;
 }
 
 export interface RunnerPoolInfo {

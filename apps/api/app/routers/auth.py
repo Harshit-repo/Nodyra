@@ -255,6 +255,7 @@ async def auth_required(
         auth_required=settings.auth_required,
         signed_in=user is not None,
         registration_open=count == 0 or settings.auth_allow_registration,
+        multi_tenancy=settings.multi_tenancy_enabled,
         user=UserInfo.model_validate(user) if user is not None else None,
     )
 

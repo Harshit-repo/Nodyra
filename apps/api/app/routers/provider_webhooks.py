@@ -36,11 +36,17 @@ async def _provider_request(request: Request) -> ProviderTriggerRequest:
 @router.api_route("/provider-webhook/{subscription_id}", methods=_METHODS)
 async def provider_webhook(subscription_id: str, request: Request) -> Response:
     """Receive a delivery for a lifecycle-managed provider trigger."""
+    from app.tenancy import run_as_system
+
+    # Cross-org by design: the subscription decides which org's workflow
+    # fires; the external provider has no Noodle identity. start_run pins
+    # the resulting run to its workflow's org.
     try:
-        result = await dispatch_provider_webhook(
-            subscription_id,
-            await _provider_request(request),
-        )
+        with run_as_system():
+            result = await dispatch_provider_webhook(
+                subscription_id,
+                await _provider_request(request),
+            )
     except KeyError as exc:
         raise HTTPException(404, "Provider trigger subscription not found") from exc
     body = result.body

@@ -7,6 +7,7 @@ export const NO_AUTH_FALLBACK: AuthState = {
   auth_required: false,
   signed_in: false,
   registration_open: false,
+  multi_tenancy: false,
   user: null,
 };
 

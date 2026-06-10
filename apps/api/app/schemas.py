@@ -561,6 +561,7 @@ class AuthRequiredResponse(BaseModel):
     auth_required: bool
     signed_in: bool
     registration_open: bool
+    multi_tenancy: bool = False
     user: UserInfo | None = None
 
 

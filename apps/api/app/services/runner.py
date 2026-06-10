@@ -641,6 +641,25 @@ async def start_run(
         graph, cache, parameters, trigger_id=trigger_node_id
     )
 
+    # Multi-tenancy: pin the request/task context to the WORKFLOW's org for
+    # everything that follows (Run row stamping, credential resolution, the
+    # background execution task — which inherits this context). Callers reach
+    # here from every trigger path: user requests (context already matches),
+    # webhook ingress (context is the default org), and system loops
+    # (scheduler/queue, context unscoped) — the workflow row is the one
+    # source of truth for which tenant a run belongs to.
+    if settings.multi_tenancy_enabled:
+        from app.models import Workflow as _Workflow
+        from app.tenancy import current_org_id, run_as_system
+
+        with run_as_system():
+            async with SessionLocal() as _org_session:
+                _wf_org = await _org_session.scalar(
+                    select(_Workflow.org_id).where(_Workflow.id == workflow_id)
+                )
+        if _wf_org:
+            current_org_id.set(_wf_org)
+
     logger.info(
         "dispatch workflow_id=%s mode=%s trigger_type=%s trigger_node_id=%s "
         "targets=%d cache_keys=%s deployment_id=%s",

@@ -37,6 +37,16 @@ def _chat_trigger_params(graph: dict | None) -> dict | None:
 
 
 async def _load_graph(workflow_id: str) -> dict | None:
+    # Public chat is reached by external visitors with no org identity; the
+    # workflow's own ``public_access`` flag is the gate. Cross-org lookup by
+    # design — run_chat_turn -> start_run pins the run to the workflow's org.
+    from app.tenancy import run_as_system
+
+    with run_as_system():
+        return await _load_graph_unscoped(workflow_id)
+
+
+async def _load_graph_unscoped(workflow_id: str) -> dict | None:
     async with SessionLocal() as session:
         wf = (
             await session.scalars(
@@ -100,10 +110,13 @@ async def public_chat_turn(
     else:
         await current_user(authorization=authorization, session=session)
 
+    from app.tenancy import run_as_system
+
     try:
-        result = await run_chat_turn(
-            workflow_id, body.message, body.session_id, prefer_draft=True
-        )
+        with run_as_system():
+            result = await run_chat_turn(
+                workflow_id, body.message, body.session_id, prefer_draft=True
+            )
     except WorkflowNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except NoChatTriggerError as exc:

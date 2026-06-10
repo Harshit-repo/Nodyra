@@ -203,27 +203,34 @@ async def trigger_webhook(path: str, request: Request) -> dict:
     req_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     payload, raw_body = await _payload(request)
     _record_capture(path, _redacted_payload(payload))
-    result = await dispatch_webhook(
-        path, payload, raw_body=raw_body,
-        client_ip=request.client.host if request.client else None,
-    )
-    logger.info(
-        "webhook prod path=%s matched=%s runs=%d req_id=%s",
-        path, result.any_match, len(result.run_ids), req_id,
-    )
-    if result.reject_status is not None:
-        # Path matched at least one workflow, but every candidate was rejected:
-        # 403 when an IP allowlist blocked the caller, else 401 (auth/HMAC).
-        # Distinct from an unknown-path 404.
-        raise HTTPException(
-            result.reject_status, _REJECT_DETAIL[result.reject_status]
+    # Webhook ingress is inherently cross-org: the path decides which org's
+    # workflow fires, not the caller's X-Org-Id (callers are external systems
+    # with no Noodle identity). Matching runs unscoped; start_run then pins
+    # each run to its workflow's org.
+    from app.tenancy import run_as_system
+
+    with run_as_system():
+        result = await dispatch_webhook(
+            path, payload, raw_body=raw_body,
+            client_ip=request.client.host if request.client else None,
         )
-    if result.sync is not None:
-        shape = await wait_for_webhook_result(
-            **result.sync,
-            timeout=settings.webhook_response_timeout_seconds,
+        logger.info(
+            "webhook prod path=%s matched=%s runs=%d req_id=%s",
+            path, result.any_match, len(result.run_ids), req_id,
         )
-        return _shaped_response(shape)
+        if result.reject_status is not None:
+            # Path matched at least one workflow, but every candidate was
+            # rejected: 403 when an IP allowlist blocked the caller, else 401
+            # (auth/HMAC). Distinct from an unknown-path 404.
+            raise HTTPException(
+                result.reject_status, _REJECT_DETAIL[result.reject_status]
+            )
+        if result.sync is not None:
+            shape = await wait_for_webhook_result(
+                **result.sync,
+                timeout=settings.webhook_response_timeout_seconds,
+            )
+            return _shaped_response(shape)
     if result.response is not None:
         return _shaped_response(result.response)
     if result.run_ids:
