@@ -119,6 +119,24 @@ async def test_org_at_cap_is_parked_with_reason(session, mt_on):
     assert resumed is not None and resumed.org_id == "org-a"
 
 
+async def test_stats_breaks_down_by_org(session, mt_on):
+    session.add(models.OrgSettings(org_id="org-a", max_concurrent_runs=1))
+    await session.commit()
+    org_limits.invalidate_limits_cache()
+    await _enqueue_run(session, "org-a", "a0")
+    await _enqueue_run(session, "org-a", "a1")
+    await _enqueue_run(session, "org-b", "b0")
+    await run_queue.lease(session, worker_id="w1")  # org-a hits its cap
+    await run_queue.lease(session, worker_id="w1")  # org-b
+    await run_queue.lease(session, worker_id="w1")  # parks org-a's second entry
+
+    stats = await run_queue.stats(session)
+    assert stats["by_org"]["org-a"]["leased"] == 1
+    assert stats["by_org"]["org-a"]["queued"] == 1
+    assert stats["by_org"]["org-a"]["quota_parked"] == 1
+    assert stats["by_org"]["org-b"]["leased"] == 1
+
+
 async def test_flag_off_keeps_global_fifo(session, monkeypatch):
     monkeypatch.setattr(settings, "multi_tenancy_enabled", False)
     # Flag off: stamping pins everything to the default org and leasing is

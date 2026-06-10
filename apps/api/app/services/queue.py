@@ -518,21 +518,23 @@ async def stats(session: AsyncSession, *, now: datetime | None = None) -> dict:
     moment = _now(now)
     rows = (
         await session.execute(
-            select(RunQueueEntry.status, func.count()).group_by(RunQueueEntry.status)
+            select(RunQueueEntry.status, func.count())
+            .group_by(RunQueueEntry.status)
+            .execution_options(skip_org_filter=True)
         )
     ).all()
     counts = {status: int(count) for status, count in rows}
 
     oldest = await session.scalar(
-        select(func.min(RunQueueEntry.available_at)).where(
-            RunQueueEntry.status == "queued"
-        )
+        select(func.min(RunQueueEntry.available_at))
+        .where(RunQueueEntry.status == "queued")
+        .execution_options(skip_org_filter=True)
     )
     oldest_age = None
     if oldest is not None:
         oldest_age = max(0.0, (moment - _as_aware(oldest)).total_seconds())
 
-    return {
+    result = {
         "queued": counts.get("queued", 0),
         "leased": counts.get("leased", 0),
         "running": counts.get("running", 0),
@@ -543,6 +545,43 @@ async def stats(session: AsyncSession, *, now: datetime | None = None) -> dict:
         "cancelled": counts.get("cancelled", 0),
         "oldest_queued_age_seconds": oldest_age,
     }
+    if settings.multi_tenancy_enabled:
+        # C6: per-org backpressure breakdown, including entries parked by the
+        # org concurrency cap (queue_reason="org_quota_exceeded").
+        org_rows = (
+            await session.execute(
+                select(
+                    RunQueueEntry.org_id,
+                    RunQueueEntry.status,
+                    func.count(),
+                )
+                .where(
+                    RunQueueEntry.status.in_(
+                        ("queued", "leased", "running", "waiting")
+                    )
+                )
+                .group_by(RunQueueEntry.org_id, RunQueueEntry.status)
+                .execution_options(skip_org_filter=True)
+            )
+        ).all()
+        by_org: dict[str, dict[str, int]] = {}
+        for org_id, status, count in org_rows:
+            by_org.setdefault(str(org_id), {})[str(status)] = int(count)
+        parked_rows = (
+            await session.execute(
+                select(RunQueueEntry.org_id, func.count())
+                .where(
+                    RunQueueEntry.status == "queued",
+                    RunQueueEntry.queue_reason == "org_quota_exceeded",
+                )
+                .group_by(RunQueueEntry.org_id)
+                .execution_options(skip_org_filter=True)
+            )
+        ).all()
+        for org_id, count in parked_rows:
+            by_org.setdefault(str(org_id), {})["quota_parked"] = int(count)
+        result["by_org"] = by_org
+    return result
 
 
 # ---------------------------------------------------------------------------

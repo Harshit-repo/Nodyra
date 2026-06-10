@@ -913,6 +913,9 @@ class QueueStats(BaseModel):
     dead_lettered: int = 0
     cancelled: int = 0
     oldest_queued_age_seconds: float | None = None
+    # Multi-tenancy (C6): per-org active counts; "quota_parked" counts queued
+    # entries held back by the org's concurrency cap. None when MT is off.
+    by_org: dict[str, dict[str, int]] | None = None
 
 
 class DrainRequest(BaseModel):
