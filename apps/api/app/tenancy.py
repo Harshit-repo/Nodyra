@@ -109,6 +109,11 @@ def install_org_filter() -> None:
         org_id = active_org_id()
         if org_id is None or not execute_state.is_select:
             return
+        # Explicit, per-query escape for legitimate cross-org reads (e.g.
+        # "list MY orgs" joins memberships across orgs). Postgres RLS still
+        # applies underneath — this only lifts the ORM-layer criteria.
+        if execute_state.execution_options.get("skip_org_filter"):
+            return
         for model in org_scoped_models():
             execute_state.statement = execute_state.statement.options(
                 with_loader_criteria(

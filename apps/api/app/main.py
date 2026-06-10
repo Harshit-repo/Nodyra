@@ -32,6 +32,7 @@ from app.routers import (
     internal,
     nodes,
     ops,
+    orgs,
     pinned,
     provider_webhooks,
     runner_pools,
@@ -477,6 +478,7 @@ app.include_router(ops.router)
 app.include_router(pinned.router)
 app.include_router(system_settings.router)
 app.include_router(runner_pools.router)
+app.include_router(orgs.router)
 app.include_router(expressions.router)
 
 

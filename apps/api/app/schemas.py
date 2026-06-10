@@ -492,6 +492,42 @@ class UserAdminInfo(UserInfo):
     created_at: datetime
 
 
+class OrgCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    slug: str = Field(default="", max_length=80)
+
+
+class OrgUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class OrgInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    slug: str
+    status: str
+    # The requesting user's role within this org (None when not applicable).
+    role: str | None = None
+
+
+class OrgMemberAdd(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    role: str = Field(default="viewer", max_length=20)
+
+
+class OrgMemberUpdate(BaseModel):
+    role: str = Field(max_length=20)
+
+
+class OrgMemberInfo(BaseModel):
+    user_id: str
+    email: str
+    name: str = ""
+    role: str
+
+
 class RegisterRequest(BaseModel):
     name: str = Field(default="", max_length=160)
     company: str = Field(default="", max_length=160)
