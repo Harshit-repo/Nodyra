@@ -26,7 +26,7 @@ import logging
 import socket
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -79,8 +79,15 @@ def _as_aware(value: datetime) -> datetime:
 
 
 async def _get(session: AsyncSession, run_id: str) -> RunQueueEntry | None:
+    # Queue bookkeeping is internal infrastructure keyed by a unique run_id;
+    # callers arrive in mixed org contexts (run task pinned to its org, the
+    # dispatch loop as system, request handlers in the caller's org). Org
+    # scoping here adds silent-miss failure modes without an isolation win,
+    # so the lookup deliberately bypasses the tenancy filter — like lease().
     return await session.scalar(
-        select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
+        select(RunQueueEntry)
+        .where(RunQueueEntry.run_id == run_id)
+        .execution_options(skip_org_filter=True)
     )
 
 
@@ -133,6 +140,74 @@ async def enqueue(
     return entry
 
 
+async def _org_fair_order(
+    session: AsyncSession, moment: datetime
+) -> list[str]:
+    """Orgs with eligible queued work, fairest-first (Phase C2).
+
+    Two cheap grouped queries instead of correlated subqueries in the lease
+    statement, so the SKIP LOCKED fast path stays a plain indexed select:
+
+    * orgs are ordered by their current in-flight count ascending (an org
+      with nothing running leases before an org with a deep backlog — a
+      1000-entry flood from one tenant interleaves instead of starving the
+      rest), tie-broken by oldest eligible entry;
+    * orgs at their ``max_concurrent_runs`` cap are excluded entirely and
+      their queued entries get ``queue_reason="org_quota_exceeded"`` for the
+      backpressure UI.
+    """
+    from app.services.org_limits import effective_limits
+
+    eligible = (
+        await session.execute(
+            select(
+                RunQueueEntry.org_id,
+                func.min(RunQueueEntry.available_at),
+            )
+            .where(
+                RunQueueEntry.status == "queued",
+                RunQueueEntry.available_at <= moment,
+            )
+            .group_by(RunQueueEntry.org_id)
+            .execution_options(skip_org_filter=True)
+        )
+    ).all()
+    if not eligible:
+        return []
+    inflight = dict(
+        (
+            await session.execute(
+                select(RunQueueEntry.org_id, func.count())
+                .where(RunQueueEntry.status.in_(("leased", "running")))
+                .group_by(RunQueueEntry.org_id)
+                .execution_options(skip_org_filter=True)
+            )
+        ).all()
+    )
+    allowed: list[tuple[int, datetime, str]] = []
+    capped: list[str] = []
+    for org_id, oldest in eligible:
+        limits = await effective_limits(session, org_id)
+        cap = limits.max_concurrent_runs
+        if cap and inflight.get(org_id, 0) >= cap:
+            capped.append(org_id)
+            continue
+        allowed.append((inflight.get(org_id, 0), oldest, org_id))
+    if capped:
+        await session.execute(
+            update(RunQueueEntry)
+            .where(
+                RunQueueEntry.org_id.in_(capped),
+                RunQueueEntry.status == "queued",
+                RunQueueEntry.queue_reason != "org_quota_exceeded",
+            )
+            .values(queue_reason="org_quota_exceeded")
+            .execution_options(synchronize_session=False)
+        )
+    allowed.sort()
+    return [org_id for _, _, org_id in allowed]
+
+
 async def lease(
     session: AsyncSession,
     *,
@@ -143,31 +218,49 @@ async def lease(
     """Claim the next eligible queued entry for ``worker_id``.
 
     Eligible = ``status == "queued"`` and ``available_at <= now``. Ordered by
-    priority (high first) then oldest-available (FIFO within a priority). The
-    claimed entry is marked ``leased`` with a fresh lease expiry and its attempt
-    count incremented. Returns the leased entry, or ``None`` when nothing is
-    eligible.
+    priority (high first) then oldest-available (FIFO within a priority). With
+    multi-tenancy on, an org-fair pre-pass picks WHICH org to lease from
+    (fewest in-flight first, per-org caps enforced) before this ordering
+    applies within that org. The claimed entry is marked ``leased`` with a
+    fresh lease expiry and its attempt count incremented. Returns the leased
+    entry, or ``None`` when nothing is eligible.
     """
     moment = _now(now)
-    stmt = (
-        select(RunQueueEntry)
-        .where(
-            RunQueueEntry.status == "queued",
-            RunQueueEntry.available_at <= moment,
-        )
-        .order_by(
-            RunQueueEntry.priority.desc(),
-            RunQueueEntry.available_at.asc(),
-        )
-        .limit(1)
-    )
-    # Postgres: lock the candidate row and skip ones already locked by a peer
-    # worker so concurrent leases don't hand the same entry out twice. SQLite
-    # has no row locking, so only request it where supported.
-    if session.bind is not None and session.bind.dialect.name == "postgresql":
-        stmt = stmt.with_for_update(skip_locked=True)
 
-    entry = await session.scalar(stmt)
+    def _base_stmt():
+        stmt = (
+            select(RunQueueEntry)
+            .where(
+                RunQueueEntry.status == "queued",
+                RunQueueEntry.available_at <= moment,
+            )
+            .order_by(
+                RunQueueEntry.priority.desc(),
+                RunQueueEntry.available_at.asc(),
+            )
+            .limit(1)
+            .execution_options(skip_org_filter=True)
+        )
+        # Postgres: lock the candidate row and skip ones already locked by a
+        # peer worker so concurrent leases don't hand the same entry out
+        # twice. SQLite has no row locking, so only request it where
+        # supported.
+        if session.bind is not None and session.bind.dialect.name == "postgresql":
+            stmt = stmt.with_for_update(skip_locked=True)
+        return stmt
+
+    entry: RunQueueEntry | None = None
+    if settings.multi_tenancy_enabled:
+        # Try the fairest few orgs in order; a miss means a peer worker
+        # drained that org between the pre-pass and the lock attempt.
+        for org_id in (await _org_fair_order(session, moment))[:5]:
+            entry = await session.scalar(
+                _base_stmt().where(RunQueueEntry.org_id == org_id)
+            )
+            if entry is not None:
+                break
+    else:
+        entry = await session.scalar(_base_stmt())
     if entry is None:
         return None
 

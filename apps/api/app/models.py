@@ -941,4 +941,8 @@ class RunQueueEntry(Base):
             "available_at",
         ),
         Index("ix_run_queue_status_lease_expires", "status", "lease_expires_at"),
+        # Org-fair leasing (C2): backs both the per-org candidate select
+        # (org_id = ? AND status = 'queued' AND available_at <= ?) and the
+        # grouped eligibility/in-flight scans.
+        Index("ix_run_queue_org_lease", "org_id", "status", "available_at"),
     )
