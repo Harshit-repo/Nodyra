@@ -5,7 +5,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
@@ -289,7 +289,18 @@ async def lifespan(app: FastAPI):
     settings.queue_drain = _prior_drain
 
 
-app = FastAPI(title="Noodle API", version="0.0.1", lifespan=lifespan)
+# resolve_org is a global dependency so every request — including
+# unauthenticated reads with no require_permission dependency — sets the
+# request-scoped org context that the ORM filter and Postgres RLS read.
+# No-op (returns None, sets nothing) while multi_tenancy_enabled is off.
+from app.security import resolve_org  # noqa: E402
+
+app = FastAPI(
+    title="Noodle API",
+    version="0.0.1",
+    lifespan=lifespan,
+    dependencies=[Depends(resolve_org)],
+)
 
 # NOTE: CORSMiddleware is added LAST (see bottom of this block) so it is the
 # OUTERMOST middleware. Starlette's add_middleware prepends, so the last call

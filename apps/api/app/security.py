@@ -8,12 +8,14 @@ minimum for the requested permission.
 from collections.abc import Awaitable, Callable
 
 from fastapi import Depends, Header, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_session
-from app.models import User
+from app.models import Membership, Organization, User
 from app.services.crypto import verify_token
+from app.tenancy import DEFAULT_ORG_ID, current_org_id
 
 VALID_ROLES = ("viewer", "editor", "admin", "owner")
 
@@ -86,6 +88,101 @@ async def optional_current_user(
     return await current_user(authorization=authorization, session=session)
 
 
+async def _lenient_session_user(
+    authorization: str | None, session: AsyncSession
+) -> User | None:
+    """The session user, or None — never raises.
+
+    The global org-resolution dependency runs on EVERY request, including
+    webhook ingress where the Authorization header carries the *webhook's*
+    Basic/Bearer/JWT credential, not a Noodle session token. Those must not
+    401 here; endpoints that require session auth still depend on the strict
+    ``current_user``/``require_role`` chain.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    user_id = verify_token(authorization.removeprefix("Bearer "))
+    if user_id is None:
+        return None
+    return await session.get(User, user_id)
+
+
+async def resolve_org(
+    x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
+    authorization: str | None = Header(default=None),
+    session: AsyncSession = Depends(get_session),
+) -> str | None:
+    """Resolve and validate the request's organization (multi-tenancy A4/A6).
+
+    Registered as a global app dependency so *every* request sets the
+    request-scoped org context both enforcement layers read. Flag off ->
+    ``None``, nothing is set, single-tenant behaviour unchanged.
+    """
+    if not settings.multi_tenancy_enabled:
+        return None
+    user = await _lenient_session_user(authorization, session)
+    return await resolve_org_for(x_org_id, user, session)
+
+
+async def resolve_org_for(
+    x_org_id: str | None,
+    user: User | None,
+    session: AsyncSession,
+) -> str | None:
+    """Validate org access for an already-resolved user; sets the ContextVar.
+
+    The ContextVar is set *before* the membership query: ``Membership``
+    carries ``org_id``, so the session filter scopes that query to the
+    requested org — set-after would scope it to the previous/default org and
+    always refuse.
+    """
+    if not settings.multi_tenancy_enabled:
+        return None
+    org_id = (x_org_id or DEFAULT_ORG_ID).strip() or DEFAULT_ORG_ID
+    current_org_id.set(org_id)
+    if user is None:
+        # Anonymous (auth disabled or public endpoint): only the default org
+        # is reachable without an identity to check membership against.
+        if org_id != DEFAULT_ORG_ID:
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED,
+                "Sign-in required to access this organization.",
+            )
+        return org_id
+    if await session.get(Organization, org_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
+    member = await session.scalar(
+        select(Membership.id).where(
+            Membership.org_id == org_id, Membership.user_id == user.id
+        )
+    )
+    if member is None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Not a member of this organization."
+        )
+    return org_id
+
+
+async def _role_for(
+    session: AsyncSession, user: User, org_id: str | None
+) -> str:
+    """The role governing this request: the user's membership role within the
+    request org when multi-tenancy is on, else the global ``User.role``."""
+    if not settings.multi_tenancy_enabled or org_id is None:
+        return user.role
+    membership_role = await session.scalar(
+        select(Membership.role).where(
+            Membership.org_id == org_id, Membership.user_id == user.id
+        )
+    )
+    if membership_role is None:
+        # resolve_org already refused non-members; belt and braces.
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Not a member of this organization."
+        )
+    return membership_role
+
+
 def require_role(
     minimum: str, *, require_authenticated: bool = False
 ) -> Callable[..., Awaitable[User | None]]:
@@ -93,6 +190,8 @@ def require_role(
 
     async def dependency(
         user: User | None = Depends(optional_current_user),
+        org_id: str | None = Depends(resolve_org),
+        session: AsyncSession = Depends(get_session),
     ) -> User | None:
         if user is None:
             if require_authenticated:
@@ -101,7 +200,8 @@ def require_role(
                     "Sign-in required for this operation.",
                 )
             return None
-        if not role_allows(user.role, minimum):
+        role = await _role_for(session, user, org_id)
+        if not role_allows(role, minimum):
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
                 f"Requires {minimum} role or higher.",
