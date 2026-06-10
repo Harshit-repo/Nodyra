@@ -70,3 +70,28 @@ async def test_start_run_parks_on_queue_when_dispatch_disabled(
         assert entry.status == "queued"
         assert entry.queue_reason == "dispatch_disabled"
         break
+
+
+def test_worker_main_validation_rejects_bad_config(monkeypatch):
+    import pytest
+
+    from app import worker_main
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "dispatch_role", "inline")
+    monkeypatch.setattr(settings, "queue_backend", "none")
+    with pytest.raises(SystemExit) as exc:
+        worker_main._validate()
+    assert "DISPATCH_ROLE=worker" in str(exc.value)
+
+
+def test_worker_main_validation_accepts_worker_config(monkeypatch):
+    from app import worker_main
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "dispatch_role", "worker")
+    monkeypatch.setattr(settings, "queue_backend", "redis")
+    monkeypatch.setattr(
+        settings, "database_url", "postgresql+asyncpg://u:p@h:5432/db"
+    )
+    worker_main._validate()  # must not raise
