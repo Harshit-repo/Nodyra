@@ -14,6 +14,17 @@ class Settings(BaseSettings):
     runtime_mode: Literal["local", "production"] = "local"
     queue_backend: Literal["none", "redis"] = "none"
     scheduler_role: Literal["inline", "leader", "disabled"] = "inline"
+    # Execution-plane topology (program A1), mirroring scheduler_role:
+    #   inline   -> this process leases its own durable-queue entries and
+    #               executes them (single-process default; today's behaviour)
+    #   worker   -> standalone execution role, started via
+    #               ``python -m app.worker_main`` (no HTTP surface)
+    #   disabled -> pure control plane: no dispatch loop, no runtime pool;
+    #               every run is parked on the durable queue for workers.
+    # worker/disabled require Redis (run events must cross processes — the
+    # in-process broker would strand WebSocket clients on the API replica)
+    # and Postgres (SKIP LOCKED queue leasing). See dispatch_topology_errors().
+    dispatch_role: Literal["inline", "worker", "disabled"] = "inline"
     # ``ingress`` (default) is the production posture: this process serves the
     # public ``/webhook/{path}`` routes. ``inline`` is the same routing for a
     # minimal single-user setup. ``disabled`` unmounts the public webhook routes
@@ -197,6 +208,26 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.runtime_mode == "production"
 
+    def dispatch_topology_errors(self) -> list[str]:
+        """Hard misconfigurations for split dispatch topologies. Unlike
+        ``runtime_warnings()`` these abort startup: a worker/disabled process
+        that silently fell back to in-process events or SQLite leasing would
+        lose runs, not just degrade."""
+        if self.dispatch_role == "inline":
+            return []
+        errors: list[str] = []
+        if self.queue_backend != "redis":
+            errors.append(
+                f"dispatch_role={self.dispatch_role} requires queue_backend=redis "
+                "so run events reach API replicas across processes."
+            )
+        if not self.database_url.startswith("postgresql"):
+            errors.append(
+                f"dispatch_role={self.dispatch_role} requires a PostgreSQL "
+                "database_url (SKIP LOCKED queue leasing)."
+            )
+        return errors
+
     def runtime_warnings(self) -> list[str]:
         """Configuration issues that make ``production`` mode behave like
         local mode. Always returned for observability (surfaced via
@@ -257,6 +288,13 @@ class Settings(BaseSettings):
                 "internal_api_token is empty; any caller that can reach the "
                 "/internal/* endpoints has full worker-level access. Set a "
                 "strong shared secret for production deployments."
+            )
+        if self.dispatch_role == "disabled":
+            warnings.append(
+                "dispatch_role=disabled: agent/kubernetes runner-pool runs "
+                "need their WebSocket-terminating API replica to dispatch "
+                "them; in an api+worker split those pools stay queued. Keep "
+                "one replica with dispatch_role=inline if you use them."
             )
         return warnings
 
