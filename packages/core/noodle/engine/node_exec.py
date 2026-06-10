@@ -58,6 +58,42 @@ def _approx_encoded_length(value: Any) -> int:
     return sink.length
 
 
+def _encoded_upper_bound(value: Any, depth: int = 2) -> int | None:
+    """Cheap, conservative upper bound on ``value``'s JSON-encoded length,
+    or None when no cheap bound exists (large/unknown shapes must be measured
+    for real). Never underestimates: a str char encodes to at most 6 chars
+    (``\\uXXXX``) plus the surrounding quotes."""
+    if value is None or isinstance(value, bool):
+        return 5
+    if isinstance(value, int):
+        return 25 if -(10**18) < value < 10**18 else None
+    if isinstance(value, float):
+        return 32
+    if isinstance(value, str):
+        return 6 * len(value) + 2
+    if depth <= 0:
+        return None
+    if isinstance(value, (list, tuple)) and len(value) <= 64:
+        total = 2
+        for item in value:
+            bound = _encoded_upper_bound(item, depth - 1)
+            if bound is None:
+                return None
+            total += bound + 1
+        return total
+    if isinstance(value, dict) and len(value) <= 64:
+        total = 2
+        for key, item in value.items():
+            if not isinstance(key, str):
+                return None
+            bound = _encoded_upper_bound(item, depth - 1)
+            if bound is None:
+                return None
+            total += 6 * len(key) + 3 + bound + 1
+        return total
+    return None
+
+
 # Per-node-type default timeouts (seconds). ``code`` is intentionally
 # *absent* so heavy/long-running Python isn't capped by an arbitrary default;
 # it's bounded only by the overall workflow timeout. Callers (the API runner /
@@ -384,15 +420,17 @@ async def _run_one_node(
                     outputs = _auto_promote_outputs(outputs)
                 _validate_output_kinds(node_def, outputs, nid)
                 if max_node_output_bytes is not None and max_node_output_bytes > 0:
-                    try:
-                        approx = _approx_encoded_length(outputs)
-                    except (TypeError, ValueError):
-                        approx = 0
-                    if approx > max_node_output_bytes:
-                        raise ValueError(
-                            f"node output of {approx} bytes exceeds limit of "
-                            f"{max_node_output_bytes} bytes"
-                        )
+                    bound = _encoded_upper_bound(outputs)
+                    if bound is None or bound > max_node_output_bytes:
+                        try:
+                            approx = _approx_encoded_length(outputs)
+                        except (TypeError, ValueError):
+                            approx = 0
+                        if approx > max_node_output_bytes:
+                            raise ValueError(
+                                f"node output of {approx} bytes exceeds limit of "
+                                f"{max_node_output_bytes} bytes"
+                            )
                 caught = None
                 break
             except AgentApprovalRequired as exc:
