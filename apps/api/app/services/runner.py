@@ -89,8 +89,12 @@ from app.services.runtime_pool import _org_run_limits_for, _resolve_run_org
 from app.services.runtime_pool import pool as runtime_pool
 from noodle.ai_runtime import AgentActionRequest
 from noodle.context import artifact_store, call_chain, org_run_limits, workflow_caller
-from noodle.engine import DEFAULT_NODE_TIMEOUTS, execute, pool_key as engine_pool_key
+from noodle.engine import DEFAULT_NODE_TIMEOUTS, execute
 from noodle.models import WorkflowGraph
+from noodle.process_isolation import (
+    PooledProcessIsolator,
+    pool_key as engine_pool_key,
+)
 from noodle.sdk import (
     register_module_functions,
     unregister_module,
@@ -105,6 +109,11 @@ from noodle.serialization import (
 )
 
 logger = logging.getLogger(__name__)
+
+# B4: the API host owns the code-node process pools. One isolator for the
+# whole process; pools inside it are still keyed per environment via
+# engine_pool_key, exactly as before.
+process_isolator = PooledProcessIsolator()
 
 _active_runs: dict[str, asyncio.Task[None]] = {}
 
@@ -549,6 +558,7 @@ async def _call_sub_workflow(
             cache=cache or None,
             targets=sub_targets,
             default_timeouts=_engine_default_timeouts(),
+            process_isolator=process_isolator,
         )
         node_status = {nid: str(r.status) for nid, r in result.nodes.items()}
         node_outputs = {nid: dict(r.outputs) for nid, r in result.nodes.items()}
@@ -1369,6 +1379,7 @@ async def _execute_run(
                         default_timeouts=_engine_default_timeouts(),
                         pause_on_approval=True,
                         agent_action_resume=agent_action_resume,
+                        process_isolator=process_isolator,
                     )
                     result = await (
                         asyncio.wait_for(coro, timeout=_eff_timeout)

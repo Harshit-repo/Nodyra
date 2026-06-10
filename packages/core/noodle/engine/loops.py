@@ -4,7 +4,7 @@ loop drivers that re-run a body sub-DAG per iteration."""
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from noodle.ai_runtime import AgentActionRequest
 from noodle.context import iteration_path, org_run_limits
@@ -18,6 +18,9 @@ from noodle.engine.scheduler import (
     _execute_nodes,
 )
 from noodle.engine.types import EventCallback, GraphError
+
+if TYPE_CHECKING:
+    from noodle.process_isolation import ProcessIsolator
 
 
 @dataclass(frozen=True)
@@ -197,6 +200,7 @@ async def _run_loop(
     loop_regions: dict[str, "LoopRegion"],
     owned: set[str],
     node_sem: asyncio.Semaphore | None = None,
+    process_isolator: "ProcessIsolator | None" = None,
 ) -> RunStatus:
     """Drive a loop region: resolve its input into items and run the body
     sub-DAG once per item, collecting each iteration's value flowing into
@@ -292,6 +296,7 @@ async def _run_loop(
                     agent_action_resume=agent_action_resume,
                     loop_regions=loop_regions, owned=child_owned,
                     node_sem=node_sem,
+                    process_isolator=process_isolator,
                 )
             finally:
                 iteration_path.reset(path_token)
@@ -333,6 +338,7 @@ async def _run_loop(
                     agent_action_resume=agent_action_resume,
                     loop_regions=loop_regions, owned=child_owned,
                     node_sem=node_sem,
+                    process_isolator=process_isolator,
                 )
                 if st is RunStatus.error:
                     if on_error == "fail":
@@ -429,6 +435,7 @@ async def _run_conditional_loop(
     loop_regions: dict[str, "LoopRegion"],
     owned: set[str],
     node_sem: asyncio.Semaphore | None = None,
+    process_isolator: "ProcessIsolator | None" = None,
 ) -> RunStatus:
     """Drive a while/until loop: thread an accumulator (state) across iterations,
     re-checking an expression condition each time, until it stops or a safety cap
@@ -508,6 +515,7 @@ async def _run_conditional_loop(
                 agent_action_resume=agent_action_resume,
                 loop_regions=loop_regions, owned=child_owned,
                 node_sem=node_sem,
+                process_isolator=process_isolator,
             )
         finally:
             iteration_path.reset(path_token)

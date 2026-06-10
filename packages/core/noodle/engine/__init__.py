@@ -28,13 +28,6 @@ from noodle.engine.node_exec import (
     _approx_encoded_length,
     _install_capture,
 )
-from noodle.engine.pools import (
-    _evict_pool,
-    _get_process_pool,
-    _pool_last_used,
-    _process_pools,
-    pool_key,
-)
 from noodle.engine.scheduler import (
     _build_plan,
     _execute_nodes,
@@ -63,7 +56,6 @@ __all__ = [
     "LoopRegion",
     "PROCESS_ISOLATED_NODE_TYPES",
     "execute",
-    "pool_key",
     "run",
     # test-consumed internals (compat with pre-split import paths)
     "_MAX_AGENT_LOOP_ITERATIONS",
@@ -72,16 +64,12 @@ __all__ = [
     "_build_plan",
     "_auto_promote_outputs",
     "_dispatch_agent_action_request",
-    "_evict_pool",
     "_execute_nodes",
     "_expand_metanodes",
-    "_get_process_pool",
     "_install_capture",
     "_loop_items",
     "_loop_regions",
     "_needed_nodes",
-    "_pool_last_used",
-    "_process_pools",
     "_topo_order",
     "_validate_connection_kinds",
     "_validate_input_kinds",

@@ -32,6 +32,7 @@ from noodle.engine.validation import _validate_connection_kinds
 
 if TYPE_CHECKING:
     from noodle.engine.loops import LoopRegion
+    from noodle.process_isolation import ProcessIsolator
 
 
 # Severity ranking for run-status aggregation: when parallel nodes finish with
@@ -236,6 +237,7 @@ async def _execute_nodes(
     loop_regions: dict[str, "LoopRegion"],
     owned: set[str],
     node_sem: asyncio.Semaphore | None = None,
+    process_isolator: "ProcessIsolator | None" = None,
 ) -> RunStatus:
     """Run the plan's units with dependency counting: each unit starts the
     moment its in-set predecessors complete. Simultaneously-ready units are
@@ -258,6 +260,7 @@ async def _execute_nodes(
                 registry=registry, emit=emit, finish=finish,
                 default_timeouts=default_timeouts,
                 max_node_output_bytes=max_node_output_bytes,
+                process_isolator=process_isolator,
             )
             return nid, st
         if gn.type == "loop_start" and nid in loop_regions:
@@ -277,6 +280,7 @@ async def _execute_nodes(
                 agent_action_resume=agent_action_resume,
                 loop_regions=loop_regions, owned=owned,
                 node_sem=node_sem,
+                process_isolator=process_isolator,
             )
             return nid, st
         if node_sem is not None:
@@ -288,6 +292,7 @@ async def _execute_nodes(
                     max_node_output_bytes=max_node_output_bytes,
                     pause_on_approval=pause_on_approval,
                     agent_action_resume=agent_action_resume,
+                    process_isolator=process_isolator,
                 )
         else:
             st = await _run_one_node(
@@ -297,6 +302,7 @@ async def _execute_nodes(
                 max_node_output_bytes=max_node_output_bytes,
                 pause_on_approval=pause_on_approval,
                 agent_action_resume=agent_action_resume,
+                process_isolator=process_isolator,
             )
         return nid, st
 
@@ -349,6 +355,7 @@ async def execute(
     pause_on_approval: bool = False,
     agent_action_resume: dict[str, AgentActionRequest] | None = None,
     max_node_concurrency: int | None = None,
+    process_isolator: "ProcessIsolator | None" = None,
 ) -> RunResult:
     """Run a workflow graph and return per-node results."""
     # Lazy: loops.py and metanodes.py import this module at module level,
@@ -440,6 +447,7 @@ async def execute(
         loop_regions=loop_regions,
         owned=owned,
         node_sem=node_sem,
+        process_isolator=process_isolator,
     )
 
     return RunResult(status=run_status, nodes=results)

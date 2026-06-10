@@ -543,33 +543,8 @@ async def test_branch_order_depends_on_insertion_not_position() -> None:
     assert order_a == order_b
 
 
-# ---------------------------------------------------------------------------
-# Per-key process pool isolation
-# ---------------------------------------------------------------------------
-
-
-def test_process_pool_returns_same_pool_for_same_key() -> None:
-    """The same key always returns the same pool object (reuse)."""
-    import noodle.engine as _eng
-    pool_a1 = _eng._get_process_pool(key="env-alpha")
-    pool_a2 = _eng._get_process_pool(key="env-alpha")
-    assert pool_a1 is pool_a2
-
-
-def test_process_pool_returns_different_pools_for_different_keys() -> None:
-    """Different keys get different pool objects (isolation)."""
-    import noodle.engine as _eng
-    pool_a = _eng._get_process_pool(key="env-x")
-    pool_b = _eng._get_process_pool(key="env-y")
-    assert pool_a is not pool_b
-
-
-def test_process_pool_none_key_is_its_own_pool() -> None:
-    """key=None (default/no env) has its own pool, distinct from named envs."""
-    import noodle.engine as _eng
-    pool_none = _eng._get_process_pool(key=None)
-    pool_named = _eng._get_process_pool(key="env-z")
-    assert pool_none is not pool_named
+# Per-key process pool tests moved: pool ownership left the engine in B4.
+# See tests/test_process_isolation.py for key-reuse, isolation, and eviction.
 
 
 def test_worse_status_ranking() -> None:
@@ -582,6 +557,31 @@ def test_worse_status_ranking() -> None:
     assert _worse_status(RunStatus.error, RunStatus.waiting) is RunStatus.error
     assert _worse_status(RunStatus.error, RunStatus.success) is RunStatus.error
     assert _worse_status(RunStatus.success, RunStatus.success) is RunStatus.success
+
+
+async def test_execute_routes_isolated_nodes_through_injected_isolator() -> None:
+    """Sync nodes of PROCESS_ISOLATED_NODE_TYPES must run via the injected
+    ProcessIsolator, not an engine-owned pool."""
+    calls: list[tuple] = []
+
+    class StubIsolator:
+        async def run(self, fn, kwargs, *, timeout=None):
+            calls.append((fn.__name__, dict(kwargs), timeout))
+            return fn(**kwargs)
+
+    reg = NodeRegistry()
+
+    @node(name="CodeLike", id="code", inputs=[], registry=reg)
+    def add_one(value: int = 0) -> int:
+        return value + 1
+
+    graph = WorkflowGraph(
+        nodes=[GraphNode(id="c", type="code", params={"value": 41})]
+    )
+    result = await execute(graph, reg, process_isolator=StubIsolator())
+    assert result.status == RunStatus.success
+    assert result.nodes["c"].outputs["main"] == 42
+    assert len(calls) == 1 and calls[0][0] == "add_one"
 
 
 async def test_independent_branches_are_not_level_barriered() -> None:

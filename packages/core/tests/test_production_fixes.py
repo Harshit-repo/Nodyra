@@ -70,40 +70,8 @@ async def test_three_sync_nodes_run_concurrently_not_serially():
 # _process_pools grows unbounded — idle pools never reaped for normal completions
 # ---------------------------------------------------------------------------
 
-def test_process_pools_idle_eviction():
-    """Process pools idle past the reap threshold must be evicted automatically.
-
-    Before the fix, _evict_pool is only called on BrokenProcessPool crash.
-    Normal completions leave pools accumulating indefinitely.
-    The fix adds _pool_last_used tracking and evicts idle pools in _get_process_pool.
-    """
-    from noodle import engine
-
-    # Save and clear state
-    saved = dict(engine._process_pools)
-    engine._process_pools.clear()
-
-    try:
-        # Create a pool and mark it as having been idle a long time ago
-        engine._get_process_pool(key="idle_env_test")
-        assert "idle_env_test" in engine._process_pools
-
-        # The fix adds _pool_last_used; simulate old last-used time
-        if hasattr(engine, "_pool_last_used"):
-            engine._pool_last_used["idle_env_test"] = time.monotonic() - 700  # > 600s
-
-        # Requesting any pool (even a new key) should sweep idle ones
-        engine._get_process_pool(key="active_env_test")
-
-        assert "idle_env_test" not in engine._process_pools, (
-            "_process_pools still contains 'idle_env_test' after 700s idle. "
-            "Fix: add _pool_last_used tracking and evict idle pools in _get_process_pool."
-        )
-    finally:
-        # Cleanup
-        for k in ("idle_env_test", "active_env_test"):
-            engine._evict_pool(k)
-        engine._process_pools.update(saved)
+# test_process_pools_idle_eviction moved: pool ownership left the engine in B4.
+# See tests/test_process_isolation.py for idle-eviction + in-flight coverage.
 
 
 # ---------------------------------------------------------------------------

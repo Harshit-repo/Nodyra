@@ -4,13 +4,16 @@ as a nested engine run."""
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from noodle.models import NodeRunResult, NodeStatus, RunStatus, WorkflowGraph
 from noodle.sdk import NodeRegistry
 
 from noodle.engine.scheduler import execute
 from noodle.engine.types import EventCallback
+
+if TYPE_CHECKING:
+    from noodle.process_isolation import ProcessIsolator
 
 
 def _expand_graph_dict(data: dict[str, Any]) -> dict[str, Any]:
@@ -128,6 +131,7 @@ async def _run_metanode(
     finish: Callable[[NodeRunResult], Awaitable[None]],
     default_timeouts: dict[str, float],
     max_node_output_bytes: int | None,
+    process_isolator: "ProcessIsolator | None" = None,
 ) -> RunStatus:
     """Run an ``isolated`` metanode: execute its embedded sub-graph as a nested
     run with its own scope, feeding boundary inputs in and mapping the boundary
@@ -167,6 +171,7 @@ async def _run_metanode(
             sub_graph, registry, cache=cache,
             default_timeouts=default_timeouts,
             max_node_output_bytes=max_node_output_bytes,
+            process_isolator=process_isolator,
         )
     except Exception as exc:  # noqa: BLE001 - surface as a node error
         node_outputs[mid] = {}

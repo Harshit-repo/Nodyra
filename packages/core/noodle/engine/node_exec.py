@@ -2,9 +2,7 @@
 process isolation for code nodes, log capture, and output normalization."""
 
 import asyncio
-import concurrent.futures
 import contextvars
-import functools
 import json
 import random
 import sys
@@ -17,6 +15,7 @@ from noodle.context import current_node_id, node_debug
 from noodle.expr import build_context, evaluate
 from noodle.models import NodeRunResult, NodeStatus, RunStatus
 from noodle.node_tool import TOOL_MODE_OUTPUT, build_node_tool_adapter
+from noodle.process_isolation import ProcessIsolator, default_isolator
 from noodle.sdk import NodeRegistry
 
 from noodle.engine.agent import (
@@ -28,7 +27,6 @@ from noodle.engine.datasets import (
     _auto_expand_dataset_inputs,
     _auto_promote_outputs,
 )
-from noodle.engine.pools import _evict_pool, _get_process_pool, pool_key
 from noodle.engine.types import EventCallback
 from noodle.engine.validation import _validate_input_kinds, _validate_output_kinds
 
@@ -146,6 +144,7 @@ async def _run_one_node(
     max_node_output_bytes: int | None,
     pause_on_approval: bool,
     agent_action_resume: dict[str, AgentActionRequest],
+    process_isolator: ProcessIsolator | None = None,
 ) -> RunStatus:
     """Execute a single node against ``node_outputs`` and return the worst
     RunStatus it produced. Extracted verbatim from the old ``execute()`` inner
@@ -328,24 +327,13 @@ async def _run_one_node(
                 )
             return await node_def.func(**current_kwargs)
         if graph_node.type in PROCESS_ISOLATED_NODE_TYPES:
-            _key = pool_key.get()
-            loop = asyncio.get_running_loop()  # MINOR: always inside a running loop
-            fn_with_kwargs = functools.partial(node_def.func, **current_kwargs)
-            fut = loop.run_in_executor(_get_process_pool(key=_key), fn_with_kwargs)
-            try:
-                return await asyncio.wait_for(fut, timeout)
-            except TimeoutError:
-                _evict_pool(_key)
-                raise
-            except concurrent.futures.process.BrokenProcessPool as exc:
-                # Child died (segfault / OOM / unpicklable arg). Recycle
-                # the pool so the next attempt gets a fresh one and
-                # re-raise as a normal ValueError so the node fails cleanly.
-                _evict_pool(_key)
-                raise ValueError(
-                    "code node crashed: subprocess died (possible "
-                    "out-of-memory, segfault, or unpicklable value)"
-                ) from exc
+            # Timeout-evict and broken-pool translation live inside the
+            # isolator; TimeoutError/ValueError surface here unchanged.
+            isolator = (
+                process_isolator if process_isolator is not None
+                else default_isolator()
+            )
+            return await isolator.run(node_def.func, current_kwargs, timeout=timeout)
         if timeout is not None:
             return await asyncio.wait_for(
                 asyncio.to_thread(node_def.func, **current_kwargs), timeout

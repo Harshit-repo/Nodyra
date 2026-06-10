@@ -10,7 +10,7 @@ def test_engine_facade_exports():
         # public API
         "execute", "run", "GraphError", "EventCallback",
         # host-consumed (runner.py / runtime server)
-        "DEFAULT_NODE_TIMEOUTS", "pool_key", "PROCESS_ISOLATED_NODE_TYPES",
+        "DEFAULT_NODE_TIMEOUTS", "PROCESS_ISOLATED_NODE_TYPES",
         # test-consumed internals
         "_worse_status", "_topo_order", "_needed_nodes", "_execute_nodes",
         "_build_plan",
@@ -23,7 +23,6 @@ def test_engine_facade_exports():
         "DATASET_AUTO_EXPAND_CAP",
         "_MAX_AGENT_LOOP_ITERATIONS", "_dispatch_agent_action_request",
         "_approx_encoded_length",
-        "_get_process_pool", "_evict_pool", "_process_pools", "_pool_last_used",
     ):
         assert hasattr(engine, name), f"noodle.engine.{name} missing"
 

@@ -51,6 +51,7 @@ from noodle.artifacts import LocalArtifactStore
 from noodle.context import artifact_store, org_run_limits, workflow_caller
 from noodle.engine import execute
 from noodle.models import WorkflowGraph
+from noodle.process_isolation import PooledProcessIsolator
 from noodle.sdk import register_module_functions, registry, unregister_module
 from noodle.serialization import deserialize_value, serialize_value
 
@@ -87,6 +88,10 @@ def _runtime_default_timeouts() -> dict[str, float]:
 
 
 _RUNTIME_DEFAULT_TIMEOUTS = _runtime_default_timeouts()
+
+# This warm runner process is already per-environment; one isolator with the
+# default (None) pool key is correct.
+_PROCESS_ISOLATOR = PooledProcessIsolator()
 
 
 def _emit(event: dict) -> None:
@@ -209,6 +214,7 @@ async def _handle_run(request: dict[str, Any]) -> None:
             default_timeouts=_RUNTIME_DEFAULT_TIMEOUTS,
             pause_on_approval=bool(request.get("pause_on_approval")),
             agent_action_resume=agent_action_resume,
+            process_isolator=_PROCESS_ISOLATOR,
         )
         _emit(
             {
@@ -279,6 +285,7 @@ async def _resolve_inline(
             cache=cache,
             targets=targets,
             default_timeouts=_RUNTIME_DEFAULT_TIMEOUTS,
+            process_isolator=_PROCESS_ISOLATOR,
         )
         leaves = [
             nid
