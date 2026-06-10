@@ -52,6 +52,20 @@ from noodle.sdk import NodeRegistry
 
 EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
+# Severity ranking for run-status aggregation: when parallel nodes finish with
+# different statuses, the run reports the *worst* one — error must never be
+# masked by a waiting (approval-paused) node that happens to finish later.
+_STATUS_RANK: dict[RunStatus, int] = {
+    RunStatus.success: 0,
+    RunStatus.waiting: 1,
+    RunStatus.error: 2,
+}
+
+
+def _worse_status(a: RunStatus, b: RunStatus) -> RunStatus:
+    """The more severe of two run statuses: error > waiting > success."""
+    return a if _STATUS_RANK[a] >= _STATUS_RANK[b] else b
+
 PROCESS_ISOLATED_NODE_TYPES: frozenset[str] = frozenset({"code"})
 
 # Node types whose outputs the engine will inspect and auto-promote heavy
@@ -1987,8 +2001,7 @@ async def _execute_nodes(
                     default_timeouts=default_timeouts,
                     max_node_output_bytes=max_node_output_bytes,
                 )
-                if st is not RunStatus.success:
-                    run_status = st
+                run_status = _worse_status(run_status, st)
                 return
             if gn.type == "loop_start" and nid in loop_regions:
                 mode = str(gn.params.get("mode", "each") or "each")
@@ -2016,8 +2029,7 @@ async def _execute_nodes(
                     pause_on_approval=pause_on_approval,
                     agent_action_resume=agent_action_resume,
                 )
-            if st is not RunStatus.success:
-                run_status = st
+            run_status = _worse_status(run_status, st)
         await asyncio.gather(*[_one(nid) for nid in level if nid in node_ids])
     return run_status
 

@@ -570,3 +570,15 @@ def test_process_pool_none_key_is_its_own_pool() -> None:
     pool_none = _eng._get_process_pool(key=None)
     pool_named = _eng._get_process_pool(key="env-z")
     assert pool_none is not pool_named
+
+
+def test_worse_status_ranking() -> None:
+    """error outranks waiting outranks success, regardless of argument order."""
+    from noodle.engine import _worse_status
+
+    assert _worse_status(RunStatus.success, RunStatus.waiting) is RunStatus.waiting
+    assert _worse_status(RunStatus.waiting, RunStatus.success) is RunStatus.waiting
+    assert _worse_status(RunStatus.waiting, RunStatus.error) is RunStatus.error
+    assert _worse_status(RunStatus.error, RunStatus.waiting) is RunStatus.error
+    assert _worse_status(RunStatus.error, RunStatus.success) is RunStatus.error
+    assert _worse_status(RunStatus.success, RunStatus.success) is RunStatus.success
