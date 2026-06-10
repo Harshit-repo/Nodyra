@@ -631,6 +631,36 @@ def _worker_id() -> str:
     return f"{socket.gethostname()}:{id(asyncio.get_running_loop())}"
 
 
+async def _cancel_reconcile(
+    session: AsyncSession, active_runs: dict[str, "asyncio.Task[None]"]
+) -> list[str]:
+    """Cancel local tasks whose queue entry was cancelled by another process.
+
+    In split topologies the API replica handling DELETE /runs/{id} has no
+    task handle — it marks the RunQueueEntry cancelled and this worker-side
+    sweep turns that into a real asyncio cancellation.
+    """
+    if not active_runs:
+        return []
+    rows = (
+        await session.scalars(
+            select(RunQueueEntry.run_id)
+            .where(
+                RunQueueEntry.run_id.in_(list(active_runs)),
+                RunQueueEntry.status == "cancelled",
+            )
+            .execution_options(skip_org_filter=True)
+        )
+    ).all()
+    cancelled: list[str] = []
+    for run_id in rows:
+        task = active_runs.get(run_id)
+        if task is not None and not task.done():
+            task.cancel()
+            cancelled.append(run_id)
+    return cancelled
+
+
 async def run_queue_dispatch_loop() -> None:
     """Lease and dispatch queued runs on a tight poll.
 
@@ -647,11 +677,18 @@ async def run_queue_dispatch_loop() -> None:
     completed/failed/cancelled) via the queue interface.
     """
     # Import here to avoid the runner ↔ queue circular import.
-    from app.services.runner import _execute_queued_entry  # noqa: PLC0415
+    from app.services.runner import _active_runs, _execute_queued_entry  # noqa: PLC0415
     from app.services.runtime_pool import pool as runtime_pool  # noqa: PLC0415
 
     worker = _worker_id()
     in_flight: set[asyncio.Task[None]] = set()
+
+    # Provider capability by role (program A1): a standalone worker can host
+    # local subprocess runs and docker-pool runs; agent/kubernetes pools need
+    # the WebSocket-terminating API process, so their entries are left for a
+    # dispatch_role=inline replica. Inline leases everything (today's mode).
+    role = settings.dispatch_role
+    providers = frozenset({"local", "docker"}) if role == "worker" else None
 
     try:
         while True:
@@ -662,6 +699,16 @@ async def run_queue_dispatch_loop() -> None:
                     await session.commit()
                 if requeued:
                     logger.info("queue: requeued %d expired lease(s)", requeued)
+
+                if role == "worker":
+                    # Cross-process cancellation: see _cancel_reconcile.
+                    async with SessionLocal() as session:
+                        cancelled = await _cancel_reconcile(session, _active_runs)
+                    if cancelled:
+                        logger.info(
+                            "queue: cancelled %d run(s) flagged by control plane",
+                            len(cancelled),
+                        )
 
                 # Drain mode: keep requeueing expired leases and let in-flight
                 # tasks finish, but stop pulling new work so the process can
@@ -677,7 +724,9 @@ async def run_queue_dispatch_loop() -> None:
                 local_budget = runtime_pool.available_global_slots()
                 for _ in range(settings.queue_max_dispatches_per_tick):
                     async with SessionLocal() as session:
-                        entry = await lease(session, worker_id=worker)
+                        entry = await lease(
+                            session, worker_id=worker, providers=providers
+                        )
                         if entry is None:
                             await session.rollback()
                             break

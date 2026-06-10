@@ -544,3 +544,31 @@ async def test_requeue_expired_lease_resets_running_run(session) -> None:
     assert entry.status == "queued"
     assert run.status == "queued"
     assert run.finished_at is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_reconcile_cancels_local_task_for_cancelled_entry(session) -> None:
+    """An API replica can only flip the queue entry to 'cancelled'; the worker
+    holding the executing task must observe that and cancel locally (A1)."""
+    import asyncio
+
+    from app.services import queue as q
+
+    await q.enqueue(session, run_id="r-cancel", workflow_id="w1")
+    await q.cancel(session, run_id="r-cancel")
+    await session.commit()
+
+    async def _hang():
+        await asyncio.sleep(60)
+
+    task = asyncio.ensure_future(_hang())
+    active = {"r-cancel": task, "r-other": asyncio.ensure_future(_hang())}
+    try:
+        cancelled = await q._cancel_reconcile(session, active)
+        assert cancelled == ["r-cancel"]
+        await asyncio.sleep(0)
+        assert task.cancelled()
+        assert not active["r-other"].done()
+    finally:
+        for t in active.values():
+            t.cancel()
