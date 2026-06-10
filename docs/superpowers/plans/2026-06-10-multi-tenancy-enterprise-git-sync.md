@@ -755,6 +755,27 @@ Endpoints (all `Depends(require_feature("git_versioning"))` from Task L4):
 
 # Workstream 3 — Multi-tenancy A–C+E+F bundle
 
+> **Status 2026-06-10 (branch `feat/multi-tenancy`): X1 and Phase A (A1–A6) are
+> IMPLEMENTED** — worker env allowlist; Organization/Membership (migration
+> 0040); tenant context + ORM scoping with `run_as_system()` for background
+> services (`app/tenancy.py`); org_id on 14 tables via flush-time stamping
+> (0041); Postgres RLS policies (0042, fail-open on unset GUC by design);
+> RLS proof tests on the Postgres lane (`test_tenancy_isolation_pg.py`);
+> X-Org-Id + membership RBAC as a global dependency. Full suite green
+> (500 passed). Notable deviations recorded in commit messages: before_flush
+> stamping instead of per-call-site stamp(); server_default backfill instead
+> of batched UPDATEs; lenient user resolution in the global org dependency
+> (webhook ingress carries non-session Authorization headers).
+>
+> **Known follow-ups for Phase B/C (MT-on only, no flag-off impact):**
+> 1. Webhook/public ingress must derive the org from the triggered workflow
+>    (`run_as_system()` + re-scope) instead of the X-Org-Id header.
+> 2. Background loops (queue dispatch, scheduler, retention, provider trigger
+>    refresh) must wrap their sessions in `run_as_system()` — audit each.
+> 3. `GET /me/orgs` and org switching need the Membership filter escape.
+> 4. Production deployments must use a non-superuser DB role (RLS bypass —
+>    documented in docs/deployment.md security checklist).
+
 All locked decisions from `docs/multi-tenancy-plan.md` §11 apply: RLS **and** session scoping from day one, `X-Org-Id` header routing, mandatory Postgres CI lane, E+F pulled forward while data is single-default-org, compute/iteration metering, per-org `subworkflow_slot`.
 
 ## Phase A — Data isolation (detailed)
