@@ -215,9 +215,15 @@ async def delete_org(
 
 @router.get("/orgs/current/members", response_model=list[OrgMemberInfo])
 async def list_members(
+    actor: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[OrgMemberInfo]:
     org_id = _active_org_or_400()
+    # resolve_org already refuses non-members, but that gate passes anonymous
+    # callers for the default org (auth_required=false installs) — an email
+    # enumeration hole. Require an authenticated member explicitly, matching
+    # the add/update/remove siblings.
+    await _require_org_role(session, actor, org_id, "viewer")
     rows = (
         await session.execute(
             select(Membership, User)

@@ -107,8 +107,12 @@ async def test_member_management_roundtrip(session, users, mt_on):
             OrgMemberAdd(email="bob@t.test", role="editor"), users["alice"], session
         )
         assert added.role == "editor"
-        members = await list_members(session)
+        members = await list_members(users["alice"], session)
         assert {m.email for m in members} == {"alice@t.test", "bob@t.test"}
+
+        # bob is only an editor — listing is still allowed (viewer+), but a
+        # NON-member must be refused even if the org context resolves.
+        assert len(await list_members(users["bob"], session)) == 2
 
         updated = await update_member(
             users["bob"].id, OrgMemberUpdate(role="admin"), users["alice"], session
@@ -116,8 +120,13 @@ async def test_member_management_roundtrip(session, users, mt_on):
         assert updated.role == "admin"
 
         await remove_member(users["bob"].id, users["alice"], session)
-        members = await list_members(session)
+        members = await list_members(users["alice"], session)
         assert {m.email for m in members} == {"alice@t.test"}
+
+        # bob is no longer a member: listing must now be refused.
+        with pytest.raises(HTTPException) as exc:
+            await list_members(users["bob"], session)
+        assert exc.value.status_code == 403
     finally:
         current_org_id.reset(token)
 
