@@ -767,6 +767,18 @@ Endpoints (all `Depends(require_feature("git_versioning"))` from Task L4):
 > of batched UPDATEs; lenient user resolution in the global org dependency
 > (webhook ingress carries non-session Authorization headers).
 >
+> **Status update (same day): Phases E and F are also IMPLEMENTED.**
+> E: org-KEK envelope (data ← DEK ← org KEK ← master) in crypto.py +
+> services/org_keys.py (cached, CAS-minted, KekProvider seam for KMS/Vault);
+> all ten credential call sites converted; migration 0043 rewraps the default
+> org's DEKs. F: artifact keys namespaced `{org_id}/runs/{run_id}/...` via
+> LocalArtifactStore key_prefix threaded through the run request +
+> RemoteArtifactStore; browser uploads under `{org_id}/uploads/...`;
+> delete_run sweeps both layouts (local + S3); downloads guarded through the
+> org-scoped parent-run lookup. Deviation from plan: NO rename migration —
+> reads are row-driven (storage_key per artifact row), so old keys keep
+> working and only new writes are namespaced.
+>
 > **Known follow-ups for Phase B/C (MT-on only, no flag-off impact):**
 > 1. Webhook/public ingress must derive the org from the triggered workflow
 >    (`run_as_system()` + re-scope) instead of the X-Org-Id header.

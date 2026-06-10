@@ -66,15 +66,23 @@ class LocalArtifactStore:
         *,
         max_bytes: int = 0,
         max_count: int = 0,
+        key_prefix: str = "",
     ) -> None:
         self.base_dir = Path(base_dir).expanduser().resolve()
         self.run_id = str(run_id)
         self.max_bytes = max(0, int(max_bytes or 0))
         self.max_count = max(0, int(max_count or 0))
+        # Tenancy namespace prepended to every storage key (e.g. an org id).
+        # Normalised to "segment/" or "" so key construction stays additive.
+        cleaned = str(key_prefix or "").strip("/")
+        self.key_prefix = f"{cleaned}/" if cleaned else ""
         self._written = 0
 
     def _storage_key(self, artifact_id: str, node_id: str, name: str) -> str:
-        return f"runs/{self.run_id}/{node_id}/{artifact_id}-{sanitize_name(name)}"
+        return (
+            f"{self.key_prefix}runs/{self.run_id}/"
+            f"{node_id}/{artifact_id}-{sanitize_name(name)}"
+        )
 
     def _path_for_key(self, storage_key: str) -> Path:
         path = (self.base_dir / storage_key).resolve()
@@ -93,7 +101,9 @@ class LocalArtifactStore:
             name = sanitize_name(str(ref.get("name") or "artifact"))
             if not artifact_id:
                 raise ValueError("artifact ref is missing artifact_id")
-            storage_key = f"runs/{run_id}/{node_id}/{artifact_id}-{name}"
+            storage_key = (
+                f"{self.key_prefix}runs/{run_id}/{node_id}/{artifact_id}-{name}"
+            )
         return self._path_for_key(storage_key)
 
     def write_bytes(

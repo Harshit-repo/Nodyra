@@ -85,6 +85,7 @@ from app.services.remote_dispatch import (
     build_env_payload,
     dispatcher,
 )
+from app.services.runtime_pool import _resolve_run_org
 from app.services.runtime_pool import pool as runtime_pool
 from noodle.ai_runtime import AgentActionRequest
 from noodle.context import artifact_store, call_chain, workflow_caller
@@ -1272,6 +1273,7 @@ async def _execute_run(
             artifact_token = artifact_store.set(
                 make_artifact_store(
                     run_id,
+                    org_id=await _resolve_run_org(run_id),
                     max_bytes=live.max_artifact_bytes if live is not None else None,
                     max_count=live.max_artifacts_per_run if live is not None else None,
                 )

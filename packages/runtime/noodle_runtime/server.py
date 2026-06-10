@@ -163,6 +163,7 @@ async def _handle_run(request: dict[str, Any]) -> None:
     artifact_token = None
     artifacts_upload_url = request.get("artifacts_upload_url")
     artifacts_dir = request.get("artifacts_dir")
+    artifact_key_prefix = str(request.get("artifact_key_prefix") or "")
     if artifacts_upload_url:
         from noodle_runtime.remote_artifacts import RemoteArtifactStore
 
@@ -173,6 +174,7 @@ async def _handle_run(request: dict[str, Any]) -> None:
                 run_id,
                 max_bytes=int(request.get("max_artifact_bytes") or 0),
                 max_count=int(request.get("max_artifacts_per_run") or 0),
+                key_prefix=artifact_key_prefix,
             )
         )
     elif artifacts_dir:
@@ -182,6 +184,7 @@ async def _handle_run(request: dict[str, Any]) -> None:
                 run_id,
                 max_bytes=int(request.get("max_artifact_bytes") or 0),
                 max_count=int(request.get("max_artifacts_per_run") or 0),
+                key_prefix=artifact_key_prefix,
             )
         )
     try:

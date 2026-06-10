@@ -173,6 +173,28 @@ def _worker_env() -> dict[str, str]:
     return env
 
 
+async def _resolve_run_org(run_id: str) -> str:
+    """The org a run belongs to, for artifact key namespacing (Phase F).
+
+    Looked up under ``run_as_system`` because dispatch often happens from
+    background loops with no request org context — the ORM filter would
+    otherwise hide a non-default org's run row and misfile its artifacts.
+    Falls back to the default org so single-tenant behaviour is unchanged.
+    """
+    from app.models import Run
+    from app.tenancy import DEFAULT_ORG_ID, run_as_system
+
+    try:
+        with run_as_system():
+            async with SessionLocal() as session:
+                run = await session.get(Run, run_id)
+                if run is not None and run.org_id:
+                    return run.org_id
+    except Exception:  # noqa: BLE001 - never let namespacing block a dispatch
+        pass
+    return DEFAULT_ORG_ID
+
+
 async def _python_for_env(env_id: str | None) -> str:
     if env_id:
         candidate = await ensure_environment_ready(env_id)
@@ -306,6 +328,7 @@ class _RuntimeProcess:
         workflow_modules: list[dict] | None = None,
         pause_on_approval: bool = False,
         agent_action_resume: dict | None = None,
+        artifact_key_prefix: str = "",
     ) -> str:
         async with self._run_lock:
             if self.dead or self.process.returncode is not None:
@@ -334,6 +357,7 @@ class _RuntimeProcess:
                         # co-located on the host today. Remote runners (Slice 8)
                         # will need an upload/finalize path instead.
                         "artifacts_dir": str(artifact_base_dir()),
+                        "artifact_key_prefix": artifact_key_prefix,
                         "max_artifact_bytes": settings.max_artifact_bytes,
                         "max_artifacts_per_run": settings.max_artifacts_per_run,
                     }
@@ -714,6 +738,7 @@ class RuntimePool:
                         workflow_modules=workflow_modules,
                         pause_on_approval=pause_on_approval,
                         agent_action_resume=agent_action_resume,
+                        artifact_key_prefix=await _resolve_run_org(run_id),
                     )
                     if timeout and timeout > 0:
                         return await asyncio.wait_for(run, timeout=timeout)
@@ -768,6 +793,7 @@ class RuntimePool:
                     on_event,
                     sub_workflow_caller,
                     workflow_modules=workflow_modules,
+                    artifact_key_prefix=await _resolve_run_org(run_id),
                 )
                 timeout = settings.workflow_run_timeout_seconds
                 if timeout and timeout > 0:

@@ -38,6 +38,7 @@ def artifact_base_dir() -> Path:
 def make_artifact_store(
     run_id: str,
     *,
+    org_id: str | None = None,
     max_bytes: int | None = None,
     max_count: int | None = None,
 ) -> LocalArtifactStore:
@@ -46,6 +47,10 @@ def make_artifact_store(
         run_id,
         max_bytes=max_bytes if max_bytes is not None else settings.max_artifact_bytes,
         max_count=max_count if max_count is not None else settings.max_artifacts_per_run,
+        # Phase F: new artifact keys are namespaced {org_id}/runs/{run_id}/...
+        # Existing rows keep their stored storage_key (reads are row-driven),
+        # so no rename migration is needed.
+        key_prefix=org_id or "",
     )
 
 
@@ -204,11 +209,11 @@ async def delete_artifacts_for_run_ids(
     await session.execute(delete(Artifact).where(Artifact.run_id.in_(run_ids)))
 
 
-def delete_run_artifact_dir(run_id: str) -> None:
+def delete_run_artifact_dir(run_id: str, org_id: str | None = None) -> None:
     """Reclaim per-run scratch space across all backends."""
     backends = {"local", (settings.artifact_storage_backend or "local").lower()}
     for backend_name in backends:
         try:
-            get_backend(backend_name).delete_run(run_id)
+            get_backend(backend_name).delete_run(run_id, org_id=org_id)
         except KeyError:
             continue

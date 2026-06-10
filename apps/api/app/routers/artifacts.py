@@ -18,6 +18,7 @@ from app.services.artifact_backends import (
 )
 from app.services.artifacts import delete_artifact_files
 from app.services.datasets_query import DatasetQueryError, run_dataset_query
+from app.tenancy import DEFAULT_ORG_ID, active_org_id
 
 router = APIRouter(tags=["artifacts"])
 
@@ -40,6 +41,17 @@ def _info(row: Artifact) -> ArtifactInfo:
 async def _get_artifact(session: AsyncSession, artifact_id: str) -> Artifact:
     row = await session.get(Artifact, artifact_id)
     if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Artifact not found")
+    # Tenancy guard: artifacts carry no org_id; their org is the parent
+    # run's. The Run lookup goes through the org-scoped ORM filter (and RLS
+    # on Postgres), so a foreign org's run resolves to None — answer 404, not
+    # 403, to avoid existence leaks. Run-less rows (browser uploads) are
+    # instance-level until Phase B scopes uploads.
+    # populate_existing forces a real SELECT — an identity-map hit from
+    # earlier in the session would skip the org filter entirely.
+    if row.run_id is not None and (
+        await session.get(Run, row.run_id, populate_existing=True) is None
+    ):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Artifact not found")
     return row
 
@@ -188,7 +200,10 @@ async def upload_artifact(
     content_type = file.content_type or "application/octet-stream"
     artifact_id = uuid.uuid4().hex
 
-    storage_key = f"uploads/{artifact_id}/{filename}"
+    # Phase F: namespace new uploads under the request org (default org when
+    # multi-tenancy is off) so storage quotas/retention can group by prefix.
+    org_segment = active_org_id() or DEFAULT_ORG_ID
+    storage_key = f"{org_segment}/uploads/{artifact_id}/{filename}"
     artifact_path = _resolve_local_path(storage_key)
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_bytes(content)

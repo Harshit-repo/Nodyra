@@ -219,10 +219,11 @@ async def test_upload_artifact_rejects_path_traversal(client):
     # Name is reduced to a safe basename — no directory components survive.
     assert r.json()["name"] == "noodle_pwned.txt"
 
-    # The persisted storage_key must stay under the uploads/ prefix with no
+    # The persisted storage_key must stay under the org's uploads/ prefix
+    # (Phase F namespacing; "default" org while multi-tenancy is off) with no
     # traversal segments, so the bytes can only ever land inside the root.
     async with retention.SessionLocal() as session:
         row = (await session.scalars(select(Artifact))).first()
     assert row is not None
-    assert row.storage_key.startswith("uploads/")
+    assert row.storage_key.startswith("default/uploads/")
     assert ".." not in row.storage_key
