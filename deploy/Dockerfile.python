@@ -1,4 +1,4 @@
-# Shared image for the Noodle API and Celery worker/beat.
+# Shared image for the Noodle API and the dispatch worker (app.worker_main).
 # Build context is the repo root.
 FROM python:3.12-slim
 

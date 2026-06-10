@@ -49,10 +49,14 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://noodle:noodle@postgres:5432/noodle
       REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      QUEUE_BACKEND: redis
+      # Control plane: runs are enqueued here and executed by the worker
+      # service below. Keep DISPATCH_ROLE=inline instead if you use agent or
+      # kubernetes runner pools (their WebSockets terminate on the API).
+      DISPATCH_ROLE: disabled
+      SCHEDULER_ROLE: leader
       CORS_ORIGINS: http://localhost:5173
-      ENABLE_INPROCESS_SCHEDULER: "false"
+      ENABLE_INPROCESS_SCHEDULER: "true"
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
       USE_SUBPROCESS_RUNNER: "true"
       ENVS_DIR: /app/envs
@@ -86,35 +90,27 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.python
-    command: celery -A worker.celery_app worker -l info
+    command: python -m app.worker_main
     environment:
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      API_BASE_URL: http://api:8000
-      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
+      DATABASE_URL: postgresql+asyncpg://noodle:noodle@postgres:5432/noodle
+      REDIS_URL: redis://redis:6379/0
+      QUEUE_BACKEND: redis
+      DISPATCH_ROLE: worker
+      USE_SUBPROCESS_RUNNER: "true"
+      ENVS_DIR: /app/envs
+      ARTIFACTS_DIR: /app/artifacts
+      SECRET_KEY: ${NOODLE_SECRET_KEY:-noodle-dev-secret-change-me-in-production}
     volumes:
+      - envdata:/app/envs
+      - artifactdata:/app/artifacts
       - "D:/output_grainbrokers_parquet:/data/grainbrokers:ro"
     depends_on:
-      api:
-        condition: service_started
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
-
-  beat:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.python
-    command: celery -A worker.celery_app beat -l info
-    environment:
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      API_BASE_URL: http://api:8000
-      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
-    depends_on:
       api:
         condition: service_started
-      redis:
-        condition: service_healthy
 
   web:
     build:
