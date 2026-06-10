@@ -48,3 +48,12 @@ artifact_store: ContextVar[Any | None] = ContextVar(
 iteration_path: ContextVar[tuple[int, ...]] = ContextVar(
     "noodle_iteration_path", default=()
 )
+
+# Per-organization amplification caps for the current run (multi-tenancy C5).
+# Keys: "max_map_width" (rows a map node may fan out into child workflows)
+# and "max_loop_iterations" (units a single loop may drive). 0/absent =
+# uncapped. Set by the host (runner / runtime server) before invoking the
+# engine; empty for single-tenant deployments.
+org_run_limits: ContextVar[dict[str, int]] = ContextVar(
+    "noodle_org_run_limits", default={}
+)

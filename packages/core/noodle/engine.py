@@ -32,7 +32,12 @@ from noodle.ai_runtime import (
     ToolAdapter,
     ToolResult,
 )
-from noodle.context import current_node_id, iteration_path, node_debug
+from noodle.context import (
+    current_node_id,
+    iteration_path,
+    node_debug,
+    org_run_limits,
+)
 from noodle.expr import build_context, evaluate
 from noodle.models import (
     NodeRunResult,
@@ -1547,6 +1552,20 @@ async def _run_loop(
         ))
         return RunStatus.error
 
+    # Multi-tenancy C5: the org's loop-iteration ceiling beats the node's own
+    # max_rows. Reject (never truncate) so quota pressure is always visible.
+    org_loop_cap = int((org_run_limits.get() or {}).get("max_loop_iterations") or 0)
+    if org_loop_cap and len(items) > org_loop_cap:
+        node_outputs[region.end_id] = {"results": [], "errors": []}
+        await finish(NodeRunResult(
+            node_id=region.end_id, status=NodeStatus.error,
+            error=(
+                f"loop received {len(items)} rows but this organization's "
+                f"iteration cap is {org_loop_cap}"
+            ),
+        ))
+        return RunStatus.error
+
     # Skip-set for the body run: only nodes owned by *directly nested* loops
     # (their own driver handles them). This loop's own direct body nodes run.
     child_owned: set[str] = set()
@@ -1740,6 +1759,11 @@ async def _run_conditional_loop(
     end = nodes_by_id[region.end_id]
     mode = str(start.params.get("mode", "while") or "while")
     max_iterations = max(0, int(start.params.get("max_iterations", 1000) or 1000))
+    # Multi-tenancy C5: the org's iteration ceiling clamps the node's own cap
+    # (while/until loops have no row count to reject up front).
+    org_loop_cap = int((org_run_limits.get() or {}).get("max_loop_iterations") or 0)
+    if org_loop_cap and (max_iterations == 0 or max_iterations > org_loop_cap):
+        max_iterations = org_loop_cap
     on_max = str(start.params.get("on_max_iterations", "fail") or "fail")
     condition_expr = start.params.get("condition", "")
     conditional_output = str(

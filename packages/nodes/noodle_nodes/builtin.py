@@ -1553,6 +1553,16 @@ async def map_items(
         raise RuntimeError("map_items: no host caller is configured for this run")
 
     items: list = input if isinstance(input, list) else ([] if input is None else [input])
+
+    # Multi-tenancy C5: every mapped item becomes a child workflow run.
+    from noodle.context import org_run_limits
+
+    org_cap = int((org_run_limits.get() or {}).get("max_map_width") or 0)
+    if org_cap and len(items) > org_cap:
+        raise ValueError(
+            f"map_items received {len(items)} items but this organization's "
+            f"map fan-out cap is {org_cap}."
+        )
     sem = asyncio.Semaphore(max(1, int(concurrency or 5)))
 
     tasks = [

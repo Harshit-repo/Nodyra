@@ -828,6 +828,17 @@ async def map_dataset(
             f"Increase max_rows explicitly or reduce rows upstream before Map Dataset."
         )
 
+    # Multi-tenancy C5: the org's map-width ceiling beats the node's max_rows
+    # — every mapped row becomes a child workflow run.
+    from noodle.context import org_run_limits
+
+    org_cap = int((org_run_limits.get() or {}).get("max_map_width") or 0)
+    if org_cap and total > org_cap:
+        raise ValueError(
+            f"Dataset has {total} rows but this organization's map fan-out "
+            f"cap is {org_cap}."
+        )
+
     rows = materialize_dataset(ref, cap=cap, allow_truncate=False)
     sem = asyncio.Semaphore(max(1, int(concurrency or 5)))
 

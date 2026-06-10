@@ -85,10 +85,10 @@ from app.services.remote_dispatch import (
     build_env_payload,
     dispatcher,
 )
-from app.services.runtime_pool import _resolve_run_org
+from app.services.runtime_pool import _org_run_limits_for, _resolve_run_org
 from app.services.runtime_pool import pool as runtime_pool
 from noodle.ai_runtime import AgentActionRequest
-from noodle.context import artifact_store, call_chain, workflow_caller
+from noodle.context import artifact_store, call_chain, org_run_limits, workflow_caller
 from noodle.engine import DEFAULT_NODE_TIMEOUTS, execute, pool_key as engine_pool_key
 from noodle.models import WorkflowGraph
 from noodle.sdk import (
@@ -1336,10 +1336,14 @@ async def _execute_run(
             chain_token = call_chain.set(frozenset({workflow_id}))
             caller_token = workflow_caller.set(_call_sub_workflow)
             pool_key_token = engine_pool_key.set(env_id)
+            _run_org = await _resolve_run_org(run_id)
+            limits_token = org_run_limits.set(
+                await _org_run_limits_for(_run_org)
+            )
             artifact_token = artifact_store.set(
                 make_artifact_store(
                     run_id,
-                    org_id=await _resolve_run_org(run_id),
+                    org_id=_run_org,
                     max_bytes=live.max_artifact_bytes if live is not None else None,
                     max_count=live.max_artifacts_per_run if live is not None else None,
                 )
@@ -1374,6 +1378,7 @@ async def _execute_run(
                 status = str(result.status)
             finally:
                 artifact_store.reset(artifact_token)
+                org_run_limits.reset(limits_token)
                 engine_pool_key.reset(pool_key_token)
                 workflow_caller.reset(caller_token)
                 call_chain.reset(chain_token)

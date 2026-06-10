@@ -198,6 +198,29 @@ async def _org_subworkflow_cap(org_id: str) -> int:
         return fallback
 
 
+async def _org_run_limits_for(org_id: str) -> dict:
+    """Amplification caps shipped to the engine in the run request (C5).
+
+    The engine runs in a subprocess with no DB access, so limits resolve
+    host-side at dispatch. Empty dict = uncapped (single-tenant, or a limits
+    lookup failure — caps must never block dispatch outright)."""
+    if not settings.multi_tenancy_enabled:
+        return {}
+    try:
+        from app.services.org_limits import effective_limits
+        from app.tenancy import run_as_system
+
+        with run_as_system():
+            async with SessionLocal() as session:
+                limits = await effective_limits(session, org_id)
+        return {
+            "max_map_width": limits.max_map_width,
+            "max_loop_iterations": limits.max_loop_iterations,
+        }
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 async def _resolve_run_org(run_id: str) -> str:
     """The org a run belongs to, for artifact key namespacing (Phase F).
 
@@ -354,6 +377,7 @@ class _RuntimeProcess:
         pause_on_approval: bool = False,
         agent_action_resume: dict | None = None,
         artifact_key_prefix: str = "",
+        org_limits: dict | None = None,
     ) -> str:
         async with self._run_lock:
             if self.dead or self.process.returncode is not None:
@@ -383,6 +407,7 @@ class _RuntimeProcess:
                         # will need an upload/finalize path instead.
                         "artifacts_dir": str(artifact_base_dir()),
                         "artifact_key_prefix": artifact_key_prefix,
+                        "org_limits": org_limits or {},
                         "max_artifact_bytes": settings.max_artifact_bytes,
                         "max_artifacts_per_run": settings.max_artifacts_per_run,
                     }
@@ -766,6 +791,7 @@ class RuntimePool:
                     else settings.workflow_run_timeout_seconds
                 )
                 try:
+                    run_org = await _resolve_run_org(run_id)
                     run = proc.run(
                         run_id,
                         graph,
@@ -776,7 +802,8 @@ class RuntimePool:
                         workflow_modules=workflow_modules,
                         pause_on_approval=pause_on_approval,
                         agent_action_resume=agent_action_resume,
-                        artifact_key_prefix=await _resolve_run_org(run_id),
+                        artifact_key_prefix=run_org,
+                        org_limits=await _org_run_limits_for(run_org),
                     )
                     if timeout and timeout > 0:
                         return await asyncio.wait_for(run, timeout=timeout)
@@ -823,6 +850,7 @@ class RuntimePool:
         async with self.subworkflow_slot():
             proc = await _RuntimeProcess.spawn(env_id)
             try:
+                run_org = await _resolve_run_org(run_id)
                 run = proc.run(
                     run_id,
                     graph,
@@ -831,7 +859,8 @@ class RuntimePool:
                     on_event,
                     sub_workflow_caller,
                     workflow_modules=workflow_modules,
-                    artifact_key_prefix=await _resolve_run_org(run_id),
+                    artifact_key_prefix=run_org,
+                    org_limits=await _org_run_limits_for(run_org),
                 )
                 timeout = settings.workflow_run_timeout_seconds
                 if timeout and timeout > 0:

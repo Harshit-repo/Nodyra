@@ -48,7 +48,7 @@ from typing import Any
 import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
 from noodle.ai_runtime import AgentActionRequest
 from noodle.artifacts import LocalArtifactStore
-from noodle.context import artifact_store, workflow_caller
+from noodle.context import artifact_store, org_run_limits, workflow_caller
 from noodle.engine import execute
 from noodle.models import WorkflowGraph
 from noodle.sdk import register_module_functions, registry, unregister_module
@@ -160,6 +160,11 @@ async def _handle_run(request: dict[str, Any]) -> None:
             )
 
     caller_token = workflow_caller.set(_call_workflow_via_host)
+    # Per-org amplification caps (multi-tenancy C5); empty = uncapped.
+    raw_limits = request.get("org_limits")
+    limits_token = org_run_limits.set(
+        raw_limits if isinstance(raw_limits, dict) else {}
+    )
     artifact_token = None
     artifacts_upload_url = request.get("artifacts_upload_url")
     artifacts_dir = request.get("artifacts_dir")
@@ -223,6 +228,7 @@ async def _handle_run(request: dict[str, Any]) -> None:
     finally:
         if artifact_token is not None:
             artifact_store.reset(artifact_token)
+        org_run_limits.reset(limits_token)
         workflow_caller.reset(caller_token)
         for module_id in loaded_module_ids:
             unregister_module(module_id, registry)
