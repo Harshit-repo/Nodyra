@@ -38,6 +38,13 @@ class Organization(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     slug: Mapped[str] = mapped_column(String(80), unique=True, index=True, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    # X4 execution isolation: "shared" (default) runs on the host warm pool —
+    # Tier-1 hygiene only, trusted authors. "dedicated_pool" refuses any run
+    # that doesn't resolve to this org's own docker/kubernetes runner pool
+    # (container-per-run), the Tier-2 boundary for untrusted authors.
+    execution_isolation: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="shared", server_default="shared"
+    )
     # Phase E: this org's KEK (data-encryption-key wrapper), itself wrapped by
     # the master KEK or an external KMS. NULL until the org-KEK migration runs.
     wrapped_org_kek: Mapped[str | None] = mapped_column(Text, nullable=True)

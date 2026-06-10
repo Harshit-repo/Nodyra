@@ -699,6 +699,35 @@ async def start_run(
         if wf_obj is None:
             wf_obj = await session.get(Workflow, workflow_id)
 
+        # X4 execution isolation: an org marked dedicated_pool must NEVER run
+        # on the shared host warm pool. The run is refused outright (rather
+        # than silently degraded) unless it resolves to the org's OWN
+        # container-per-run pool. Enforced here — the single chokepoint every
+        # trigger path (manual, webhook, schedule, queue, deployment, error
+        # workflow, batch) funnels through.
+        if settings.multi_tenancy_enabled and wf_obj is not None:
+            from app.models import Organization, RunnerPool
+            from app.tenancy import run_as_system
+
+            with run_as_system():
+                org = await session.get(Organization, wf_obj.org_id)
+                if org is not None and org.execution_isolation == "dedicated_pool":
+                    pool = (
+                        await session.get(RunnerPool, runner_pool_id)
+                        if runner_pool_id
+                        else None
+                    )
+                    if (
+                        pool is None
+                        or pool.org_id != org.id
+                        or pool.provider not in ("docker", "kubernetes")
+                    ):
+                        raise ValueError(
+                            "This organization requires isolated execution: "
+                            "assign one of its docker/kubernetes runner pools "
+                            "to the workflow, environment, or deployment."
+                        )
+
         # Preflight: block the run if a node needs a package the env lacks.
         preflight_env = None
         if wf_obj and wf_obj.environment_id:

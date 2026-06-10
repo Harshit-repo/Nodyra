@@ -167,6 +167,18 @@ async def update_org(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
     if body.name is not None:
         org.name = body.name.strip()
+    if body.execution_isolation is not None:
+        if body.execution_isolation not in ("shared", "dedicated_pool"):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "execution_isolation must be 'shared' or 'dedicated_pool'.",
+            )
+        if role != "owner":
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Only an owner can change execution isolation.",
+            )
+        org.execution_isolation = body.execution_isolation
     await log_audit(
         session, "update", "organization", org.id, org.name,
         actor_id=user.id, actor_email=user.email,
