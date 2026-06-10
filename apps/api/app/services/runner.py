@@ -670,17 +670,20 @@ async def start_run(
         # lets the model default mint one.
         if run_id is not None:
             run.id = run_id
-        # Local durable queue: a LOCAL run (no remote runner pool) that can't
-        # grab an admission slot right now is parked as a durable ``queued``
-        # entry instead of blocking a coroutine on the pool semaphore. The
-        # dispatch loop leases it when capacity frees — giving visible queue
-        # depth and restart durability. Only for async dispatch; synchronous
-        # runs (tests) always execute inline.
-        queue_locally = (
-            settings.local_queue_enabled
-            and not settings.run_synchronously
-            and runner_pool_id is None
-            and not runtime_pool.has_immediate_capacity()
+        # Park the run on the durable queue instead of dispatching inline when
+        # (a) this replica is a pure control plane (dispatch_role=disabled —
+        # applies to remote-pool runs too; a worker or WS-holding replica
+        # leases it), or (b) it's a local run with no immediate admission slot
+        # (parked rather than blocking a coroutine on the pool semaphore; the
+        # dispatch loop leases it when capacity frees — visible queue depth +
+        # restart durability). Synchronous runs (tests) always execute inline.
+        queue_locally = not settings.run_synchronously and (
+            settings.dispatch_role == "disabled"
+            or (
+                settings.local_queue_enabled
+                and runner_pool_id is None
+                and not runtime_pool.has_immediate_capacity()
+            )
         )
         if queue_locally:
             run.status = "queued"
@@ -695,7 +698,11 @@ async def start_run(
             run_id=run_id,
             workflow_id=workflow_id,
             runner_pool_id=runner_pool_id,
-            reason="local_capacity" if queue_locally else "start_run",
+            reason=(
+                ("dispatch_disabled" if settings.dispatch_role == "disabled" else "local_capacity")
+                if queue_locally
+                else "start_run"
+            ),
         )
         await session.commit()
 
