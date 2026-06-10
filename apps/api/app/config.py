@@ -153,6 +153,12 @@ class Settings(BaseSettings):
     # only by ``workflow_run_timeout_seconds``. Set a positive value to guard
     # against runaway user code.
     code_node_timeout_seconds: float = 0.0
+    # Multi-tenancy master switch. Off (default): single-tenant behaviour,
+    # zero filtering, the existing suite must pass unchanged. On: every
+    # request resolves an organization (X-Org-Id header validated against
+    # memberships), ORM SELECTs are auto-scoped to it, and on Postgres the
+    # app.current_org GUC backs the RLS policies. See app/tenancy.py.
+    multi_tenancy_enabled: bool = False
     auth_required: bool = False
     auth_allow_registration: bool = False
     auth_registration_role: str = "viewer"

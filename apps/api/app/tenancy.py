@@ -1,0 +1,108 @@
+"""Request-scoped tenant context + the ORM enforcement layer (Layer 2).
+
+Two enforcement layers keep tenants apart (see docs/multi-tenancy-plan.md A3):
+
+* **Layer 2 (this module, all backends):** a ``do_orm_execute`` hook appends
+  ``org_id = :current_org`` to every ORM SELECT against any model that has an
+  ``org_id`` column (discovered from the mapper registry, so new org-scoped
+  models are covered automatically).
+* **Layer 1 (Postgres only):** an ``after_begin`` hook sets the
+  ``app.current_org`` GUC with transaction scope (``set_config(..., true)``)
+  so the RLS policies enforce isolation even for raw SQL that bypasses the
+  ORM. ``SET LOCAL`` semantics are deliberate — a pooled connection can never
+  leak the previous request's org because the setting dies with the
+  transaction.
+
+With ``multi_tenancy_enabled`` off, ``active_org_id()`` is ``None`` and both
+hooks are no-ops: single-tenant behaviour is bit-for-bit unchanged.
+"""
+
+from contextvars import ContextVar
+
+from sqlalchemy import event, text
+from sqlalchemy.orm import Session, with_loader_criteria
+
+from app.config import settings
+
+DEFAULT_ORG_ID = "default"
+
+# Set per request by the org-resolution dependency (see app.security). Each
+# asyncio task gets its own context, so concurrent requests can't see each
+# other's value.
+current_org_id: ContextVar[str | None] = ContextVar("current_org_id", default=None)
+
+
+def active_org_id() -> str | None:
+    """The org every data access in this task must be scoped to.
+
+    ``None`` means "no scoping" — only ever when multi-tenancy is disabled.
+    With the flag on, an unset context falls back to the default org rather
+    than to no filtering, so a missed ``resolve_org`` can never widen access.
+    """
+    if not settings.multi_tenancy_enabled:
+        return None
+    return current_org_id.get() or DEFAULT_ORG_ID
+
+
+def org_scoped_models() -> list[type]:
+    """Every mapped class carrying an ``org_id`` column."""
+    from app.db import Base  # late import: db imports tenancy at engine setup
+
+    return [
+        mapper.class_
+        for mapper in Base.registry.mappers
+        if "org_id" in mapper.columns
+    ]
+
+
+def stamp(obj: object) -> object:
+    """Set ``org_id`` on a new ORM object from the request context.
+
+    Call at every creation site of an org-scoped model. No-op when the model
+    has no ``org_id`` or when it is already set explicitly.
+    """
+    if hasattr(obj, "org_id") and getattr(obj, "org_id", None) is None:
+        org_id = active_org_id()
+        obj.org_id = org_id if org_id is not None else DEFAULT_ORG_ID
+    return obj
+
+
+_installed = False
+
+
+def install_org_filter() -> None:
+    """Register both enforcement hooks once, process-wide.
+
+    Listening on the ``Session`` class (not one sessionmaker) covers the app
+    factory in ``app.db`` and any test-local sessionmaker alike.
+    """
+    global _installed
+    if _installed:
+        return
+    _installed = True
+
+    @event.listens_for(Session, "do_orm_execute")
+    def _scope_selects_to_org(execute_state) -> None:
+        org_id = active_org_id()
+        if org_id is None or not execute_state.is_select:
+            return
+        for model in org_scoped_models():
+            execute_state.statement = execute_state.statement.options(
+                with_loader_criteria(
+                    model,
+                    lambda cls: cls.org_id == org_id,  # noqa: B023 - org_id fixed per event
+                    include_aliases=True,
+                )
+            )
+
+    @event.listens_for(Session, "after_begin")
+    def _set_postgres_guc(session, transaction, connection) -> None:
+        org_id = active_org_id()
+        if org_id is None or connection.dialect.name != "postgresql":
+            return
+        # set_config(..., is_local=true) == SET LOCAL: dies with the
+        # transaction, so pooled connections can't carry it across requests.
+        connection.execute(
+            text("SELECT set_config('app.current_org', :org, true)"),
+            {"org": org_id},
+        )

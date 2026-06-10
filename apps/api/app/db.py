@@ -29,6 +29,13 @@ def _create_engine():
 engine = _create_engine()
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
+# Tenancy enforcement (no-op while multi_tenancy_enabled is off): org-scopes
+# every ORM SELECT and sets the Postgres RLS GUC per transaction. Imported
+# late — tenancy reads Base from this module.
+from app.tenancy import install_org_filter  # noqa: E402
+
+install_org_filter()
+
 
 async def get_session() -> AsyncIterator[AsyncSession]:
     async with SessionLocal() as session:
