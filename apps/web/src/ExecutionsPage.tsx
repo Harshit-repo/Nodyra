@@ -123,6 +123,37 @@ function OpsDashboard() {
             {queue.leased} leased · {queue.running} running
           </div>
         </div>
+        {queue.by_org && Object.keys(queue.by_org).length > 0 && (
+          <div className="ops-card">
+            <div className="ops-card-label">By organization</div>
+            <div className="ops-card-value small">
+              {Object.keys(queue.by_org).length} active
+            </div>
+            <div className="ops-card-sub">
+              {Object.entries(queue.by_org)
+                .slice(0, 4)
+                .map(([orgId, counts]) => {
+                  const parked = counts.quota_parked ?? 0;
+                  const active = (counts.leased ?? 0) + (counts.running ?? 0);
+                  return (
+                    <span
+                      key={orgId}
+                      title={
+                        parked
+                          ? `${parked} runs parked by this org's concurrency quota`
+                          : undefined
+                      }
+                      style={{ marginRight: 8 }}
+                    >
+                      {orgId}: {active} active
+                      {counts.queued ? ` · ${counts.queued} queued` : ""}
+                      {parked ? ` · ⚠ ${parked} at quota` : ""}
+                    </span>
+                  );
+                })}
+            </div>
+          </div>
+        )}
         <div className="ops-card">
           <div className="ops-card-label">Runtime</div>
           <div className="ops-card-value small">

@@ -613,6 +613,25 @@ export interface OrgMemberInfo {
   role: string;
 }
 
+export interface OrgSettingsInfo {
+  org_id: string;
+  max_concurrent_runs: number;
+  executions_per_day: number;
+  max_map_width: number;
+  max_loop_iterations: number;
+  max_inflight_subworkflows: number;
+  storage_quota_bytes: number;
+  /** Field names whose value is an org override (vs inherited default). */
+  overridden: string[];
+}
+
+export interface OrgUsageDay {
+  day: string;
+  runs: number;
+  compute_seconds: number;
+  node_runs: number;
+}
+
 export interface RunnerPoolInfo {
   id: string;
   name: string;

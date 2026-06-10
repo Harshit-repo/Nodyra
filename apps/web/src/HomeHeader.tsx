@@ -95,6 +95,13 @@ function OrgSwitcher() {
               {org.id === current.id ? " ✓" : ""}
             </button>
           ))}
+          <Link
+            to="/organization"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+          >
+            Manage organization
+          </Link>
           <button type="button" role="menuitem" onClick={createOrg}>
             + New organization
           </button>

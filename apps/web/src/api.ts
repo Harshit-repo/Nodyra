@@ -27,6 +27,8 @@ import type {
   RunListItem,
   OrgInfo,
   OrgMemberInfo,
+  OrgSettingsInfo,
+  OrgUsageDay,
   RunnerInfo,
   RunnerPoolInfo,
   RegistrationTokenResponse,
@@ -607,6 +609,15 @@ export const api = {
     }),
   removeOrgMember: (userId: string) =>
     request<void>(`/orgs/current/members/${userId}`, { method: "DELETE" }),
+  getOrgSettings: (orgId: string) =>
+    request<OrgSettingsInfo>(`/orgs/${orgId}/settings`),
+  updateOrgSettings: (orgId: string, body: Record<string, number>) =>
+    request<OrgSettingsInfo>(`/orgs/${orgId}/settings`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  getOrgUsage: (orgId: string, days = 14) =>
+    request<OrgUsageDay[]>(`/orgs/${orgId}/usage?days=${days}`),
   listUsers: () => request<UserAdminInfo[]>("/auth/users"),
   createUser: (body: {
     name?: string;
@@ -710,6 +721,9 @@ export interface QueueStats {
   dead_lettered: number;
   cancelled: number;
   oldest_queued_age_seconds: number | null;
+  /** Multi-tenancy: per-org active counts; "quota_parked" = queued entries
+   *  held back by the org's concurrency cap. Absent when MT is off. */
+  by_org?: Record<string, Record<string, number>> | null;
 }
 
 export interface RunTimelineEvent {

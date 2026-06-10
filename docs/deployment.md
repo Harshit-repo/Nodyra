@@ -196,3 +196,29 @@ Migration policy:
   docker-compose default user is a superuser — fine for single-tenant, not
   for multi-tenant. Create a dedicated app role and grant table privileges
   instead.
+
+## Enabling multi-tenancy
+
+Multi-tenancy ships dormant: with `MULTI_TENANCY_ENABLED=false` (default)
+behaviour is identical to single-tenant Noodle. To enable:
+
+1. Run on **Postgres** (RLS is the DB-enforced isolation backstop; SQLite has
+   none) with a **non-superuser app role** — see the security checklist above.
+2. Apply migrations (`alembic upgrade head`); existing data lands in the
+   `default` organization and every user keeps their role there.
+3. Set `MULTI_TENANCY_ENABLED=true` and `AUTH_REQUIRED=true` (anonymous
+   requests can only ever reach the default org).
+4. Users create organizations from the org switcher in the header; the
+   creator becomes that org's owner and gets an org-scoped default
+   environment. Members, roles, quotas, and usage live under
+   **Manage organization**.
+5. Trust model per org: `shared` execution runs workflow code on the host
+   warm pool (trusted authors — Tier 1 hygiene only). Orgs with untrusted
+   authors must be set to `dedicated_pool` (org owner setting) and given
+   their own docker/kubernetes runner pool — runs that don't resolve to one
+   are refused. Deep sandbox hardening (egress policy, gVisor) is not
+   included; do not market shared-pool tenancy as hard isolation.
+6. Per-org quotas (concurrent runs, executions/day, map/loop caps, etc.) are
+   owner-editable per org; instance defaults come from Settings. The
+   ops dashboard's queue card shows per-org backpressure, including runs
+   parked by an org's concurrency quota.

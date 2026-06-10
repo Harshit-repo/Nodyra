@@ -36,6 +36,9 @@ const EnvironmentsPage = lazy(named(() => import("./EnvironmentsPage"), "Environ
 const ExecutionsPage = lazy(named(() => import("./ExecutionsPage"), "ExecutionsPage"));
 const RunnerPoolsPage = lazy(named(() => import("./RunnerPoolsPage"), "RunnerPoolsPage"));
 const SecurityPage = lazy(named(() => import("./SecurityPage"), "SecurityPage"));
+const OrganizationPage = lazy(
+  named(() => import("./OrganizationPage"), "OrganizationPage"),
+);
 const SettingsPage = lazy(named(() => import("./SettingsPage"), "SettingsPage"));
 const WorkflowsPage = lazy(named(() => import("./WorkflowsPage"), "WorkflowsPage"));
 
@@ -181,6 +184,7 @@ export default function App() {
               <Route path="/activity" element={<ActivityPage />} />
               <Route path="/runner-pools" element={<RunnerPoolsPage />} />
               <Route path="/security" element={<SecurityPage />} />
+              <Route path="/organization" element={<OrganizationPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/workflows/:id" element={<EditorPage />} />
               <Route path="*" element={<NotFound />} />
