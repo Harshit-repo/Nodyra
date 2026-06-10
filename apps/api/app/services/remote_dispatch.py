@@ -449,6 +449,12 @@ class RemoteDispatcher:
                 run.runner_id = conn.runner_id
             await session.commit()
 
+        # Multi-tenancy F/C5: remote runs carry the same org namespace and
+        # amplification caps as local subprocess runs — the agent forwards
+        # both to noodle_runtime verbatim.
+        from app.services.runtime_pool import _org_run_limits_for, _resolve_run_org
+
+        run_org = await _resolve_run_org(run_id)
         await conn.send({
             "type": "run_assigned",
             "run_id": run_id,
@@ -459,6 +465,8 @@ class RemoteDispatcher:
             "workflow_modules": workflow_modules,
             "pause_on_approval": pause_on_approval,
             "agent_action_resume": agent_action_resume or {},
+            "artifact_key_prefix": run_org,
+            "org_limits": await _org_run_limits_for(run_org),
         })
 
         try:

@@ -180,6 +180,9 @@ async def update_environment(
         env.runner_pool_max = body.runner_pool_max
     if body.runner_pool_set or "runner_pool_id" in sent:
         await _validate_pool_ref(session, body.runner_pool_id)
+        from app.services.isolation import validate_pool_assignment
+
+        await validate_pool_assignment(session, env.org_id, body.runner_pool_id)
         env.runner_pool_id = body.runner_pool_id
     needs_rebuild = False
     if body.backend_config is not None:

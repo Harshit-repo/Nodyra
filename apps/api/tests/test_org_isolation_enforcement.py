@@ -116,6 +116,42 @@ async def test_dedicated_org_with_own_docker_pool_dispatches(
     assert run.org_id == "org-x"
 
 
+async def test_write_time_pool_validation(client: AsyncClient, mt_on):
+    """Polish-1: assigning a non-qualifying pool to a dedicated org's
+    environment fails up front with 422 (the dispatch gate would refuse the
+    run anyway; this is the early, actionable error)."""
+    from fastapi import HTTPException
+
+    from app.services.isolation import validate_pool_assignment
+
+    async with retention.SessionLocal() as session:
+        session.add_all(
+            [
+                models.Organization(id=DEFAULT_ORG_ID, name="D", slug="default"),
+                models.Organization(
+                    id="org-x", name="X", slug="x",
+                    execution_isolation="dedicated_pool",
+                ),
+                models.Organization(id="org-s", name="S", slug="s"),
+            ]
+        )
+        own_docker = models.RunnerPool(name="ok", provider="docker", org_id="org-x")
+        own_agent = models.RunnerPool(name="vm", provider="agent", org_id="org-x")
+        foreign = models.RunnerPool(
+            name="theirs", provider="docker", org_id=DEFAULT_ORG_ID
+        )
+        session.add_all([own_docker, own_agent, foreign])
+        await session.commit()
+
+        await validate_pool_assignment(session, "org-x", own_docker.id)  # ok
+        await validate_pool_assignment(session, "org-x", None)  # clearing ok
+        await validate_pool_assignment(session, "org-s", own_agent.id)  # shared org ok
+        for bad in (own_agent.id, foreign.id, "missing"):
+            with pytest.raises(HTTPException) as exc:
+                await validate_pool_assignment(session, "org-x", bad)
+            assert exc.value.status_code == 422
+
+
 async def test_shared_org_unaffected(client: AsyncClient, mt_on):
     async with retention.SessionLocal() as session:
         workflow_id = await _seed(

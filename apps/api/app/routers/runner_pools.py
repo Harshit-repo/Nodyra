@@ -475,13 +475,28 @@ async def upload_artifact(
     # artifacts into someone else's run. Runs not yet assigned have
     # ``runner_id is None`` (assignment happens before execution, so artifacts
     # always arrive after) and are not bound here.
-    run = await session.get(Run, run_id)
+    # Runner auth is the gate here, not the request org context (runners send
+    # no X-Org-Id) — look the run up org-blind or non-default orgs would 404.
+    run = await session.scalar(
+        select(Run).where(Run.id == run_id).execution_options(skip_org_filter=True)
+    )
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
     if run.runner_id is not None and run.runner_id != payload.get("sub"):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "Runner is not assigned to this run"
         )
+    # Phase F: a runner may only write inside its run's org namespace — a
+    # compromised runner token must not plant bytes under another tenant's
+    # prefix. Legacy unprefixed keys are rejected too once MT is on; the
+    # runner protocol ships artifact_key_prefix with every assignment.
+    if settings.multi_tenancy_enabled and run.org_id:
+        if not storage_key.startswith(f"{run.org_id}/"):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Artifact storage key must be namespaced under the run's "
+                "organization.",
+            )
 
     body = await data.read()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -552,6 +567,12 @@ async def create_batch_run(
     trigger_id = trigger.id if hasattr(trigger, "id") else trigger["id"]
 
     runner_pool_id = body.runner_pool_id or workflow.default_runner_pool_id
+    # X4 write-time check: a dedicated_pool org cannot point batch runs at a
+    # foreign or non-container pool (the dispatch gate would refuse anyway;
+    # this fails the whole batch up front with a clear error).
+    from app.services.isolation import validate_pool_assignment
+
+    await validate_pool_assignment(session, workflow.org_id, runner_pool_id)
 
     batch = RunBatch(
         workflow_id=workflow_id,

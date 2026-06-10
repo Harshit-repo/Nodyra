@@ -38,6 +38,8 @@ async def run_workflow_subprocess(
     call_workflow: CallWorkflow | None = None,
     pause_on_approval: bool = False,
     agent_action_resume: dict | None = None,
+    artifact_key_prefix: str = "",
+    org_limits: dict | None = None,
 ) -> str:
     """Spawn ``noodle_runtime``, run the workflow, return the status string."""
     proc = await asyncio.create_subprocess_exec(
@@ -90,6 +92,8 @@ async def run_workflow_subprocess(
         "workflow_modules": workflow_modules,
         "pause_on_approval": pause_on_approval,
         "agent_action_resume": agent_action_resume or {},
+        "artifact_key_prefix": artifact_key_prefix,
+        "org_limits": org_limits or {},
     }
     if artifacts_upload_url:
         run_msg["artifacts_upload_url"] = artifacts_upload_url

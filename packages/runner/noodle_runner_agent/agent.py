@@ -166,6 +166,8 @@ class RunnerAgent:
                     call_workflow=broker,
                     pause_on_approval=bool(msg.get("pause_on_approval")),
                     agent_action_resume=msg.get("agent_action_resume") or {},
+                    artifact_key_prefix=str(msg.get("artifact_key_prefix") or ""),
+                    org_limits=msg.get("org_limits") or {},
                 )
             except asyncio.CancelledError:
                 logger.info("run %s cancelled", run_id)
