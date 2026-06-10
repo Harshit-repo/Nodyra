@@ -530,6 +530,32 @@ class OrgMemberInfo(BaseModel):
     role: str
 
 
+class OrgSettingsUpdate(BaseModel):
+    """Per-org quota overrides. Omitted/None fields are left unchanged;
+    send -1 to clear an override back to 'inherit instance default'."""
+
+    max_concurrent_runs: int | None = Field(default=None, ge=-1)
+    executions_per_day: int | None = Field(default=None, ge=-1)
+    max_map_width: int | None = Field(default=None, ge=-1)
+    max_loop_iterations: int | None = Field(default=None, ge=-1)
+    max_inflight_subworkflows: int | None = Field(default=None, ge=-1)
+    storage_quota_bytes: int | None = Field(default=None, ge=-1)
+
+
+class OrgSettingsInfo(BaseModel):
+    """Effective limits (override or inherited). ``overridden`` lists which
+    fields come from the org row rather than instance defaults."""
+
+    org_id: str
+    max_concurrent_runs: int
+    executions_per_day: int
+    max_map_width: int
+    max_loop_iterations: int
+    max_inflight_subworkflows: int
+    storage_quota_bytes: int
+    overridden: list[str] = []
+
+
 class RegisterRequest(BaseModel):
     name: str = Field(default="", max_length=160)
     company: str = Field(default="", max_length=160)

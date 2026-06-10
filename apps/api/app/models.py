@@ -76,6 +76,35 @@ class Membership(Base):
     )
 
 
+class OrgSettings(Base):
+    """Per-org quota overrides (multi-tenancy Phase C).
+
+    NULL inherits the instance default (``SystemSetting`` singleton /
+    ``config.settings``); 0 means unlimited — matching the existing
+    ``run_retention_days`` convention. No ``org_id`` *column* name clash
+    with the tenancy filter: the PK itself is the org, and the filter only
+    keys off attributes named ``org_id``, so this table is intentionally
+    org-scoped too.
+    """
+
+    __tablename__ = "org_settings"
+
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True
+    )
+    max_concurrent_runs: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    executions_per_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_map_width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_loop_iterations: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_inflight_subworkflows: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    storage_quota_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Environment(Base):
     """A Python environment: the global one or a user-created custom venv."""
 

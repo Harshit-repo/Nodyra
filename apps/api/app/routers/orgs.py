@@ -16,17 +16,20 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.models import Environment, Membership, Organization, User
+from app.models import Environment, Membership, Organization, OrgSettings, User
 from app.schemas import (
     OrgCreate,
     OrgInfo,
     OrgMemberAdd,
     OrgMemberInfo,
     OrgMemberUpdate,
+    OrgSettingsInfo,
+    OrgSettingsUpdate,
     OrgUpdate,
 )
 from app.security import current_user, normalize_role
 from app.services import org_keys
+from app.services.org_limits import effective_limits, invalidate_limits_cache
 from app.services.audit import log_audit
 from app.tenancy import DEFAULT_ORG_ID, active_org_id
 
@@ -211,6 +214,83 @@ async def delete_org(
     # FK ondelete=CASCADE wipes the org's workflows, runs, credentials, etc.
     await session.delete(org)
     await session.commit()
+
+
+_QUOTA_FIELDS = (
+    "max_concurrent_runs",
+    "executions_per_day",
+    "max_map_width",
+    "max_loop_iterations",
+    "max_inflight_subworkflows",
+    "storage_quota_bytes",
+)
+
+
+async def _settings_info(
+    session: AsyncSession, org_id: str
+) -> OrgSettingsInfo:
+    limits = await effective_limits(session, org_id)
+    row = await session.scalar(
+        select(OrgSettings)
+        .where(OrgSettings.org_id == org_id)
+        .execution_options(skip_org_filter=True)
+    )
+    overridden = [
+        field
+        for field in _QUOTA_FIELDS
+        if row is not None and getattr(row, field) is not None
+    ]
+    return OrgSettingsInfo(
+        org_id=org_id,
+        overridden=overridden,
+        **{field: getattr(limits, field) for field in _QUOTA_FIELDS},
+    )
+
+
+@router.get("/orgs/{org_id}/settings", response_model=OrgSettingsInfo)
+async def get_org_settings(
+    org_id: str,
+    actor: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> OrgSettingsInfo:
+    await _require_org_role(session, actor, org_id, "admin")
+    return await _settings_info(session, org_id)
+
+
+@router.put("/orgs/{org_id}/settings", response_model=OrgSettingsInfo)
+async def update_org_settings(
+    org_id: str,
+    body: OrgSettingsUpdate,
+    actor: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> OrgSettingsInfo:
+    role = await _require_org_role(session, actor, org_id, "admin")
+    if role != "owner":
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Only an owner can change org quotas."
+        )
+    row = await session.scalar(
+        select(OrgSettings)
+        .where(OrgSettings.org_id == org_id)
+        .execution_options(skip_org_filter=True)
+    )
+    if row is None:
+        row = OrgSettings(org_id=org_id)
+        session.add(row)
+    for field in _QUOTA_FIELDS:
+        value = getattr(body, field)
+        if value is None:
+            continue
+        # -1 clears the override back to "inherit instance default".
+        setattr(row, field, None if value == -1 else value)
+    await log_audit(
+        session, "update", "org_settings", org_id,
+        ", ".join(f for f in _QUOTA_FIELDS if getattr(body, f) is not None),
+        actor_id=actor.id, actor_email=actor.email,
+    )
+    await session.commit()
+    invalidate_limits_cache()
+    return await _settings_info(session, org_id)
 
 
 @router.get("/orgs/current/members", response_model=list[OrgMemberInfo])
