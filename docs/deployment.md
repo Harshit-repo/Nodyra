@@ -189,3 +189,10 @@ Migration policy:
 - `ARTIFACTS_DIR` should be on persistent storage (PVC or host volume) so
   downloads survive restarts. If you set a retention policy, files for
   pruned runs are deleted automatically.
+- **Multi-tenancy (`MULTI_TENANCY_ENABLED=true`): the API must connect to
+  Postgres as a non-superuser role without `BYPASSRLS`.** Postgres superusers
+  skip row-level security entirely, which voids the tenant-isolation backstop
+  (see migration `0042_rls` and `tests/test_tenancy_isolation_pg.py`). The
+  docker-compose default user is a superuser — fine for single-tenant, not
+  for multi-tenant. Create a dedicated app role and grant table privileges
+  instead.

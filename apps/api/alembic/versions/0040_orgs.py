@@ -79,13 +79,20 @@ def upgrade() -> None:
         op.create_index("ix_memberships_user_id", "memberships", ["user_id"])
 
     bind = op.get_bind()
+    # Explicit casts: asyncpg refuses to deduce a type for a parameter used
+    # both in the SELECT list and a varchar comparison ("inconsistent types
+    # deduced for parameter $1") — caught by the Postgres lane, invisible to
+    # SQLite.
     bind.execute(
         sa.text(
             "INSERT INTO organizations (id, name, slug, status) "
-            "SELECT :id, 'Default', :slug, 'active' "
-            "WHERE NOT EXISTS (SELECT 1 FROM organizations WHERE id = :id)"
+            "SELECT CAST(:id AS VARCHAR(32)), 'Default', "
+            "CAST(:slug AS VARCHAR(80)), 'active' "
+            "WHERE NOT EXISTS ("
+            "  SELECT 1 FROM organizations WHERE id = CAST(:probe AS VARCHAR(32))"
+            ")"
         ),
-        {"id": DEFAULT_ORG_ID, "slug": DEFAULT_ORG_ID},
+        {"id": DEFAULT_ORG_ID, "slug": DEFAULT_ORG_ID, "probe": DEFAULT_ORG_ID},
     )
     # One membership per existing user, carrying their global role into the
     # default org. hex-uuid ids are generated app-side normally; here we reuse
@@ -94,13 +101,13 @@ def upgrade() -> None:
     bind.execute(
         sa.text(
             "INSERT INTO memberships (id, org_id, user_id, role) "
-            "SELECT u.id, :org, u.id, u.role FROM users u "
+            "SELECT u.id, CAST(:org AS VARCHAR(32)), u.id, u.role FROM users u "
             "WHERE NOT EXISTS ("
             "  SELECT 1 FROM memberships m "
-            "  WHERE m.org_id = :org AND m.user_id = u.id"
+            "  WHERE m.org_id = CAST(:probe AS VARCHAR(32)) AND m.user_id = u.id"
             ")"
         ),
-        {"org": DEFAULT_ORG_ID},
+        {"org": DEFAULT_ORG_ID, "probe": DEFAULT_ORG_ID},
     )
 
 
