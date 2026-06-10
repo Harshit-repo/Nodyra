@@ -116,6 +116,63 @@ async def _rss_soft_budget_bytes() -> int:
         return max(0, int(settings.worker_rss_soft_budget_bytes))
 
 
+# Environment variables a runtime worker legitimately needs. Everything else
+# — SECRET_KEY (the master KEK), DATABASE_URL, OAuth client secrets, cloud
+# credentials — must NOT reach user code, which can trivially read
+# ``os.environ`` from a Code node. The runtime itself reads only
+# ``NOODLE_CODE_NODE_TIMEOUT_SECONDS`` (set explicitly below); the rest of the
+# allowlist is OS plumbing the interpreter needs to boot and make TLS/temp-file
+# syscalls work, cross-platform.
+_WORKER_ENV_ALLOWLIST = frozenset(
+    name.upper()
+    for name in (
+        "PATH",
+        "HOME",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "LANG",
+        "LC_ALL",
+        "PYTHONIOENCODING",
+        # Windows essentials
+        "SYSTEMROOT",
+        "SYSTEMDRIVE",
+        "COMSPEC",
+        "WINDIR",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "PROGRAMDATA",
+        "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE",
+        # TLS trust stores commonly pointed at by env (certifi overrides)
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE",
+    )
+)
+
+
+def _worker_env() -> dict[str, str]:
+    """Allowlisted environment for runtime worker subprocesses.
+
+    Passes through OS plumbing and ``NOODLE_*`` variables only; never the
+    API's secrets. Name matching is case-insensitive (Windows semantics).
+    """
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in _WORKER_ENV_ALLOWLIST or key.upper().startswith("NOODLE_")
+    }
+    # Propagate the configurable per-node code timeout so the runtime
+    # subprocess applies the same default as the in-process engine. 0
+    # (default) leaves code uncapped.
+    env["NOODLE_CODE_NODE_TIMEOUT_SECONDS"] = str(
+        settings.code_node_timeout_seconds
+    )
+    return env
+
+
 async def _python_for_env(env_id: str | None) -> str:
     if env_id:
         candidate = await ensure_environment_ready(env_id)
@@ -146,13 +203,7 @@ class _RuntimeProcess:
     @classmethod
     async def spawn(cls, env_id: str | None) -> "_RuntimeProcess":
         python = await _python_for_env(env_id)
-        env = dict(os.environ)
-        # Propagate the configurable per-node code timeout so the runtime
-        # subprocess applies the same default as the in-process engine. 0
-        # (default) leaves code uncapped.
-        env["NOODLE_CODE_NODE_TIMEOUT_SECONDS"] = str(
-            settings.code_node_timeout_seconds
-        )
+        env = _worker_env()
         process = await asyncio.create_subprocess_exec(
             python,
             "-u",
