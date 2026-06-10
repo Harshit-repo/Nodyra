@@ -49,9 +49,16 @@ function parameter rendered in the inspector. The engine filters kwargs to
 what the function actually accepts before calling, so the virtual `input`
 port is not passed to functions that don't declare it.
 
-The engine (`noodle.engine.execute`) walks the graph in topological order,
-resolving each node's wired inputs from upstream outputs and its config
-parameters from the inspector.
+The engine (`noodle.engine.execute`, a package under
+`packages/core/noodle/engine/` — scheduler, node_exec, loops, agent,
+datasets, validation, metanodes, types — behind a re-exporting facade)
+schedules the graph by **dependency counting**: a node starts the moment all
+of its in-set predecessors complete, with no level barrier holding a fast
+branch hostage to a slow sibling. Loop regions are contracted into their
+`loop_start` node as a single scheduling unit (loop validation guarantees
+single-entry/single-exit, so the region's driver owns its body). Each node's
+wired inputs resolve from upstream outputs and its config parameters from
+the inspector.
 
 **Ordering contract.** Execution order is a function of edges and node
 insertion order in `WorkflowGraph.nodes` only. Canvas position
@@ -77,7 +84,14 @@ It supports:
 - **artifacts** — Code/user-module nodes call `artifacts.write_*` to write
   bytes outside the DB; refs flow through node outputs as small JSON marker
   dicts and the UI renders them as artifact cards;
-- **live events** — `on_event` fires per-node start/finish with timing.
+- **live events** — `on_event` fires per-node start/finish with timing;
+- **process isolation** — `code` nodes run in a `ProcessIsolator` injected
+  by the host via `execute(..., process_isolator=...)`
+  (`noodle.process_isolation.PooledProcessIsolator`: one pool per
+  environment key, eviction keyed off task completion + in-flight counts so
+  a long-running code node's pool is never reaped mid-task). The API runner
+  and runtime server each own one; tests and exported scripts fall back to
+  a lazy module default.
 
 ## Triggers
 
