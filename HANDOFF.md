@@ -74,7 +74,8 @@ User ──UI──▶ FastAPI (apps/api)
 
 | Service | Role |
 |---|---|
-| `runner.py` | Orchestrates a run: load graph, gather code modules, resolve credentials, dispatch via `runtime_pool`, persist `NodeRun`s + logs/timing/artifacts. Holds `_prefer_draft_graphs` ContextVar — production-mode runs always force `published` sub-workflows. |
+| `runner.py` | Orchestrates a run: load graph, gather code modules, resolve credentials, dispatch via `runtime_pool`, persist `NodeRun`s + logs/timing/artifacts. Builds the per-run `SubworkflowMeta` (`subworkflows.meta_for_root_run`) — production-mode runs always force `published` sub-workflows via `use_published`. |
+| `subworkflows.py` | A3 host resolver (`resolve_subworkflow`): child graph lookup (draft vs published from `call.use_published`), credential resolution, trigger seeding, child `Run` rows (`mode="subworkflow"`, `parent_run_id`), inline-vs-spawn decision. Cycle/depth semantics live in `noodle.engine.subworkflows`, not here. |
 | `runtime_pool.py` | `_EnvPool(min_size, max_size)` per env. Three presets (Fixed/Elastic/Spawn-per-run) all driven by one rule: `release(): if min_size==0, close worker`. Reaper respects min floor. Global `max_concurrent_runs` semaphore at top-level dispatch only (subworkflows bypass to avoid deadlock). |
 | `triggers.py` | DB-backed in-process scheduler. `_is_due()` consults workspace `app_timezone` + per-trigger `timezone` override. `dispatch_webhook(path, payload) -> (run_ids, any_path_matched)` — 401 when path matched but auth failed. |
 | `credentials.py` + `redaction.py` | Encrypted-at-rest credential store, deterministic resolution (workflow → env → runner_pool → global). `_resolve_ref` returns whole dict when key=="*" (multi-field credentials). |
@@ -194,8 +195,8 @@ packages/nodes/tests/test_{execute_command,new_node_registration,transform_extra
 - **Engine backward-compat:** any new `GraphNode` field MUST be optional with default — exported scripts and the runtime depend on it.
 - **No pickle. Ever.** Use `serialization.py` envelopes for cross-process values.
 - **Secrets at boundaries only.** Decrypt in `runner._execute_run` right before dispatch; everything downstream (events, logs, persisted output) flows through `redaction.py`.
-- **Sub-workflows bypass the global concurrency cap.** Wrapping them deadlocks parents holding the only slot.
-- **Sub-workflows respect `_prefer_draft_graphs` ContextVar.** Editor manual runs propagate draft; webhook/schedule/deployment/error runs force published. Don't break this.
+- **Sub-workflows bypass the global concurrency cap.** Wrapping them deadlocks parents holding the only slot. (Unchanged by A3 — `dispatch_subworkflow` and the in-process child path both skip `global_slot()`.) Sub-workflow *semantics* — cycle detection, depth limits, inline-child execution, leaf extraction — live in `noodle.engine.subworkflows`; hosts (API, runtime subprocess, remote agent, exporter) supply a `SubworkflowRunner` resolver.
+- **Sub-workflows respect the run's `use_published` flag** (carried in `SubworkflowMeta`/`SubworkflowCall`, set from the root run's mode). Editor manual runs propagate draft; webhook/schedule/deployment/error runs force published. Don't break this.
 - **Frontend brand icons:** any node icon prefixed `brand:<slug>` resolves to `https://cdn.simpleicons.org/<slug>` via `NodeIcon.tsx`. Use real slugs.
 - **Credentials in node params:** declare via `cred_single(type, key, label)` for single-field or `cred_multi(type, label, [fields])` for multi-field. Multi sets `key="*"`; the resolver returns the whole dict.
 - **Webhook auth:** `dispatch_webhook` returns `(run_ids, any_path_matched)` — router maps `any_path_matched and not run_ids` → 401, no matches → 404.
@@ -240,7 +241,7 @@ cd apps/api && uv run uvicorn app.main:app --reload
 | How are env pools sized? | `apps/api/app/services/runtime_pool.py` `_resolve_pool_sizes` + `_EnvPool` |
 | What does a graph node look like? | `packages/core/noodle/models.py` `GraphNode` |
 | Where is the trigger-type list? | `apps/api/app/services/runner.py` `TRIGGER_TYPES` |
-| How does a workflow get its graph? | `apps/api/app/services/runner.py` `_load_workflow_graph` (respects `_prefer_draft_graphs`) |
+| How does a workflow get its graph? | `apps/api/app/services/subworkflows.py` `_load_workflow_graph` (respects `use_published` from the call) |
 | How does the inspector show a credential field? | `apps/web/src/editor/NodeDetails.tsx` `CredentialParamField` |
 | Where does the timezone dropdown render? | `apps/web/src/editor/fields/TimezoneSelect.tsx` (consumed in NDV) |
 
@@ -259,7 +260,7 @@ cd apps/api && uv run uvicorn app.main:app --reload
 ## 11. Things NOT to do
 
 - Don't reintroduce inline `api_key`/`token`/`password` params — use `cred_single` / `cred_multi`.
-- Don't read graphs as `workflow.draft_graph or latest.graph` in production paths — that's the Slice 11 sub-workflow leak. Use `_load_workflow_graph` which honors the ContextVar.
+- Don't read graphs as `workflow.draft_graph or latest.graph` in production paths — that's the Slice 11 sub-workflow leak. Use `subworkflows._load_workflow_graph`, which honors the call's `use_published` flag.
 - Don't add a global `sys.stdout` redirect for log capture — use the engine's context-local stream installer.
 - Don't bake `INTERNAL_API_TOKEN` into docker-compose. The `${VAR:?...}` form is intentional.
 - Don't ship a new GraphNode field without a default — exported scripts will break.

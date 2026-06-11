@@ -95,6 +95,22 @@ It supports:
   a long-running code node's pool is never reaped mid-task). The API runner
   and runtime server each own one; tests and exported scripts fall back to
   a lazy module default.
+- **sub-workflows (A3)** — the engine owns calling semantics (cycle
+  detection via an explicit `call_chain`, depth limiting via
+  `max_subworkflow_depth`, inline-child execution, leaf extraction) in
+  `noodle.engine.subworkflows`; hosts inject a `SubworkflowRunner` resolver
+  through `execute(..., subworkflow_runner=..., subworkflow_meta=...)`. The
+  API resolver (`app/services/subworkflows.py`) loads the child graph
+  (draft vs published from the call's `use_published`), creates a child
+  `Run` row (`mode="subworkflow"`, `parent_run_id`, org inherited from the
+  parent), and either spawns a subprocess via `dispatch_subworkflow`
+  (global-cap bypass preserved) or answers with an `InlineSubworkflow`
+  directive when parent and child share an env — the parent's engine then
+  runs the prepared child graph itself, with correct depth/chain meta, so
+  nested workflow calls inside inline children are allowed. The runtime
+  subprocess RPCs calls back to the host over stdio; remote agents broker
+  them over the runner WebSocket; exported scripts resolve them from a
+  bundled `SUBWORKFLOWS` map with no server.
 
 ## Triggers
 
