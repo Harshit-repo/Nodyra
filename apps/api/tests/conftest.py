@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+import app.mcp.tools as mcp_tools_module
 import app.routers.runner_pools as runner_pools_module
 import app.services.artifacts as artifacts_module
 import app.services.chat_service as chat_service_module
@@ -185,6 +186,7 @@ async def client() -> AsyncIterator[AsyncClient]:
         remote_dispatch_module: remote_dispatch_module.SessionLocal,
         runner_pools_module: runner_pools_module.SessionLocal,
         subworkflows_module: subworkflows_module.SessionLocal,
+        mcp_tools_module: mcp_tools_module.SessionLocal,
     }
     backends_module.SessionLocal = test_session
     artifacts_module.SessionLocal = test_session
@@ -198,6 +200,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     remote_dispatch_module.SessionLocal = test_session
     runner_pools_module.SessionLocal = test_session
     subworkflows_module.SessionLocal = test_session
+    mcp_tools_module.SessionLocal = test_session
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
