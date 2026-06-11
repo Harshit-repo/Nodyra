@@ -15,6 +15,7 @@ dependencies = [
     "cryptography>=42.0",
     "duckdb>=1.0",
     "pyarrow>=15.0",
+    "mcp>=1.9",
 ]
 
 [project.optional-dependencies]
