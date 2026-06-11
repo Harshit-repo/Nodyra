@@ -21,6 +21,7 @@ Submodules:
 """
 
 from noodle_nodes.ai_v2 import agents as agents
+from noodle_nodes.ai_v2 import mcp as mcp
 from noodle_nodes.ai_v2 import document_loaders as document_loaders
 from noodle_nodes.ai_v2 import embeddings as embeddings
 from noodle_nodes.ai_v2 import guardrails as guardrails
@@ -37,6 +38,7 @@ __all__ = [
     "document_loaders",
     "embeddings",
     "agents",
+    "mcp",
     "guardrails",
     "memory",
     "model_options",
