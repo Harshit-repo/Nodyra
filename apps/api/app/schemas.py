@@ -31,6 +31,10 @@ class WorkflowUpdate(BaseModel):
     # Per-workflow wall-clock cap (seconds) for a run. None leaves it unset
     # (falls back to the server default); 0 disables the cap for this workflow.
     run_timeout_seconds: float | None = Field(default=None, ge=0)
+    mcp_enabled: bool | None = None
+    mcp_tool_name: str | None = None
+    mcp_description: str | None = None
+    mcp_parameters_schema: dict | None = None
 
 
 class ProviderTriggerStatusCounts(BaseModel):
@@ -94,6 +98,10 @@ class WorkflowDetail(BaseModel):
     error_alerts: dict[str, Any] = Field(default_factory=dict)
     allow_concurrent: bool = True
     run_timeout_seconds: float | None = None
+    mcp_enabled: bool = False
+    mcp_tool_name: str | None = None
+    mcp_description: str | None = None
+    mcp_parameters_schema: dict | None = None
     provider_trigger_counts: ProviderTriggerStatusCounts = Field(
         default_factory=ProviderTriggerStatusCounts
     )
@@ -999,7 +1007,7 @@ class RunApprovalInfo(BaseModel):
 
 
 class RunApprovalDecisionRequest(BaseModel):
-    decision: Literal["approve", "reject"]
+    decision: Literal["approve", "reject", "approve_all"]
     reason: str | None = Field(default=None, max_length=4000)
     resolved_by: str | None = Field(default=None, max_length=120)
 

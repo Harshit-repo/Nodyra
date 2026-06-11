@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -228,6 +230,10 @@ async def _detail(session: AsyncSession, workflow: Workflow) -> WorkflowDetail:
         error_alerts=workflow.error_alerts or {},
         allow_concurrent=workflow.allow_concurrent,
         run_timeout_seconds=workflow.run_timeout_seconds,
+        mcp_enabled=workflow.mcp_enabled,
+        mcp_tool_name=workflow.mcp_tool_name,
+        mcp_description=workflow.mcp_description,
+        mcp_parameters_schema=workflow.mcp_parameters_schema,
         provider_trigger_counts=counts.get(
             workflow.id,
             ProviderTriggerStatusCounts(),
@@ -369,6 +375,20 @@ async def update_workflow(
         workflow.allow_concurrent = body.allow_concurrent
     if body.run_timeout_seconds is not None:
         workflow.run_timeout_seconds = body.run_timeout_seconds
+    if body.mcp_enabled is not None:
+        workflow.mcp_enabled = body.mcp_enabled
+    if body.mcp_tool_name is not None:
+        name_value = body.mcp_tool_name.strip()
+        if name_value and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name_value):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "mcp_tool_name must match [A-Za-z0-9_-]{1,64}.",
+            )
+        workflow.mcp_tool_name = name_value or None
+    if body.mcp_description is not None:
+        workflow.mcp_description = body.mcp_description.strip() or None
+    if body.mcp_parameters_schema is not None:
+        workflow.mcp_parameters_schema = body.mcp_parameters_schema
     if body.graph is not None:
         _validate_node_types(body.graph)
         workflow.draft_graph = body.graph.model_dump()

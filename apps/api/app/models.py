@@ -326,6 +326,12 @@ class Workflow(Base):
     run_timeout_seconds: Mapped[float | None] = mapped_column(
         Float, nullable=True
     )
+    mcp_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=false()
+    )
+    mcp_tool_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    mcp_description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    mcp_parameters_schema: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
