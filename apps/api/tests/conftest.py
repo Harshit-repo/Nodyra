@@ -19,6 +19,7 @@ import app.services.remote_dispatch as remote_dispatch_module
 import app.services.retention as retention_module
 import app.services.runner as runner_module
 import app.services.runtime_pool as runtime_pool_module
+import app.services.subworkflows as subworkflows_module
 import app.services.triggers as triggers_module
 import app.services.backends as backends_module
 import app.services.venv as venv_module
@@ -183,6 +184,7 @@ async def client() -> AsyncIterator[AsyncClient]:
         runtime_pool_module: runtime_pool_module.SessionLocal,
         remote_dispatch_module: remote_dispatch_module.SessionLocal,
         runner_pools_module: runner_pools_module.SessionLocal,
+        subworkflows_module: subworkflows_module.SessionLocal,
     }
     backends_module.SessionLocal = test_session
     artifacts_module.SessionLocal = test_session
@@ -195,6 +197,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     runtime_pool_module.SessionLocal = test_session
     remote_dispatch_module.SessionLocal = test_session
     runner_pools_module.SessionLocal = test_session
+    subworkflows_module.SessionLocal = test_session
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
