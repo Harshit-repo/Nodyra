@@ -21,6 +21,7 @@ import app.services.retention as retention_module
 import app.services.runner as runner_module
 import app.services.runtime_pool as runtime_pool_module
 import app.services.subworkflows as subworkflows_module
+import app.services.queue as queue_module
 import app.services.triggers as triggers_module
 import app.services.backends as backends_module
 import app.services.venv as venv_module
@@ -126,6 +127,24 @@ def _reset_run_dispatch_state():
     _reset()
 
 
+@pytest.fixture(autouse=True)
+def _reset_webhook_listen_state():
+    """Clear in-memory webhook listen sessions and capture buffer between tests.
+
+    Both dicts are module-level state in the webhooks router. Without a reset,
+    a test that calls start_listen_session for path X leaves that session open
+    for subsequent tests, and a captured payload can pollute the next test's
+    lastWebhook poll.
+    """
+    import app.routers.webhooks as webhooks_module
+
+    webhooks_module._listening.clear()
+    webhooks_module._captured.clear()
+    yield
+    webhooks_module._listening.clear()
+    webhooks_module._captured.clear()
+
+
 # Set ``NOODLE_TEST_DATABASE_URL`` (e.g. a Postgres async URL) to run the suite
 # against a real backend instead of per-test SQLite. The CI "postgres" lane uses
 # this so the durable queue's ``SELECT ... FOR UPDATE SKIP LOCKED`` lease path
@@ -179,6 +198,7 @@ async def client() -> AsyncIterator[AsyncClient]:
         chat_service_module: chat_service_module.SessionLocal,
         runner_module: runner_module.SessionLocal,
         triggers_module: triggers_module.SessionLocal,
+        queue_module: queue_module.SessionLocal,
         retention_module: retention_module.SessionLocal,
         live_settings_module: live_settings_module.SessionLocal,
         provider_triggers_module: provider_triggers_module.SessionLocal,
@@ -193,6 +213,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     chat_service_module.SessionLocal = test_session
     runner_module.SessionLocal = test_session
     triggers_module.SessionLocal = test_session
+    queue_module.SessionLocal = test_session
     retention_module.SessionLocal = test_session
     live_settings_module.SessionLocal = test_session
     provider_triggers_module.SessionLocal = test_session
