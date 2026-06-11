@@ -572,3 +572,40 @@ async def test_cancel_reconcile_cancels_local_task_for_cancelled_entry(session) 
     finally:
         for t in active.values():
             t.cancel()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_persists_trace_context(session) -> None:
+    from app.services import queue as run_queue
+
+    entry = await run_queue.enqueue(
+        session,
+        run_id="run-tc",
+        workflow_id="wf-1",
+        trace_context={"traceparent": "00-aa-bb-01"},
+    )
+    await session.commit()
+    await session.refresh(entry)
+    assert entry.trace_context == {"traceparent": "00-aa-bb-01"}
+
+
+@pytest.mark.asyncio
+async def test_reenqueue_replaces_trace_context(session) -> None:
+    from app.services import queue as run_queue
+
+    entry = await run_queue.enqueue(
+        session,
+        run_id="run-tc2",
+        workflow_id="wf-1",
+        trace_context={"traceparent": "00-old-old-01"},
+    )
+    entry.status = "failed"  # terminal -> revival path
+    await session.commit()
+    revived = await run_queue.enqueue(
+        session,
+        run_id="run-tc2",
+        workflow_id="wf-1",
+        trace_context={"traceparent": "00-new-new-01"},
+    )
+    await session.commit()
+    assert revived.trace_context == {"traceparent": "00-new-new-01"}

@@ -102,6 +102,7 @@ async def enqueue(
     runner_pool_id: str | None = None,
     max_attempts: int | None = None,
     available_at: datetime | None = None,
+    trace_context: dict | None = None,
 ) -> RunQueueEntry:
     """Add a run to the queue, or reset an existing entry for the same run.
 
@@ -122,6 +123,7 @@ async def enqueue(
         existing.lease_expires_at = None
         existing.last_error = None
         existing.available_at = available_at or _now(None)
+        existing.trace_context = trace_context
         return existing
 
     entry = RunQueueEntry(
@@ -134,6 +136,7 @@ async def enqueue(
         priority=priority,
         max_attempts=max_attempts if max_attempts is not None else _default_max_attempts(),
         available_at=available_at or _now(None),
+        trace_context=trace_context,
     )
     session.add(entry)
     await session.flush()

@@ -951,6 +951,10 @@ class RunQueueEntry(Base):
     # "targets": [node_id, ...]}``. ``_execute_queued_entry`` merges this onto the
     # pinned cache and uses ``targets`` instead of the trigger-derived ones.
     replay_seed: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # W3C trace-context carrier injected at enqueue (program A5) so the worker
+    # that leases this entry can parent its spans on the enqueueing request's
+    # trace. None whenever tracing is disabled.
+    trace_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
