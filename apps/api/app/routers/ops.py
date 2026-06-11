@@ -84,6 +84,7 @@ async def runtime_mode(
         artifact_backend=settings.artifact_storage_backend,
         runner_providers=runner_providers,
         allow_insecure=settings.runtime_allow_insecure,
+        otel_enabled=settings.otel_enabled,
         warnings=settings.runtime_warnings(),
     )
 

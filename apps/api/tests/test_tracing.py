@@ -141,3 +141,8 @@ async def test_run_produces_connected_trace(client: AsyncClient, exporter) -> No
     types = {s.attributes["noodle.node_id"]: s.attributes["noodle.node_type"]
              for s in node_spans}
     assert types == {"t": "manual_trigger", "c": "code"}
+
+
+async def test_runtime_mode_reports_otel_flag(client: AsyncClient) -> None:
+    body = (await client.get("/ops/runtime-mode")).json()
+    assert body["otel_enabled"] is False

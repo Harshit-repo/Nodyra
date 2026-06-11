@@ -895,6 +895,7 @@ class RuntimeModeStatus(BaseModel):
     artifact_backend: str
     runner_providers: list[str]
     allow_insecure: bool
+    otel_enabled: bool
     warnings: list[str]
 
 

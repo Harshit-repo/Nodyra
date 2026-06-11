@@ -16,6 +16,7 @@ import contextlib
 import logging
 import signal
 
+from app import tracing
 from app.config import settings
 from app.db import engine
 from app.redis_client import redis_client
@@ -56,6 +57,10 @@ def _as_system(loop_fn):
 
 async def _amain() -> None:
     _validate()
+    # A5: no-ops unless OTEL_ENABLED=true. The worker has no HTTP surface, so
+    # only SQLAlchemy gets instrumented; run spans come from the runner hooks.
+    tracing.setup_tracing("noodle-worker")
+    tracing.instrument_sqlalchemy(engine)
     if settings.artifact_storage_backend == "s3":
         from app.services.s3_artifact_backend import register_s3_backend  # noqa: PLC0415
 
@@ -105,6 +110,8 @@ async def _amain() -> None:
         with contextlib.suppress(Exception):
             await runtime_pool.shutdown()
         process_isolator.shutdown()
+        with contextlib.suppress(Exception):
+            tracing.flush()
         with contextlib.suppress(Exception):
             await engine.dispose()
         with contextlib.suppress(Exception):

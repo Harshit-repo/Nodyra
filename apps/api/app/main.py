@@ -41,6 +41,7 @@ from app.routers import (
     webhooks,
     workflows,
 )
+from app import tracing
 from app.services.crypto import verify_token
 from app.services.events import broker_reaper_loop
 from app.services.queue import run_queue_dispatch_loop
@@ -331,6 +332,7 @@ async def lifespan(app: FastAPI):
     await _bounded(dispatcher.shutdown())
     await _bounded(runtime_pool.shutdown())
     await _bounded(expr_preview.shutdown())
+    tracing.flush()  # push buffered spans before the process winds down
     process_isolator.shutdown()  # sync + fast: wait=False pool teardown
     await _bounded(engine.dispose())
     await _bounded(redis_client.aclose())
@@ -349,6 +351,13 @@ app = FastAPI(
     lifespan=lifespan,
     dependencies=[Depends(resolve_org)],
 )
+
+# A5: tracing is initialised at import so FastAPI/SQLAlchemy instrumentation
+# wraps everything from the first request. All three calls no-op when
+# settings.otel_enabled is false.
+tracing.setup_tracing("noodle-api")
+tracing.instrument_app(app)
+tracing.instrument_sqlalchemy(engine)
 
 # NOTE: CORSMiddleware is added LAST (see bottom of this block) so it is the
 # OUTERMOST middleware. Starlette's add_middleware prepends, so the last call
