@@ -24,6 +24,14 @@ import {
 } from "./editor/store";
 import { Logo } from "./Logo";
 import { useCan } from "./permissions";
+import {
+  useEnvironments,
+  useNodes,
+  usePinned,
+  useRuns,
+  useWorkflow,
+  useWorkflowCustomNodeManifests,
+} from "./queries";
 import { RunApprovalsPanel } from "./RunApprovalsPanel";
 import { useToast } from "./ToastProvider";
 import { useModalA11y } from "./useModalA11y";
@@ -31,7 +39,6 @@ import type {
   AiDraftMode,
   AiFixStrategy,
   AiWorkflowDraftResponse,
-  Environment,
   GraphNode,
   RunEvent,
   RunInfo,
@@ -190,6 +197,12 @@ function A11yModal({
 
 export function EditorPage() {
   const { id } = useParams<{ id: string }>();
+  const workflowQuery = useWorkflow(id ?? null);
+  const nodesQuery = useNodes();
+  const customNodesQuery = useWorkflowCustomNodeManifests(id ?? null);
+  const environmentsQuery = useEnvironments();
+  const pinnedQuery = usePinned(id ?? null);
+  const runsQuery = useRuns(id ?? null, { enabled: false });
   const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   const [name, setName] = useState("");
   const [active, setActive] = useState(false);
@@ -198,7 +211,7 @@ export function EditorPage() {
   const [mcpEnabled, setMcpEnabled] = useState(false);
   const [mcpToolName, setMcpToolName] = useState("");
   const [mcpDescription, setMcpDescription] = useState("");
-  const [environments, setEnvironments] = useState<Environment[]>([]);
+  const environments = environmentsQuery.data ?? [];
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
@@ -238,6 +251,7 @@ export function EditorPage() {
   const runsMenuRef = useRef<HTMLDivElement | null>(null);
   const aiAbortRef = useRef<AbortController | null>(null);
   const saveInProgressRef = useRef(false);
+  const loadedWorkflowIdRef = useRef<string | null>(null);
 
   const setManifests = useEditor((s) => s.setManifests);
   const setEnvContext = useEditor((s) => s.setEnvContext);
@@ -292,73 +306,108 @@ export function EditorPage() {
 
   useEffect(() => {
     if (!id) return;
-    let cancelled = false;
+    loadedWorkflowIdRef.current = null;
     setStatus("loading");
+    setMessage("");
     clearRun();
     closeNdv();
-    (async () => {
-      try {
-        const [manifests, custom, detail, envs, pinnedList] = await Promise.all([
-          api.nodes(),
-          api.workflowCustomNodeManifests(id),
-          api.getWorkflow(id),
-          api.listEnvironments(),
-          api.listPinned(id),
-        ]);
-        if (cancelled) return;
-        setManifests([...manifests, ...custom]);
-        loadGraph(detail.graph);
-        setWorkflow(detail);
-        setName(detail.name);
-        setActive(detail.active);
-        setEnvironmentId(detail.environment_id);
-        setRunTimeout(
-          detail.run_timeout_seconds != null
-            ? String(detail.run_timeout_seconds)
-            : "",
-        );
-        setMcpEnabled(detail.mcp_enabled ?? false);
-        setMcpToolName(detail.mcp_tool_name ?? "");
-        setMcpDescription(detail.mcp_description ?? "");
-        setEnvironments(envs);
-        setWorkflowId(id);
-        const pinnedMap: Record<string, PinnedOutput> = {};
-        for (const p of pinnedList) {
-          pinnedMap[p.node_id] = { payload: p.payload, updatedAt: p.updated_at };
-        }
-        setPinned(pinnedMap);
-        setStatus("ready");
-        window.setTimeout(() => window.dispatchEvent(new Event("noodle:fit-view")), 60);
+    setWorkflowId(id);
+  }, [clearRun, closeNdv, id, setWorkflowId]);
 
-        // Load child workflows for any map_group nodes.
-        const mapGroupNodes = useEditor.getState().nodes.filter(
-          (n) => n.type === "mapGroup" && Boolean(n.data.params.child_workflow_id as string),
-        );
-        if (mapGroupNodes.length > 0) {
-          await Promise.all(
-            mapGroupNodes.map(async (mg) => {
-              if (cancelled) return;
-              const childId = mg.data.params.child_workflow_id as string;
-              setChildWorkflowLoading(mg.id, true);
-              try {
-                const child = await api.getWorkflow(childId);
-                if (!cancelled) loadChildGraph(mg.id, childId, child.graph);
-              } catch (err) {
-                if (!cancelled) setChildWorkflowLoading(mg.id, false, String(err));
-              }
-            }),
-          );
-        }
-      } catch (err) {
-        if (cancelled) return;
-        setMessage(String(err));
-        setStatus("error");
-      }
-    })();
+  useEffect(() => {
+    if (!id || loadedWorkflowIdRef.current === id) return;
+    if (
+      workflowQuery.isLoading ||
+      nodesQuery.isLoading ||
+      customNodesQuery.isLoading ||
+      environmentsQuery.isLoading ||
+      pinnedQuery.isLoading
+    ) {
+      return;
+    }
+    const loadError =
+      workflowQuery.error ??
+      nodesQuery.error ??
+      customNodesQuery.error ??
+      environmentsQuery.error ??
+      pinnedQuery.error;
+    if (loadError) {
+      setMessage(errorMessage(loadError));
+      setStatus("error");
+      return;
+    }
+    const detail = workflowQuery.data;
+    if (!detail || !nodesQuery.data || !customNodesQuery.data || !pinnedQuery.data) {
+      return;
+    }
+
+    let cancelled = false;
+    setManifests([...nodesQuery.data, ...customNodesQuery.data]);
+    loadGraph(detail.graph);
+    setWorkflow(detail);
+    setName(detail.name);
+    setActive(detail.active);
+    setEnvironmentId(detail.environment_id);
+    setRunTimeout(
+      detail.run_timeout_seconds != null ? String(detail.run_timeout_seconds) : "",
+    );
+    setMcpEnabled(detail.mcp_enabled ?? false);
+    setMcpToolName(detail.mcp_tool_name ?? "");
+    setMcpDescription(detail.mcp_description ?? "");
+    const pinnedMap: Record<string, PinnedOutput> = {};
+    for (const p of pinnedQuery.data) {
+      pinnedMap[p.node_id] = { payload: p.payload, updatedAt: p.updated_at };
+    }
+    setPinned(pinnedMap);
+    loadedWorkflowIdRef.current = id;
+    setStatus("ready");
+    window.setTimeout(() => window.dispatchEvent(new Event("noodle:fit-view")), 60);
+
+    // Load child workflows for any map_group nodes.
+    const mapGroupNodes = useEditor.getState().nodes.filter(
+      (n) => n.type === "mapGroup" && Boolean(n.data.params.child_workflow_id as string),
+    );
+    if (mapGroupNodes.length > 0) {
+      void Promise.all(
+        mapGroupNodes.map(async (mg) => {
+          if (cancelled) return;
+          const childId = mg.data.params.child_workflow_id as string;
+          setChildWorkflowLoading(mg.id, true);
+          try {
+            const child = await api.getWorkflow(childId);
+            if (!cancelled) loadChildGraph(mg.id, childId, child.graph);
+          } catch (err) {
+            if (!cancelled) setChildWorkflowLoading(mg.id, false, String(err));
+          }
+        }),
+      );
+    }
+
     return () => {
       cancelled = true;
     };
-  }, [id, setManifests, loadGraph, clearRun, closeNdv, setWorkflowId, setPinned, setChildWorkflowLoading, loadChildGraph]);
+  }, [
+    customNodesQuery.data,
+    customNodesQuery.error,
+    customNodesQuery.isLoading,
+    environmentsQuery.error,
+    environmentsQuery.isLoading,
+    id,
+    loadChildGraph,
+    loadGraph,
+    nodesQuery.data,
+    nodesQuery.error,
+    nodesQuery.isLoading,
+    pinnedQuery.data,
+    pinnedQuery.error,
+    pinnedQuery.isLoading,
+    setChildWorkflowLoading,
+    setManifests,
+    setPinned,
+    workflowQuery.data,
+    workflowQuery.error,
+    workflowQuery.isLoading,
+  ]);
 
   // Mirror the current run-environment context into the editor store so the
   // NDV can flag nodes whose packages the env lacks (and offer fix actions).
@@ -1067,7 +1116,8 @@ export function EditorPage() {
       return;
     }
     try {
-      const list = await api.listRuns(id);
+      const result = await runsQuery.refetch();
+      const list = result.data ?? [];
       setRunsList(list);
       setRunsOpen(true);
     } catch (err) {
@@ -1270,6 +1320,12 @@ export function EditorPage() {
                   onClick={() => setExportOpen(false)}
                 >
                   Docker bundle (.zip)
+                </a>
+                <a
+                  href={`/api/workflows/${id}/export.module.py`}
+                  onClick={() => setExportOpen(false)}
+                >
+                  Python module (code-first .py)
                 </a>
               </div>
             )}
@@ -1601,10 +1657,10 @@ export function EditorPage() {
           onClose={() => setFunctionsOpen(false)}
           onChanged={async () => {
             const [builtins, custom] = await Promise.all([
-              api.nodes(),
-              api.workflowCustomNodeManifests(id),
+              nodesQuery.refetch(),
+              customNodesQuery.refetch(),
             ]);
-            setManifests([...builtins, ...custom]);
+            setManifests([...(builtins.data ?? []), ...(custom.data ?? [])]);
           }}
           onApplyStarterGraph={(graph) => {
             // Apply locally and mark the workflow dirty; the user reviews on

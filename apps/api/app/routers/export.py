@@ -5,9 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+import noodle_nodes  # noqa: F401 - registers built-in nodes
 from app.db import get_session
 from app.models import Environment, Workflow
-from noodle_exporter import docker_bundle, slugify, workflow_to_script
+from noodle.models import WorkflowGraph
+from noodle.sdk import registry as node_registry
+from noodle_exporter import docker_bundle, slugify, workflow_to_module, workflow_to_script
 
 router = APIRouter(tags=["export"])
 
@@ -91,6 +94,32 @@ async def export_script(
         media_type="text/x-python",
         headers={
             "Content-Disposition": f'attachment; filename="{slugify(workflow.name)}.py"'
+        },
+    )
+
+
+@router.get("/workflows/{workflow_id}/export.module.py")
+async def export_module(
+    workflow_id: str, session: AsyncSession = Depends(get_session)
+) -> Response:
+    """Code-first export: one @node-decorated function per workflow node."""
+    workflow = await _load(session, workflow_id)
+    graph = workflow.draft_graph or workflow.versions[-1].graph or EMPTY_GRAPH
+    subs = await _collect_subworkflows(session, graph)
+    script = workflow_to_module(
+        WorkflowGraph.model_validate(graph),
+        workflow.name,
+        registry=node_registry,
+        subworkflows=subs,
+        root_id=workflow.id,
+    )
+    return Response(
+        script,
+        media_type="text/x-python",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{slugify(workflow.name)}_module.py"'
+            )
         },
     )
 

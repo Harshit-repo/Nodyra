@@ -46,3 +46,13 @@ async def test_export_docker_bundle(client: AsyncClient) -> None:
         "Dockerfile",
         "README.md",
     }
+
+
+async def test_export_python_module(client: AsyncClient) -> None:
+    workflow_id = await _workflow(client)
+    resp = await client.get(f"/workflows/{workflow_id}/export.module.py")
+    assert resp.status_code == 200
+    assert "@node(" in resp.text
+    assert "workflow_registry" in resp.text
+    assert "manual_trigger" in resp.text
+    assert "attachment" in resp.headers["content-disposition"]
