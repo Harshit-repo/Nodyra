@@ -372,6 +372,7 @@ async def list_deployment_runs(
             workflow_version_id=run.workflow_version_id,
             deployment_id=run.deployment_id,
             triggered_by_error_run_id=run.triggered_by_error_run_id,
+            parent_run_id=run.parent_run_id,
             mode=run.mode,
             status=run.status,
             trigger_type=run.trigger_type,

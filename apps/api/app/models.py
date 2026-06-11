@@ -479,6 +479,11 @@ class Run(Base):
     triggered_by_error_run_id: Mapped[str | None] = mapped_column(
         ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # A3: set when this run is a sub-workflow child spawned by another run's
+    # execute_workflow / map_* node. Children carry mode="subworkflow".
+    parent_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     runner_pool_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     runner_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     batch_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)

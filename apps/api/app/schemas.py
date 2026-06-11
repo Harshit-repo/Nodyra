@@ -297,6 +297,7 @@ class RunListItem(BaseModel):
     workflow_version_id: str | None = None
     deployment_id: str | None = None
     triggered_by_error_run_id: str | None = None
+    parent_run_id: str | None = None
     runner_pool_id: str | None = None
     runner_id: str | None = None
     batch_id: str | None = None
@@ -317,6 +318,7 @@ class RunInfo(BaseModel):
     workflow_version_id: str | None = None
     deployment_id: str | None = None
     triggered_by_error_run_id: str | None = None
+    parent_run_id: str | None = None
     runner_pool_id: str | None = None
     runner_id: str | None = None
     batch_id: str | None = None

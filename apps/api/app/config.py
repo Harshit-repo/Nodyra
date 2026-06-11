@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     # without hard-blocking legitimate nesting.
     max_concurrent_subworkflows: int = 0
     subworkflow_spawn_timeout_seconds: float = 30.0
+    # A3: hard ceiling on sub-workflow nesting depth (root = 0). Cycle
+    # detection catches A->B->A; this catches runaway A->B->C->... chains.
+    # 0 = unlimited.
+    max_subworkflow_depth: int = 16
     # Close warm runner processes that have been idle longer than this.
     # 0 disables reaping (warm forever). Sweep interval is separate so the
     # cost stays low even with a low idle threshold.
