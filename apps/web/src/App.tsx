@@ -2,9 +2,10 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 
 const AUTH_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000, 30000, 60000];
 const AUTH_MAX_RETRIES = AUTH_RETRY_DELAYS_MS.length;
+import { QueryClientProvider } from "@tanstack/react-query";
 import { Link, Route, Routes, useLocation } from "react-router-dom";
 
-import { api, onUnauthorized, setToken, setUser } from "./api";
+import { api, apiLogout, onUnauthorized, setToken, setUser } from "./api";
 import { NO_AUTH_FALLBACK, shouldRetryAuthError } from "./authBootstrap";
 import { BackendLoading } from "./BackendLoading";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -13,6 +14,7 @@ import { ErrorBoundary } from "./ErrorBoundary";
 // import { AppAssistant } from "./AppAssistant";
 import { ConfirmProvider } from "./ConfirmProvider";
 import { LoginPage } from "./LoginPage";
+import { queryClient } from "./queries";
 import { ToastProvider } from "./ToastProvider";
 import type { AuthState, UserInfo } from "./types";
 
@@ -114,6 +116,9 @@ export default function App() {
   }
 
   const signOut = useCallback((): void => {
+    // Fire-and-forget: clears server httpOnly cookie; local state cleared
+    // synchronously below so the UI transitions immediately.
+    void apiLogout();
     setToken(null);
     setUser(null);
     setAuth((current) =>
@@ -170,32 +175,34 @@ export default function App() {
   }
 
   return (
-    <ToastProvider>
-      <ConfirmProvider>
-        <ErrorBoundary resetKey={location.pathname}>
-          <Suspense fallback={<BackendLoading retrying={false} />}>
-            <Routes>
-              <Route path="/" element={<WorkflowsPage />} />
-              <Route path="/environments" element={<EnvironmentsPage />} />
-              <Route path="/code-library" element={<CodeLibraryPage />} />
-              <Route path="/deployments" element={<DeploymentsPage />} />
-              <Route path="/executions" element={<ExecutionsPage />} />
-              <Route path="/credentials" element={<CredentialsPage />} />
-              <Route path="/activity" element={<ActivityPage />} />
-              <Route path="/runner-pools" element={<RunnerPoolsPage />} />
-              <Route path="/security" element={<SecurityPage />} />
-              <Route path="/organization" element={<OrganizationPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="/workflows/:id" element={<EditorPage />} />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </Suspense>
-        </ErrorBoundary>
-        {/* App-wide AI assistant (floating dock). Temporarily disabled in the UI
-            while it is iterated on — the component and its backend wiring remain
-            in the codebase (apps/web/src/AppAssistant.tsx). To re-enable, restore:
-            {location.pathname.startsWith("/workflows/") ? null : <AppAssistant />} */}
-      </ConfirmProvider>
-    </ToastProvider>
+    <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+        <ConfirmProvider>
+          <ErrorBoundary resetKey={location.pathname}>
+            <Suspense fallback={<BackendLoading retrying={false} />}>
+              <Routes>
+                <Route path="/" element={<WorkflowsPage />} />
+                <Route path="/environments" element={<EnvironmentsPage />} />
+                <Route path="/code-library" element={<CodeLibraryPage />} />
+                <Route path="/deployments" element={<DeploymentsPage />} />
+                <Route path="/executions" element={<ExecutionsPage />} />
+                <Route path="/credentials" element={<CredentialsPage />} />
+                <Route path="/activity" element={<ActivityPage />} />
+                <Route path="/runner-pools" element={<RunnerPoolsPage />} />
+                <Route path="/security" element={<SecurityPage />} />
+                <Route path="/organization" element={<OrganizationPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/workflows/:id" element={<EditorPage />} />
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </Suspense>
+          </ErrorBoundary>
+          {/* App-wide AI assistant (floating dock). Temporarily disabled in the UI
+              while it is iterated on — the component and its backend wiring remain
+              in the codebase (apps/web/src/AppAssistant.tsx). To re-enable, restore:
+              {location.pathname.startsWith("/workflows/") ? null : <AppAssistant />} */}
+        </ConfirmProvider>
+      </ToastProvider>
+    </QueryClientProvider>
   );
 }

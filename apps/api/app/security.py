@@ -3,11 +3,19 @@
 Auth can be disabled for local development. When it is enabled, endpoints
 using these dependencies require a valid bearer token and enforce the role
 minimum for the requested permission.
+
+Dual-mode auth (C3): requests may authenticate via either:
+  1. ``Authorization: Bearer <token>`` header (existing, always supported)
+  2. ``noodle_session`` httpOnly cookie set by POST /auth/login (SPA mode)
+
+Bearer auth takes precedence when both are present.  Cookie-auth requests
+MUST carry a valid ``X-CSRF-Token`` header on state-changing methods; the
+CSRF middleware in ``main.py`` enforces this before route handlers run.
 """
 
 from collections.abc import Awaitable, Callable
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,34 +70,68 @@ def role_allows(role: str, minimum: str) -> bool:
     return _ROLE_RANK.get(role, 0) >= _ROLE_RANK[minimum]
 
 
+def _extract_token(
+    authorization: str | None,
+    request: Request | None,
+) -> tuple[str | None, bool]:
+    """Extract a Noodle session token from the request.
+
+    Returns ``(token_str, is_cookie_auth)``.  Bearer takes precedence over
+    cookie so existing API consumers are unaffected.  ``is_cookie_auth`` lets
+    callers (and the CSRF middleware) know which auth mode was used.
+    """
+    if authorization and authorization.startswith("Bearer "):
+        return authorization.removeprefix("Bearer "), False
+    if request is not None:
+        cookie = request.cookies.get(settings.session_cookie_name)
+        if cookie:
+            return cookie, True
+    return None, False
+
+
 async def current_user(
+    request: Request,
     authorization: str | None = Header(default=None),
     session: AsyncSession = Depends(get_session),
 ) -> User:
-    if not authorization or not authorization.startswith("Bearer "):
+    token, is_cookie = _extract_token(authorization, request)
+    if not token:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
-    user_id = verify_token(authorization.removeprefix("Bearer "))
+    user_id = verify_token(token)
     if user_id is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
     user = await session.get(User, user_id)
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+    # Surface cookie-auth mode so the CSRF middleware can check it.
+    request.state.cookie_auth = is_cookie
     return user
 
 
 async def optional_current_user(
+    request: Request,
     authorization: str | None = Header(default=None),
     session: AsyncSession = Depends(get_session),
 ) -> User | None:
-    if not authorization:
+    token, is_cookie = _extract_token(authorization, request)
+    if not token:
         if settings.auth_required:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
         return None
-    return await current_user(authorization=authorization, session=session)
+    user_id = verify_token(token)
+    if user_id is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+    request.state.cookie_auth = is_cookie
+    return user
 
 
 async def _lenient_session_user(
-    authorization: str | None, session: AsyncSession
+    authorization: str | None,
+    session: AsyncSession,
+    request: Request | None = None,
 ) -> User | None:
     """The session user, or None — never raises.
 
@@ -98,16 +140,21 @@ async def _lenient_session_user(
     Basic/Bearer/JWT credential, not a Noodle session token. Those must not
     401 here; endpoints that require session auth still depend on the strict
     ``current_user``/``require_role`` chain.
+
+    Also checks the httpOnly session cookie (C3 dual-mode auth) when
+    ``request`` is provided.
     """
-    if not authorization or not authorization.startswith("Bearer "):
+    token, _ = _extract_token(authorization, request)
+    if not token:
         return None
-    user_id = verify_token(authorization.removeprefix("Bearer "))
+    user_id = verify_token(token)
     if user_id is None:
         return None
     return await session.get(User, user_id)
 
 
 async def resolve_org(
+    request: Request,
     x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
     authorization: str | None = Header(default=None),
     session: AsyncSession = Depends(get_session),
@@ -120,7 +167,7 @@ async def resolve_org(
     """
     if not settings.multi_tenancy_enabled:
         return None
-    user = await _lenient_session_user(authorization, session)
+    user = await _lenient_session_user(authorization, session, request)
     return await resolve_org_for(x_org_id, user, session)
 
 

@@ -46,6 +46,14 @@ const BASE = "/api";
 const TOKEN_KEY = "noodle_token";
 const USER_KEY = "noodle_user";
 const ORG_KEY = "noodle_org";
+// Must match settings.csrf_cookie_name and settings.csrf_header_name defaults.
+const CSRF_COOKIE_NAME = "noodle_csrf";
+const CSRF_HEADER_NAME = "X-CSRF-Token";
+
+function _getCookie(name: string): string | null {
+  const entry = document.cookie.split("; ").find((row) => row.startsWith(`${name}=`));
+  return entry ? decodeURIComponent(entry.split("=").slice(1).join("=")) : null;
+}
 
 /** Selected organization (multi-tenancy). Sent as X-Org-Id on every request;
  *  null means the server default org. */
@@ -89,6 +97,17 @@ function handleUnauthorized(): void {
   setToken(null);
   setUser(null);
   unauthorizedHandler?.();
+}
+
+/** Sign out: clears server-side cookies and local session state. */
+export async function apiLogout(): Promise<void> {
+  try {
+    await request<void>("/auth/logout", { method: "POST" });
+  } catch {
+    // Best-effort: always clear local state even if the server call fails.
+  }
+  setToken(null);
+  setUser(null);
 }
 
 export class ApiError extends Error {
@@ -172,7 +191,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const baseHeaders: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  if (token) baseHeaders.Authorization = `Bearer ${token}`;
+  if (token) {
+    baseHeaders.Authorization = `Bearer ${token}`;
+  } else {
+    // Cookie-auth mode: Bearer is absent but a CSRF cookie may be present.
+    // Echo it in the request header so the server-side CSRF double-submit
+    // check passes for state-changing requests.
+    const csrfToken = _getCookie(CSRF_COOKIE_NAME);
+    if (csrfToken) baseHeaders[CSRF_HEADER_NAME] = csrfToken;
+  }
   const orgId = getOrgId();
   if (orgId) baseHeaders["X-Org-Id"] = orgId;
   const headers = {
@@ -580,6 +607,15 @@ export const api = {
     request<void>(`/webhook-test/${encodeURIComponent(path)}/last`, {
       method: "DELETE",
     }),
+  startListen: (path: string) =>
+    request<{ listening: boolean; ttl_seconds: number }>(
+      `/webhook-test/${encodeURIComponent(path)}/listen`,
+      { method: "POST" },
+    ),
+  stopListen: (path: string) =>
+    request<void>(`/webhook-test/${encodeURIComponent(path)}/listen`, {
+      method: "DELETE",
+    }),
 
   authRequired: () => request<AuthState>("/auth/required"),
   login: (email: string, password: string) =>
@@ -775,11 +811,16 @@ export interface RunDebugSnapshot {
   node_errors: Record<string, string>;
 }
 
-export function runEventsUrl(runId: string): string {
+function _runEventsBaseUrl(runId: string): string {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}/ws/runs/${runId}`;
+}
+
+/** @deprecated Use subscribeToRunEvents — it handles ticket-based auth. */
+export function runEventsUrl(runId: string): string {
   const token = getToken();
   const query = token ? `?token=${encodeURIComponent(token)}` : "";
-  return `${proto}//${window.location.host}/ws/runs/${runId}${query}`;
+  return `${_runEventsBaseUrl(runId)}${query}`;
 }
 
 /** Subscribe to a run's live events with auto-reconnect.
@@ -813,9 +854,25 @@ export function subscribeToRunEvents(
   let attempt = 0;
   let closedByCaller = false;
 
-  function open(): void {
+  async function open(): Promise<void> {
     if (closedByCaller) return;
-    socket = new WebSocket(runEventsUrl(runId));
+    // Fetch a single-use WS ticket so the token doesn't appear in server
+    // access logs (?token= query param is visible there; ?ticket= is not).
+    // Fall back to the legacy ?token= param if the ticket request fails
+    // (e.g. auth is disabled in dev mode).
+    let wsUrl = _runEventsBaseUrl(runId);
+    const bearerToken = getToken();
+    if (bearerToken) {
+      try {
+        const { ticket } = await request<{ ticket: string }>("/auth/ws-ticket", {
+          method: "POST",
+        });
+        wsUrl += `?ticket=${encodeURIComponent(ticket)}`;
+      } catch {
+        wsUrl += `?token=${encodeURIComponent(bearerToken)}`;
+      }
+    }
+    socket = new WebSocket(wsUrl);
     socket.onmessage = (event) => {
       // Reset the backoff once any message arrives — the connection is healthy.
       attempt = 0;

@@ -458,6 +458,76 @@ _AUTH_EXEMPT_PATHS = {
 }
 
 
+_CSRF_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+# Paths that use their own request-level auth and must never be CSRF-blocked.
+_CSRF_EXEMPT_PREFIXES = (
+    "/health",
+    "/webhook",
+    "/webhook-test",
+    "/provider-webhook",
+    "/internal",
+    "/runner-pools/ws",
+    "/credentials/oauth/callback",
+)
+# Specific /auth endpoints that are safe without CSRF: they either have no
+# session cookie yet (bootstrapping login/register) or are idempotent reads.
+_CSRF_EXEMPT_PATHS_EXACT = {
+    "/auth/login",
+    "/auth/register",
+    "/auth/required",
+    "/auth/users",   # GET; list users admin endpoint
+}
+
+
+@app.middleware("http")
+async def _csrf_gate(request: Request, call_next):
+    """Enforce CSRF double-submit for cookie-authenticated state-changing requests.
+
+    Algorithm:
+      1. Read-only methods (GET/HEAD/OPTIONS) are always safe — skip.
+      2. Auth-exempt prefixes handle their own security — skip.
+      3. If the request carries ``Authorization: Bearer`` → Bearer is not
+         forgeable via cookie injection → skip CSRF check.
+      4. If the ``noodle_session`` httpOnly cookie is absent → anonymous or
+         Bearer-only client → skip (the route's own auth will 401 if needed).
+      5. Otherwise: verify that the ``X-CSRF-Token`` header matches the
+         ``noodle_csrf`` non-httpOnly cookie set by the login endpoint.
+         Mismatch → 403. This pattern prevents CSRF without a server-side
+         token store; the attacker can't read the ``noodle_csrf`` cookie
+         (same-site + domain restrictions) so they can't forge the header.
+    """
+    if request.method in _CSRF_SAFE_METHODS:
+        return await call_next(request)
+
+    path = request.url.path
+    if (
+        path in _AUTH_EXEMPT_PATHS
+        or path in _CSRF_EXEMPT_PATHS_EXACT
+        or any(path == p or path.startswith(f"{p}/") for p in _CSRF_EXEMPT_PREFIXES)
+    ):
+        return await call_next(request)
+
+    # Bearer auth is CSRF-safe — skip enforcement.
+    if request.headers.get("authorization", "").startswith("Bearer "):
+        return await call_next(request)
+
+    # No session cookie → anonymous / Bearer-only path → not a cookie session.
+    session_cookie = request.cookies.get(settings.session_cookie_name)
+    if not session_cookie:
+        return await call_next(request)
+
+    # Cookie-auth: enforce CSRF double-submit.
+    csrf_cookie = request.cookies.get(settings.csrf_cookie_name, "")
+    csrf_header = request.headers.get(settings.csrf_header_name, "")
+    if not csrf_cookie or not csrf_header or csrf_cookie != csrf_header:
+        return JSONResponse(
+            {"detail": "CSRF token missing or invalid"},
+            status_code=403,
+        )
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def auth_gate(request: Request, call_next):
     """Reject unauthenticated requests when ``settings.auth_required`` is on.
@@ -476,7 +546,12 @@ async def auth_gate(request: Request, call_next):
         return await call_next(request)
 
     header = request.headers.get("authorization", "")
+    # Accept cookie-based auth (httpOnly session cookie) as an alternative to
+    # Bearer — verify the token value is valid before passing the request on.
     if not header.startswith("Bearer "):
+        cookie_token = request.cookies.get(settings.session_cookie_name, "")
+        if cookie_token and verify_token(cookie_token) is not None:
+            return await call_next(request)
         # Allow ``?token=`` on routes that are typically opened via plain
         # browser navigation (artifact downloads, ws upgrade is handled
         # elsewhere). The query token is the same bearer token.

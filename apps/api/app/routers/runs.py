@@ -686,7 +686,8 @@ async def decide_run_approval(
             f"Approval has already been {approval.status}.",
         )
 
-    approval.status = "approved" if body.decision == "approve" else "rejected"
+    approved = body.decision in {"approve", "approve_all"}
+    approval.status = "approved" if approved else "rejected"
     approval.reason = body.reason or ""
     approval.resolved_by = body.resolved_by or None
     approval.resolved_at = datetime.now(UTC)
@@ -726,7 +727,11 @@ async def decide_run_approval(
     # Resume the waiting run for both decisions: approval lets the tool run,
     # rejection feeds a denial back to the agent so it can wrap up gracefully
     # instead of leaving the run stuck in "waiting" forever.
-    await resume_waiting_run_from_approval(run_id, approval.id)
+    await resume_waiting_run_from_approval(
+        run_id,
+        approval.id,
+        approve_all=body.decision == "approve_all",
+    )
     return approval
 
 
@@ -772,14 +777,29 @@ async def run_debug_snapshot(
 @router.websocket("/ws/runs/{run_id}")
 async def run_events(websocket: WebSocket, run_id: str) -> None:
     if settings.auth_required:
-        # WebSocket upgrades cannot send custom headers in many browsers/clients,
-        # so we accept the token via query param OR Authorization header.
-        token = websocket.query_params.get("token", "")
+        # WebSocket upgrades cannot send custom headers in most browsers,
+        # so we accept auth via:
+        #   1. ``?ticket=`` — a single-use ticket from POST /auth/ws-ticket
+        #      (preferred; avoids persistent tokens in access logs)
+        #   2. ``?token=`` — legacy bearer token query param (deprecated)
+        #   3. ``Authorization: Bearer`` header (non-browser clients)
+        token: str | None = None
+        ticket = websocket.query_params.get("ticket", "")
+        if ticket:
+            from app.services.ws_ticket import consume_ticket
+
+            user_id = await consume_ticket(ticket)
+            if user_id is None:
+                await websocket.close(code=1008)
+                return
+            token = "ok"  # already verified via ticket; skip verify_token below
+        if not token:
+            token = websocket.query_params.get("token", "")
         if not token:
             auth_header = websocket.headers.get("authorization", "")
             if auth_header.lower().startswith("bearer "):
                 token = auth_header[7:].strip()
-        if verify_token(token) is None:
+        if token != "ok" and verify_token(token) is None:
             await websocket.close(code=1008)
             return
     await websocket.accept()

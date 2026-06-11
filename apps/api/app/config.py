@@ -206,6 +206,22 @@ class Settings(BaseSettings):
     # Public API base URL used for remote runners and provider webhook callback
     # URLs. Blank falls back to localhost in non-request lifecycle paths.
     public_api_url: str = ""
+    # C3: Session hardening — httpOnly cookie auth + CSRF + WS tickets.
+    # When auth_required=True, the SPA can authenticate via either:
+    #   1. Bearer token in Authorization header (existing, unchanged)
+    #   2. httpOnly session cookie set by POST /auth/login or /auth/register
+    # Cookie-based sessions require a CSRF double-submit token on state-changing
+    # requests; Bearer auth is CSRF-safe and exempt.
+    session_cookie_name: str = "noodle_session"
+    session_cookie_secure: bool = True
+    session_cookie_samesite: Literal["strict", "lax", "none"] = "lax"
+    csrf_cookie_name: str = "noodle_csrf"
+    csrf_header_name: str = "X-CSRF-Token"
+    # One-time WS ticket TTL (seconds). Browser fetches a short-lived ticket
+    # via POST /auth/ws-ticket, then passes ?ticket=<token> on the WS URL.
+    # Avoids putting Bearer/session tokens in server access logs.
+    ws_ticket_ttl_seconds: int = 30
+
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""
     microsoft_oauth_client_id: str = ""

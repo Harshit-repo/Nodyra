@@ -1,7 +1,7 @@
 from collections import defaultdict, deque
 from time import monotonic
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,8 +18,10 @@ from app.schemas import (
     UserCreate,
     UserInfo,
     UserUpdate,
+    WsTicketResponse,
 )
 from app.security import (
+    _extract_token,
     current_user,
     normalize_role,
     require_permission,
@@ -140,6 +142,52 @@ def _token_response(user: User) -> TokenResponse:
     )
 
 
+def _set_session_cookies(response: Response, token: str) -> None:
+    """Attach httpOnly session cookie + non-httpOnly CSRF cookie to the response.
+
+    The CSRF cookie carries a same-value token the SPA must echo in the
+    ``X-CSRF-Token`` header.  It is NOT httpOnly so JS can read it.
+    The session cookie IS httpOnly so JS cannot access the bearer token.
+    """
+    import secrets
+
+    csrf_value = secrets.token_urlsafe(32)
+    ttl = settings.auth_token_ttl_seconds
+    samesite = settings.session_cookie_samesite
+
+    response.set_cookie(
+        key=settings.session_cookie_name,
+        value=token,
+        max_age=ttl,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite=samesite,
+    )
+    response.set_cookie(
+        key=settings.csrf_cookie_name,
+        value=csrf_value,
+        max_age=ttl,
+        httponly=False,
+        secure=settings.session_cookie_secure,
+        samesite=samesite,
+    )
+
+
+def _clear_session_cookies(response: Response) -> None:
+    response.delete_cookie(
+        key=settings.session_cookie_name,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite=settings.session_cookie_samesite,
+    )
+    response.delete_cookie(
+        key=settings.csrf_cookie_name,
+        httponly=False,
+        secure=settings.session_cookie_secure,
+        samesite=settings.session_cookie_samesite,
+    )
+
+
 async def _assert_role_change_allowed(
     session: AsyncSession,
     actor: User | None,
@@ -181,6 +229,7 @@ async def _assert_role_change_allowed(
 async def register(
     body: RegisterRequest,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_session),
 ):
     await _enforce_auth_rate_limit(request, "register")
@@ -210,13 +259,16 @@ async def register(
         await session.commit()
     except IntegrityError:
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
-    return _token_response(user)
+    result = _token_response(user)
+    _set_session_cookies(response, result.token)
+    return result
 
 
 @router.post("/login", response_model=TokenResponse)
 async def login(
     body: LoginRequest,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_session),
 ):
     await _enforce_auth_rate_limit(request, "login")
@@ -225,7 +277,32 @@ async def login(
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "Invalid email or password"
         )
-    return _token_response(user)
+    result = _token_response(user)
+    _set_session_cookies(response, result.token)
+    return result
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(response: Response) -> None:
+    """Clear the httpOnly session cookie and CSRF cookie.
+
+    Safe to call when not signed in (idempotent cookie deletion).
+    """
+    _clear_session_cookies(response)
+
+
+@router.post("/ws-ticket", response_model=WsTicketResponse)
+async def ws_ticket(user: User = Depends(current_user)) -> WsTicketResponse:
+    """Mint a single-use WebSocket authentication ticket.
+
+    Browsers can't send custom headers on WS upgrades, so the SPA calls this
+    endpoint first to get a short-lived ticket and passes it as ``?ticket=``
+    on the WS URL.  The ticket is consumed on first use.
+    """
+    from app.services.ws_ticket import create_ticket
+
+    ticket = await create_ticket(user.id)
+    return WsTicketResponse(ticket=ticket)
 
 
 @router.get("/me", response_model=UserInfo)
@@ -241,13 +318,15 @@ async def users_me(user: User = Depends(current_user)):
 
 @router.get("/required", response_model=AuthRequiredResponse)
 async def auth_required(
+    request: Request,
     authorization: str | None = Header(default=None),
     session: AsyncSession = Depends(get_session),
 ):
     """Frontend bootstrap — tells the UI whether to show a login screen."""
     user: User | None = None
-    if authorization and authorization.startswith("Bearer "):
-        user_id = verify_token(authorization.removeprefix("Bearer "))
+    token, _ = _extract_token(authorization, request)
+    if token:
+        user_id = verify_token(token)
         if user_id is not None:
             user = await session.get(User, user_id)
     count = await _user_count(session)

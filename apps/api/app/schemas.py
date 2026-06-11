@@ -604,6 +604,10 @@ class TokenResponse(BaseModel):
     user: UserInfo
 
 
+class WsTicketResponse(BaseModel):
+    ticket: str
+
+
 class AuthRequiredResponse(BaseModel):
     auth_required: bool
     signed_in: bool
