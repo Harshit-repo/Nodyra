@@ -195,6 +195,9 @@ export function EditorPage() {
   const [active, setActive] = useState(false);
   const [environmentId, setEnvironmentId] = useState<string | null>(null);
   const [runTimeout, setRunTimeout] = useState<string>("");
+  const [mcpEnabled, setMcpEnabled] = useState(false);
+  const [mcpToolName, setMcpToolName] = useState("");
+  const [mcpDescription, setMcpDescription] = useState("");
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [message, setMessage] = useState("");
@@ -314,6 +317,9 @@ export function EditorPage() {
             ? String(detail.run_timeout_seconds)
             : "",
         );
+        setMcpEnabled(detail.mcp_enabled ?? false);
+        setMcpToolName(detail.mcp_tool_name ?? "");
+        setMcpDescription(detail.mcp_description ?? "");
         setEnvironments(envs);
         setWorkflowId(id);
         const pinnedMap: Record<string, PinnedOutput> = {};
@@ -516,6 +522,9 @@ export function EditorPage() {
         active,
         environment_id: environmentId ?? undefined,
         run_timeout_seconds: runTimeout === "" ? null : Math.max(0, parseFloat(runTimeout) || 0),
+        mcp_enabled: mcpEnabled,
+        mcp_tool_name: mcpToolName || null,
+        mcp_description: mcpDescription || null,
         graph: toGraph(),
       });
       setWorkflow(updated);
@@ -677,6 +686,9 @@ export function EditorPage() {
         active: next,
         environment_id: environmentId ?? undefined,
         run_timeout_seconds: runTimeout === "" ? null : Math.max(0, parseFloat(runTimeout) || 0),
+        mcp_enabled: mcpEnabled,
+        mcp_tool_name: mcpToolName || null,
+        mcp_description: mcpDescription || null,
         graph: toGraph(),
       });
       setWorkflow(updated);
@@ -1134,6 +1146,33 @@ export function EditorPage() {
             title="Run timeout (seconds). Blank or 0 means the run is never capped."
             onChange={(e) => setRunTimeout(e.target.value)}
           />
+          <label className="active-toggle" title="Expose as MCP tool (AI agents can call this workflow via /mcp)">
+            <input
+              type="checkbox"
+              checked={mcpEnabled}
+              onChange={(e) => setMcpEnabled(e.target.checked)}
+            />
+            <span className="active-track" />
+            <span>MCP</span>
+          </label>
+          {mcpEnabled && (
+            <>
+              <input
+                className="toolbar-timeout"
+                value={mcpToolName}
+                placeholder="Tool name (auto)"
+                title="MCP tool name (leave blank to auto-generate from workflow name)"
+                onChange={(e) => setMcpToolName(e.target.value)}
+              />
+              <input
+                className="toolbar-timeout"
+                value={mcpDescription}
+                placeholder="Tool description"
+                title="MCP tool description shown to calling AI agents"
+                onChange={(e) => setMcpDescription(e.target.value)}
+              />
+            </>
+          )}
           <label className="active-toggle">
             <input
               type="checkbox"

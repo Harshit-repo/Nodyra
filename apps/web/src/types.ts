@@ -227,6 +227,10 @@ export interface WorkflowDetail {
   error_workflow_id?: string | null;
   error_alerts?: Record<string, unknown>;
   run_timeout_seconds?: number | null;
+  mcp_enabled?: boolean;
+  mcp_tool_name?: string | null;
+  mcp_description?: string | null;
+  mcp_parameters_schema?: Record<string, unknown> | null;
   provider_trigger_counts?: ProviderTriggerStatusCounts;
   graph: WorkflowGraph;
   created_at: string;

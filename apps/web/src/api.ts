@@ -206,6 +206,10 @@ export interface WorkflowPatch {
   error_workflow_id?: string | null;
   error_alerts?: Record<string, unknown>;
   run_timeout_seconds?: number | null;
+  mcp_enabled?: boolean;
+  mcp_tool_name?: string | null;
+  mcp_description?: string | null;
+  mcp_parameters_schema?: Record<string, unknown> | null;
 }
 
 type Page<T> = { items: T[]; total: number; limit: number; offset: number };
@@ -658,7 +662,7 @@ export const api = {
   decideRunApproval: (
     runId: string,
     approvalId: string,
-    decision: "approve" | "reject",
+    decision: RunApprovalDecision,
     reason = "",
   ) =>
     request<RunApprovalInfo>(`/runs/${runId}/approvals/${approvalId}/decision`, {
@@ -756,6 +760,8 @@ export interface RunApprovalInfo {
   resolved_by: string | null;
   reason: string;
 }
+
+export type RunApprovalDecision = "approve" | "reject" | "approve_all";
 
 export interface RunDebugSnapshot {
   run_id: string;
