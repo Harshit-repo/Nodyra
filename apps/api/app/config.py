@@ -175,6 +175,14 @@ class Settings(BaseSettings):
     # memberships), ORM SELECTs are auto-scoped to it, and on Postgres the
     # app.current_org GUC backs the RLS policies. See app/tenancy.py.
     multi_tenancy_enabled: bool = False
+    # A5: OpenTelemetry tracing. Off by default — when disabled no SDK objects
+    # are created and every tracing hook is a single boolean check (zero
+    # overhead). Endpoint is the OTLP/HTTP collector traces URL, e.g.
+    # http://localhost:4318/v1/traces; blank uses the SDK default
+    # (http://localhost:4318/v1/traces). Standard OTEL_* env vars are also
+    # honoured by the SDK for anything not surfaced here.
+    otel_enabled: bool = False
+    otel_exporter_otlp_endpoint: str = ""
     auth_required: bool = False
     auth_allow_registration: bool = False
     auth_registration_role: str = "viewer"
