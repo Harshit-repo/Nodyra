@@ -37,6 +37,14 @@ from noodle.engine.scheduler import (
     execute,
     run,
 )
+from noodle.engine.subworkflows import (
+    InlineSubworkflow,
+    SubworkflowCall,
+    SubworkflowMeta,
+    SubworkflowRunner,
+    extract_leaf_value,
+    make_workflow_caller,
+)
 from noodle.engine.types import EventCallback, GraphError
 from noodle.engine.validation import (
     AI_PORT_KINDS,
@@ -53,9 +61,15 @@ __all__ = [
     "DEFAULT_NODE_TIMEOUTS",
     "EventCallback",
     "GraphError",
+    "InlineSubworkflow",
     "LoopRegion",
     "PROCESS_ISOLATED_NODE_TYPES",
+    "SubworkflowCall",
+    "SubworkflowMeta",
+    "SubworkflowRunner",
     "execute",
+    "extract_leaf_value",
+    "make_workflow_caller",
     "run",
     # test-consumed internals (compat with pre-split import paths)
     "_MAX_AGENT_LOOP_ITERATIONS",
