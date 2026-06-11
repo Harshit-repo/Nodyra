@@ -82,3 +82,62 @@ def test_carrier_round_trip_connects_spans(exporter):
         == spans["run.enqueue"].context.trace_id
     )
     assert spans["run.lease"].parent.span_id == spans["run.enqueue"].context.span_id
+
+
+# ---------------------------------------------------------------------------
+# Integration: a real run through start_run produces one connected trace.
+# Graph/boilerplate mirror tests/test_runs.py::test_run_executes_the_graph.
+# ---------------------------------------------------------------------------
+
+from httpx import AsyncClient  # noqa: E402
+
+GRAPH = {
+    "nodes": [
+        {"id": "t", "type": "manual_trigger", "params": {"data": {"n": 3}},
+         "position": {"x": 0, "y": 0}},
+        {"id": "c", "type": "code", "params": {"code": "output = input['n'] * 2"},
+         "position": {"x": 250, "y": 0}},
+    ],
+    "edges": [
+        {"id": "e1", "source": "t", "source_output": "main",
+         "target": "c", "target_input": "input"},
+    ],
+}
+
+
+async def test_run_produces_connected_trace(client: AsyncClient, exporter) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "Traced"})).json()["id"]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": GRAPH})
+    run_id = (
+        await client.post(f"/workflows/{workflow_id}/run", json={})
+    ).json()["run_id"]
+    run = (await client.get(f"/runs/{run_id}")).json()
+    assert run["status"] == "success"
+
+    spans = exporter.get_finished_spans()
+    by_name: dict[str, list] = {}
+    for s in spans:
+        by_name.setdefault(s.name, []).append(s)
+
+    assert len(by_name.get("run.enqueue", [])) == 1
+    assert len(by_name.get("run.execute", [])) == 1
+    node_spans = by_name.get("node.execute", [])
+    assert {s.attributes["noodle.node_id"] for s in node_spans} == {"t", "c"}
+
+    run_span = by_name["run.execute"][0]
+    assert run_span.attributes["noodle.run_id"] == run_id
+    assert run_span.attributes["noodle.workflow_id"] == workflow_id
+    assert run_span.attributes["noodle.status"] == "success"
+
+    # single connected trace: every span shares the enqueue span's trace id
+    trace_id = by_name["run.enqueue"][0].context.trace_id
+    assert all(s.context.trace_id == trace_id for s in spans)
+    # node spans hang off run.execute
+    assert all(
+        s.parent is not None and s.parent.span_id == run_span.context.span_id
+        for s in node_spans
+    )
+    # node types resolved from the graph
+    types = {s.attributes["noodle.node_id"]: s.attributes["noodle.node_type"]
+             for s in node_spans}
+    assert types == {"t": "manual_trigger", "c": "code"}

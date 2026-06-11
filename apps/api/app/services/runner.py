@@ -39,6 +39,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
 import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
+from app import tracing
 from app.config import settings
 from app.db import SessionLocal
 from app.models import (
@@ -440,17 +441,26 @@ async def start_run(
         # Durable queue ledger entry; immediate dispatch happens below so this
         # only adds latency cost when capacity is unavailable (failure path
         # transitions the entry back to ``queued`` for the worker to retry).
-        await run_queue.enqueue(
-            session,
-            run_id=run_id,
-            workflow_id=workflow_id,
-            runner_pool_id=runner_pool_id,
-            reason=(
-                ("dispatch_disabled" if settings.dispatch_role == "disabled" else "local_capacity")
-                if queue_locally
-                else "start_run"
-            ),
-        )
+        # A5: the enqueue span is the trace root for this run (child of the
+        # HTTP request span when FastAPI instrumentation is on). Its carrier
+        # rides the queue entry so a worker in another process joins the trace.
+        with tracing.span(
+            "run.enqueue",
+            attributes={"noodle.run_id": run_id, "noodle.workflow_id": workflow_id},
+        ):
+            trace_carrier = tracing.inject_context()
+            await run_queue.enqueue(
+                session,
+                run_id=run_id,
+                workflow_id=workflow_id,
+                runner_pool_id=runner_pool_id,
+                reason=(
+                    ("dispatch_disabled" if settings.dispatch_role == "disabled" else "local_capacity")
+                    if queue_locally
+                    else "start_run"
+                ),
+                trace_context=trace_carrier,
+            )
         await session.commit()
 
     # Editor "manual" and "test" (test-URL webhook) runs iterate on the
@@ -471,6 +481,7 @@ async def start_run(
             await _execute_run(
                 run_id, workflow_id, graph, targets, cache,
                 prefer_draft=prefer_draft, runner_pool_id=runner_pool_id,
+                trace_carrier=trace_carrier,
             )
         finally:
             _active_runs.pop(run_id, None)
@@ -479,6 +490,7 @@ async def start_run(
             _execute_run(
                 run_id, workflow_id, graph, targets, cache,
                 prefer_draft=prefer_draft, runner_pool_id=runner_pool_id,
+                trace_carrier=trace_carrier,
             )
         )
         _active_runs[run_id] = task
@@ -578,7 +590,44 @@ async def _execute_run(
     prefer_draft: bool = False,
     runner_pool_id: str | None = None,
     agent_action_resume: dict[str, AgentActionRequest] | None = None,
+    trace_carrier: dict | None = None,
 ) -> None:
+    """Tracing wrapper: opens the run.execute span (parented on ``trace_carrier``
+    when given, else ambient context) around the real executor. A plain
+    pass-through when tracing is off."""
+    if not tracing.enabled():
+        await _execute_run_impl(
+            run_id, workflow_id, graph_dict, targets, cache,
+            prefer_draft=prefer_draft, runner_pool_id=runner_pool_id,
+            agent_action_resume=agent_action_resume,
+        )
+        return
+    org_id = await _resolve_run_org(run_id)
+    attrs = {"noodle.run_id": run_id, "noodle.workflow_id": workflow_id}
+    if org_id:
+        attrs["noodle.org_id"] = org_id
+    with tracing.span("run.execute", carrier=trace_carrier, attributes=attrs) as sp:
+        status = await _execute_run_impl(
+            run_id, workflow_id, graph_dict, targets, cache,
+            prefer_draft=prefer_draft, runner_pool_id=runner_pool_id,
+            agent_action_resume=agent_action_resume, trace_org=org_id,
+        )
+        if sp is not None:
+            sp.set_attribute("noodle.status", status)
+
+
+async def _execute_run_impl(
+    run_id: str,
+    workflow_id: str,
+    graph_dict: dict,
+    targets: list[str] | None,
+    cache: dict[str, dict] | None = None,
+    *,
+    prefer_draft: bool = False,
+    runner_pool_id: str | None = None,
+    agent_action_resume: dict[str, AgentActionRequest] | None = None,
+    trace_org: str | None = None,
+) -> str:
     node_events: dict[str, dict] = {}
     # Distinct NodeRun records keyed by (node_id, iteration_path). Non-loop nodes
     # key on an empty path -> one record each; looped body nodes get one per
@@ -596,6 +645,14 @@ async def _execute_run(
     )
     run_id_token = _log_run_id.set(run_id)
     _install_run_id_filter()
+    # A5: node-type lookup for node.execute span attributes; only consulted
+    # (and only built) when tracing is enabled.
+    trace_node_types: dict[str, str] = (
+        {str(n.get("id")): str(n.get("type") or "")
+         for n in graph_dict.get("nodes", []) if isinstance(n, dict)}
+        if tracing.enabled()
+        else {}
+    )
 
     async def on_event(event: dict) -> None:
         nonlocal run_event_sequence
@@ -611,6 +668,9 @@ async def _execute_run(
         artifact_refs.extend(collect_artifact_refs(clean))
         broker.publish(run_id, clean)
         if clean.get("type") == "node_finished":
+            tracing.record_node_span(
+                clean, node_types=trace_node_types, org_id=trace_org
+            )
             node_events[clean["node_id"]] = clean
             path = clean.get("iteration_path")
             run_key = (clean["node_id"], tuple(path) if isinstance(path, list) else ())
@@ -776,7 +836,7 @@ async def _execute_run(
                                 run.finished_at = datetime.now(UTC)
                         await session.commit()
                     _log_run_id.reset(run_id_token)
-                    return
+                    return "queued"
             else:
                 outcome = await local_executor.execute(
                     _build_ctx(
@@ -925,6 +985,7 @@ async def _execute_run(
         )
 
     _log_run_id.reset(run_id_token)
+    return status
 
 
 async def _execute_queued_entry(run_id: str) -> None:
@@ -954,6 +1015,13 @@ async def _execute_queued_entry(run_id: str) -> None:
         )
         if queue_entry is not None and queue_entry.replay_seed:
             queue_entry.replay_seed = None  # consumed; don't re-apply on later retries
+        # A5: carrier stamped at enqueue — lets this (possibly different)
+        # process join the originating request's trace.
+        entry_trace_carrier: dict | None = (
+            dict(queue_entry.trace_context)
+            if queue_entry is not None and queue_entry.trace_context
+            else None
+        )
 
         workflow = await session.scalar(
             select(Workflow)
@@ -1021,11 +1089,21 @@ async def _execute_queued_entry(run_id: str) -> None:
     else:
         agent_action_resume = None
 
+    # A5: run.lease marks the worker-side pickup; run.execute parents on it.
+    # The span is brief by design — it records the handoff, not the execution.
+    with tracing.span(
+        "run.lease",
+        carrier=entry_trace_carrier,
+        attributes={"noodle.run_id": run_id, "noodle.workflow_id": workflow_id},
+    ):
+        lease_carrier = tracing.inject_context() or entry_trace_carrier
+
     await _execute_run(
         run_id, workflow_id, graph_dict, targets, cache,
         prefer_draft=(mode in ("manual", "test")),
         runner_pool_id=runner_pool_id,
         agent_action_resume=agent_action_resume,
+        trace_carrier=lease_carrier,
     )
 
 

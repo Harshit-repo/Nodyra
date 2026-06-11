@@ -200,7 +200,9 @@ def test_runner_run_events_has_cap():
     import inspect
     from app.services import runner as runner_module
 
-    source = inspect.getsource(runner_module._execute_run)
+    # _execute_run is a thin tracing wrapper (A5); the execution body —
+    # where run_events accumulates — is _execute_run_impl.
+    source = inspect.getsource(runner_module._execute_run_impl)
 
     # The fix should introduce a cap on the run_events list
     has_cap = (
