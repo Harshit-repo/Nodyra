@@ -183,6 +183,8 @@ class Settings(BaseSettings):
     # honoured by the SDK for anything not surfaced here.
     otel_enabled: bool = False
     otel_exporter_otlp_endpoint: str = ""
+    # MCP server: exposes POST /mcp (workflow run + builder tools) when on.
+    mcp_server_enabled: bool = True
     auth_required: bool = False
     auth_allow_registration: bool = False
     auth_registration_role: str = "viewer"

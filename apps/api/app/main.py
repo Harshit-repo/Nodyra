@@ -30,6 +30,7 @@ from app.routers import (
     expressions,
     health,
     internal,
+    mcp,
     nodes,
     ops,
     orgs,
@@ -524,6 +525,8 @@ app.include_router(chat_public.router)
 app.include_router(deployments.router)
 app.include_router(code_modules.router)
 app.include_router(internal.router)
+if settings.mcp_server_enabled:
+    app.include_router(mcp.router)
 app.include_router(export.router)
 app.include_router(auth.router)
 app.include_router(credentials.router)
