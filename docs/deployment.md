@@ -193,6 +193,26 @@ Migration policy:
 - `GET /runs` (paginated, filterable) and the **Executions** page in the UI
   show every run across the system with per-node logs, timing, and outputs.
 
+### Distributed tracing (OpenTelemetry)
+
+Off by default. To enable, set on every API replica **and** worker:
+
+    OTEL_ENABLED=true
+    OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318/v1/traces   # OTLP/HTTP
+
+Each run produces one trace: `run.enqueue` (API, child of the HTTP request
+span) → `run.lease` (the worker that picked the entry up) → `run.execute` →
+one `node.execute` span per node with `noodle.node_id`, `noodle.node_type`,
+`noodle.status`, `noodle.org_id`, and `noodle.iteration_path` attributes.
+Node spans carry the engine's real start/finish timestamps, including for
+nodes executed inside runtime subprocesses — the subprocesses themselves
+need no OTel dependencies. Trace context crosses the API→worker boundary on
+the durable queue row (`run_queue.trace_context`), so split topologies get
+the same single connected trace. FastAPI requests and SQLAlchemy queries are
+auto-instrumented in the API process. When disabled, no SDK objects exist
+and every hook is a single boolean check. `/ops/runtime-mode` reports
+`otel_enabled` so you can confirm what a replica is actually running.
+
 ## Security checklist
 
 - Set `SECRET_KEY` to a strong random value. It encrypts credentials and
