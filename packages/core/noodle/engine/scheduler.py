@@ -32,6 +32,7 @@ from noodle.engine.validation import _validate_connection_kinds
 
 if TYPE_CHECKING:
     from noodle.engine.loops import LoopRegion
+    from noodle.engine.subworkflows import SubworkflowMeta, SubworkflowRunner
     from noodle.process_isolation import ProcessIsolator
 
 
@@ -356,8 +357,71 @@ async def execute(
     agent_action_resume: dict[str, AgentActionRequest] | None = None,
     max_node_concurrency: int | None = None,
     process_isolator: "ProcessIsolator | None" = None,
+    subworkflow_runner: "SubworkflowRunner | None" = None,
+    subworkflow_meta: "SubworkflowMeta | None" = None,
 ) -> RunResult:
-    """Run a workflow graph and return per-node results."""
+    """Run a workflow graph and return per-node results.
+
+    When ``subworkflow_runner`` is given, ``workflow_call``-style nodes
+    resolve children through it: the engine installs a ``workflow_caller``
+    adapter that enforces cycle/depth invariants (seeded from
+    ``subworkflow_meta``) before delegating to the host resolver.
+    """
+    if subworkflow_runner is None:
+        return await _execute_impl(
+            graph, registry, cache=cache, targets=targets, on_event=on_event,
+            default_timeouts=default_timeouts,
+            max_node_output_bytes=max_node_output_bytes,
+            pause_on_approval=pause_on_approval,
+            agent_action_resume=agent_action_resume,
+            max_node_concurrency=max_node_concurrency,
+            process_isolator=process_isolator,
+        )
+
+    # Lazy: subworkflows.py recursively imports execute from this module.
+    from noodle.context import call_chain, workflow_caller
+    from noodle.engine.subworkflows import SubworkflowMeta, make_workflow_caller
+
+    meta = subworkflow_meta or SubworkflowMeta()
+    chain_token = call_chain.set(meta.call_chain)
+    caller_token = workflow_caller.set(
+        make_workflow_caller(
+            subworkflow_runner,
+            meta,
+            registry,
+            default_timeouts=default_timeouts,
+            process_isolator=process_isolator,
+        )
+    )
+    try:
+        return await _execute_impl(
+            graph, registry, cache=cache, targets=targets, on_event=on_event,
+            default_timeouts=default_timeouts,
+            max_node_output_bytes=max_node_output_bytes,
+            pause_on_approval=pause_on_approval,
+            agent_action_resume=agent_action_resume,
+            max_node_concurrency=max_node_concurrency,
+            process_isolator=process_isolator,
+        )
+    finally:
+        workflow_caller.reset(caller_token)
+        call_chain.reset(chain_token)
+
+
+async def _execute_impl(
+    graph: WorkflowGraph,
+    registry: NodeRegistry,
+    *,
+    cache: dict[str, dict[str, Any]] | None = None,
+    targets: Iterable[str] | None = None,
+    on_event: EventCallback | None = None,
+    default_timeouts: dict[str, float] | None = None,
+    max_node_output_bytes: int | None = None,
+    pause_on_approval: bool = False,
+    agent_action_resume: dict[str, AgentActionRequest] | None = None,
+    max_node_concurrency: int | None = None,
+    process_isolator: "ProcessIsolator | None" = None,
+) -> RunResult:
     # Lazy: loops.py and metanodes.py import this module at module level,
     # so importing them here (not at the top) breaks the cycle.
     from noodle.engine.loops import _loop_regions, _validate_loop_regions
@@ -459,6 +523,17 @@ def run(
     *,
     cache: dict[str, dict[str, Any]] | None = None,
     targets: Iterable[str] | None = None,
+    subworkflow_runner: "SubworkflowRunner | None" = None,
+    subworkflow_meta: "SubworkflowMeta | None" = None,
 ) -> RunResult:
     """Synchronous wrapper around :func:`execute` for scripts and exports."""
-    return asyncio.run(execute(graph, registry, cache=cache, targets=targets))
+    return asyncio.run(
+        execute(
+            graph,
+            registry,
+            cache=cache,
+            targets=targets,
+            subworkflow_runner=subworkflow_runner,
+            subworkflow_meta=subworkflow_meta,
+        )
+    )
