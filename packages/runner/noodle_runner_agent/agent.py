@@ -96,8 +96,14 @@ class RunnerAgent:
                 else:
                     fut.set_result(msg.get("result"))
 
-    async def _broker_subworkflow(self, run_id: str, workflow_id: str, input_value: Any) -> Any:
-        """Ask the API to run a sub-workflow and return its result."""
+    async def _broker_subworkflow(self, run_id: str, payload: dict) -> Any:
+        """Ask the API to run a sub-workflow and return its result.
+
+        ``payload`` is the full SubworkflowCall payload from the runtime
+        (workflow_id, input, use_published, parent_run_id, depth,
+        call_chain) — forwarded verbatim so cycle/depth context survives
+        the WS hop (A3).
+        """
         callback_id = uuid.uuid4().hex
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         self._pending_calls[callback_id] = fut
@@ -105,8 +111,7 @@ class RunnerAgent:
             "type": "call_workflow",
             "run_id": run_id,
             "callback_id": callback_id,
-            "workflow_id": workflow_id,
-            "input": input_value,
+            **payload,
         })
         try:
             return await fut
@@ -148,8 +153,8 @@ class RunnerAgent:
                     "type": "run_event", "run_id": run_id, "event": event,
                 })
 
-            async def broker(workflow_id: str, input_value: Any) -> Any:
-                return await self._broker_subworkflow(run_id, workflow_id, input_value)
+            async def broker(payload: dict) -> Any:
+                return await self._broker_subworkflow(run_id, payload)
 
             status = "error"
             try:
@@ -168,6 +173,7 @@ class RunnerAgent:
                     agent_action_resume=msg.get("agent_action_resume") or {},
                     artifact_key_prefix=str(msg.get("artifact_key_prefix") or ""),
                     org_limits=msg.get("org_limits") or {},
+                    subworkflow_meta=msg.get("subworkflow_meta") or {},
                 )
             except asyncio.CancelledError:
                 logger.info("run %s cancelled", run_id)
