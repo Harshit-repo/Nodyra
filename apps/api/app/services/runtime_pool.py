@@ -7,13 +7,11 @@ inside its assigned ``uv`` venv.
 
 The pool also brokers sub-workflow calls back to the host: when an
 ``execute_workflow`` node runs inside a subprocess, it writes a
-``call_workflow`` event to stdout; the pool catches it, invokes the host-side
-``sub_workflow_caller`` passed by the runner (as an ``asyncio.create_task``
-so the new task inherits the caller's ContextVar context — including
-``call_chain`` — for cycle detection), and writes the result back to the
-subprocess's stdin. The host-side caller runs the engine in-process, so
-sub-workflows do not get their own env isolation today (see
-``_call_sub_workflow`` docstring).
+``call_workflow`` event to stdout (carrying the SubworkflowCall payload —
+depth/chain travel explicitly, A3); the pool catches it, invokes the
+host-side ``subworkflow_resolver`` passed by the runner
+(``app.services.subworkflows.resolve_subworkflow``), and writes the result
+— a leaf value or an inline directive — back to the subprocess's stdin.
 
 Each subprocess is serialized via an ``asyncio.Lock`` — concurrent runs to
 the same env queue rather than interleaving their stdio. Different envs run
@@ -29,7 +27,10 @@ import sys
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from noodle.engine.subworkflows import SubworkflowMeta
 
 from app.config import settings
 from app.db import SessionLocal
@@ -41,12 +42,11 @@ from noodle.serialization import deserialize_value, serialize_value
 logger = logging.getLogger(__name__)
 
 EventCallback = Callable[[dict], Awaitable[None]]
-# Signature accepts an optional ``parent_env_id`` kwarg. The runner's
-# ``_call_sub_workflow`` uses it to detect the same-env inline opportunity
-# and may return an ``InlineSubWorkflow`` sentinel instead of a leaf value.
-# Callers that don't care (in-process engine via the ``workflow_caller``
-# ContextVar) omit the kwarg and always get a real leaf back.
-SubWorkflowCaller = Callable[..., Awaitable[Any]]
+# Host-side sub-workflow resolver: (SubworkflowCall, *, parent_env_id) →
+# leaf value | InlineSubworkflow directive. Implemented by
+# app.services.subworkflows.resolve_subworkflow. ``parent_env_id`` lets the
+# resolver detect the same-env inline opportunity.
+SubworkflowResolver = Callable[..., Awaitable[Any]]
 
 
 async def _resolve_pool_sizes(env_id: str | None) -> tuple[int, int]:
@@ -318,26 +318,21 @@ class _RuntimeProcess:
     async def _handle_call_workflow(
         self,
         event: dict,
-        sub_workflow_caller: SubWorkflowCaller | None,
+        subworkflow_resolver: SubworkflowResolver | None,
     ) -> None:
+        from noodle.engine.subworkflows import InlineSubworkflow, SubworkflowCall
+
         callback_id = event.get("callback_id", "")
         try:
-            if sub_workflow_caller is None:
+            if subworkflow_resolver is None:
                 raise RuntimeError(
-                    "subprocess runner has no host-side sub-workflow caller"
+                    "subprocess runner has no host-side sub-workflow resolver"
                 )
-            outcome = await sub_workflow_caller(
-                event.get("workflow_id", ""),
-                deserialize_value(event.get("input")),
-                parent_env_id=self.env_id,
+            call = SubworkflowCall.from_payload(
+                {**event, "input": deserialize_value(event.get("input"))}
             )
-            # Late import — InlineSubWorkflow is defined in runner.py which
-            # already imports this module; bringing it in at the top would
-            # create a cycle. Keeping it local also means the pool stays
-            # usable from contexts that don't need sub-workflow handling.
-            from app.services.runner import InlineSubWorkflow
-
-            if isinstance(outcome, InlineSubWorkflow):
+            outcome = await subworkflow_resolver(call, parent_env_id=self.env_id)
+            if isinstance(outcome, InlineSubworkflow):
                 await self._write_message(
                     {
                         "type": "call_workflow_response",
@@ -345,7 +340,7 @@ class _RuntimeProcess:
                         "inline_graph": outcome.graph,
                         "inline_cache": outcome.cache,
                         "inline_targets": outcome.targets,
-                        "inline_sources": outcome.sources,
+                        "inline_sources": list(outcome.sources),
                     }
                 )
             else:
@@ -372,7 +367,8 @@ class _RuntimeProcess:
         cache: dict | None,
         targets: list[str] | None,
         on_event: EventCallback,
-        sub_workflow_caller: SubWorkflowCaller | None = None,
+        subworkflow_resolver: SubworkflowResolver | None = None,
+        subworkflow_meta: dict | None = None,
         workflow_modules: list[dict] | None = None,
         pause_on_approval: bool = False,
         agent_action_resume: dict | None = None,
@@ -401,6 +397,7 @@ class _RuntimeProcess:
                         "workflow_modules": workflow_modules or [],
                         "pause_on_approval": pause_on_approval,
                         "agent_action_resume": agent_action_resume or {},
+                        "subworkflow_meta": subworkflow_meta or {},
                         # Subprocess writes artifact bytes to the SAME path the
                         # API reads from — only safe because the runner is
                         # co-located on the host today. Remote runners (Slice 8)
@@ -426,7 +423,7 @@ class _RuntimeProcess:
                     # task so the read loop keeps draining the pipe.
                     if event.get("type") == "call_workflow":
                         task = asyncio.create_task(
-                            self._handle_call_workflow(event, sub_workflow_caller)
+                            self._handle_call_workflow(event, subworkflow_resolver)
                         )
                         callbacks.add(task)
                         task.add_done_callback(callbacks.discard)
@@ -769,7 +766,8 @@ class RuntimePool:
         cache: dict | None,
         targets: list[str] | None,
         on_event: EventCallback,
-        sub_workflow_caller: SubWorkflowCaller | None = None,
+        subworkflow_resolver: SubworkflowResolver | None = None,
+        subworkflow_meta: dict | None = None,
         workflow_modules: list[dict] | None = None,
         run_timeout: float | None = None,
         pause_on_approval: bool = False,
@@ -798,7 +796,8 @@ class RuntimePool:
                         cache,
                         targets,
                         on_event,
-                        sub_workflow_caller,
+                        subworkflow_resolver,
+                        subworkflow_meta=subworkflow_meta,
                         workflow_modules=workflow_modules,
                         pause_on_approval=pause_on_approval,
                         agent_action_resume=agent_action_resume,
@@ -824,7 +823,8 @@ class RuntimePool:
         cache: dict | None,
         targets: list[str] | None,
         on_event: EventCallback,
-        sub_workflow_caller: SubWorkflowCaller | None = None,
+        subworkflow_resolver: SubworkflowResolver | None = None,
+        subworkflow_meta: "SubworkflowMeta | None" = None,
         workflow_modules: list[dict] | None = None,
     ) -> str:
         """Run a sub-workflow in its env's subprocess, bypassing the pool caps.
@@ -857,7 +857,10 @@ class RuntimePool:
                     cache,
                     targets,
                     on_event,
-                    sub_workflow_caller,
+                    subworkflow_resolver,
+                    subworkflow_meta=(
+                        subworkflow_meta.to_payload() if subworkflow_meta else {}
+                    ),
                     workflow_modules=workflow_modules,
                     artifact_key_prefix=run_org,
                     org_limits=await _org_run_limits_for(run_org),

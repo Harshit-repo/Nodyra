@@ -31,6 +31,7 @@ class RunExecutionContext(TypedDict):
     default_timeouts: dict[str, float]
     pause_on_approval: bool
     agent_action_resume: dict[str, Any] | None  # node_id -> serialized request
+    subworkflow_meta: dict | None    # SubworkflowMeta.to_payload() for the run protocol
 
 
 @dataclass(frozen=True)

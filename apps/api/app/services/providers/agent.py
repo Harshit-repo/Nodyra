@@ -71,6 +71,7 @@ async def assign_agent_run(
     on_event: EventCallback,
     pause_on_approval: bool = False,
     agent_action_resume: dict | None = None,
+    subworkflow_meta: dict | None = None,
 ) -> str:
     conn = await pick_agent(d, session_factory, pool_id)
     if conn is None:
@@ -111,6 +112,7 @@ async def assign_agent_run(
         "workflow_modules": workflow_modules,
         "pause_on_approval": pause_on_approval,
         "agent_action_resume": agent_action_resume or {},
+        "subworkflow_meta": subworkflow_meta or {},
         "artifact_key_prefix": run_org,
         "org_limits": await _org_run_limits_for(run_org),
     })
@@ -271,19 +273,18 @@ async def handle_agent_message(
 async def resolve_remote_subworkflow(conn: _AgentConnection, msg: dict) -> None:
     """Run a sub-workflow host-side for a remote runner and reply.
 
-    Reuses the host's ``_call_sub_workflow`` (deferred import to avoid the
-    runner.py ↔ remote_dispatch.py cycle). With no ``parent_env_id`` it
-    always returns a concrete leaf result — never an inline sentinel — so
-    the value serializes cleanly back over the WS.
+    With no ``parent_env_id`` the resolver never answers with an inline
+    directive — the result is always a concrete leaf value that serializes
+    cleanly back over the WS.
     """
-    from app.services.runner import _call_sub_workflow  # noqa: PLC0415
+    from app.services.subworkflows import resolve_subworkflow  # noqa: PLC0415
+    from noodle.engine.subworkflows import SubworkflowCall  # noqa: PLC0415
 
     callback_id = msg.get("callback_id", "")
     try:
+        call = SubworkflowCall.from_payload(msg)
         _timeout = settings.subworkflow_spawn_timeout_seconds or None
-        coro = _call_sub_workflow(
-            str(msg.get("workflow_id") or ""), msg.get("input")
-        )
+        coro = resolve_subworkflow(call)
         result = await (
             asyncio.wait_for(coro, timeout=_timeout) if _timeout else coro
         )

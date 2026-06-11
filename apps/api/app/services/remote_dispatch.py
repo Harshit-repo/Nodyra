@@ -103,6 +103,7 @@ class RemoteDispatcher:
         on_event: EventCallback,
         pause_on_approval: bool = False,
         agent_action_resume: dict | None = None,
+        subworkflow_meta: dict | None = None,
     ) -> str:
         """Dispatch a run to the pool. Returns the final run status string."""
         async with SessionLocal() as session:
@@ -123,6 +124,7 @@ class RemoteDispatcher:
                 on_event,
                 pause_on_approval=pause_on_approval,
                 agent_action_resume=agent_action_resume,
+                subworkflow_meta=subworkflow_meta,
             )
         if provider == "docker":
             return await self._assign_docker_run(
@@ -136,6 +138,7 @@ class RemoteDispatcher:
                 on_event,
                 pause_on_approval=pause_on_approval,
                 agent_action_resume=agent_action_resume,
+                subworkflow_meta=subworkflow_meta,
             )
         if provider == "kubernetes":
             return await self._assign_k8s_run(
@@ -149,6 +152,7 @@ class RemoteDispatcher:
                 on_event,
                 pause_on_approval=pause_on_approval,
                 agent_action_resume=agent_action_resume,
+                subworkflow_meta=subworkflow_meta,
             )
         raise ValueError(f"unknown runner pool provider '{provider}'")
 

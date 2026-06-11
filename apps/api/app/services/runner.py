@@ -3,16 +3,15 @@
 Runs a workflow graph in-process with the Noodle engine, streams per-node
 events to the broker for live editor updates, and persists the run.
 
-Sets up the runtime context (``noodle.context.workflow_caller`` and
-``call_chain``) so Execute-Workflow nodes can invoke sub-workflows by id.
+Sub-workflow semantics (cycle/depth/inline) live in the engine
+(``noodle.engine.subworkflows``); this host supplies the resolver
+(``app.services.subworkflows.resolve_subworkflow``) and per-run meta.
 """
 
 import asyncio
 import logging
-import uuid
 from collections import deque
 from contextvars import ContextVar
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -37,7 +36,6 @@ def _install_run_id_filter() -> None:
     root.addFilter(_RunIdFilter())
 
 from sqlalchemy import or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
@@ -80,8 +78,9 @@ from app.services.remote_dispatch import (
 )
 from app.services.runtime_pool import _org_run_limits_for, _resolve_run_org
 from app.services.runtime_pool import pool as runtime_pool
+from app.services.subworkflows import meta_for_root_run, resolve_subworkflow
 from noodle.ai_runtime import AgentActionRequest
-from noodle.context import artifact_store, call_chain, org_run_limits, workflow_caller
+from noodle.context import artifact_store, org_run_limits
 from noodle.engine import DEFAULT_NODE_TIMEOUTS, execute
 from noodle.models import WorkflowGraph
 from noodle.process_isolation import (
@@ -133,6 +132,7 @@ def _build_ctx(
     runner_pool_id: str | None, env_payload: dict | None,
     workflow_modules: list[dict], run_timeout: float | None,
     agent_action_resume: dict[str, AgentActionRequest] | None,
+    subworkflow_meta: dict | None = None,
 ) -> RunExecutionContext:
     return {
         "run_id": run_id, "workflow_id": workflow_id, "graph": graph,
@@ -146,6 +146,7 @@ def _build_ctx(
              for nid, req in agent_action_resume.items()}
             if agent_action_resume else None
         ),
+        "subworkflow_meta": subworkflow_meta,
     }
 
 
@@ -162,266 +163,12 @@ def _engine_default_timeouts() -> dict[str, float]:
         timeouts["code"] = code_timeout
     return timeouts
 
-# Set by ``_execute_run`` before invoking the engine. ``_call_sub_workflow``
-# reads this to decide whether sub-workflows should run their editable draft
-# (when the root run is a manual editor iteration) or their latest published
-# version (any production run). Default ``False`` is the safe choice — a
-# missing context defaults to "published only".
-_prefer_draft_graphs: ContextVar[bool] = ContextVar(
-    "noodle_prefer_draft_graphs", default=False
-)
-
-
-async def _load_workflow_graph(
-    session: AsyncSession, workflow_id: str
-) -> tuple[dict, dict[str, dict]]:
-    """Return (graph_dict, pinned_cache) for a workflow id.
-
-    Used only by ``_call_sub_workflow``. The graph picked depends on the
-    root run's context:
-
-    * Production runs (scheduled/webhook/deployment/error workflow) execute
-      the most recently published version. This is the Slice 11 contract —
-      production must never pick up unpublished changes via a sub-workflow.
-    * Manual editor runs (where the user clicked Run on a draft) propagate
-      "use draft" to sub-workflows so iteration works without publishing
-      every dependent workflow first.
-
-    The choice is read from ``_prefer_draft_graphs`` which ``_execute_run``
-    sets based on the root run's ``mode``.
-    """
-    workflow = await session.scalar(
-        select(Workflow)
-        .where(Workflow.id == workflow_id)
-        .options(selectinload(Workflow.versions))
-    )
-    if workflow is None:
-        raise ValueError(f"workflow '{workflow_id}' not found")
-    if not workflow.versions:
-        raise ValueError(f"workflow '{workflow_id}' has no published versions")
-    latest = workflow.versions[-1]
-    pinned_rows = await session.scalars(
-        select(PinnedData).where(PinnedData.workflow_id == workflow_id)
-    )
-    pinned = {row.node_id: row.payload for row in pinned_rows.all()}
-    published = latest.graph or {"nodes": [], "edges": []}
-    if _prefer_draft_graphs.get() and workflow.draft_graph:
-        return workflow.draft_graph, pinned
-    return published, pinned
-
-
-@dataclass(frozen=True)
-class InlineSubWorkflow:
-    """Sentinel returned by the sub-workflow caller asking the parent's
-    runtime to execute the sub in-process — no fresh subprocess spawn.
-
-    Carried by ``_handle_call_workflow`` from the host back to the
-    parent's subprocess via the existing ``call_workflow_response``
-    message (with ``inline_*`` fields). The runtime runs the engine on
-    ``graph`` and completes the awaiting callback with the leaf result,
-    saving one subprocess spawn + the credential resolution and graph
-    load are already done here on the host.
-    """
-
-    graph: dict
-    cache: dict | None
-    targets: list[str] | None
-    sources: list[str]
-
-
-def _has_nested_workflow_call(graph: dict) -> bool:
-    """True if the graph has any ``execute_workflow`` node.
-
-    Inline execution is only safe when the sub doesn't fan out into more
-    sub-workflows: the host's ``call_chain`` ContextVar wouldn't be
-    extended with this sub's id (we never enter the chain-set block on
-    the host for inline subs), so deep cycle detection beyond one level
-    of inlining would break. Falling back to the spawn-fresh path keeps
-    chain tracking correct via the existing mechanism.
-    """
-    nodes = graph.get("nodes") or [] if isinstance(graph, dict) else []
-    return any(
-        isinstance(n, dict) and n.get("type") == "execute_workflow" for n in nodes
-    )
-
-
-def _extract_sub_leaf(
-    sources: set[str],
-    node_status: dict[str, str],
-    node_outputs: dict[str, dict],
-) -> Any:
-    """Extract the leaf-node output(s) from a sub-workflow run.
-
-    Same selection rule used by both execution paths: the "leaf" is any
-    successful node that no edge originates from (i.e. it has no
-    downstream consumers in this graph). One leaf → return its ``main``
-    output; multiple leaves → dict keyed by node id; none → ``None``.
-    """
-    leaves = [
-        nid
-        for nid, status in node_status.items()
-        if status == "success" and nid not in sources
-    ]
-    if len(leaves) == 1:
-        return (node_outputs.get(leaves[0]) or {}).get("main")
-    if leaves:
-        return {nid: (node_outputs.get(nid) or {}).get("main") for nid in leaves}
-    return None
-
-
-async def _call_sub_workflow(
-    workflow_id: str,
-    input_value: Any,
-    *,
-    parent_env_id: str | None = None,
-) -> Any:
-    """Implementation of ``noodle.context.workflow_caller`` for the API.
-
-    Loads the target workflow's graph, seeds its trigger node with the
-    supplied input, runs it through the engine, and returns the output of
-    its leaf node (or a dict keyed by leaf id when there are several).
-
-    Three execution paths:
-
-    * **Inline-in-parent** (subprocess mode + parent and sub share an env
-      + sub has no nested ``execute_workflow`` nodes) — returns an
-      ``InlineSubWorkflow`` sentinel. The pool's callback handler forwards
-      the prepared graph/cache/targets back to the parent's subprocess,
-      which runs the engine inline and completes the awaiting callback.
-      Zero subprocess spawns, zero round-trips through the host runtime
-      pool. Fastest path for the common pattern (parent → sub on same env).
-    * **Spawn-fresh subprocess** (subprocess mode + different env, OR sub
-      contains ``execute_workflow`` nodes) — dispatches through
-      ``runtime_pool.dispatch_subworkflow`` which spawns a short-lived
-      ``_RuntimeProcess`` for the sub's env outside both pool caps.
-    * **In-process** (tests / ``use_subprocess_runner=False``) — runs on
-      the host's engine + ``node_registry``.
-
-    Cycle detection: the host-side ``call_chain`` ContextVar is
-    inherited by the asyncio task that handles ``call_workflow``
-    callbacks from the subprocess. Detection works for the spawn-fresh
-    and in-process paths because we enter the ``chain_token`` block
-    before invoking the engine. The inline path is restricted to subs
-    with no nested workflow calls (see ``_has_nested_workflow_call``),
-    so chain depth never exceeds one level past where we set it.
-
-    ``parent_env_id`` is supplied by the pool's callback handler so we
-    can detect the inline opportunity; in-process callers (host engine
-    invocations via the ``workflow_caller`` ContextVar) leave it ``None``
-    and always fall through to the spawn-fresh or in-process branches.
-    """
-    chain = call_chain.get()
-    if workflow_id in chain:
-        raise RuntimeError(
-            f"sub-workflow cycle detected — '{workflow_id}' is already running"
-        )
-
-    async with SessionLocal() as session:
-        workflow = await session.get(Workflow, workflow_id)
-        sub_env_id = workflow.environment_id if workflow else None
-        graph_dict, pinned_cache = await _load_workflow_graph(session, workflow_id)
-        graph_dict = await resolve_credential_refs(
-            session, graph_dict, workflow_id=workflow_id
-        )
-        pinned_cache = await resolve_credential_refs(
-            session, pinned_cache, workflow_id=workflow_id
-        )
-        await session.commit()
-
-    graph = WorkflowGraph.model_validate(graph_dict)
-    sources = {edge.source for edge in graph.edges}
-
-    cache: dict[str, dict] = deserialize_value(dict(pinned_cache))
-    trigger = first_trigger_node(graph)
-    if trigger is not None and trigger.id not in cache:
-        cache[trigger.id] = {"main": input_value if input_value is not None else {}}
-
-    # Gate the sub-workflow's execution to the trigger we just seeded, so
-    # sibling triggers in the same sub-graph don't fire on every call.
-    sub_targets = (
-        resolve_trigger_targets(graph_dict, trigger.id, None)
-        if trigger is not None
-        else None
-    )
-
-    # Inline opportunity — see docstring. Returned BEFORE the chain_token
-    # block because the parent's runtime will execute this sub itself; the
-    # restriction to subs without nested workflow calls keeps us from
-    # needing to thread chain state into the subprocess.
-    inline_eligible = (
-        settings.use_subprocess_runner
-        and parent_env_id is not None
-        and parent_env_id == sub_env_id
-        and not _has_nested_workflow_call(graph_dict)
-    )
-    if inline_eligible:
-        logger.info(
-            "sub-workflow inline workflow_id=%s env_id=%s",
-            workflow_id,
-            sub_env_id,
-        )
-        return InlineSubWorkflow(
-            graph=graph_dict,
-            cache=cache or None,
-            targets=sub_targets,
-            sources=sorted(sources),
-        )
-
-    chain_token = call_chain.set(chain | {workflow_id})
-    try:
-        if settings.use_subprocess_runner:
-            node_status: dict[str, str] = {}
-            node_outputs: dict[str, dict] = {}
-
-            async def collect(event: dict) -> None:
-                if event.get("type") != "node_finished":
-                    return
-                nid = event.get("node_id")
-                if not isinstance(nid, str):
-                    return
-                node_status[nid] = str(event.get("status") or "")
-                outputs = deserialize_value(event.get("outputs"))
-                if isinstance(outputs, dict):
-                    node_outputs[nid] = outputs
-
-            sub_run_id = f"sub_{workflow_id}_{uuid.uuid4().hex[:8]}"
-            logger.info(
-                "sub-workflow spawn workflow_id=%s env_id=%s parent_env_id=%s",
-                workflow_id, sub_env_id, parent_env_id,
-            )
-            await runtime_pool.dispatch_subworkflow(
-                sub_run_id,
-                sub_env_id,
-                graph_dict,
-                cache or None,
-                sub_targets,
-                collect,
-                sub_workflow_caller=_call_sub_workflow,
-            )
-            return _extract_sub_leaf(sources, node_status, node_outputs)
-
-        # In-process fallback for tests / dev. Same leaf rule as above.
-        result = await execute(
-            graph,
-            node_registry,
-            cache=cache or None,
-            targets=sub_targets,
-            default_timeouts=_engine_default_timeouts(),
-            process_isolator=process_isolator,
-        )
-        node_status = {nid: str(r.status) for nid, r in result.nodes.items()}
-        node_outputs = {nid: dict(r.outputs) for nid, r in result.nodes.items()}
-        return _extract_sub_leaf(sources, node_status, node_outputs)
-    finally:
-        call_chain.reset(chain_token)
-
-
-# A2: the local executor wraps the warm-subprocess pool path. Constructed
-# after _call_sub_workflow so the caller reference binds; _active_runs is
-# shared by reference, so conftest's reset (which .clear()s it) covers both.
+# A2: the local executor wraps the warm-subprocess pool path. The resolver
+# lives in app.services.subworkflows (A3); _active_runs is shared by
+# reference, so conftest's reset (which .clear()s it) covers both.
 local_executor = LocalExecutor(
     pool=runtime_pool,
-    sub_workflow_caller=_call_sub_workflow,
+    subworkflow_resolver=resolve_subworkflow,
     active_runs=_active_runs,
 )
 
@@ -842,7 +589,11 @@ async def _execute_run(
     run_event_sequence = 0
     artifact_refs: list[dict] = []
     secret_values: list[str] = []
-    prefer_draft_token = _prefer_draft_graphs.set(prefer_draft)
+    # A3: sub-workflow context (draft preference, depth/chain seed) travels
+    # as explicit meta through the engine / run protocol — no ContextVars.
+    sub_meta = meta_for_root_run(
+        run_id=run_id, workflow_id=workflow_id, prefer_draft=prefer_draft
+    )
     run_id_token = _log_run_id.set(run_id)
     _install_run_id_filter()
 
@@ -982,69 +733,64 @@ async def _execute_run(
             workflow_modules = []
 
         if settings.use_subprocess_runner:
-            chain_token = call_chain.set(frozenset({workflow_id}))
-            caller_token = workflow_caller.set(_call_sub_workflow)
-            try:
-                if runner_pool_id:
-                    # Remote runner path — build env descriptor and dispatch.
-                    env_payload = await _build_env_payload_for_run(env_id)
-                    try:
-                        outcome = await remote_executor.execute(
-                            _build_ctx(
-                                run_id=run_id, workflow_id=workflow_id,
-                                graph=graph_dict, cache=cache, targets=targets,
-                                environment_id=env_id,
-                                runner_pool_id=runner_pool_id,
-                                env_payload=env_payload,
-                                workflow_modules=workflow_modules,
-                                run_timeout=run_timeout,
-                                agent_action_resume=agent_action_resume,
-                            ),
-                            on_event,
-                        )
-                        status = outcome.status
-                    except _QueuedError as queued_exc:
-                        # No runner capacity right now. Reset both ledgers
-                        # to "queued" so the durable queue's dispatch loop
-                        # retries with backoff when capacity frees. If the
-                        # queue has exhausted its retry budget the entry is
-                        # dead-lettered; mirror that onto Run.status="error"
-                        # so the run doesn't appear queued forever.
-                        async with SessionLocal() as session:
-                            entry = await run_queue.fail(
-                                session,
-                                run_id=run_id,
-                                retryable=True,
-                                error=str(queued_exc) or "no runner capacity",
-                            )
-                            run = await session.get(Run, run_id)
-                            if run is not None:
-                                if entry is not None and entry.status == "queued":
-                                    run.status = "queued"
-                                    run.finished_at = None
-                                else:
-                                    run.status = "error"
-                                    run.finished_at = datetime.now(UTC)
-                            await session.commit()
-                        _prefer_draft_graphs.reset(prefer_draft_token)
-                        _log_run_id.reset(run_id_token)
-                        return
-                else:
-                    outcome = await local_executor.execute(
+            if runner_pool_id:
+                # Remote runner path — build env descriptor and dispatch.
+                env_payload = await _build_env_payload_for_run(env_id)
+                try:
+                    outcome = await remote_executor.execute(
                         _build_ctx(
                             run_id=run_id, workflow_id=workflow_id,
                             graph=graph_dict, cache=cache, targets=targets,
-                            environment_id=env_id, runner_pool_id=None,
-                            env_payload=None, workflow_modules=workflow_modules,
+                            environment_id=env_id,
+                            runner_pool_id=runner_pool_id,
+                            env_payload=env_payload,
+                            workflow_modules=workflow_modules,
                             run_timeout=run_timeout,
                             agent_action_resume=agent_action_resume,
+                            subworkflow_meta=sub_meta.to_payload(),
                         ),
                         on_event,
                     )
                     status = outcome.status
-            finally:
-                workflow_caller.reset(caller_token)
-                call_chain.reset(chain_token)
+                except _QueuedError as queued_exc:
+                    # No runner capacity right now. Reset both ledgers
+                    # to "queued" so the durable queue's dispatch loop
+                    # retries with backoff when capacity frees. If the
+                    # queue has exhausted its retry budget the entry is
+                    # dead-lettered; mirror that onto Run.status="error"
+                    # so the run doesn't appear queued forever.
+                    async with SessionLocal() as session:
+                        entry = await run_queue.fail(
+                            session,
+                            run_id=run_id,
+                            retryable=True,
+                            error=str(queued_exc) or "no runner capacity",
+                        )
+                        run = await session.get(Run, run_id)
+                        if run is not None:
+                            if entry is not None and entry.status == "queued":
+                                run.status = "queued"
+                                run.finished_at = None
+                            else:
+                                run.status = "error"
+                                run.finished_at = datetime.now(UTC)
+                        await session.commit()
+                    _log_run_id.reset(run_id_token)
+                    return
+            else:
+                outcome = await local_executor.execute(
+                    _build_ctx(
+                        run_id=run_id, workflow_id=workflow_id,
+                        graph=graph_dict, cache=cache, targets=targets,
+                        environment_id=env_id, runner_pool_id=None,
+                        env_payload=None, workflow_modules=workflow_modules,
+                        run_timeout=run_timeout,
+                        agent_action_resume=agent_action_resume,
+                        subworkflow_meta=sub_meta.to_payload(),
+                    ),
+                    on_event,
+                )
+                status = outcome.status
         else:
             # In-process path: register modules into the host's registry for
             # the duration of the run, then strip them on the way out so we
@@ -1073,8 +819,6 @@ async def _execute_run(
                             secret_values,
                         ),
                     )
-            chain_token = call_chain.set(frozenset({workflow_id}))
-            caller_token = workflow_caller.set(_call_sub_workflow)
             pool_key_token = engine_pool_key.set(env_id)
             _run_org = await _resolve_run_org(run_id)
             limits_token = org_run_limits.set(
@@ -1093,7 +837,7 @@ async def _execute_run(
                 # Bound top-level in-process runs by the same global ceiling
                 # subprocess ``dispatch`` uses, so an in-process deployment
                 # can't spawn unbounded concurrent engine runs. Sub-workflows
-                # reached via ``workflow_caller``/``_call_sub_workflow`` call
+                # reached via the engine's subworkflow resolver call
                 # ``execute`` directly WITHOUT this slot, so a parent waiting
                 # on a child never deadlocks (mirrors the subprocess split).
                 _eff_timeout = run_timeout if (run_timeout and run_timeout > 0) else (
@@ -1110,6 +854,8 @@ async def _execute_run(
                         pause_on_approval=True,
                         agent_action_resume=agent_action_resume,
                         process_isolator=process_isolator,
+                        subworkflow_runner=resolve_subworkflow,
+                        subworkflow_meta=sub_meta,
                     )
                     result = await (
                         asyncio.wait_for(coro, timeout=_eff_timeout)
@@ -1121,8 +867,6 @@ async def _execute_run(
                 artifact_store.reset(artifact_token)
                 org_run_limits.reset(limits_token)
                 engine_pool_key.reset(pool_key_token)
-                workflow_caller.reset(caller_token)
-                call_chain.reset(chain_token)
                 for module_id in loaded_module_ids:
                     unregister_module(module_id, node_registry)
     except asyncio.CancelledError:
@@ -1180,7 +924,6 @@ async def _execute_run(
             run_id=run_id, node_events=node_events, secret_values=secret_values,
         )
 
-    _prefer_draft_graphs.reset(prefer_draft_token)
     _log_run_id.reset(run_id_token)
 
 

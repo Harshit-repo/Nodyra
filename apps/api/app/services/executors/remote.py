@@ -41,6 +41,7 @@ class RemoteExecutor:
             on_event,
             pause_on_approval=ctx["pause_on_approval"],
             agent_action_resume=ctx["agent_action_resume"],
+            subworkflow_meta=ctx.get("subworkflow_meta"),
         )
         return RunOutcome(status=str(status))
 

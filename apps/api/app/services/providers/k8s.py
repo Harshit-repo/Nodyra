@@ -34,6 +34,7 @@ async def assign_k8s_run(
     on_event: EventCallback,
     pause_on_approval: bool = False,
     agent_action_resume: dict | None = None,
+    subworkflow_meta: dict | None = None,
 ) -> str:
     """Create a K8s Job whose pod connects back as a single-run agent."""
     try:
@@ -129,6 +130,7 @@ async def assign_k8s_run(
         "workflow_modules": workflow_modules,
         "pause_on_approval": pause_on_approval,
         "agent_action_resume": agent_action_resume or {},
+        "subworkflow_meta": subworkflow_meta or {},
     }
 
     try:

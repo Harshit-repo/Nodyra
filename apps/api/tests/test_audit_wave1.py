@@ -160,7 +160,7 @@ async def test_runtime_run_cancels_callbacks_on_error():
     caller_started = asyncio.Event()
     caller_cancelled = asyncio.Event()
 
-    async def hanging_caller(workflow_id, input_value, *, parent_env_id=None):
+    async def hanging_caller(call, *, parent_env_id=None):
         caller_started.set()
         try:
             await asyncio.Event().wait()  # never resolves
@@ -189,7 +189,7 @@ async def test_runtime_run_cancels_callbacks_on_error():
             None,
             None,
             AsyncMock(),
-            sub_workflow_caller=hanging_caller,
+            subworkflow_resolver=hanging_caller,
         )
 
     assert caller_started.is_set(), "callback should have started"

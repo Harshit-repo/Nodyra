@@ -181,12 +181,13 @@ def test_required_composite_indices_declared_on_models() -> None:
 async def test_subworkflow_routes_through_subprocess_for_sub_env(
     client: AsyncClient,
 ) -> None:
-    """When subprocess mode is on, ``_call_sub_workflow`` dispatches the
-    sub through its assigned env's subprocess — not the host engine — so
-    the sub runs against its own env's installed packages."""
+    """When subprocess mode is on, the resolver dispatches the sub through
+    its assigned env's subprocess — not the host engine — and forwards the
+    resolver + child meta so nested calls keep working (A3)."""
     from app.config import settings as live_settings
-    from app.services import runner as runner_module
-    from noodle.context import call_chain
+    from app.services import runtime_pool as pool_module
+    from app.services.subworkflows import resolve_subworkflow
+    from noodle.engine.subworkflows import SubworkflowCall
 
     # Build a sub workflow assigned to a specific environment.
     env = (
@@ -217,7 +218,7 @@ async def test_subworkflow_routes_through_subprocess_for_sub_env(
             },
         },
     )
-    # Publish so production-mode loads (default of `_prefer_draft_graphs`)
+    # Publish so production-mode loads (use_published=True, the default)
     # see the real graph rather than the empty initial WorkflowVersion.
     await client.post(f"/workflows/{sub['id']}/publish", json={})
 
@@ -230,15 +231,18 @@ async def test_subworkflow_routes_through_subprocess_for_sub_env(
         cache: dict | None,
         targets: list[str] | None,
         on_event,
-        sub_workflow_caller=None,
+        subworkflow_resolver=None,
+        subworkflow_meta=None,
         workflow_modules=None,
     ) -> str:
-        # Record what the router asked for.
+        # Record what the resolver asked for.
         captured["env_id"] = env_id
         captured["targets"] = targets
         captured["sub_run_id"] = run_id
-        # Mimic a successful sub run: emit one node_finished event for the
-        # leaf so ``_extract_sub_leaf`` returns something useful.
+        captured["resolver"] = subworkflow_resolver
+        captured["meta"] = subworkflow_meta
+        # Mimic a successful sub run: emit node_finished events so leaf
+        # extraction returns something useful.
         await on_event({
             "type": "node_finished",
             "node_id": "t",
@@ -255,61 +259,30 @@ async def test_subworkflow_routes_through_subprocess_for_sub_env(
 
     previous_mode = live_settings.use_subprocess_runner
     live_settings.use_subprocess_runner = True
-    previous_dispatch = runner_module.runtime_pool.dispatch_subworkflow
-    runner_module.runtime_pool.dispatch_subworkflow = fake_dispatch_subworkflow  # type: ignore[method-assign]
+    previous_dispatch = pool_module.pool.dispatch_subworkflow
+    pool_module.pool.dispatch_subworkflow = fake_dispatch_subworkflow  # type: ignore[method-assign]
     try:
-        token = call_chain.set(frozenset({"parent-run"}))
-        try:
-            result = await runner_module._call_sub_workflow(
-                sub["id"], {"echo": True}
-            )
-        finally:
-            call_chain.reset(token)
+        call = SubworkflowCall(
+            workflow_id=sub["id"], parameters={"echo": True},
+            use_published=True, parent_run_id=None, depth=1,
+            call_chain=frozenset({"parent-wf", sub["id"]}),
+        )
+        result = await resolve_subworkflow(call)
     finally:
-        runner_module.runtime_pool.dispatch_subworkflow = previous_dispatch  # type: ignore[method-assign]
+        pool_module.pool.dispatch_subworkflow = previous_dispatch  # type: ignore[method-assign]
         live_settings.use_subprocess_runner = previous_mode
 
     assert captured["env_id"] == env["id"]
     # Trigger-gating must restrict execution to the sub's trigger+descendants.
     assert set(captured["targets"]) == {"t", "c"}
+    # Nested calls from the spawned child must round-trip through the SAME
+    # resolver, carrying the child's meta (depth + extended chain).
+    assert captured["resolver"] is resolve_subworkflow
+    meta = captured["meta"]
+    assert meta is not None and meta.depth == 1
+    assert sub["id"] in meta.call_chain
     # Leaf output flows back to the caller.
     assert result == {"echo": True}
-
-
-async def test_subworkflow_in_process_path_still_works(
-    client: AsyncClient,
-) -> None:
-    """In-process fallback (subprocess runner off — the test default) must
-    keep returning the leaf's ``main`` output via the host engine."""
-    from app.services import runner as runner_module
-    from noodle.context import call_chain
-
-    sub = (await client.post("/workflows", json={"name": "Sub"})).json()
-    await client.put(
-        f"/workflows/{sub['id']}",
-        json={
-            "graph": {
-                "nodes": [
-                    {"id": "t", "type": "manual_trigger", "params": {},
-                     "position": {"x": 0, "y": 0}},
-                    {"id": "c", "type": "code",
-                     "params": {"code": "output = input['n'] * 2"},
-                     "position": {"x": 200, "y": 0}},
-                ],
-                "edges": [{"id": "e", "source": "t", "source_output": "main",
-                           "target": "c", "target_input": "input"}],
-            },
-        },
-    )
-    await client.post(f"/workflows/{sub['id']}/publish", json={})
-
-    token = call_chain.set(frozenset({"parent-run"}))
-    try:
-        result = await runner_module._call_sub_workflow(sub["id"], {"n": 7})
-    finally:
-        call_chain.reset(token)
-
-    assert result == 14
 
 
 # --- Sub-workflow inline-same-subprocess optimization -----------------------
@@ -339,62 +312,37 @@ async def _build_sub_with_env(
     return sub["id"]
 
 
-async def test_subworkflow_inline_when_same_env_and_no_nested_calls(
+def _sub_call(workflow_id: str, value, **kw):
+    from noodle.engine.subworkflows import SubworkflowCall
+
+    defaults = dict(
+        parameters=value, use_published=True, parent_run_id=None,
+        depth=1, call_chain=frozenset({workflow_id}),
+    )
+    defaults.update(kw)
+    return SubworkflowCall(workflow_id=workflow_id, **defaults)
+
+
+async def test_subworkflow_inline_even_with_nested_workflow_call(
     client: AsyncClient,
 ) -> None:
-    """Same env + no nested execute_workflow → InlineSubWorkflow returned
-    instead of spawning a fresh subprocess. The pool's callback handler
-    will forward the sub graph to the parent's existing subprocess."""
+    """Same env → InlineSubworkflow directive, INCLUDING when the sub
+    contains nested execute_workflow nodes. The pre-A3 restriction is
+    lifted: the engine executes inline directives with explicit depth/chain
+    meta, so nested calls inside inline children stay cycle-checked."""
     from app.config import settings as live_settings
-    from app.services import runner as runner_module
-    from noodle.context import call_chain
-
-    env = (await client.post(
-        "/environments",
-        json={"name": "Inline Env", "python_version": "3.12", "packages": []},
-    )).json()
-    sub_id = await _build_sub_with_env(client, env["id"], "output = input")
-
-    previous_mode = live_settings.use_subprocess_runner
-    live_settings.use_subprocess_runner = True
-    try:
-        token = call_chain.set(frozenset({"parent-run"}))
-        try:
-            outcome = await runner_module._call_sub_workflow(
-                sub_id, {"hello": "world"}, parent_env_id=env["id"]
-            )
-        finally:
-            call_chain.reset(token)
-    finally:
-        live_settings.use_subprocess_runner = previous_mode
-
-    assert isinstance(outcome, runner_module.InlineSubWorkflow)
-    # Trigger-gating still applies.
-    assert set(outcome.targets) == {"t", "c"}
-    # Sources list lets the runtime compute leaves consistently.
-    assert "t" in outcome.sources and "c" not in outcome.sources
-
-
-async def test_subworkflow_spawns_when_sub_has_nested_workflow_call(
-    client: AsyncClient,
-) -> None:
-    """A sub containing execute_workflow is ineligible for inline (cycle
-    chain bookkeeping would need to follow the inline path back), so we
-    must fall back to the spawn-fresh subprocess path."""
-    from app.config import settings as live_settings
-    from app.services import runner as runner_module
-    from noodle.context import call_chain
+    from app.services.subworkflows import resolve_subworkflow
+    from noodle.engine.subworkflows import InlineSubworkflow
 
     env = (await client.post(
         "/environments",
         json={"name": "Mixed Env", "python_version": "3.12", "packages": []},
     )).json()
 
-    # A "leaf" sub the nested call would target — content doesn't matter
-    # because we won't actually dispatch (the spawn is monkeypatched).
+    # A "leaf" sub the nested call would target.
     inner = await _build_sub_with_env(client, env["id"], "output = input")
 
-    # Sub that calls inner — has execute_workflow → ineligible for inline.
+    # Sub that calls inner — nested execute_workflow, same env → still inline.
     nested = (await client.post(
         "/workflows", json={"name": "Nested"})).json()
     await client.put(
@@ -416,38 +364,65 @@ async def test_subworkflow_spawns_when_sub_has_nested_workflow_call(
     )
     await client.post(f"/workflows/{nested['id']}/publish", json={})
 
+    previous_mode = live_settings.use_subprocess_runner
+    live_settings.use_subprocess_runner = True
+    try:
+        outcome = await resolve_subworkflow(
+            _sub_call(nested["id"], {"x": 1}), parent_env_id=env["id"]
+        )
+    finally:
+        live_settings.use_subprocess_runner = previous_mode
+
+    assert isinstance(outcome, InlineSubworkflow)
+    # Trigger-gating still applies.
+    assert set(outcome.targets or []) == {"t", "call"}
+    # Sources let the engine compute leaves consistently.
+    assert "t" in outcome.sources and "call" not in outcome.sources
+
+
+async def test_subworkflow_spawns_when_env_differs(
+    client: AsyncClient,
+) -> None:
+    """A sub bound to a different env than the parent's still goes through
+    the spawn-fresh ``dispatch_subworkflow`` path — never inline."""
+    from app.config import settings as live_settings
+    from app.services import runtime_pool as pool_module
+    from app.services.subworkflows import resolve_subworkflow
+    from noodle.engine.subworkflows import InlineSubworkflow
+
+    env = (await client.post(
+        "/environments",
+        json={"name": "Sub-only Env", "python_version": "3.12", "packages": []},
+    )).json()
+    sub_id = await _build_sub_with_env(client, env["id"], "output = input")
+
     captured: dict[str, object] = {}
 
     async def fake_dispatch(
         run_id, env_id, graph, cache, targets, on_event,
-        sub_workflow_caller=None, workflow_modules=None,
+        subworkflow_resolver=None, subworkflow_meta=None, workflow_modules=None,
     ) -> str:
         captured["env_id"] = env_id
-        # Mimic a finished sub: emit minimal events so leaf extraction works.
         await on_event({"type": "node_finished", "node_id": "t",
                         "status": "success", "outputs": {"main": {}}})
-        await on_event({"type": "node_finished", "node_id": "call",
+        await on_event({"type": "node_finished", "node_id": "c",
                         "status": "success", "outputs": {"main": "called"}})
         return "success"
 
     previous_mode = live_settings.use_subprocess_runner
     live_settings.use_subprocess_runner = True
-    previous_dispatch = runner_module.runtime_pool.dispatch_subworkflow
-    runner_module.runtime_pool.dispatch_subworkflow = fake_dispatch  # type: ignore[method-assign]
+    previous_dispatch = pool_module.pool.dispatch_subworkflow
+    pool_module.pool.dispatch_subworkflow = fake_dispatch  # type: ignore[method-assign]
     try:
-        token = call_chain.set(frozenset({"parent-run"}))
-        try:
-            outcome = await runner_module._call_sub_workflow(
-                nested["id"], {"x": 1}, parent_env_id=env["id"]
-            )
-        finally:
-            call_chain.reset(token)
+        outcome = await resolve_subworkflow(
+            _sub_call(sub_id, {"x": 1}), parent_env_id="some-other-env"
+        )
     finally:
-        runner_module.runtime_pool.dispatch_subworkflow = previous_dispatch  # type: ignore[method-assign]
+        pool_module.pool.dispatch_subworkflow = previous_dispatch  # type: ignore[method-assign]
         live_settings.use_subprocess_runner = previous_mode
 
-    # Did NOT return InlineSubWorkflow — went through spawn path.
-    assert not isinstance(outcome, runner_module.InlineSubWorkflow)
+    # Did NOT return an inline directive — went through the spawn path.
+    assert not isinstance(outcome, InlineSubworkflow)
     assert outcome == "called"
     assert captured["env_id"] == env["id"]
 
@@ -455,20 +430,24 @@ async def test_subworkflow_spawns_when_sub_has_nested_workflow_call(
 async def test_subworkflow_pool_writes_inline_response_field(
     client: AsyncClient,
 ) -> None:
-    """Pool callback handler must serialize an InlineSubWorkflow into the
-    new ``inline_*`` fields on the call_workflow_response message."""
-    from app.services import runner as runner_module
+    """Pool callback handler must rebuild the SubworkflowCall from the
+    event and serialize an InlineSubworkflow directive into the
+    ``inline_*`` fields on the call_workflow_response message."""
     from app.services import runtime_pool as pool_module
+    from noodle.engine.subworkflows import InlineSubworkflow, SubworkflowCall
 
-    inline = runner_module.InlineSubWorkflow(
+    inline = InlineSubworkflow(
         graph={"nodes": [], "edges": []},
         cache={"t": {"main": {"hi": 1}}},
         targets=["t"],
-        sources=["t"],
+        sources=("t",),
     )
+    seen: dict[str, object] = {}
 
-    async def caller(workflow_id, input_value, *, parent_env_id=None) -> object:
+    async def resolver(call, *, parent_env_id=None) -> object:
+        assert isinstance(call, SubworkflowCall)
         assert parent_env_id == "env-xyz"
+        seen["call"] = call
         return inline
 
     # Build a fake _RuntimeProcess just sturdy enough for _handle_call_workflow.
@@ -486,8 +465,9 @@ async def test_subworkflow_pool_writes_inline_response_field(
 
     await pool_module._RuntimeProcess._handle_call_workflow(
         fake,  # type: ignore[arg-type]
-        {"callback_id": "cb1", "workflow_id": "wf1", "input": None},
-        caller,
+        {"callback_id": "cb1", "workflow_id": "wf1", "input": None,
+         "use_published": False, "depth": 2, "call_chain": ["wf0", "wf1"]},
+        resolver,
     )
 
     msg = fake.written  # type: ignore[attr-defined]
@@ -497,6 +477,12 @@ async def test_subworkflow_pool_writes_inline_response_field(
     assert msg["inline_targets"] == ["t"]
     assert msg["inline_sources"] == ["t"]
     assert "result" not in msg
+    # The protocol fields round-tripped into a typed call.
+    call = seen["call"]
+    assert call.workflow_id == "wf1"
+    assert call.depth == 2
+    assert call.call_chain == frozenset({"wf0", "wf1"})
+    assert call.use_published is False
 
 
 # --- Retention: active runs must not be pruned ------------------------------

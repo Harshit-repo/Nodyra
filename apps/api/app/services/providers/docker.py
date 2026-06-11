@@ -74,6 +74,7 @@ async def assign_docker_run(
     on_event: EventCallback,
     pause_on_approval: bool = False,
     agent_action_resume: dict | None = None,
+    subworkflow_meta: dict | None = None,
 ) -> str:
     try:
         import docker  # type: ignore[import-untyped]  # noqa: PLC0415
@@ -115,6 +116,7 @@ async def assign_docker_run(
         "workflow_modules": workflow_modules,
         "pause_on_approval": pause_on_approval,
         "agent_action_resume": agent_action_resume or {},
+        "subworkflow_meta": subworkflow_meta or {},
     }) + "\n"
 
     node_events: dict[str, dict] = {}

@@ -24,6 +24,7 @@ def test_executor_protocol_shape():
         "default_timeouts": {},
         "pause_on_approval": True,
         "agent_action_resume": None,
+        "subworkflow_meta": None,
     }
     assert ctx["run_id"] == "r1"
     assert RunOutcome(status="success").status == "success"
@@ -45,7 +46,7 @@ async def test_local_executor_delegates_to_pool_and_cancels_task():
     active: dict[str, asyncio.Task] = {}
     ex = LocalExecutor(
         pool=FakePool(),
-        sub_workflow_caller=lambda *a, **k: None,
+        subworkflow_resolver=lambda *a, **k: None,
         active_runs=active,
     )
 
@@ -87,7 +88,8 @@ async def test_remote_executor_delegates_to_dispatcher():
     class FakeDispatcher:
         async def assign_run(self, run_id, pool_id, env_payload, graph, cache,
                              targets, workflow_modules, on_event,
-                             pause_on_approval=False, agent_action_resume=None):
+                             pause_on_approval=False, agent_action_resume=None,
+                             subworkflow_meta=None):
             calls["assign"] = (run_id, pool_id, env_payload)
             return "success"
 

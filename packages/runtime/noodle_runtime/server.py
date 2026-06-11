@@ -24,8 +24,9 @@ Protocol — every streamed event includes the originating ``request_id``:
         {"type": "call_workflow_error",    "callback_id": "x", "error": "..."}
         # OR: "run this sub graph yourself in-process, return its leaf as
         # the result". Sent by the host when the sub shares the parent's
-        # env and contains no nested execute_workflow nodes — avoids a
-        # subprocess spawn + round-trip.
+        # env — avoids a subprocess spawn + round-trip. The ENGINE executes
+        # the directive (with correct depth/chain meta), so nested
+        # workflow calls inside inline children are allowed.
         {"type": "call_workflow_response", "callback_id": "x",
          "inline_graph": {...}, "inline_cache": {...} | null,
          "inline_targets": [...] | null, "inline_sources": [...]}
@@ -48,8 +49,13 @@ from typing import Any
 import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
 from noodle.ai_runtime import AgentActionRequest
 from noodle.artifacts import LocalArtifactStore
-from noodle.context import artifact_store, org_run_limits, workflow_caller
+from noodle.context import artifact_store, org_run_limits
 from noodle.engine import execute
+from noodle.engine.subworkflows import (
+    InlineSubworkflow,
+    SubworkflowCall,
+    SubworkflowMeta,
+)
 from noodle.models import WorkflowGraph
 from noodle.process_isolation import PooledProcessIsolator
 from noodle.sdk import register_module_functions, registry, unregister_module
@@ -109,19 +115,18 @@ async def _read_line() -> str | None:
     return line.rstrip("\n")
 
 
-async def _call_workflow_via_host(workflow_id: str, input_value: Any) -> Any:
-    """``workflow_caller`` implementation that round-trips through the host."""
+async def _run_subworkflow_via_host(call: SubworkflowCall) -> Any:
+    """``SubworkflowRunner`` that round-trips through the host.
+
+    The host answers with either a concrete result or an inline directive;
+    directives are returned as ``InlineSubworkflow`` for the ENGINE adapter
+    to execute (the engine owns inline semantics now — the old
+    ``_resolve_inline`` duplication is gone).
+    """
     callback_id = uuid.uuid4().hex
     future: asyncio.Future = asyncio.get_event_loop().create_future()
     _pending_callbacks[callback_id] = future
-    _emit(
-        {
-            "type": "call_workflow",
-            "callback_id": callback_id,
-            "workflow_id": workflow_id,
-            "input": input_value,
-        }
-    )
+    _emit({"type": "call_workflow", "callback_id": callback_id, **call.to_payload()})
     try:
         return await future
     finally:
@@ -164,7 +169,6 @@ async def _handle_run(request: dict[str, Any]) -> None:
                 }
             )
 
-    caller_token = workflow_caller.set(_call_workflow_via_host)
     # Per-org amplification caps (multi-tenancy C5); empty = uncapped.
     raw_limits = request.get("org_limits")
     limits_token = org_run_limits.set(
@@ -205,6 +209,9 @@ async def _handle_run(request: dict[str, Any]) -> None:
             for node_id, action_request in raw_agent_resume.items()
             if isinstance(action_request, dict)
         } if isinstance(raw_agent_resume, dict) else {}
+        sub_meta = SubworkflowMeta.from_payload(
+            request.get("subworkflow_meta") or {}
+        )
         result = await execute(
             graph,
             registry,
@@ -215,6 +222,8 @@ async def _handle_run(request: dict[str, Any]) -> None:
             pause_on_approval=bool(request.get("pause_on_approval")),
             agent_action_resume=agent_action_resume,
             process_isolator=_PROCESS_ISOLATOR,
+            subworkflow_runner=_run_subworkflow_via_host,
+            subworkflow_meta=sub_meta,
         )
         _emit(
             {
@@ -235,7 +244,6 @@ async def _handle_run(request: dict[str, Any]) -> None:
         if artifact_token is not None:
             artifact_store.reset(artifact_token)
         org_run_limits.reset(limits_token)
-        workflow_caller.reset(caller_token)
         for module_id in loaded_module_ids:
             unregister_module(module_id, registry)
 
@@ -253,58 +261,19 @@ def _resolve_callback(message: dict[str, Any]) -> bool:
             RuntimeError(message.get("error", "remote call_workflow error"))
         )
     elif "inline_graph" in message:
-        # Inline path — host wants us to run this sub graph ourselves.
-        # Spawn a task so the stdin reader loop keeps draining; the task
-        # completes the future when the inline run finishes.
-        asyncio.create_task(_resolve_inline(future, message))
+        # Inline directive — the ENGINE adapter executes it with correct
+        # depth/chain meta (noodle.engine.subworkflows.make_workflow_caller).
+        future.set_result(
+            InlineSubworkflow(
+                graph=message["inline_graph"],
+                cache=deserialize_value(message.get("inline_cache")) or None,
+                targets=message.get("inline_targets") or None,
+                sources=tuple(message.get("inline_sources") or ()),
+            )
+        )
     else:
         future.set_result(deserialize_value(message.get("result")))
     return True
-
-
-async def _resolve_inline(
-    future: asyncio.Future, message: dict[str, Any]
-) -> None:
-    """Run an inlined sub-workflow graph in this process and complete the
-    awaiting ``execute_workflow`` callback with its leaf result.
-
-    Uses the same engine + ``workflow_caller`` set up for top-level runs,
-    so a nested ``execute_workflow`` node inside the inline graph still
-    round-trips through the host (which then decides spawn vs nested
-    inline based on its own rules — the host restricts inline to subs
-    with no nested calls, so practically this won't recurse).
-    """
-    try:
-        graph = WorkflowGraph.model_validate(message["inline_graph"])
-        cache = deserialize_value(message.get("inline_cache")) or None
-        targets = message.get("inline_targets") or None
-        sources: set[str] = set(message.get("inline_sources") or [])
-        result = await execute(
-            graph,
-            registry,
-            cache=cache,
-            targets=targets,
-            default_timeouts=_RUNTIME_DEFAULT_TIMEOUTS,
-            process_isolator=_PROCESS_ISOLATOR,
-        )
-        leaves = [
-            nid
-            for nid, run in result.nodes.items()
-            if str(run.status) == "success" and nid not in sources
-        ]
-        if len(leaves) == 1:
-            value: Any = result.nodes[leaves[0]].outputs.get("main")
-        elif leaves:
-            value = {
-                nid: result.nodes[nid].outputs.get("main") for nid in leaves
-            }
-        else:
-            value = None
-        if not future.done():
-            future.set_result(value)
-    except Exception as exc:  # noqa: BLE001 - surface to the awaiter
-        if not future.done():
-            future.set_exception(exc)
 
 
 # Node types that call ``workflow_caller`` and therefore need the host-side
