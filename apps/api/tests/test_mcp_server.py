@@ -1,5 +1,6 @@
 import json
 import re
+from contextlib import asynccontextmanager
 
 from httpx import AsyncClient
 
@@ -191,3 +192,77 @@ async def test_unknown_tool_is_method_not_found(client: AsyncClient) -> None:
         "/mcp", json=rpc("tools/call", {"name": "nope_tool", "arguments": {}})
     )
     assert resp.json()["error"]["code"] == -32601
+
+
+# ---------------------------------------------------------------------------
+# Loopback: MCP client nodes against Noodle's own /mcp server (B3)
+# ---------------------------------------------------------------------------
+
+
+class _LoopbackSession:
+    """Minimal MCP client session that speaks to the test app's /mcp route."""
+
+    def __init__(self, client: AsyncClient) -> None:
+        self._client = client
+        self._seq = 0
+
+    async def _post(self, method: str, params: dict) -> dict:
+        self._seq += 1
+        resp = await self._client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": self._seq, "method": method, "params": params},
+        )
+        data = resp.json()
+        assert "error" not in data, data
+        return data["result"]
+
+    async def list_tools(self):
+        from types import SimpleNamespace
+
+        result = await self._post("tools/list", {})
+        return SimpleNamespace(
+            tools=[
+                SimpleNamespace(
+                    name=t["name"],
+                    description=t.get("description"),
+                    inputSchema=t.get("inputSchema"),
+                )
+                for t in result["tools"]
+            ]
+        )
+
+    async def call_tool(self, name: str, arguments: dict):
+        from types import SimpleNamespace
+
+        result = await self._post(
+            "tools/call", {"name": name, "arguments": arguments}
+        )
+        return SimpleNamespace(
+            content=[SimpleNamespace(text=c["text"]) for c in result["content"]],
+            structuredContent=result.get("structuredContent"),
+            isError=result["isError"],
+        )
+
+
+async def test_client_nodes_loopback_against_own_server(
+    client: AsyncClient, monkeypatch
+) -> None:
+    from noodle_nodes.ai_v2 import mcp as mcp_module
+
+    @asynccontextmanager
+    async def _loopback(config):
+        yield _LoopbackSession(client)
+
+    monkeypatch.setattr(mcp_module, "_mcp_session", _loopback)
+
+    creds = {"url": "https://loopback.invalid/mcp"}
+    tools = await mcp_module.mcp_list_tools(credentials=creds)
+    assert any(t["name"] == "list_workflows" for t in tools)
+
+    workflow_id = await make_workflow(client, "Loopback WF")
+    out = await mcp_module.mcp_call_tool(
+        credentials=creds,
+        tool_name="run_workflow",
+        arguments={"workflow_id": workflow_id},
+    )
+    assert out["status"] == "success"
