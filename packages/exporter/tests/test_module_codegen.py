@@ -95,3 +95,30 @@ def test_main_runs_trigger_only_graph(capsys) -> None:
     module["main"]()
     captured = capsys.readouterr()
     assert "success" in captured.out
+
+
+def test_two_node_pipeline_executes() -> None:
+    graph = WorkflowGraph.model_validate(
+        {
+            "nodes": [
+                {"id": "t", "type": "manual_trigger", "params": {}},
+                {
+                    "id": "shape",
+                    "type": "edit_fields",
+                    "params": {"fields": {"greeting": "hello"}},
+                },
+            ],
+            "edges": [
+                {"id": "e1", "source": "t", "target": "shape", "target_input": "input"}
+            ],
+        }
+    )
+    module = _load_module(workflow_to_module(graph, "Pipeline", registry=registry))
+    built = module["_build_graph"]()
+    parsed = WorkflowGraph.model_validate(built)
+
+    from noodle.engine import run
+
+    result = run(parsed, module["_runtime_registry"]())
+    assert result.status == "success"
+    assert result.nodes["shape"].status == "success"
