@@ -223,6 +223,17 @@ async def lifespan(app: FastAPI):
     )
 
     await _ensure_global_environment()
+
+    # Phase D: refuse unsafe MT configurations outright; probe the container
+    # sandbox only where this process can dispatch runs.
+    from app.services.sandbox_policy import enforce_sandbox_policy
+
+    enforce_sandbox_policy()
+    if dispatch_inline:
+        from app.services.sandbox_pool import init_sandbox
+
+        await init_sandbox()
+
     if dispatch_inline:
         # Only the process that owns execution may declare runs interrupted;
         # in split topologies workers own runs and lease-expiry recovers them.
@@ -332,6 +343,9 @@ async def lifespan(app: FastAPI):
     await _bounded(shutdown_active_runs())
     await _bounded(dispatcher.shutdown())
     await _bounded(runtime_pool.shutdown())
+    from app.services.sandbox_pool import pool as _sandbox_pool
+
+    await _bounded(_sandbox_pool.flush())
     await _bounded(expr_preview.shutdown())
     tracing.flush()  # push buffered spans before the process winds down
     process_isolator.shutdown()  # sync + fast: wait=False pool teardown
@@ -470,13 +484,16 @@ _CSRF_EXEMPT_PREFIXES = (
     "/runner-pools/ws",
     "/credentials/oauth/callback",
 )
-# Specific /auth endpoints that are safe without CSRF: they either have no
-# session cookie yet (bootstrapping login/register) or are idempotent reads.
+# Specific /auth endpoints that are safe without CSRF: they have no session
+# cookie yet (bootstrapping login/register) or are read-only probes. Matching
+# is method-blind, so never list a path whose unsafe methods must stay
+# protected (GETs are already exempt via _CSRF_SAFE_METHODS — e.g. listing
+# "/auth/users" here would have exempted POST /auth/users, the admin
+# create-user endpoint, from CSRF).
 _CSRF_EXEMPT_PATHS_EXACT = {
     "/auth/login",
     "/auth/register",
     "/auth/required",
-    "/auth/users",   # GET; list users admin endpoint
 }
 
 

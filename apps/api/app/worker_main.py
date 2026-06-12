@@ -29,6 +29,9 @@ from app.services.runner import (
 )
 from app.services.runtime_pool import idle_reaper_loop
 from app.services.runtime_pool import pool as runtime_pool
+from app.services.sandbox_policy import enforce_sandbox_policy
+from app.services.sandbox_pool import init_sandbox
+from app.services.sandbox_pool import pool as sandbox_pool
 from app.tenancy import run_as_system
 
 logger = logging.getLogger("noodle.worker")
@@ -72,6 +75,11 @@ async def _amain() -> None:
             f"(REDIS_URL={settings.redis_url}); broker mode was {mode!r}"
         )
 
+    # Phase D: the worker IS the execution plane, so the sandbox policy and
+    # probe always apply here (no dispatch_inline gate like main.py).
+    enforce_sandbox_policy()
+    await init_sandbox()
+
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -109,6 +117,8 @@ async def _amain() -> None:
             await shutdown_active_runs()
         with contextlib.suppress(Exception):
             await runtime_pool.shutdown()
+        with contextlib.suppress(Exception):
+            await sandbox_pool.flush()
         process_isolator.shutdown()
         with contextlib.suppress(Exception):
             tracing.flush()

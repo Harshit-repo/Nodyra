@@ -2,8 +2,10 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from app.config import settings
 from app.db import engine
 from app.redis_client import redis_client
+from app.services.sandbox_pool import pool as sandbox_pool
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -34,6 +36,18 @@ async def ready() -> JSONResponse:
     except Exception as exc:  # noqa: BLE001
         healthy = False
         checks["redis"] = f"error: {exc}"
+
+    # Sandbox state is informational in "auto" (subprocess fallback is fine)
+    # but a hard readiness failure in "required" — runs would error at
+    # dispatch time, so refuse traffic instead.
+    if settings.execution_sandbox != "off":
+        if sandbox_pool.enabled:
+            checks["sandbox"] = sandbox_pool.describe()
+        elif settings.execution_sandbox == "required":
+            healthy = False
+            checks["sandbox"] = "error: required but inactive"
+        else:
+            checks["sandbox"] = "inactive (subprocess fallback)"
 
     body = {"status": "ok" if healthy else "degraded", "checks": checks}
     return JSONResponse(body, status_code=200 if healthy else 503)
