@@ -1,13 +1,14 @@
 # Deployment
 
-> **⚠️ Trust boundary — read before exposing Noodle.** Workflow Code nodes and
-> uploaded code modules run **arbitrary Python in the worker process on the
-> Noodle host**. Deploy Noodle for **single-tenant, trusted authors** only:
-> put it behind authentication, restrict edit/deploy access to people you trust
-> to run code on the host, and never offer it as a multi-tenant builder to
-> untrusted users. Multi-tenant isolation (containers / gVisor / Firecracker per
-> run) is a planned capability of the remote-runner seam, not something the warm
-> local pools provide today. See [SECURITY.md](../SECURITY.md).
+> **⚠️ Trust boundary — read before exposing Noodle.** With the default
+> `EXECUTION_SANDBOX=off`, workflow Code nodes and uploaded code modules run
+> **arbitrary Python in the worker process on the Noodle host** — deploy for
+> **single-tenant, trusted authors** only: put it behind authentication and
+> restrict edit/deploy access to people you trust to run code on the host.
+> To serve untrusted authors, enable [sandboxed
+> execution](#sandboxed-execution) (per-run hardened containers, gVisor where
+> available); multi-tenancy refuses to start without it. See
+> [SECURITY.md](../SECURITY.md).
 
 ## Local development
 
@@ -250,13 +251,73 @@ behaviour is identical to single-tenant Noodle. To enable:
    creator becomes that org's owner and gets an org-scoped default
    environment. Members, roles, quotas, and usage live under
    **Manage organization**.
-5. Trust model per org: `shared` execution runs workflow code on the host
-   warm pool (trusted authors — Tier 1 hygiene only). Orgs with untrusted
-   authors must be set to `dedicated_pool` (org owner setting) and given
-   their own docker/kubernetes runner pool — runs that don't resolve to one
-   are refused. Deep sandbox hardening (egress policy, gVisor) is not
-   included; do not market shared-pool tenancy as hard isolation.
+5. Set `EXECUTION_SANDBOX=required` on every process that executes runs
+   (the worker, or the API when `DISPATCH_ROLE=inline`) — startup refuses
+   unsafe combinations otherwise. See "Sandboxed execution" below for setup.
+   `SANDBOX_POLICY_STRICT=false` disables that check for deployments where
+   every tenant is trusted (e.g. internal departments); only then does the
+   pre-sandbox trust model apply: orgs with untrusted authors must use
+   `dedicated_pool` with their own docker/kubernetes runner pool.
 6. Per-org quotas (concurrent runs, executions/day, map/loop caps, etc.) are
    owner-editable per org; instance defaults come from Settings. The
    ops dashboard's queue card shows per-org backpressure, including runs
    parked by an org's concurrency quota.
+
+## Sandboxed execution
+
+With `EXECUTION_SANDBOX` enabled, the execution plane runs each workflow in a
+disposable hardened container instead of a subprocess: caps dropped,
+`no-new-privileges`, read-only rootfs (tmpfs `/tmp`), non-root user, memory/
+CPU/pids ceilings, and a dedicated bridge network. Containers are warm-pooled
+per `(organization, environment)` — never reused across orgs — and recycled
+after `SANDBOX_MAX_RUNS_PER_CONTAINER` runs or `SANDBOX_WARM_TTL_SECONDS`
+idle.
+
+Modes (`EXECUTION_SANDBOX`):
+
+- `off` (default) — subprocess runner, single-tenant behaviour unchanged.
+- `auto` — use the sandbox when a Docker daemon is reachable, else log a
+  warning and fall back to the subprocess runner.
+- `required` — refuse to start without a working sandbox. **Enforced at
+  startup when `MULTI_TENANCY_ENABLED=true`** (escape hatch:
+  `SANDBOX_POLICY_STRICT=false`, trusted tenants only).
+
+Container runtime (`SANDBOX_RUNTIME`): `auto` probes the daemon and picks the
+strongest available runtime — `kata` (microVM) > `runsc` (gVisor) > `runc`.
+Set it explicitly to fail fast when a specific runtime is mandatory.
+
+| Host | Runtime you get | Isolation |
+| --- | --- | --- |
+| Docker Desktop (Windows/macOS) | `runc` | container + the Desktop VM boundary |
+| Linux / WSL2, gVisor installed | `runsc` | user-space kernel (syscall interception) |
+| Linux with Kata containers | `kata` | per-container microVM |
+
+gVisor install (Linux/WSL2): follow
+<https://gvisor.dev/docs/user_guide/install/>, add `runsc` to
+`/etc/docker/daemon.json` runtimes, restart dockerd. `docker info` should
+list `runsc` under Runtimes.
+
+docker-compose: uncomment the `EXECUTION_SANDBOX`/`SANDBOX_RUNTIME` env vars
+and the `/var/run/docker.sock` volume on the **worker** service. The socket
+grants the worker root-equivalent control of the host daemon — acceptable
+precisely because tenant code no longer executes inside the worker; runs
+execute in the hardened sibling containers it spawns on the host daemon
+(images stay host-local, no registry needed).
+
+Resource ceilings (per run container, overridable per deployment):
+`SANDBOX_MEM_LIMIT` (default `1g`), `SANDBOX_CPU_LIMIT` (`1.0`),
+`SANDBOX_PIDS_LIMIT` (`256`), `SANDBOX_TMPFS_SIZE` (`256m`). The security
+floor (cap-drop, no-new-privileges, read-only rootfs, non-root) is not
+overridable. Warm-pool sizing: `SANDBOX_WARM_PER_KEY` (`1`),
+`SANDBOX_WARM_TOTAL` (`8`).
+
+Network: run containers attach to the `SANDBOX_NETWORK` bridge
+(`noodle-sandbox`, created on demand). They get outbound internet (HTTP
+nodes need it) but sit isolated from the compose service network. Stricter
+egress (blocking cloud metadata endpoints, allow-listing destinations) is
+operator-supplied: point `SANDBOX_NETWORK` at a network you manage with
+firewall rules.
+
+Kubernetes: the DooD socket mount does not translate; the planned K8s path
+is a Job per run with `runtimeClassName: gvisor` — a follow-up slice. Until
+then, run the worker on a node/VM with Docker for sandboxed execution.

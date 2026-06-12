@@ -100,10 +100,27 @@ services:
       ENVS_DIR: /app/envs
       ARTIFACTS_DIR: /app/artifacts
       SECRET_KEY: ${NOODLE_SECRET_KEY:-noodle-dev-secret-change-me-in-production}
+      # --- Sandboxed execution (container-per-run isolation) ---
+      # Uncomment to run each workflow in a disposable hardened container
+      # instead of a worker subprocess. Requires the docker.sock volume below.
+      # See docs/deployment.md "Sandboxed execution".
+      #   auto     = use the sandbox when Docker is reachable, else fall back
+      #   required = refuse to start without it (mandatory when
+      #              MULTI_TENANCY_ENABLED=true)
+      # EXECUTION_SANDBOX: auto
+      # Container runtime: auto picks the strongest available
+      # (kata > runsc/gVisor > runc). Set explicitly to fail fast when a
+      # specific runtime is mandatory.
+      # SANDBOX_RUNTIME: auto
     volumes:
       - envdata:/app/envs
       - artifactdata:/app/artifacts
       - "D:/output_grainbrokers_parquet:/data/grainbrokers:ro"
+      # Required for EXECUTION_SANDBOX: lets the worker spawn sibling run
+      # containers on the host daemon (Docker-out-of-Docker). The worker
+      # itself never runs untrusted code — runs execute in the hardened
+      # sibling containers it creates.
+      # - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
         condition: service_healthy
