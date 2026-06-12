@@ -164,3 +164,64 @@ def test_ensure_sandbox_network_hard_failure():
     client.networks.create = always_fail
     with pytest.raises(RuntimeError, match="sandbox network"):
         ensure_sandbox_network(client, "noodle-sandbox")
+
+
+# --- docker runner-pool provider hardening -----------------------------------
+
+import asyncio  # noqa: E402
+
+
+def test_docker_provider_spawns_hardened(monkeypatch):
+    """assign_docker_run passes the security floor to containers.run and
+    sends the run message exactly once (after ready)."""
+    from app.services.providers import docker as provider
+
+    client = FakeDockerClient()
+
+    class FakeSession:
+        async def get(self, model, pid):
+            class P:
+                provider_config = {"runtime": "runsc", "limits": {"mem_limit": "2g"}}
+
+            return P()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    import docker as docker_sdk  # noqa: PLC0415
+
+    monkeypatch.setattr(docker_sdk, "from_env", lambda: client)
+
+    events: list[dict] = []
+
+    async def on_event(e):
+        events.append(e)
+
+    async def scenario():
+        task = asyncio.create_task(
+            provider.assign_docker_run(
+                lambda: FakeSession(), "run123", "pool1",
+                {"id": "env1", "packages_hash": "h", "python_version": "3.12",
+                 "packages": []},
+                {"nodes": [], "edges": []}, None, None, [], on_event,
+            )
+        )
+        await asyncio.sleep(0.3)  # let it spawn + consume ready
+        sock = client.containers_made[0].sock._sock
+        sock.feed({"type": "result", "status": "success"})
+        return await task
+
+    status = asyncio.run(scenario())
+    assert status == "success"
+    call = client.run_calls[0]
+    assert call["cap_drop"] == ["ALL"]
+    assert call["runtime"] == "runsc"
+    assert call["mem_limit"] == "2g"          # pool override applied
+    assert call["read_only"] is True
+    run_msgs = [m for m in client.containers_made[0].sock._sock.sent_messages()
+                if m.get("type") == "run"]
+    assert len(run_msgs) == 1                  # double-send fixed
+    assert client.containers_made[0].removed   # torn down in finally

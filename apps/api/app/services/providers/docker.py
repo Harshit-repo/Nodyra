@@ -18,6 +18,7 @@ from app.config import settings
 from app.models import RunnerPool
 from app.services.container_runtime import (
     ensure_docker_image,
+    hardening_kwargs,
     image_tag_for,
 )
 from app.services.executors.base import EventCallback
@@ -83,6 +84,13 @@ async def assign_docker_run(
     status = "error"
 
     try:
+        # Hardened spawn (shared security floor; pool config may raise the
+        # resource ceilings via "limits" and pick an isolation runtime).
+        spawn_kwargs = hardening_kwargs(
+            runtime=cfg.get("runtime") or "runc",
+            network=network,
+            overrides=cfg.get("limits") or {},
+        )
         container = await loop.run_in_executor(
             None,
             lambda: client.containers.run(
@@ -91,17 +99,16 @@ async def assign_docker_run(
                 stdin_open=True,
                 remove=False,
                 name=container_name,
-                network=network,
+                **spawn_kwargs,
             ),
         )
 
         # Attach to the container and drive the noodle_runtime protocol.
+        # The run message is sent ONLY on the runtime's "ready" event below —
+        # sending it earlier double-queued the run.
         sock = await loop.run_in_executor(None, lambda: container.attach_socket(
             params={"stdin": True, "stdout": True, "stderr": False, "stream": True}
         ))
-
-        # Write the run message to stdin.
-        await loop.run_in_executor(None, sock._sock.sendall, run_msg.encode())
 
         # Bound the recv loop so a crashed container never hangs the caller.
         _recv_timeout = settings.workflow_run_timeout_seconds or 3600.0
