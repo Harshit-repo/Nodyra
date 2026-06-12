@@ -242,3 +242,185 @@ def test_call_workflow_resolver_error_replied():
     messages = asyncio.run(scenario())
     errors = [m for m in messages if m.get("type") == "call_workflow_error"]
     assert len(errors) == 1 and "no such workflow" in errors[0]["error"]
+
+
+# --- SandboxPool: warm reuse, eviction, recycling ------------------------------
+
+from app.services.sandbox_pool import SandboxPool  # noqa: E402
+
+
+def _make_pool(client) -> SandboxPool:
+    p = SandboxPool()
+    p.configure(client, runtime="runc", network="noodle-sandbox")
+    return p
+
+
+def _dispatch(pool, run_id, org="org1", env="env1"):
+    async def on_event(e):
+        pass
+
+    return pool.dispatch(
+        run_id, org_id=org, env_id=env,
+        env_payload={"id": env, "packages_hash": "h1",
+                     "python_version": "3.12", "packages": []},
+        graph={}, cache=None, targets=None, workflow_modules=[],
+        on_event=on_event,
+    )
+
+
+def test_warm_reuse_within_key():
+    client = FakeDockerClient()
+
+    async def scenario():
+        pool = _make_pool(client)
+        t1 = asyncio.create_task(_dispatch(pool, "r1"))
+        await asyncio.sleep(0.2)
+        client.containers_made[0].sock._sock.feed({"type": "result", "status": "success"})
+        assert await t1 == "success"
+        # second run, same key: reuses the warm container
+        t2 = asyncio.create_task(_dispatch(pool, "r2"))
+        await asyncio.sleep(0.2)
+        client.containers_made[0].sock._sock.feed({"type": "result", "status": "success"})
+        assert await t2 == "success"
+
+    asyncio.run(scenario())
+    assert len(client.containers_made) == 1  # one container served both runs
+
+
+def test_no_cross_key_reuse():
+    client = FakeDockerClient()
+
+    async def scenario():
+        pool = _make_pool(client)
+        t1 = asyncio.create_task(_dispatch(pool, "r1", org="orgA"))
+        await asyncio.sleep(0.2)
+        client.containers_made[0].sock._sock.feed({"type": "result", "status": "success"})
+        await t1
+        t2 = asyncio.create_task(_dispatch(pool, "r2", org="orgB"))  # different org!
+        await asyncio.sleep(0.2)
+        client.containers_made[1].sock._sock.feed({"type": "result", "status": "success"})
+        await t2
+
+    asyncio.run(scenario())
+    assert len(client.containers_made) == 2  # orgB never got orgA's container
+
+
+def test_dirty_exit_not_pooled():
+    client = FakeDockerClient()
+
+    async def scenario():
+        pool = _make_pool(client)
+        t1 = asyncio.create_task(_dispatch(pool, "r1"))
+        await asyncio.sleep(0.2)
+        client.containers_made[0].sock._sock.feed_eof()  # crash
+        assert await t1 == "error"
+        t2 = asyncio.create_task(_dispatch(pool, "r2"))
+        await asyncio.sleep(0.2)
+        client.containers_made[1].sock._sock.feed({"type": "result", "status": "success"})
+        await t2
+
+    asyncio.run(scenario())
+    assert client.containers_made[0].removed
+    assert len(client.containers_made) == 2
+
+
+def test_stale_image_not_reused():
+    """Env packages changed (new packages_hash) → warm container discarded."""
+    client = FakeDockerClient()
+
+    async def scenario():
+        pool = _make_pool(client)
+        t1 = asyncio.create_task(_dispatch(pool, "r1"))
+        await asyncio.sleep(0.2)
+        client.containers_made[0].sock._sock.feed({"type": "result", "status": "success"})
+        await t1
+
+        async def on_event(e):
+            pass
+
+        t2 = asyncio.create_task(pool.dispatch(
+            "r2", org_id="org1", env_id="env1",
+            env_payload={"id": "env1", "packages_hash": "CHANGED",
+                         "python_version": "3.12", "packages": []},
+            graph={}, cache=None, targets=None, workflow_modules=[],
+            on_event=on_event,
+        ))
+        await asyncio.sleep(0.2)
+        client.containers_made[1].sock._sock.feed({"type": "result", "status": "success"})
+        await t2
+
+    asyncio.run(scenario())
+    assert client.containers_made[0].removed  # stale-image worker destroyed
+    assert len(client.containers_made) == 2
+
+
+def test_recycle_after_max_runs(monkeypatch):
+    monkeypatch.setattr(settings, "sandbox_max_runs_per_container", 1)
+    client = FakeDockerClient()
+
+    async def scenario():
+        pool = _make_pool(client)
+        for rid in ("r1", "r2"):
+            t = asyncio.create_task(_dispatch(pool, rid))
+            await asyncio.sleep(0.2)
+            client.containers_made[-1].sock._sock.feed(
+                {"type": "result", "status": "success"}
+            )
+            await t
+
+    asyncio.run(scenario())
+    assert len(client.containers_made) == 2  # recycled after every run
+    assert client.containers_made[0].removed
+
+
+def test_warm_total_cap_evicts_lru(monkeypatch):
+    monkeypatch.setattr(settings, "sandbox_warm_total", 1)
+    client = FakeDockerClient()
+
+    async def scenario():
+        pool = _make_pool(client)
+        for rid, org in (("r1", "orgA"), ("r2", "orgB")):
+            t = asyncio.create_task(_dispatch(pool, rid, org=org))
+            await asyncio.sleep(0.2)
+            client.containers_made[-1].sock._sock.feed(
+                {"type": "result", "status": "success"}
+            )
+            await t
+
+    asyncio.run(scenario())
+    # orgA's idle worker was evicted to make room for orgB's
+    assert client.containers_made[0].removed
+    assert not client.containers_made[1].removed
+
+
+def test_cancel_force_removes():
+    client = FakeDockerClient()
+
+    async def scenario():
+        pool = _make_pool(client)
+        t = asyncio.create_task(_dispatch(pool, "r1"))
+        await asyncio.sleep(0.2)
+        assert await pool.cancel("r1") is True
+        # the read loop now sees EOF/error from the removed container
+        client.containers_made[0].sock._sock.feed_eof()
+        status = await t
+        assert status == "error"
+        assert await pool.cancel("r1") is False  # already gone
+
+    asyncio.run(scenario())
+    assert client.containers_made[0].removed
+
+
+def test_flush_closes_idle():
+    client = FakeDockerClient()
+
+    async def scenario():
+        pool = _make_pool(client)
+        t = asyncio.create_task(_dispatch(pool, "r1"))
+        await asyncio.sleep(0.2)
+        client.containers_made[0].sock._sock.feed({"type": "result", "status": "success"})
+        await t
+        await pool.flush()
+
+    asyncio.run(scenario())
+    assert client.containers_made[0].removed

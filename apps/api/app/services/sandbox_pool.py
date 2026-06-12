@@ -261,3 +261,163 @@ class SandboxWorker:
             await loop.run_in_executor(None, lambda: self.container.remove(force=True))
         except Exception:  # noqa: BLE001 — already gone
             pass
+
+
+class SandboxPool:
+    """Bounded warm pool of SandboxWorkers keyed by (org_id, environment_id)."""
+
+    def __init__(self) -> None:
+        self._client: Any | None = None
+        self._runtime: str = "runc"
+        self._network: str = ""
+        self._idle: dict[tuple[str | None, str | None], list[SandboxWorker]] = {}
+        self._active: dict[str, SandboxWorker] = {}  # run_id -> worker
+        self._lock = asyncio.Lock()
+        self._reaper: asyncio.Task | None = None
+
+    def configure(self, client: Any, *, runtime: str, network: str) -> None:
+        self._client = client
+        self._runtime = runtime
+        self._network = network
+
+    @property
+    def enabled(self) -> bool:
+        return self._client is not None
+
+    def describe(self) -> str:
+        if not self.enabled:
+            return "inactive"
+        idle = sum(len(v) for v in self._idle.values())
+        return f"runtime={self._runtime} idle={idle} active={len(self._active)}"
+
+    async def dispatch(self, run_id: str, *, org_id: str | None,
+                       env_id: str | None, env_payload: dict, graph: dict,
+                       cache: dict | None, targets: list[str] | None,
+                       workflow_modules: list[dict], on_event,
+                       subworkflow_resolver=None,
+                       subworkflow_meta: dict | None = None,
+                       run_timeout: float | None = None,
+                       pause_on_approval: bool = False,
+                       agent_action_resume: dict | None = None) -> str:
+        if self._client is None:
+            raise RuntimeError("sandbox pool is not configured")
+        self._ensure_reaper()
+        key = (org_id, env_id)
+        worker = await self._acquire(key, env_payload)
+        self._active[run_id] = worker
+        try:
+            status = await worker.run(
+                run_id, graph=graph, cache=cache, targets=targets,
+                workflow_modules=workflow_modules, on_event=on_event,
+                subworkflow_resolver=subworkflow_resolver,
+                subworkflow_meta=subworkflow_meta,
+                pause_on_approval=pause_on_approval,
+                agent_action_resume=agent_action_resume,
+                run_timeout=run_timeout,
+            )
+        except asyncio.CancelledError:
+            await worker.close()  # cancelled task ⇒ hard-kill the container
+            raise
+        except Exception as exc:  # noqa: BLE001 — transport/spawn failure
+            logger.exception("sandbox run failed run_id=%s: %s", run_id, exc)
+            await on_event({"type": "run_error", "error": str(exc)})
+            status = "error"
+        finally:
+            self._active.pop(run_id, None)
+            await self._release(worker)
+        return status
+
+    async def cancel(self, run_id: str) -> bool:
+        worker = self._active.get(run_id)
+        if worker is None:
+            return False
+        await worker.close()  # read loop sees EOF; dispatch's finally cleans up
+        return True
+
+    async def flush(self) -> None:
+        async with self._lock:
+            workers = [w for lst in self._idle.values() for w in lst]
+            self._idle.clear()
+        for w in workers:
+            await w.close()
+
+    async def _acquire(self, key: tuple[str | None, str | None],
+                       env_payload: dict) -> SandboxWorker:
+        wanted_tag = image_tag_for(env_payload)
+        stale: list[SandboxWorker] = []
+        worker: SandboxWorker | None = None
+        async with self._lock:
+            bucket = self._idle.get(key) or []
+            while bucket:
+                candidate = bucket.pop()
+                if candidate.dead or candidate.image_tag != wanted_tag:
+                    stale.append(candidate)
+                else:
+                    worker = candidate
+                    break
+            if not bucket:
+                self._idle.pop(key, None)
+        for s in stale:
+            await s.close()
+        if worker is not None:
+            return worker
+        return await SandboxWorker.spawn(
+            self._client, key=key, env_payload=env_payload,
+            runtime=self._runtime, network=self._network,
+        )
+
+    async def _release(self, worker: SandboxWorker) -> None:
+        if (
+            worker.dead
+            or worker.runs_completed >= settings.sandbox_max_runs_per_container
+        ):
+            await worker.close()
+            return
+        evicted: list[SandboxWorker] = []
+        async with self._lock:
+            bucket = self._idle.setdefault(worker.key, [])
+            if len(bucket) >= settings.sandbox_warm_per_key:
+                evicted.append(bucket.pop(0))
+            worker.idle_since = time.monotonic()
+            bucket.append(worker)
+            total = sum(len(v) for v in self._idle.values())
+            while total > settings.sandbox_warm_total:
+                lru_key = min(
+                    (k for k, v in self._idle.items() if v),
+                    key=lambda k: self._idle[k][0].idle_since,
+                )
+                evicted.append(self._idle[lru_key].pop(0))
+                if not self._idle[lru_key]:
+                    self._idle.pop(lru_key)
+                total -= 1
+        for w in evicted:
+            await w.close()
+
+    def _ensure_reaper(self) -> None:
+        if self._reaper is None or self._reaper.done():
+            self._reaper = asyncio.create_task(self._reap_idle())
+
+    async def _reap_idle(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(30)
+                cutoff = time.monotonic() - settings.sandbox_warm_ttl_seconds
+                expired: list[SandboxWorker] = []
+                async with self._lock:
+                    for key in list(self._idle):
+                        keep = [w for w in self._idle[key] if w.idle_since >= cutoff]
+                        expired.extend(
+                            w for w in self._idle[key] if w.idle_since < cutoff
+                        )
+                        if keep:
+                            self._idle[key] = keep
+                        else:
+                            self._idle.pop(key)
+                for w in expired:
+                    await w.close()
+        except asyncio.CancelledError:
+            return
+
+
+# Module-level singleton, mirroring runtime_pool's pattern.
+pool = SandboxPool()
