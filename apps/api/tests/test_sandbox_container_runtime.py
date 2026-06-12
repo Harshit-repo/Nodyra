@@ -98,3 +98,69 @@ def test_probe_runc_always_available():
 def test_probe_invalid_value():
     with pytest.raises(ValueError, match="sandbox_runtime"):
         detect_runtime(FakeDockerClient(), "qemu")
+
+
+# --- hardened spawn kwargs + sandbox network ---------------------------------
+
+from app.services.container_runtime import (  # noqa: E402
+    ensure_sandbox_network,
+    hardening_kwargs,
+)
+
+
+def test_hardening_kwargs_complete():
+    kw = hardening_kwargs(runtime="runsc", network="noodle-sandbox")
+    assert kw["cap_drop"] == ["ALL"]
+    assert kw["security_opt"] == ["no-new-privileges:true"]
+    assert kw["read_only"] is True
+    assert kw["tmpfs"] == {"/tmp": "size=256m"}
+    assert kw["mem_limit"] == "1g"
+    assert kw["nano_cpus"] == 1_000_000_000
+    assert kw["pids_limit"] == 256
+    assert kw["network"] == "noodle-sandbox"
+    assert kw["runtime"] == "runsc"
+    # rootfs is read-only, so HOME must point at the writable tmpfs
+    assert kw["environment"] == {"HOME": "/tmp"}
+
+
+def test_hardening_kwargs_overrides():
+    kw = hardening_kwargs(
+        runtime="runc", network="bridge",
+        overrides={"mem_limit": "4g", "pids_limit": 1024, "nano_cpus": 2_000_000_000},
+    )
+    assert kw["mem_limit"] == "4g"
+    assert kw["pids_limit"] == 1024
+    assert kw["nano_cpus"] == 2_000_000_000
+    # overrides can't strip the security floor
+    assert kw["cap_drop"] == ["ALL"]
+    assert kw["read_only"] is True
+
+
+def test_ensure_sandbox_network_creates_once():
+    client = FakeDockerClient()
+    assert ensure_sandbox_network(client, "noodle-sandbox") == "noodle-sandbox"
+    assert "noodle-sandbox" in client.networks.existing
+    ensure_sandbox_network(client, "noodle-sandbox")  # idempotent, no error
+
+
+def test_ensure_sandbox_network_creation_race():
+    """Two workers racing to create: create conflicts, but re-get succeeds."""
+    client = FakeDockerClient()
+
+    def create_then_appear(name, **kw):
+        client.networks.existing.add(name)
+        raise RuntimeError("409 conflict")
+
+    client.networks.create = create_then_appear
+    assert ensure_sandbox_network(client, "noodle-sandbox") == "noodle-sandbox"
+
+
+def test_ensure_sandbox_network_hard_failure():
+    client = FakeDockerClient()
+
+    def always_fail(name, **kw):
+        raise RuntimeError("daemon on fire")
+
+    client.networks.create = always_fail
+    with pytest.raises(RuntimeError, match="sandbox network"):
+        ensure_sandbox_network(client, "noodle-sandbox")

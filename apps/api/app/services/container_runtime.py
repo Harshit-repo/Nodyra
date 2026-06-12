@@ -61,6 +61,56 @@ def _validate_python_version(version: str) -> str:
     return v
 
 
+# Spawn kwargs every Noodle-launched container gets. Resource ceilings are
+# overridable (per runner-pool provider_config, later per org_limits); the
+# security floor — cap_drop / no-new-privileges / read-only rootfs — is not.
+_OVERRIDABLE = ("mem_limit", "nano_cpus", "pids_limit", "tmpfs", "network")
+
+
+def hardening_kwargs(
+    *, runtime: str, network: str, overrides: dict | None = None
+) -> dict[str, Any]:
+    kw: dict[str, Any] = {
+        "cap_drop": ["ALL"],
+        "security_opt": ["no-new-privileges:true"],
+        "read_only": True,
+        "tmpfs": {"/tmp": f"size={settings.sandbox_tmpfs_size}"},
+        "mem_limit": settings.sandbox_mem_limit,
+        "nano_cpus": int(settings.sandbox_cpu_limit * 1_000_000_000),
+        "pids_limit": settings.sandbox_pids_limit,
+        "network": network,
+        "runtime": runtime,
+        # rootfs is read-only; /tmp is the only writable surface.
+        "environment": {"HOME": "/tmp"},
+    }
+    for key, value in (overrides or {}).items():
+        if key in _OVERRIDABLE:
+            kw[key] = value
+    return kw
+
+
+def ensure_sandbox_network(client: Any, name: str | None = None) -> str:
+    """Get-or-create the dedicated bridge network. Handles the two-workers-
+    racing-to-create case by re-checking after a failed create."""
+    name = name or settings.sandbox_network
+    try:
+        client.networks.get(name)
+        return name
+    except Exception:  # noqa: BLE001 — NotFound
+        pass
+    try:
+        client.networks.create(name, driver="bridge")
+        return name
+    except Exception as exc:  # noqa: BLE001 — possibly a concurrent create
+        try:
+            client.networks.get(name)
+            return name
+        except Exception:  # noqa: BLE001
+            raise RuntimeError(
+                f"could not create sandbox network {name!r}: {exc}"
+            ) from exc
+
+
 def image_tag_for(env_payload: dict) -> str:
     return (
         f"noodle-env:{env_payload.get('id', 'default')}"
