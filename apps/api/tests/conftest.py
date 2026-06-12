@@ -128,6 +128,39 @@ def _reset_run_dispatch_state():
 
 
 @pytest.fixture(autouse=True)
+def _relax_sandbox_policy():
+    """Default the MT→sandbox startup policy off for the suite.
+
+    Many MT tests flip ``multi_tenancy_enabled`` on without configuring a
+    container sandbox; in production that combination refuses to boot
+    (services/sandbox_policy.py). test_sandbox_policy.py re-enables
+    strictness explicitly to test the gate itself.
+    """
+    from app.config import settings as _settings
+
+    prev = _settings.sandbox_policy_strict
+    _settings.sandbox_policy_strict = False
+    yield
+    _settings.sandbox_policy_strict = prev
+
+
+@pytest.fixture(autouse=True)
+def _reset_auth_rate_limit_state():
+    """Clear the in-process auth rate-limit buckets between tests.
+
+    The buckets are keyed by client IP — every test shares the ASGI transport
+    "testclient" address, so a fast full-suite run accumulates enough register
+    calls within one minute to trip the brute-force limiter and 429 unrelated
+    tests.
+    """
+    from app.routers import auth as auth_module
+
+    auth_module._AUTH_RATE_BUCKETS.clear()
+    yield
+    auth_module._AUTH_RATE_BUCKETS.clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_webhook_listen_state():
     """Clear in-memory webhook listen sessions and capture buffer between tests.
 

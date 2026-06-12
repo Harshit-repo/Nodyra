@@ -175,6 +175,37 @@ class Settings(BaseSettings):
     # memberships), ORM SELECTs are auto-scoped to it, and on Postgres the
     # app.current_org GUC backs the RLS policies. See app/tenancy.py.
     multi_tenancy_enabled: bool = False
+    # Sandboxed execution (MT Phase D slice 1). "off": runs use the warm
+    # subprocess pool (today's behaviour). "auto": use disposable hardened
+    # containers when a Docker daemon is reachable, else fall back to
+    # subprocess with a startup warning. "required": refuse to start the
+    # dispatching process without a usable daemon + runtime.
+    execution_sandbox: str = "off"
+    # Container isolation runtime: auto-probe (kata > runsc > runc) or pin.
+    sandbox_runtime: str = "auto"
+    # Docker daemon for sandbox containers; empty = environment default
+    # (DOCKER_HOST / the mounted socket).
+    sandbox_docker_host: str = ""
+    # Dedicated bridge network for run containers — keeps tenant code off
+    # the compose project network (no postgres/redis/minio reachability).
+    sandbox_network: str = "noodle-sandbox"
+    # Per-container resource ceilings.
+    sandbox_mem_limit: str = "1g"
+    sandbox_cpu_limit: float = 1.0
+    sandbox_pids_limit: int = 256
+    sandbox_tmpfs_size: str = "256m"
+    # Warm pool: idle containers kept per (org, env) key / globally, idle
+    # TTL, and a recycle ceiling bounding state accumulation per container.
+    sandbox_warm_per_key: int = 1
+    sandbox_warm_total: int = 8
+    sandbox_warm_ttl_seconds: float = 300.0
+    sandbox_max_runs_per_container: int = 50
+    # Seconds to wait for a fresh container's {"type":"ready"} handshake.
+    sandbox_ready_timeout_seconds: float = 60.0
+    # When True (default), multi_tenancy_enabled requires
+    # execution_sandbox=required at startup. Setting False acknowledges
+    # shared-kernel execution for trusted-tenant deployments.
+    sandbox_policy_strict: bool = True
     # A5: OpenTelemetry tracing. Off by default — when disabled no SDK objects
     # are created and every tracing hook is a single boolean check (zero
     # overhead). Endpoint is the OTLP/HTTP collector traces URL, e.g.
