@@ -18,7 +18,12 @@ class FakeRawSock:
         self.timeout: float | None = None
 
     def feed(self, obj: dict) -> None:
-        self._q.put((json.dumps(obj) + "\n").encode())
+        # Real no-TTY attach streams are multiplexed: 8-byte frame header
+        # (stream type 1=stdout + big-endian length), then the payload.
+        payload = (json.dumps(obj) + "\n").encode()
+        self._q.put(
+            bytes([1, 0, 0, 0]) + len(payload).to_bytes(4, "big") + payload
+        )
 
     def feed_raw(self, data: bytes) -> None:
         self._q.put(data)
@@ -87,6 +92,7 @@ class _FakeContainers:
 class _FakeImages:
     def __init__(self):
         self.built: list[str] = []
+        self.build_calls: list[dict] = []
         self.existing: set[str] = set()
 
     def get(self, tag: str):
@@ -94,8 +100,9 @@ class _FakeImages:
             return object()
         raise KeyError(tag)  # NotFound — triggers build
 
-    def build(self, fileobj=None, tag: str = "", rm: bool = True):
+    def build(self, fileobj=None, tag: str = "", rm: bool = True, **kwargs):
         self.built.append(tag)
+        self.build_calls.append({"fileobj": fileobj, "tag": tag, "rm": rm, **kwargs})
         return (object(), iter(()))
 
 

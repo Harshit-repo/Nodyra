@@ -17,6 +17,8 @@ from typing import Any
 from app.config import settings
 from app.models import RunnerPool
 from app.services.container_runtime import (
+    DockerStreamDemuxer,
+    attach_raw_socket,
     ensure_docker_image,
     hardening_kwargs,
     image_tag_for,
@@ -106,23 +108,28 @@ async def assign_docker_run(
         # Attach to the container and drive the noodle_runtime protocol.
         # The run message is sent ONLY on the runtime's "ready" event below —
         # sending it earlier double-queued the run.
-        sock = await loop.run_in_executor(None, lambda: container.attach_socket(
-            params={"stdin": True, "stdout": True, "stderr": False, "stream": True}
+        sock = attach_raw_socket(await loop.run_in_executor(
+            None, lambda: container.attach_socket(
+                params={"stdin": True, "stdout": True, "stderr": False,
+                        "stream": True}
+            )
         ))
 
         # Bound the recv loop so a crashed container never hangs the caller.
         _recv_timeout = settings.workflow_run_timeout_seconds or 3600.0
         await loop.run_in_executor(
-            None, sock._sock.settimeout, _recv_timeout
+            None, sock.settimeout, _recv_timeout
         )
 
-        # Read events line by line until result.
+        # Read events line by line until result. The no-TTY attach stream is
+        # multiplexed — strip the frame headers before line splitting.
+        demux = DockerStreamDemuxer()
         buf = b""
         while True:
-            chunk = await loop.run_in_executor(None, sock._sock.recv, 4096)
+            chunk = await loop.run_in_executor(None, sock.recv, 4096)
             if not chunk:
                 break
-            buf += chunk
+            buf += demux.feed(chunk)
             while b"\n" in buf:
                 line, buf = buf.split(b"\n", 1)
                 line = line.strip()
@@ -136,7 +143,7 @@ async def assign_docker_run(
                 etype = event.get("type")
                 if etype == "ready":
                     # Send the run message now that the runtime is ready.
-                    await loop.run_in_executor(None, sock._sock.sendall, run_msg.encode())
+                    await loop.run_in_executor(None, sock.sendall, run_msg.encode())
                 elif etype in (
                     "node_started",
                     "node_finished",

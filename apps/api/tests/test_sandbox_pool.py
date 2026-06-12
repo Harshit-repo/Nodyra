@@ -4,6 +4,7 @@ import asyncio
 import pytest
 
 from app.config import settings
+from app.services.container_runtime import IMAGE_SCHEMA_VERSION
 from app.services.sandbox_pool import SandboxWorker
 from tests.sandbox_fakes import FakeDockerClient
 
@@ -25,7 +26,7 @@ def test_spawn_waits_for_ready_and_is_hardened():
     call = client.run_calls[0]
     assert call["cap_drop"] == ["ALL"]
     assert call["runtime"] == "runsc"
-    assert call["image"].endswith("-v2")
+    assert call["image"].endswith(f"-{IMAGE_SCHEMA_VERSION}")
     assert call["name"].startswith("noodle-sbx-")
 
 

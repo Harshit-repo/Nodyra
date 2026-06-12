@@ -28,25 +28,134 @@ def test_build_skipped_when_cached():
     assert client.images.built == []
 
 
-def test_build_dockerfile_runs_as_nonroot():
+def test_attach_raw_socket_unwraps_both_shapes():
+    """attach_socket() returns SocketIO (with ._sock) on Unix daemons but a
+    bare NpipeSocket on Windows named pipes — both must work."""
+    from app.services.container_runtime import attach_raw_socket
+
+    class Raw:
+        pass
+
+    class SocketIOLike:
+        def __init__(self):
+            self._sock = Raw()
+
+    wrapped = SocketIOLike()
+    assert attach_raw_socket(wrapped) is wrapped._sock
+    bare = Raw()
+    assert attach_raw_socket(bare) is bare
+
+
+def test_stream_demuxer_strips_frame_headers():
+    """No-TTY attach streams are multiplexed: 8-byte header (stream type +
+    big-endian length) per frame. json.loads must never see a header."""
+    from app.services.container_runtime import DockerStreamDemuxer
+
+    def frame(stream_type: int, payload: bytes) -> bytes:
+        return bytes([stream_type, 0, 0, 0]) + len(payload).to_bytes(4, "big") + payload
+
+    d = DockerStreamDemuxer()
+    assert d.feed(frame(1, b'{"type":"ready"}\n')) == b'{"type":"ready"}\n'
+    # two frames in one chunk
+    two = frame(1, b"abc") + frame(1, b"def\n")
+    assert d.feed(two) == b"abcdef\n"
+
+
+def test_stream_demuxer_partial_frames_across_recvs():
+    from app.services.container_runtime import DockerStreamDemuxer
+
+    payload = b'{"type":"result","status":"success"}\n'
+    framed = bytes([1, 0, 0, 0]) + len(payload).to_bytes(4, "big") + payload
+    d = DockerStreamDemuxer()
+    out = b""
+    # deliver one byte at a time — header and payload split arbitrarily
+    for i in range(len(framed)):
+        out += d.feed(framed[i:i + 1])
+    assert out == payload
+
+
+def test_base_image_built_from_workspace_source():
+    """The noodle packages are not on PyPI — the base image must install them
+    from the workspace source shipped in the build context."""
+    import io
+    import tarfile
+
+    from app.services.container_runtime import base_image_tag, ensure_base_image
+
+    client = FakeDockerClient()
+    tag = ensure_base_image(client, "3.12")
+    assert tag == base_image_tag("3.12")
+    assert tag.endswith(f"-{IMAGE_SCHEMA_VERSION}")
+    assert client.images.built == [tag]
+
+    call = client.images.build_calls[0]
+    assert call["custom_context"] is True
+    with tarfile.open(fileobj=io.BytesIO(call["fileobj"].getvalue())) as tar:
+        names = tar.getnames()
+        df = tar.extractfile("Dockerfile").read().decode()
+    for pkg in ("core", "nodes", "runtime"):
+        assert f"packages/{pkg}/pyproject.toml" in names
+    assert not any("__pycache__" in n or "/tests/" in n for n in names)
+    # installs from the copied source, never from PyPI names
+    assert "/opt/noodle-src/packages/runtime" in df
+    assert "uv pip install --system noodle-runtime" not in df
+    assert "useradd" in df and "USER noodle" in df
+    assert df.index("uv pip install") < df.index("USER noodle")
+
+
+def test_base_image_cached():
+    from app.services.container_runtime import base_image_tag, ensure_base_image
+
+    client = FakeDockerClient()
+    client.images.existing.add(base_image_tag("3.12"))
+    ensure_base_image(client, "3.12")
+    assert client.images.built == []
+
+
+def test_env_image_derives_from_base():
+    """Env images are thin layers over the base: FROM base, extra packages
+    installed as root, then privileges dropped again."""
+    from app.services.container_runtime import base_image_tag
+
     captured = {}
     client = FakeDockerClient()
     orig = client.images.build
 
-    def capture(fileobj=None, tag="", rm=True):
-        captured["dockerfile"] = fileobj.read().decode()
-        return orig(fileobj=fileobj, tag=tag, rm=rm)
+    def capture(fileobj=None, tag="", rm=True, **kw):
+        if not kw.get("custom_context"):
+            captured["dockerfile"] = fileobj.read().decode()
+        return orig(fileobj=fileobj, tag=tag, rm=rm, **kw)
 
     client.images.build = capture
     ensure_docker_image(
         client, "t1", {"python_version": "3.12", "packages": ["requests==2.31.0"]}
     )
+    base = base_image_tag("3.12")
+    assert client.images.built[0] == base  # base built first
+    assert client.images.built[1] == "t1"
     df = captured["dockerfile"]
-    assert "USER noodle" in df
-    assert "useradd" in df
+    assert df.startswith(f"FROM {base}\n")
     assert "requests==2.31.0" in df
-    # install happens BEFORE dropping privileges
+    # install happens as root, then drops back to the base image's user
+    assert df.index("USER root") < df.index("uv pip install")
     assert df.index("uv pip install") < df.index("USER noodle")
+
+
+def test_env_image_without_extra_packages_is_from_only():
+    from app.services.container_runtime import base_image_tag
+
+    captured = {}
+    client = FakeDockerClient()
+    client.images.existing.add(base_image_tag("3.12"))
+    orig = client.images.build
+
+    def capture(fileobj=None, tag="", rm=True, **kw):
+        captured["dockerfile"] = fileobj.read().decode()
+        return orig(fileobj=fileobj, tag=tag, rm=rm, **kw)
+
+    client.images.build = capture
+    ensure_docker_image(client, "t2", {"python_version": "3.12", "packages": []})
+    assert captured["dockerfile"] == f"FROM {base_image_tag('3.12')}\n"
 
 
 def test_package_validation_blocks_shell_metacharacters():

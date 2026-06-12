@@ -22,6 +22,8 @@ from typing import Any
 
 from app.config import settings
 from app.services.container_runtime import (
+    DockerStreamDemuxer,
+    attach_raw_socket,
     ensure_docker_image,
     hardening_kwargs,
     image_tag_for,
@@ -48,13 +50,14 @@ class SandboxWorker:
                  key: tuple[str | None, str | None], image_tag: str) -> None:
         self.client = client
         self.container = container
-        self._sock = sock
+        self._raw = attach_raw_socket(sock)
         self.key = key
         self.image_tag = image_tag
         self.runs_completed = 0
         self.idle_since = time.monotonic()
         self.dead = False
         self._buf = b""
+        self._demux = DockerStreamDemuxer()
         self._write_lock = asyncio.Lock()
 
     @classmethod
@@ -94,7 +97,7 @@ class SandboxWorker:
 
     async def _await_ready(self, loop: asyncio.AbstractEventLoop) -> None:
         await loop.run_in_executor(
-            None, self._sock._sock.settimeout, settings.sandbox_ready_timeout_seconds
+            None, self._raw.settimeout, settings.sandbox_ready_timeout_seconds
         )
         try:
             event = await self._read_event(loop)
@@ -122,20 +125,20 @@ class SandboxWorker:
                 except json.JSONDecodeError:
                     continue  # node stdout noise on the protocol stream
             try:
-                chunk = await loop.run_in_executor(None, self._sock._sock.recv, 4096)
+                chunk = await loop.run_in_executor(None, self._raw.recv, 4096)
             except Exception as exc:  # noqa: BLE001 — socket.timeout et al.
                 self.dead = True
                 raise RuntimeError(f"sandbox socket read failed: {exc}") from exc
             if not chunk:
                 self.dead = True
                 raise RuntimeError("sandbox container closed its output stream")
-            self._buf += chunk
+            self._buf += self._demux.feed(chunk)
 
     async def _send(self, message: dict, loop: asyncio.AbstractEventLoop) -> None:
         payload = json.dumps(serialize_value(message)).encode() + b"\n"
         async with self._write_lock:
             try:
-                await loop.run_in_executor(None, self._sock._sock.sendall, payload)
+                await loop.run_in_executor(None, self._raw.sendall, payload)
             except Exception as exc:  # noqa: BLE001 — broken pipe = dead container
                 self.dead = True
                 raise RuntimeError(f"sandbox socket write failed: {exc}") from exc
@@ -163,7 +166,7 @@ class SandboxWorker:
             run_timeout if (run_timeout and run_timeout > 0)
             else (settings.workflow_run_timeout_seconds or 3600.0)
         )
-        await loop.run_in_executor(None, self._sock._sock.settimeout, timeout)
+        await loop.run_in_executor(None, self._raw.settimeout, timeout)
         await self._send({
             "type": "run",
             "request_id": run_id,
