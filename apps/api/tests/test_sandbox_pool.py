@@ -424,3 +424,56 @@ def test_flush_closes_idle():
 
     asyncio.run(scenario())
     assert client.containers_made[0].removed
+
+
+# --- init_sandbox startup probe -------------------------------------------------
+
+from app.services import sandbox_pool as sp  # noqa: E402
+
+
+def test_init_off_is_noop(monkeypatch):
+    monkeypatch.setattr(settings, "execution_sandbox", "off")
+    fresh = SandboxPool()
+    monkeypatch.setattr(sp, "pool", fresh)
+    assert asyncio.run(sp.init_sandbox()) is None
+    assert not fresh.enabled
+
+
+def test_init_auto_falls_back_without_daemon(monkeypatch, caplog):
+    monkeypatch.setattr(settings, "execution_sandbox", "auto")
+    fresh = SandboxPool()
+    monkeypatch.setattr(sp, "pool", fresh)
+
+    def no_daemon():
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(sp, "_make_docker_client", no_daemon)
+    with caplog.at_level("WARNING"):
+        assert asyncio.run(sp.init_sandbox()) is None
+    assert not fresh.enabled
+    assert any("falling back" in r.message for r in caplog.records)
+
+
+def test_init_required_raises_without_daemon(monkeypatch):
+    monkeypatch.setattr(settings, "execution_sandbox", "required")
+    fresh = SandboxPool()
+    monkeypatch.setattr(sp, "pool", fresh)
+
+    def no_daemon():
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(sp, "_make_docker_client", no_daemon)
+    with pytest.raises(RuntimeError, match="execution_sandbox=required"):
+        asyncio.run(sp.init_sandbox())
+
+
+def test_init_required_with_daemon(monkeypatch):
+    monkeypatch.setattr(settings, "execution_sandbox", "required")
+    monkeypatch.setattr(settings, "sandbox_runtime", "auto")
+    fresh = SandboxPool()
+    monkeypatch.setattr(sp, "pool", fresh)
+    client = FakeDockerClient(runtimes=("runc", "runsc"))
+    monkeypatch.setattr(sp, "_make_docker_client", lambda: client)
+    assert asyncio.run(sp.init_sandbox()) == "runsc"
+    assert fresh.enabled
+    assert "noodle-sandbox" in client.networks.existing

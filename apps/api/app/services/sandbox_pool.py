@@ -421,3 +421,50 @@ class SandboxPool:
 
 # Module-level singleton, mirroring runtime_pool's pattern.
 pool = SandboxPool()
+
+
+def _make_docker_client() -> Any:
+    """Construct the SDK client (separated for test monkeypatching)."""
+    import docker  # noqa: PLC0415 — optional dependency, sandbox-mode only
+
+    if settings.sandbox_docker_host:
+        return docker.DockerClient(base_url=settings.sandbox_docker_host)
+    return docker.from_env()
+
+
+async def init_sandbox() -> str | None:
+    """Probe the daemon per execution_sandbox mode; configure the pool.
+
+    Returns the active isolation runtime, or None when the sandbox is off /
+    unavailable-in-auto. Call once from worker_main and the API lifespan
+    (after enforce_sandbox_policy)."""
+    from app.services.container_runtime import (  # noqa: PLC0415
+        detect_runtime,
+        ensure_sandbox_network,
+    )
+
+    mode = settings.execution_sandbox
+    if mode == "off":
+        return None
+    loop = asyncio.get_running_loop()
+    try:
+        client = await loop.run_in_executor(None, _make_docker_client)
+        await loop.run_in_executor(None, client.ping)
+        runtime = await loop.run_in_executor(
+            None, detect_runtime, client, settings.sandbox_runtime
+        )
+        network = await loop.run_in_executor(None, ensure_sandbox_network, client)
+    except Exception as exc:
+        if mode == "required":
+            raise RuntimeError(
+                f"execution_sandbox=required but no usable Docker daemon/"
+                f"runtime: {exc}"
+            ) from exc
+        logger.warning(
+            "execution_sandbox=auto: no usable Docker daemon (%s); "
+            "falling back to the subprocess runner", exc,
+        )
+        return None
+    pool.configure(client, runtime=runtime, network=network)
+    logger.info("sandbox execution active: runtime=%s network=%s", runtime, network)
+    return runtime
