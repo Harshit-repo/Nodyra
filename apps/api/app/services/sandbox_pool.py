@@ -140,6 +140,119 @@ class SandboxWorker:
                 self.dead = True
                 raise RuntimeError(f"sandbox socket write failed: {exc}") from exc
 
+    async def run(
+        self,
+        run_id: str,
+        *,
+        graph: dict,
+        cache: dict | None,
+        targets: list[str] | None,
+        workflow_modules: list[dict],
+        on_event,
+        subworkflow_resolver=None,
+        subworkflow_meta: dict | None = None,
+        pause_on_approval: bool = False,
+        agent_action_resume: dict | None = None,
+        run_timeout: float | None = None,
+    ) -> str:
+        """Execute one run on this container. Raises on transport failure
+        (caller surfaces run_error); a missing ``result`` event marks the
+        worker dead so the pool never reuses it."""
+        loop = asyncio.get_running_loop()
+        timeout = (
+            run_timeout if (run_timeout and run_timeout > 0)
+            else (settings.workflow_run_timeout_seconds or 3600.0)
+        )
+        await loop.run_in_executor(None, self._sock._sock.settimeout, timeout)
+        await self._send({
+            "type": "run",
+            "request_id": run_id,
+            "graph": graph,
+            "cache": cache or {},
+            "targets": targets or [],
+            "workflow_modules": workflow_modules,
+            "pause_on_approval": pause_on_approval,
+            "agent_action_resume": agent_action_resume or {},
+            "subworkflow_meta": subworkflow_meta or {},
+        }, loop)
+
+        callbacks: set[asyncio.Task] = set()
+        status = "error"
+        clean = False
+        try:
+            while True:
+                event = await self._read_event(loop)
+                etype = event.get("type")
+                if etype == "call_workflow":
+                    task = asyncio.create_task(
+                        self._handle_call_workflow(event, subworkflow_resolver, loop)
+                    )
+                    callbacks.add(task)
+                    task.add_done_callback(callbacks.discard)
+                elif etype in _FORWARDED_EVENTS:
+                    await on_event(event)
+                elif etype == "result":
+                    status = str(event.get("status", "error"))
+                    clean = True
+                    break
+                elif etype == "error":
+                    await on_event({
+                        "type": "run_error",
+                        "error": str(event.get("error", "runtime failure")),
+                    })
+                    break
+                # unknown event types are ignored (forward-compat)
+        finally:
+            self.runs_completed += 1
+            if not clean:
+                self.dead = True
+            for task in callbacks:
+                task.cancel()
+        return status
+
+    async def _handle_call_workflow(self, event: dict, subworkflow_resolver,
+                                    loop: asyncio.AbstractEventLoop) -> None:
+        """Mirror of runtime_pool._handle_call_workflow over the attach socket."""
+        from noodle.engine.subworkflows import (  # noqa: PLC0415
+            InlineSubworkflow,
+            SubworkflowCall,
+        )
+
+        callback_id = event.get("callback_id", "")
+        try:
+            if subworkflow_resolver is None:
+                raise RuntimeError(
+                    "sandbox runner has no host-side sub-workflow resolver"
+                )
+            call = SubworkflowCall.from_payload(
+                {**event, "input": deserialize_value(event.get("input"))}
+            )
+            outcome = await subworkflow_resolver(call, parent_env_id=self.key[1])
+            if isinstance(outcome, InlineSubworkflow):
+                await self._send({
+                    "type": "call_workflow_response",
+                    "callback_id": callback_id,
+                    "inline_graph": outcome.graph,
+                    "inline_cache": outcome.cache,
+                    "inline_targets": outcome.targets,
+                    "inline_sources": list(outcome.sources),
+                }, loop)
+            else:
+                await self._send({
+                    "type": "call_workflow_response",
+                    "callback_id": callback_id,
+                    "result": outcome,
+                }, loop)
+        except Exception as exc:  # noqa: BLE001 — surface back into the run
+            try:
+                await self._send({
+                    "type": "call_workflow_error",
+                    "callback_id": callback_id,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }, loop)
+            except RuntimeError:
+                pass  # container died; the read loop reports it
+
     async def close(self) -> None:
         """Force-remove the container. Idempotent; never raises."""
         self.dead = True

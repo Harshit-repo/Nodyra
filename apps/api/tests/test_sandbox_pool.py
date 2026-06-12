@@ -59,3 +59,107 @@ def test_spawn_container_dies_before_ready():
     with pytest.raises(RuntimeError):
         asyncio.run(scenario())
     assert client.containers_made[0].removed
+
+
+# --- run protocol loop --------------------------------------------------------
+
+
+async def _spawned_worker(client):
+    return await SandboxWorker.spawn(
+        client, key=("org1", "env1"), env_payload=ENV,
+        runtime="runc", network="noodle-sandbox",
+    )
+
+
+def test_run_forwards_events_and_returns_status():
+    client = FakeDockerClient()
+
+    async def scenario():
+        worker = await _spawned_worker(client)
+        sock = client.containers_made[0].sock._sock
+        sock.feed({"type": "node_started", "node_id": "n1"})
+        sock.feed({"type": "node_finished", "node_id": "n1", "status": "success"})
+        sock.feed({"type": "result", "status": "success"})
+        events = []
+
+        async def on_event(e):
+            events.append(e)
+
+        status = await worker.run(
+            "run1", graph={"nodes": []}, cache=None, targets=None,
+            workflow_modules=[], on_event=on_event,
+        )
+        return status, events, worker
+
+    status, events, worker = asyncio.run(scenario())
+    assert status == "success"
+    assert [e["type"] for e in events] == ["node_started", "node_finished"]
+    assert not worker.dead
+    assert worker.runs_completed == 1
+    # the run message went over the wire with the run id
+    sock = client.containers_made[0].sock._sock
+    run_msgs = [m for m in sock.sent_messages() if m.get("type") == "run"]
+    assert len(run_msgs) == 1 and run_msgs[0]["request_id"] == "run1"
+
+
+def test_run_container_death_marks_dead():
+    client = FakeDockerClient()
+
+    async def scenario():
+        worker = await _spawned_worker(client)
+        client.containers_made[0].sock._sock.feed_eof()  # dies mid-run
+
+        async def on_event(e):
+            pass
+
+        with pytest.raises(RuntimeError):
+            await worker.run("run1", graph={}, cache=None, targets=None,
+                             workflow_modules=[], on_event=on_event)
+        return worker
+
+    worker = asyncio.run(scenario())
+    assert worker.dead
+
+
+def test_run_timeout_marks_dead(monkeypatch):
+    monkeypatch.setattr(settings, "workflow_run_timeout_seconds", 0.2)
+    client = FakeDockerClient()
+
+    async def scenario():
+        worker = await _spawned_worker(client)
+        # feed nothing after ready: recv times out
+
+        async def on_event(e):
+            pass
+
+        with pytest.raises(RuntimeError, match="read failed"):
+            await worker.run("run1", graph={}, cache=None, targets=None,
+                             workflow_modules=[], on_event=on_event)
+        return worker
+
+    worker = asyncio.run(scenario())
+    assert worker.dead
+
+
+def test_run_runtime_error_event_is_dirty():
+    """A terminal {"type":"error"} (unrecoverable runtime failure) surfaces as
+    run_error and the container is not reusable."""
+    client = FakeDockerClient()
+
+    async def scenario():
+        worker = await _spawned_worker(client)
+        sock = client.containers_made[0].sock._sock
+        sock.feed({"type": "error", "error": "import explosion"})
+        events = []
+
+        async def on_event(e):
+            events.append(e)
+
+        status = await worker.run("run1", graph={}, cache=None, targets=None,
+                                  workflow_modules=[], on_event=on_event)
+        return status, events, worker
+
+    status, events, worker = asyncio.run(scenario())
+    assert status == "error"
+    assert events[0]["type"] == "run_error" and "import explosion" in events[0]["error"]
+    assert worker.dead  # no result event → never pooled again
