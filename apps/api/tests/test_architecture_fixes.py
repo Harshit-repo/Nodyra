@@ -80,6 +80,7 @@ async def test_webhook_capture_evicts_stale_entries(client: AsyncClient) -> None
         {"body": "stale"},
     )
 
+    await client.post("/webhook-test/fresh-path/listen")
     response = await client.post("/webhook-test/fresh-path", json={"body": "new"})
     assert response.status_code == 200
 
@@ -96,6 +97,7 @@ async def test_webhook_capture_cap_evicts_oldest(client: AsyncClient) -> None:
     for i in range(cap):
         webhooks._captured[f"path-{i}"] = (base + i, {"i": i})
 
+    await client.post("/webhook-test/path-new/listen")
     response = await client.post("/webhook-test/path-new", json={"i": "new"})
     assert response.status_code == 200
 
@@ -967,9 +969,10 @@ async def test_dispatch_webhook_passes_shared_session_to_resolve_node_auth(
     monkeypatch.setattr(triggers_module, "_active_workflows", fake_active_workflows)
     monkeypatch.setattr(triggers_module, "_resolve_node_auth", spy_resolve)
     monkeypatch.setattr(triggers_module, "_webhook_dedup_key", lambda p, r: None)
-
-    import app.services.runner as runner_module
-    monkeypatch.setattr(runner_module, "start_run", fake_start_run)
+    # triggers.py binds start_run at import time (``from app.services.runner
+    # import start_run``) — patch the name triggers actually calls, not the
+    # runner module's attribute, or the REAL start_run runs and hits the DB.
+    monkeypatch.setattr(triggers_module, "start_run", fake_start_run)
 
     await triggers_module.dispatch_webhook(
         "test-dispatch-session",

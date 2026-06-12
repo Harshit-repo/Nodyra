@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -7,6 +8,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, WebSocket, s
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload, selectinload
+from starlette.websockets import WebSocketDisconnect
 
 from app.config import settings
 from app.db import get_session
@@ -815,8 +817,14 @@ async def run_events(websocket: WebSocket, run_id: str) -> None:
         hb_task = asyncio.create_task(_heartbeat())
         try:
             async for event in broker.subscribe(run_id):
-                await websocket.send_json(event)
+                try:
+                    await websocket.send_json(event)
+                except WebSocketDisconnect:
+                    break
         finally:
             hb_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await hb_task
     finally:
-        await websocket.close()
+        with contextlib.suppress(RuntimeError, WebSocketDisconnect):
+            await websocket.close()

@@ -101,6 +101,55 @@ async def test_chat_endpoint_returns_reply(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_turn_survives_queue_parking(client: AsyncClient, monkeypatch) -> None:
+    """dispatch_role=disabled: a chat turn is parked on the durable queue and
+    executed by a worker in another process. The chat message is seeded into
+    ``start_run``'s in-memory ``cache`` — it must ride the queue entry's
+    ``replay_seed`` or the worker executes the graph with an empty trigger
+    (run "succeeds" with zero node runs and the reply is blank)."""
+    from sqlalchemy import select
+
+    from app.config import settings
+    from app.db import get_session
+    from app.main import app as fastapi_app
+    from app.models import RunQueueEntry
+    from app.services.chat_service import await_chat_result, start_chat_turn
+    from app.services.runner import _execute_queued_entry
+
+    workflow_id = (
+        await client.post("/workflows", json={"name": "QueuedChat"})
+    ).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}", json={"graph": _chat_echo_graph()}
+    )
+
+    monkeypatch.setattr(settings, "run_synchronously", False)
+    monkeypatch.setattr(settings, "dispatch_role", "disabled")
+
+    run_id, session_id = await start_chat_turn(workflow_id, "ping", "sess-q")
+
+    override = fastapi_app.dependency_overrides[get_session]
+    async for session in override():
+        entry = await session.scalar(
+            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
+        )
+        assert entry is not None and entry.status == "queued"
+        seed_cache = (entry.replay_seed or {}).get("cache") or {}
+        assert seed_cache.get("chat") == {
+            "main": {"chatInput": "ping", "sessionId": "sess-q"}
+        }
+        break
+
+    # Simulate the worker leasing and executing the parked entry.
+    monkeypatch.setattr(settings, "run_synchronously", True)
+    await _execute_queued_entry(run_id)
+
+    result = await await_chat_result(run_id, session_id, timeout=10.0)
+    assert result.status == "success"
+    assert result.reply == "ping"
+
+
+@pytest.mark.asyncio
 async def test_chat_endpoint_422_without_chat_trigger(client: AsyncClient) -> None:
     workflow_id = (
         await client.post("/workflows", json={"name": "EP2"})

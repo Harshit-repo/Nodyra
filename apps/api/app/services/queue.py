@@ -103,6 +103,7 @@ async def enqueue(
     max_attempts: int | None = None,
     available_at: datetime | None = None,
     trace_context: dict | None = None,
+    replay_seed: dict | None = None,
 ) -> RunQueueEntry:
     """Add a run to the queue, or reset an existing entry for the same run.
 
@@ -124,6 +125,8 @@ async def enqueue(
         existing.last_error = None
         existing.available_at = available_at or _now(None)
         existing.trace_context = trace_context
+        if replay_seed is not None:
+            existing.replay_seed = replay_seed
         return existing
 
     entry = RunQueueEntry(
@@ -137,6 +140,7 @@ async def enqueue(
         max_attempts=max_attempts if max_attempts is not None else _default_max_attempts(),
         available_at=available_at or _now(None),
         trace_context=trace_context,
+        replay_seed=replay_seed,
     )
     session.add(entry)
     await session.flush()

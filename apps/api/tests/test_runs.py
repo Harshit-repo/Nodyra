@@ -940,19 +940,23 @@ async def test_approval_decision_requeues_waiting_run(
 
     response = await client.post(
         f"/runs/{run_id}/approvals/{approval['id']}/decision",
-        json={"decision": "approve"},
+        json={"decision": "approve_all"},
     )
     assert response.status_code == 200, response.text
 
     resumed_run = (await client.get(f"/runs/{run_id}")).json()
     assert resumed_run["status"] == "success"
     assert any(call is not None for call in calls)
+    resume_payload = next(call for call in calls if call is not None)
+    resumed_request = AgentActionRequest.model_validate(resume_payload["agent"])
+    assert resumed_request.allow_side_effects is True
 
     timeline = (await client.get(f"/runs/{run_id}/timeline")).json()
     prepared = [
         event for event in timeline["events"] if event["type"] == "agent_resume_prepared"
     ]
     assert prepared
+    assert prepared[0]["data"]["approve_all"] is True
     assert prepared[0]["data"]["cached_node_ids"] == []
     assert prepared[0]["data"]["skipped_cache_nodes"][0]["node_id"] == "supplier"
     assert prepared[0]["data"]["skipped_cache_nodes"][0]["reason"] == "unrestorable_output"

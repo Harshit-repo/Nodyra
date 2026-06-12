@@ -26,7 +26,7 @@ from noodle.ai_runtime import AgentActionRequest
 
 
 async def resume_waiting_run_from_approval(
-    session_factory, *, run_id: str, approval_id: str
+    session_factory, *, run_id: str, approval_id: str, approve_all: bool = False
 ) -> dict | None:
     """Requeue a waiting run using the stored approved agent action request.
 
@@ -65,6 +65,8 @@ async def resume_waiting_run_from_approval(
             approved_ids = set(request.approved_tool_call_ids or [])
             approved_ids.add(approval.tool_call_id)
             request.approved_tool_call_ids = sorted(approved_ids)
+            if approve_all:
+                request.allow_side_effects = True
         else:
             rejected_ids = set(request.rejected_tool_call_ids or [])
             rejected_ids.add(approval.tool_call_id)
@@ -140,6 +142,7 @@ async def resume_waiting_run_from_approval(
             "agent_node_id": agent_node_id,
             "tool_call_id": approval.tool_call_id,
             "tool_name": approval.tool_name,
+            "approve_all": bool(approve_all),
             "cached_node_ids": sorted(cache.keys()),
             "skipped_cache_nodes": skipped_cache_nodes,
             "targets": resume_targets,

@@ -62,8 +62,10 @@ from app.services.artifacts import (
 from app.services.credentials import resolve_credential_refs
 from app.services.events import broker
 from app.services.executors.base import RunExecutionContext
+from app.services import sandbox_pool
 from app.services.executors.local import LocalExecutor
 from app.services.executors.remote import RemoteExecutor
+from app.services.executors.sandbox import SandboxExecutor
 from app.services.graph_utils import (
     first_trigger_node,
     resolve_trigger_targets,
@@ -134,9 +136,11 @@ def _build_ctx(
     workflow_modules: list[dict], run_timeout: float | None,
     agent_action_resume: dict[str, AgentActionRequest] | None,
     subworkflow_meta: dict | None = None,
+    org_id: str | None = None,
 ) -> RunExecutionContext:
     return {
-        "run_id": run_id, "workflow_id": workflow_id, "graph": graph,
+        "run_id": run_id, "workflow_id": workflow_id, "org_id": org_id,
+        "graph": graph,
         "cache": cache, "targets": targets, "environment_id": environment_id,
         "runner_pool_id": runner_pool_id, "env_payload": env_payload,
         "workflow_modules": workflow_modules, "run_timeout": run_timeout,
@@ -171,6 +175,14 @@ local_executor = LocalExecutor(
     pool=runtime_pool,
     subworkflow_resolver=resolve_subworkflow,
     active_runs=_active_runs,
+)
+
+# Phase D: when sandbox mode is active (init_sandbox configured the pool),
+# runs that resolve to NO runner pool execute in disposable hardened
+# containers instead of the shared warm-subprocess pool.
+sandbox_executor = SandboxExecutor(
+    pool=sandbox_pool.pool,
+    subworkflow_resolver=resolve_subworkflow,
 )
 
 
@@ -444,6 +456,17 @@ async def start_run(
         # A5: the enqueue span is the trace root for this run (child of the
         # HTTP request span when FastAPI instrumentation is on). Its carrier
         # rides the queue entry so a worker in another process joins the trace.
+        # A parked run executes in another process which rebuilds dispatch
+        # state from the DB — the in-memory ``cache`` (trigger payloads: chat
+        # message, webhook body) and ``targets`` (partial-run selection) would
+        # otherwise be lost, silently executing an empty or full graph instead.
+        park_seed: dict | None = None
+        if queue_locally and (cache or targets):
+            park_seed = {}
+            if cache:
+                park_seed["cache"] = cache
+            if targets:
+                park_seed["targets"] = list(targets)
         with tracing.span(
             "run.enqueue",
             attributes={"noodle.run_id": run_id, "noodle.workflow_id": workflow_id},
@@ -460,14 +483,21 @@ async def start_run(
                     else "start_run"
                 ),
                 trace_context=trace_carrier,
+                replay_seed=park_seed,
             )
         await session.commit()
 
     # Editor "manual" and "test" (test-URL webhook) runs iterate on the
     # draft; any production trigger (webhook, schedule, deployment, error
     # workflow) must execute the published versions — including for any
-    # sub-workflow calls.
-    prefer_draft = mode in ("manual", "test")
+    # sub-workflow calls. A "manual" run with a pinned version is a
+    # published-graph dispatch (editor use_draft=false, MCP run_workflow
+    # use_draft=false, deployment "Run now") and must NOT prefer drafts.
+    # "test" runs anchor workflow_version_id to the latest version for
+    # history sanity but still execute the draft, hence the mode split.
+    prefer_draft = mode == "test" or (
+        mode == "manual" and workflow_version_id is None
+    )
 
     # Parked for the local durable queue — the dispatch loop owns it now.
     if queue_locally:
@@ -498,10 +528,12 @@ async def start_run(
     return run_id
 
 
-async def resume_waiting_run_from_approval(run_id: str, approval_id: str) -> bool:
+async def resume_waiting_run_from_approval(
+    run_id: str, approval_id: str, *, approve_all: bool = False
+) -> bool:
     """Requeue a waiting run using the stored approved agent action request."""
     resume_event = await run_resume.resume_waiting_run_from_approval(
-        SessionLocal, run_id=run_id, approval_id=approval_id
+        SessionLocal, run_id=run_id, approval_id=approval_id, approve_all=approve_all
     )
     if resume_event is None:
         return False
@@ -527,6 +559,14 @@ async def cancel_run(run_id: str) -> str | None:
     if task is not None and not task.done():
         task.cancel()
         return "cancelling"
+
+    # Sandbox runs: hard-kill the container directly when no awaiting task
+    # was found (e.g. a queue-driven worker awaiting pool.dispatch).
+    try:
+        if await sandbox_pool.pool.cancel(run_id):
+            return "cancelling"
+    except Exception:  # noqa: BLE001 - container teardown is best-effort
+        pass
 
     async with SessionLocal() as session:
         run = await session.get(Run, run_id)
@@ -837,6 +877,26 @@ async def _execute_run_impl(
                         await session.commit()
                     _log_run_id.reset(run_id_token)
                     return "queued"
+            elif sandbox_executor.active:
+                # Sandbox path: same prepared inputs as local, but the run
+                # executes in a disposable hardened container keyed by
+                # (org, env). env_payload drives the per-env image.
+                env_payload = await _build_env_payload_for_run(env_id)
+                outcome = await sandbox_executor.execute(
+                    _build_ctx(
+                        run_id=run_id, workflow_id=workflow_id,
+                        org_id=trace_org,
+                        graph=graph_dict, cache=cache, targets=targets,
+                        environment_id=env_id, runner_pool_id=None,
+                        env_payload=env_payload,
+                        workflow_modules=workflow_modules,
+                        run_timeout=run_timeout,
+                        agent_action_resume=agent_action_resume,
+                        subworkflow_meta=sub_meta.to_payload(),
+                    ),
+                    on_event,
+                )
+                status = outcome.status
             else:
                 outcome = await local_executor.execute(
                     _build_ctx(
@@ -1034,12 +1094,20 @@ async def _execute_queued_entry(run_id: str) -> None:
             await session.commit()
             return
 
-        # Pick the version that was originally dispatched if available, else
-        # the workflow's draft graph (the editor's working copy) so manual /
-        # test runs replay correctly. Falling back to the latest *published*
-        # version would replay against the wrong graph entirely.
+        # Pick the graph the run was originally dispatched against. "test"
+        # runs (test-URL webhook, draft chat) execute the editor's DRAFT even
+        # though the run row anchors the latest published version id for
+        # history sanity — using the version graph for those would replay
+        # against the wrong graph (a chat run's seeded trigger id may not
+        # even exist in it). "manual" runs ran the draft only when no version
+        # is pinned: use_draft=false dispatches (editor, MCP run_workflow,
+        # deployment "Run now") pin a version and must replay exactly that
+        # graph, never the possibly half-edited draft.
+        ran_draft = mode == "test" or (mode == "manual" and not wf_version_id)
         graph_dict: dict | None = None
-        if wf_version_id:
+        if ran_draft:
+            graph_dict = workflow.draft_graph or None
+        if not graph_dict and wf_version_id:
             version_row = await session.scalar(
                 select(WorkflowVersion).where(WorkflowVersion.id == wf_version_id)
             )
@@ -1100,7 +1168,7 @@ async def _execute_queued_entry(run_id: str) -> None:
 
     await _execute_run(
         run_id, workflow_id, graph_dict, targets, cache,
-        prefer_draft=(mode in ("manual", "test")),
+        prefer_draft=ran_draft,
         runner_pool_id=runner_pool_id,
         agent_action_resume=agent_action_resume,
         trace_carrier=lease_carrier,
