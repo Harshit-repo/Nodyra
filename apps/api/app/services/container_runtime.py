@@ -69,6 +69,36 @@ def image_tag_for(env_payload: dict) -> str:
     )
 
 
+_RUNTIME_PREFERENCE = ("kata", "runsc", "runc")  # strongest first
+_VALID_RUNTIMES = ("auto", "runc", "runsc", "kata")
+
+
+def detect_runtime(client: Any, configured: str) -> str:
+    """Resolve the isolation runtime for this daemon. Sync — call at startup.
+
+    Explicit values fail fast when the daemon doesn't list them; ``auto``
+    picks the strongest available. ``runc`` is the daemon default and is
+    treated as always present (some daemons omit it from info()).
+    """
+    if configured not in _VALID_RUNTIMES:
+        raise ValueError(
+            f"invalid sandbox_runtime={configured!r}: expected one of {_VALID_RUNTIMES}"
+        )
+    info = client.info() or {}
+    available = set((info.get("Runtimes") or {}).keys()) | {"runc"}
+    if configured != "auto":
+        if configured not in available:
+            raise RuntimeError(
+                f"sandbox_runtime={configured!r} is not installed on this Docker "
+                f"daemon (available: {sorted(available)}). Install it or use 'auto'."
+            )
+        return configured
+    for candidate in _RUNTIME_PREFERENCE:
+        if candidate in available:
+            return candidate
+    return "runc"
+
+
 def ensure_docker_image(client: Any, image_tag: str, env_payload: dict) -> None:
     """Build the env image if absent. Sync — call via run_in_executor."""
     try:

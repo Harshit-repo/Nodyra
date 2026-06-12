@@ -62,3 +62,39 @@ def test_python_version_validation():
     assert _validate_python_version("3.12") == "3.12"
     with pytest.raises(ValueError):
         _validate_python_version("3.12; rm -rf /")
+
+
+# --- isolation runtime probe -------------------------------------------------
+
+from app.services.container_runtime import detect_runtime  # noqa: E402
+
+
+def test_probe_auto_prefers_strongest():
+    assert detect_runtime(FakeDockerClient(runtimes=("runc",)), "auto") == "runc"
+    assert detect_runtime(FakeDockerClient(runtimes=("runc", "runsc")), "auto") == "runsc"
+    assert (
+        detect_runtime(FakeDockerClient(runtimes=("runc", "runsc", "kata")), "auto")
+        == "kata"
+    )
+
+
+def test_probe_explicit_runtime_must_exist():
+    assert detect_runtime(FakeDockerClient(runtimes=("runc", "runsc")), "runsc") == "runsc"
+    with pytest.raises(RuntimeError, match="runsc"):
+        detect_runtime(FakeDockerClient(runtimes=("runc",)), "runsc")
+
+
+def test_probe_runc_always_available():
+    """Docker Desktop daemons sometimes omit Runtimes from info()."""
+
+    class NoRuntimesClient(FakeDockerClient):
+        def info(self):
+            return {}
+
+    assert detect_runtime(NoRuntimesClient(), "auto") == "runc"
+    assert detect_runtime(NoRuntimesClient(), "runc") == "runc"
+
+
+def test_probe_invalid_value():
+    with pytest.raises(ValueError, match="sandbox_runtime"):
+        detect_runtime(FakeDockerClient(), "qemu")
