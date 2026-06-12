@@ -120,8 +120,8 @@ async def test_webhook_triggers_active_workflow(client: AsyncClient) -> None:
 
 
 async def test_webhook_with_no_active_workflow(client: AsyncClient) -> None:
-    response = (await client.post("/webhook/unknown", json={})).json()
-    assert response["runs"] == []
+    resp = await client.post("/webhook/unknown", json={})
+    assert resp.status_code == 404
 
 
 async def test_inactive_workflow_is_not_triggered(client: AsyncClient) -> None:
@@ -134,8 +134,8 @@ async def test_inactive_workflow_is_not_triggered(client: AsyncClient) -> None:
     )
     await client.post(f"/workflows/{workflow_id}/publish", json={})
 
-    response = (await client.post("/webhook/idle", json={})).json()
-    assert response["runs"] == []
+    resp = await client.post("/webhook/idle", json={})
+    assert resp.status_code == 404
 
 
 def test_match_webhook_path_exact_no_params() -> None:
@@ -402,8 +402,8 @@ async def test_webhook_method_must_match_node_method(client: AsyncClient) -> Non
     # so GET and DELETE workflows for /items/{id} stay independent.
     await _publish(client, "Read item", _param_webhook_graph("items/{id}", "GET"))
 
-    delete_resp = (await client.delete("/webhook/items/9")).json()
-    assert delete_resp["runs"] == []
+    delete_resp = await client.delete("/webhook/items/9")
+    assert delete_resp.status_code == 404  # no workflow registered for DELETE
 
     get_resp = (await client.get("/webhook/items/9")).json()
     assert len(get_resp["runs"]) == 1
@@ -1256,14 +1256,14 @@ async def test_wait_for_webhook_result_times_out(client: AsyncClient) -> None:
     assert shape["status"] == 504
 
 
-async def test_webhook_unknown_path_still_returns_200(client: AsyncClient) -> None:
-    """Unknown paths return 200 with empty runs (existing behaviour).
+async def test_webhook_unknown_path_returns_404(client: AsyncClient) -> None:
+    """Unknown production paths return 404 so callers know the endpoint doesn't exist.
 
-    Only path matches that *exist but fail auth* return 401.
+    A 200 would falsely signal delivery success to external senders like Stripe.
+    Only path matches that exist but fail auth return 401/403.
     """
-    response = await client.post("/webhook/nobody-listens", json={})
-    assert response.status_code == 200
-    assert response.json()["runs"] == []
+    resp = await client.post("/webhook/nobody-listens", json={})
+    assert resp.status_code == 404
 
 
 def test_is_due_different_timezones_fire_at_different_utc() -> None:
@@ -1296,10 +1296,18 @@ def test_webhook_role_defaults_to_ingress() -> None:
 
 
 async def test_webhook_role_default_serves_production_path(client: AsyncClient) -> None:
-    """Default role — production /webhook/* is reachable (not 404)."""
-    resp = await client.post("/webhook/no-such-path", json={})
-    # 200 is the "accepted, no matching trigger" reply; we just need NOT 404.
-    assert resp.status_code != 404
+    """Default role — production /webhook/* is mounted and fires active workflows."""
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Probe"})
+    ).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}",
+        json={"graph": _webhook_graph("probe-role"), "active": True},
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+    resp = await client.post("/webhook/probe-role", json={})
+    assert resp.status_code == 200
+    assert len(resp.json()["runs"]) == 1
 
 
 async def test_webhook_role_disabled_blocks_production_but_keeps_test_paths(
@@ -1313,21 +1321,109 @@ async def test_webhook_role_disabled_blocks_production_but_keeps_test_paths(
     from app import config as _config
     from app.config import Settings
 
-    new_settings = Settings(webhook_role="disabled")
-    monkeypatch.setattr(_config, "settings", new_settings)
-
     import app.main as _main
-    reloaded = importlib.reload(_main)
-    paths = {getattr(r, "path", "") for r in reloaded.app.routes}
-    assert "/webhook/{path}" not in paths, (
-        "production /webhook/{path} must not be mounted when role=disabled"
-    )
-    assert any(p.startswith("/webhook-test") for p in paths), (
-        "editor /webhook-test/* paths must stay mounted when role=disabled"
-    )
 
-    # Restore default behaviour for subsequent tests in the session.
-    monkeypatch.setattr(_config, "settings", Settings())
-    importlib.reload(_main)
+    # Reloading app.main replaces ``app.main.app`` with a NEW FastAPI
+    # instance. The conftest ``client`` fixture (and every other test) holds
+    # references to the ORIGINAL instance, so the original module attribute
+    # MUST be restored afterwards or every subsequent test that does
+    # ``from app.main import app`` sees an app without the fixture's
+    # dependency overrides and fails with KeyError/missing-table errors.
+    original_app = _main.app
+    try:
+        monkeypatch.setattr(_config, "settings", Settings(webhook_role="disabled"))
+        reloaded = importlib.reload(_main)
+        paths = {getattr(r, "path", "") for r in reloaded.app.routes}
+        assert "/webhook/{path}" not in paths, (
+            "production /webhook/{path} must not be mounted when role=disabled"
+        )
+        assert any(p.startswith("/webhook-test") for p in paths), (
+            "editor /webhook-test/* paths must stay mounted when role=disabled"
+        )
+    finally:
+        # Re-execute once more with default settings (so module-level state
+        # is rebuilt sanely), then put the original app instance back.
+        monkeypatch.setattr(_config, "settings", Settings())
+        importlib.reload(_main)
+        _main.app = original_app
 
+
+# --- Listen gate (test URL) --------------------------------------------------
+
+
+async def test_webhook_test_url_blocked_without_listen_session(
+    client: AsyncClient,
+) -> None:
+    """Test URL returns 404 when no listen session is registered."""
+    resp = await client.post("/webhook-test/my-path", json={"x": 1})
+    assert resp.status_code == 404
+    assert "listen" in resp.json()["detail"].lower()
+
+
+async def test_webhook_test_url_allowed_after_start_listen(
+    client: AsyncClient,
+) -> None:
+    """Test URL accepts requests once the listen session is started."""
+    await client.post("/webhook-test/my-path/listen")
+    resp = await client.post("/webhook-test/my-path", json={"x": 1})
+    assert resp.status_code == 200
+
+
+async def test_webhook_test_url_blocked_after_stop_listen(
+    client: AsyncClient,
+) -> None:
+    """Test URL returns 404 after the listen session is explicitly stopped."""
+    await client.post("/webhook-test/my-path/listen")
+    await client.delete("/webhook-test/my-path/listen")
+    resp = await client.post("/webhook-test/my-path", json={"x": 1})
+    assert resp.status_code == 404
+
+
+async def test_webhook_test_url_still_captures_when_no_workflow_matches(
+    client: AsyncClient,
+) -> None:
+    """When listening but no workflow matches, the request is still captured (200)
+    so the editor can show it — but no run is fired."""
+    await client.post("/webhook-test/unmatched-path/listen")
+    resp = await client.post("/webhook-test/unmatched-path", json={"hello": "world"})
+    assert resp.status_code == 200
+    assert resp.json()["matched"] is False
+    captured = (await client.get("/webhook-test/unmatched-path/last")).json()
+    assert captured["body"] == {"hello": "world"}
+
+
+async def test_webhook_test_url_enforces_auth_when_listening(
+    client: AsyncClient,
+) -> None:
+    """Auth is enforced on the test URL when listening and the workflow draft
+    has authentication configured."""
+    import base64
+
+    workflow_id = (
+        await client.post("/workflows", json={"name": "AuthedTest"})
+    ).json()["id"]
+    graph = _webhook_graph_with_auth(
+        "test-auth-path",
+        {
+            "auth_type": "basic",
+            "auth_username": "alice",
+            "auth_password": "wonderland",
+        },
+    )
+    await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
+
+    await client.post("/webhook-test/test-auth-path/listen")
+
+    # No auth → 401
+    resp = await client.post("/webhook-test/test-auth-path", json={})
+    assert resp.status_code == 401
+
+    # Correct auth → 200
+    token = base64.b64encode(b"alice:wonderland").decode("ascii")
+    resp = await client.post(
+        "/webhook-test/test-auth-path",
+        headers={"Authorization": f"Basic {token}"},
+        json={"order": 1},
+    )
+    assert resp.status_code == 200
 
