@@ -163,3 +163,82 @@ def test_run_runtime_error_event_is_dirty():
     assert status == "error"
     assert events[0]["type"] == "run_error" and "import explosion" in events[0]["error"]
     assert worker.dead  # no result event → never pooled again
+
+
+# --- call_workflow host-callback bridging -------------------------------------
+
+
+def test_call_workflow_bridged_to_resolver():
+    client = FakeDockerClient()
+
+    async def scenario():
+        worker = await _spawned_worker(client)
+        sock = client.containers_made[0].sock._sock
+        resolved = asyncio.Event()
+
+        async def resolver(call, parent_env_id=None):
+            assert parent_env_id == "env1"
+            assert call.workflow_id == "wf2"
+            resolved.set()
+            return {"answer": 42}
+
+        async def on_event(e):
+            pass
+
+        run_task = asyncio.create_task(worker.run(
+            "run1", graph={}, cache=None, targets=None, workflow_modules=[],
+            on_event=on_event, subworkflow_resolver=resolver,
+        ))
+        sock.feed({"type": "call_workflow", "callback_id": "cb1",
+                   "request_id": "run1", "workflow_id": "wf2", "input": None,
+                   "depth": 1, "call_chain": ["wf1"]})
+        await asyncio.wait_for(resolved.wait(), 3)
+        # wait until the response hits the wire, then finish the run
+        for _ in range(50):
+            if any(m.get("type") == "call_workflow_response"
+                   for m in sock.sent_messages()):
+                break
+            await asyncio.sleep(0.05)
+        sock.feed({"type": "result", "status": "success"})
+        status = await run_task
+        return status, sock.sent_messages()
+
+    status, messages = asyncio.run(scenario())
+    assert status == "success"
+    responses = [m for m in messages if m.get("type") == "call_workflow_response"]
+    assert responses == [{"type": "call_workflow_response", "callback_id": "cb1",
+                          "result": {"answer": 42}}]
+
+
+def test_call_workflow_resolver_error_replied():
+    client = FakeDockerClient()
+
+    async def scenario():
+        worker = await _spawned_worker(client)
+        sock = client.containers_made[0].sock._sock
+
+        async def resolver(call, parent_env_id=None):
+            raise ValueError("no such workflow")
+
+        async def on_event(e):
+            pass
+
+        run_task = asyncio.create_task(worker.run(
+            "run1", graph={}, cache=None, targets=None, workflow_modules=[],
+            on_event=on_event, subworkflow_resolver=resolver,
+        ))
+        sock.feed({"type": "call_workflow", "callback_id": "cb2",
+                   "request_id": "run1", "workflow_id": "missing", "input": None,
+                   "depth": 1, "call_chain": []})
+        for _ in range(50):
+            if any(m.get("type") == "call_workflow_error"
+                   for m in sock.sent_messages()):
+                break
+            await asyncio.sleep(0.05)
+        sock.feed({"type": "result", "status": "error"})
+        await run_task
+        return sock.sent_messages()
+
+    messages = asyncio.run(scenario())
+    errors = [m for m in messages if m.get("type") == "call_workflow_error"]
+    assert len(errors) == 1 and "no such workflow" in errors[0]["error"]
