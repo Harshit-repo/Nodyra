@@ -46,7 +46,7 @@ from app.services.providers.agent import (  # noqa: F401
     _AgentConnection,
     _QueuedError,
 )
-from app.services.providers.docker import (  # noqa: F401
+from app.services.container_runtime import (  # noqa: F401
     _validate_packages,
     _validate_python_version,
 )

