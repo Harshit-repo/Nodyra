@@ -20,6 +20,7 @@ EventCallback = Callable[[dict], Awaitable[None]]
 class RunExecutionContext(TypedDict):
     run_id: str
     workflow_id: str
+    org_id: str | None               # sandbox pool key; None single-tenant
     graph: dict                      # credential refs already resolved
     cache: dict | None
     targets: list[str] | None

@@ -13,6 +13,7 @@ def test_executor_protocol_shape():
     ctx: RunExecutionContext = {
         "run_id": "r1",
         "workflow_id": "w1",
+        "org_id": None,
         "graph": {"nodes": [], "edges": []},
         "cache": None,
         "targets": None,
@@ -120,3 +121,48 @@ async def test_remote_executor_delegates_to_dispatcher():
 
     assert await ex.cancel("r1") is True
     assert calls["cancel"] == ("r1", "runner-7")
+
+
+def test_sandbox_executor_delegates_and_cancels():
+    from app.services.executors.sandbox import SandboxExecutor
+
+    calls = {}
+
+    class FakeSandboxPool:
+        enabled = True
+
+        async def dispatch(self, run_id, **kw):
+            calls["run_id"] = run_id
+            calls["org_id"] = kw["org_id"]
+            calls["env_id"] = kw["env_id"]
+            calls["resolver"] = kw["subworkflow_resolver"]
+            return "success"
+
+        async def cancel(self, run_id):
+            calls["cancelled"] = run_id
+            return True
+
+    async def resolver(call, parent_env_id=None):
+        return None
+
+    ex = SandboxExecutor(pool=FakeSandboxPool(), subworkflow_resolver=resolver)
+    ctx = {
+        "run_id": "r1", "workflow_id": "wf1", "org_id": "org9",
+        "graph": {}, "cache": None, "targets": None,
+        "environment_id": "env5", "runner_pool_id": None,
+        "env_payload": {"id": "env5"}, "workflow_modules": [],
+        "run_timeout": None, "default_timeouts": {},
+        "pause_on_approval": False, "agent_action_resume": None,
+        "subworkflow_meta": None,
+    }
+
+    async def on_event(e):
+        pass
+
+    outcome = asyncio.run(ex.execute(ctx, on_event))
+    assert outcome.status == "success"
+    assert calls["org_id"] == "org9" and calls["env_id"] == "env5"
+    assert calls["resolver"] is resolver
+    assert ex.active is True
+    assert asyncio.run(ex.cancel("r1")) is True
+    assert calls["cancelled"] == "r1"
