@@ -28,7 +28,7 @@
 - Create: `apps/api/app/services/sandbox_policy.py`
 - Test: `apps/api/tests/test_sandbox_policy.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """Sandbox mode settings and the MT enforcement policy."""
@@ -80,12 +80,12 @@ def test_invalid_mode_rejected(monkeypatch):
         enforce_sandbox_policy()
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_policy.py -v`
 Expected: FAIL — `AttributeError: ... no attribute 'execution_sandbox'` / `ModuleNotFoundError: sandbox_policy`
 
-- [ ] **Step 3: Add settings to `apps/api/app/config.py`**
+- [x] **Step 3: Add settings to `apps/api/app/config.py`**
 
 Insert directly after the `multi_tenancy_enabled` block (~line 177), matching the surrounding comment style:
 
@@ -123,7 +123,7 @@ Insert directly after the `multi_tenancy_enabled` block (~line 177), matching th
     sandbox_policy_strict: bool = True
 ```
 
-- [ ] **Step 4: Create `apps/api/app/services/sandbox_policy.py`**
+- [x] **Step 4: Create `apps/api/app/services/sandbox_policy.py`**
 
 ```python
 """Startup policy: multi-tenant deployments must not share the subprocess pool.
@@ -156,19 +156,19 @@ def enforce_sandbox_policy() -> None:
         )
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_policy.py -v`
 Expected: 6 passed (parametrized counts as 2)
 
-- [ ] **Step 6: Keep the MT test suite green**
+- [x] **Step 6: Keep the MT test suite green**
 
 Find every test fixture that flips MT on: `grep -rn "multi_tenancy_enabled" apps/api/tests --include="*.py" -l`. In each fixture that sets `settings.multi_tenancy_enabled = True` (or monkeypatches it), also set `settings.sandbox_policy_strict = False` the same way. The cleanest variant: if there is a shared MT fixture in a conftest, one line there covers all. Then run the MT-touching suites:
 
 Run: `cd apps/api && python -m pytest tests/ -k "tenan or org" -q`
 Expected: same pass count as before this task (the policy is not yet called at app startup, so this is precautionary for Task 12 — do it now anyway).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/api/app/config.py apps/api/app/services/sandbox_policy.py apps/api/tests/test_sandbox_policy.py apps/api/tests/conftest.py
@@ -184,7 +184,7 @@ git commit -m "feat(sandbox): execution_sandbox settings + MT startup policy"
 
 No TDD cycle — this is shared test infrastructure consumed by Tasks 3–12. It must faithfully model the slices of the docker SDK we use: `client.info()`, `client.ping()`, `client.images.get/build`, `client.networks.get/create`, `client.containers.run/get`, `container.attach_socket(...)._sock` with `sendall/recv/settimeout`, `container.remove(force=True)`.
 
-- [ ] **Step 1: Create `apps/api/tests/sandbox_fakes.py`**
+- [x] **Step 1: Create `apps/api/tests/sandbox_fakes.py`**
 
 ```python
 """Fake docker SDK surface for sandbox tests (no daemon required).
@@ -323,12 +323,12 @@ class FakeDockerClient:
         return True
 ```
 
-- [ ] **Step 2: Sanity-import**
+- [x] **Step 2: Sanity-import**
 
 Run: `cd apps/api && python -c "from tests.sandbox_fakes import FakeDockerClient; c = FakeDockerClient(); c.containers.run('img', name='x'); print('ok')"`
 Expected: `ok`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add apps/api/tests/sandbox_fakes.py
@@ -344,7 +344,7 @@ git commit -m "test(sandbox): fake docker SDK surface for daemon-free tests"
 - Modify: `apps/api/app/services/providers/docker.py` (delete the moved code, import instead)
 - Test: `apps/api/tests/test_sandbox_container_runtime.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """Shared container machinery: image tags, dockerfile generation, build."""
@@ -411,12 +411,12 @@ def test_python_version_validation():
         _validate_python_version("3.12; rm -rf /")
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_container_runtime.py -v`
 Expected: FAIL — `ModuleNotFoundError: app.services.container_runtime`
 
-- [ ] **Step 3: Create `apps/api/app/services/container_runtime.py`**
+- [x] **Step 3: Create `apps/api/app/services/container_runtime.py`**
 
 Move `_PKG_SPEC_RE`, `_PY_VERSION_RE`, `_validate_packages`, `_validate_python_version`, and `ensure_docker_image` verbatim from `providers/docker.py` (including the RD-2 comment block), then add the tag helper and the non-root dockerfile change:
 
@@ -487,7 +487,7 @@ def ensure_docker_image(client: Any, image_tag: str, env_payload: dict) -> None:
     logger.info("built docker image %s", image_tag)
 ```
 
-- [ ] **Step 4: Update `providers/docker.py` to consume the shared module**
+- [x] **Step 4: Update `providers/docker.py` to consume the shared module**
 
 Delete the moved regexes/functions and `ensure_docker_image` from `providers/docker.py`; replace with:
 
@@ -500,12 +500,12 @@ from app.services.container_runtime import (
 
 and replace the inline tag construction (lines ~97–100) with `image_tag = image_tag_for(env_payload)`.
 
-- [ ] **Step 5: Run tests + the existing suites that touch the provider**
+- [x] **Step 5: Run tests + the existing suites that touch the provider**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_container_runtime.py tests/test_executors.py tests/test_architecture_fixes.py -v`
 Expected: all pass (the provider tests exercise the moved validation through the new import path)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/app/services/container_runtime.py apps/api/app/services/providers/docker.py apps/api/tests/test_sandbox_container_runtime.py
@@ -520,7 +520,7 @@ git commit -m "refactor(sandbox): extract shared container_runtime; v2 non-root 
 - Modify: `apps/api/app/services/container_runtime.py`
 - Test: `apps/api/tests/test_sandbox_container_runtime.py` (append)
 
-- [ ] **Step 1: Write the failing tests (append to the test file)**
+- [x] **Step 1: Write the failing tests (append to the test file)**
 
 ```python
 from app.services.container_runtime import detect_runtime
@@ -554,12 +554,12 @@ def test_probe_invalid_value():
         detect_runtime(FakeDockerClient(), "qemu")
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_container_runtime.py -k probe -v`
 Expected: FAIL — `ImportError: detect_runtime`
 
-- [ ] **Step 3: Implement in `container_runtime.py`**
+- [x] **Step 3: Implement in `container_runtime.py`**
 
 ```python
 _RUNTIME_PREFERENCE = ("kata", "runsc", "runc")  # strongest first
@@ -592,12 +592,12 @@ def detect_runtime(client: Any, configured: str) -> str:
     return "runc"
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_container_runtime.py -v`
 Expected: all pass
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/app/services/container_runtime.py apps/api/tests/test_sandbox_container_runtime.py
@@ -612,7 +612,7 @@ git commit -m "feat(sandbox): isolation runtime probe (kata > runsc > runc)"
 - Modify: `apps/api/app/services/container_runtime.py`
 - Test: `apps/api/tests/test_sandbox_container_runtime.py` (append)
 
-- [ ] **Step 1: Write the failing tests (append)**
+- [x] **Step 1: Write the failing tests (append)**
 
 ```python
 from app.services.container_runtime import ensure_sandbox_network, hardening_kwargs
@@ -682,12 +682,12 @@ def test_ensure_sandbox_network_hard_failure():
         ensure_sandbox_network(client, "noodle-sandbox")
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_container_runtime.py -k "hardening or network" -v`
 Expected: FAIL — ImportError
 
-- [ ] **Step 3: Implement in `container_runtime.py`**
+- [x] **Step 3: Implement in `container_runtime.py`**
 
 ```python
 # Spawn kwargs every Noodle-launched container gets. Resource ceilings are
@@ -738,12 +738,12 @@ def ensure_sandbox_network(client: Any, name: str | None = None) -> str:
             raise RuntimeError(f"could not create sandbox network {name!r}: {exc}") from exc
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_container_runtime.py -v`
 Expected: all pass
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/app/services/container_runtime.py apps/api/tests/test_sandbox_container_runtime.py
@@ -760,7 +760,7 @@ git commit -m "feat(sandbox): hardened spawn kwargs + dedicated sandbox network"
 
 The provider currently spawns with NO hardening and sends the run message twice (once right after attach at line ~144, again on the `ready` event at line ~172 — the runtime queues the duplicate and would try to execute the run a second time if the host didn't tear the container down on `result`). Fix both.
 
-- [ ] **Step 1: Change the spawn call in `assign_docker_run`**
+- [x] **Step 1: Change the spawn call in `assign_docker_run`**
 
 Replace the `client.containers.run(...)` call (lines ~126–136) with:
 
@@ -787,11 +787,11 @@ Replace the `client.containers.run(...)` call (lines ~126–136) with:
 
 (Move the import to the top of the file with the Task 3 imports. `cfg["runtime"]` gives runner pools per-pool runtime selection; `cfg["limits"]` lets an operator raise resource ceilings per pool.)
 
-- [ ] **Step 2: Delete the pre-ready send**
+- [x] **Step 2: Delete the pre-ready send**
 
 Remove the block at lines ~143–144 (`# Write the run message to stdin.` + the `sendall` call). The `ready`-event send inside the loop (line ~172) is now the only send.
 
-- [ ] **Step 3: Write a regression test (append to test file)**
+- [x] **Step 3: Write a regression test (append to test file)**
 
 ```python
 import asyncio
@@ -852,12 +852,12 @@ def test_docker_provider_spawns_hardened(monkeypatch):
 
 Note: if the provider builds its client via `docker.from_env()` inside the function, the `monkeypatch.setattr(docker_sdk, "from_env", ...)` line above intercepts it. If the `docker` package is not installed in the dev venv, install it: `pip install docker`.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_container_runtime.py -v`
 Expected: all pass
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/app/services/providers/docker.py apps/api/tests/test_sandbox_container_runtime.py
@@ -872,7 +872,7 @@ git commit -m "fix(docker-provider): hardened spawns, per-pool runtime/limits, s
 - Create: `apps/api/app/services/sandbox_pool.py`
 - Test: `apps/api/tests/test_sandbox_pool.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """SandboxWorker lifecycle: spawn, ready handshake, protocol, teardown."""
@@ -938,12 +938,12 @@ def test_spawn_container_dies_before_ready():
     assert client.containers_made[0].removed
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_pool.py -v`
 Expected: FAIL — ModuleNotFoundError
 
-- [ ] **Step 3: Create `apps/api/app/services/sandbox_pool.py` with `SandboxWorker` spawn/handshake/teardown**
+- [x] **Step 3: Create `apps/api/app/services/sandbox_pool.py` with `SandboxWorker` spawn/handshake/teardown**
 
 ```python
 """Warm per-(org, environment) sandbox container pool (MT Phase D slice 1).
@@ -1096,12 +1096,12 @@ class SandboxWorker:
             pass
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_pool.py -v`
 Expected: 3 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/app/services/sandbox_pool.py apps/api/tests/test_sandbox_pool.py
@@ -1116,7 +1116,7 @@ git commit -m "feat(sandbox): SandboxWorker spawn + ready handshake + teardown"
 - Modify: `apps/api/app/services/sandbox_pool.py`
 - Test: `apps/api/tests/test_sandbox_pool.py` (append)
 
-- [ ] **Step 1: Write the failing tests (append)**
+- [x] **Step 1: Write the failing tests (append)**
 
 ```python
 async def _spawned_worker(client):
@@ -1220,12 +1220,12 @@ def test_run_runtime_error_event_is_dirty():
     assert worker.dead  # no result event → never pooled again
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_pool.py -k run -v`
 Expected: FAIL — `AttributeError: 'SandboxWorker' object has no attribute 'run'`
 
-- [ ] **Step 3: Implement `run` on `SandboxWorker`**
+- [x] **Step 3: Implement `run` on `SandboxWorker`**
 
 ```python
     async def run(
@@ -1337,12 +1337,12 @@ Expected: FAIL — `AttributeError: 'SandboxWorker' object has no attribute 'run
                 pass  # container died; the read loop reports it
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_pool.py -v`
 Expected: all pass
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/app/services/sandbox_pool.py apps/api/tests/test_sandbox_pool.py
@@ -1358,7 +1358,7 @@ git commit -m "feat(sandbox): SandboxWorker.run protocol loop with dirty-exit tr
 
 The implementation landed in Task 8; this task proves the bridge end-to-end against the fake socket, including the error reply path.
 
-- [ ] **Step 1: Write the tests**
+- [x] **Step 1: Write the tests**
 
 ```python
 def test_call_workflow_bridged_to_resolver():
@@ -1438,12 +1438,12 @@ def test_call_workflow_resolver_error_replied():
 
 Note: if `SubworkflowCall.from_payload` requires additional keys, run `grep -n "def from_payload" packages/core/noodle/engine/subworkflows.py`, read the method, and extend the fed `call_workflow` event dicts to match — do NOT change `from_payload`.
 
-- [ ] **Step 2: Run tests**
+- [x] **Step 2: Run tests**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_pool.py -k call_workflow -v`
 Expected: 2 passed
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add apps/api/tests/test_sandbox_pool.py
@@ -1458,7 +1458,7 @@ git commit -m "test(sandbox): call_workflow host-callback bridging incl. error r
 - Modify: `apps/api/app/services/sandbox_pool.py`
 - Test: `apps/api/tests/test_sandbox_pool.py` (append)
 
-- [ ] **Step 1: Write the failing tests (append)**
+- [x] **Step 1: Write the failing tests (append)**
 
 ```python
 from app.services.sandbox_pool import SandboxPool
@@ -1637,12 +1637,12 @@ def test_flush_closes_idle():
     assert client.containers_made[0].removed
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_pool.py -k "pool or reuse or dirty or recycle or cap or cancel or flush or stale" -v`
 Expected: FAIL — ImportError on `SandboxPool`
 
-- [ ] **Step 3: Implement `SandboxPool` in `sandbox_pool.py`**
+- [x] **Step 3: Implement `SandboxPool` in `sandbox_pool.py`**
 
 ```python
 class SandboxPool:
@@ -1799,12 +1799,12 @@ class SandboxPool:
 pool = SandboxPool()
 ```
 
-- [ ] **Step 4: Run the whole sandbox suite**
+- [x] **Step 4: Run the whole sandbox suite**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_pool.py tests/test_sandbox_container_runtime.py tests/test_sandbox_policy.py -v`
 Expected: all pass
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/app/services/sandbox_pool.py apps/api/tests/test_sandbox_pool.py
@@ -1819,7 +1819,7 @@ git commit -m "feat(sandbox): warm SandboxPool with per-key reuse, LRU/TTL evict
 - Modify: `apps/api/app/services/sandbox_pool.py`
 - Test: `apps/api/tests/test_sandbox_pool.py` (append)
 
-- [ ] **Step 1: Write the failing tests (append)**
+- [x] **Step 1: Write the failing tests (append)**
 
 ```python
 from app.services import sandbox_pool as sp
@@ -1872,12 +1872,12 @@ def test_init_required_with_daemon(monkeypatch):
     assert "noodle-sandbox" in client.networks.existing
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_pool.py -k init -v`
 Expected: FAIL — no `init_sandbox`
 
-- [ ] **Step 3: Implement in `sandbox_pool.py`**
+- [x] **Step 3: Implement in `sandbox_pool.py`**
 
 ```python
 def _make_docker_client() -> Any:
@@ -1924,12 +1924,12 @@ async def init_sandbox() -> str | None:
     return runtime
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_pool.py -v`
 Expected: all pass
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/app/services/sandbox_pool.py apps/api/tests/test_sandbox_pool.py
@@ -1946,7 +1946,7 @@ git commit -m "feat(sandbox): init_sandbox startup probe with auto-fallback and 
 - Modify: `apps/api/app/services/runner.py` (executor instantiation + dispatch fork)
 - Test: `apps/api/tests/test_executors.py` (append)
 
-- [ ] **Step 1: Add `org_id` to `RunExecutionContext` in `executors/base.py`**
+- [x] **Step 1: Add `org_id` to `RunExecutionContext` in `executors/base.py`**
 
 ```python
 class RunExecutionContext(TypedDict):
@@ -1959,7 +1959,7 @@ class RunExecutionContext(TypedDict):
 
 Then find `_build_ctx` in `runner.py` (`grep -n "_build_ctx" apps/api/app/services/runner.py`) and add an `org_id: str | None = None` parameter that flows into the dict; every existing call site keeps working via the default.
 
-- [ ] **Step 2: Write the failing executor test (append to `tests/test_executors.py`, following its FakePool style)**
+- [x] **Step 2: Write the failing executor test (append to `tests/test_executors.py`, following its FakePool style)**
 
 ```python
 def test_sandbox_executor_delegates_and_cancels():
@@ -2006,12 +2006,12 @@ def test_sandbox_executor_delegates_and_cancels():
     assert calls["cancelled"] == "r1"
 ```
 
-- [ ] **Step 3: Run to verify failure**
+- [x] **Step 3: Run to verify failure**
 
 Run: `cd apps/api && python -m pytest tests/test_executors.py -k sandbox -v`
 Expected: FAIL — ModuleNotFoundError
 
-- [ ] **Step 4: Create `apps/api/app/services/executors/sandbox.py`**
+- [x] **Step 4: Create `apps/api/app/services/executors/sandbox.py`**
 
 ```python
 """Sandbox execution: disposable hardened container via the SandboxPool."""
@@ -2064,7 +2064,7 @@ class SandboxExecutor:
         return await self._pool.cancel(run_id)
 ```
 
-- [ ] **Step 5: Wire into `runner.py`**
+- [x] **Step 5: Wire into `runner.py`**
 
 Next to `local_executor` (~line 170):
 
@@ -2119,12 +2119,12 @@ Also wire cancellation: find `cancel_run` in runner.py (`grep -n "async def canc
 
 (placed so it runs only if the task-based cancel didn't already return).
 
-- [ ] **Step 6: Run executor + runner suites**
+- [x] **Step 6: Run executor + runner suites**
 
 Run: `cd apps/api && python -m pytest tests/test_executors.py tests/test_runs.py -v`
 Expected: all pass — with sandbox off and `pool.enabled` False, every existing test takes the unchanged local path.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/api/app/services/executors/sandbox.py apps/api/app/services/executors/base.py apps/api/app/services/runner.py apps/api/tests/test_executors.py
@@ -2141,11 +2141,11 @@ git commit -m "feat(sandbox): SandboxExecutor wired into the run dispatch fork"
 - Modify: `apps/api/app/routers/health.py`
 - Test: `apps/api/tests/test_sandbox_policy.py` (append)
 
-- [ ] **Step 1: Locate the startup seams**
+- [x] **Step 1: Locate the startup seams**
 
 Run: `grep -n "lifespan\|async def.*startup\|ENABLE_INPROCESS" apps/api/app/main.py | head` and `grep -n "def main\|async def\|run_forever\|asyncio.run" apps/api/app/worker_main.py`. Identify where each process finishes config/DB setup and before it starts accepting work.
 
-- [ ] **Step 2: Add to both startup paths**
+- [x] **Step 2: Add to both startup paths**
 
 In `main.py` lifespan startup (after DB/redis init) and in `worker_main`'s async startup, insert:
 
@@ -2166,7 +2166,7 @@ In `main.py` lifespan **shutdown**, and worker_main's shutdown path, add:
     await _sandbox_pool.flush()
 ```
 
-- [ ] **Step 3: Extend `/health/ready` in `routers/health.py`**
+- [x] **Step 3: Extend `/health/ready` in `routers/health.py`**
 
 After the redis check, add (non-fatal — auto mode running on subprocess is healthy):
 
@@ -2181,7 +2181,7 @@ After the redis check, add (non-fatal — auto mode running on subprocess is hea
             checks["sandbox"] = "error: required but inactive"
 ```
 
-- [ ] **Step 4: Write tests (append to `tests/test_sandbox_policy.py`)**
+- [x] **Step 4: Write tests (append to `tests/test_sandbox_policy.py`)**
 
 ```python
 import asyncio
@@ -2208,12 +2208,12 @@ def test_health_reports_sandbox_state(monkeypatch):
 
 Note: `health.ready()` touches the DB and redis; in the test environment those checks may report errors — assert only on the `sandbox` key and on 503-when-required-inactive. If the DB check already forces 503 in tests, assert `checks["sandbox"] == "error: required but inactive"` instead of the status code.
 
-- [ ] **Step 5: Run tests + a broad smoke**
+- [x] **Step 5: Run tests + a broad smoke**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_policy.py tests/test_runs.py -q`
 Expected: pass. Then the full suite: `cd apps/api && python -m pytest tests/ -q -x --timeout=300` — expected: same results as before this branch (no new failures; sandbox defaults off).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/app/main.py apps/api/app/worker_main.py apps/api/app/routers/health.py apps/api/tests/test_sandbox_policy.py
@@ -2229,11 +2229,11 @@ git commit -m "feat(sandbox): startup policy+probe wiring, pool flush on shutdow
 - Modify: `deploy/Dockerfile.python` (only if `docker` pkg missing)
 - Modify: `docs/deployment.md`
 
-- [ ] **Step 1: Ensure the worker image has the docker SDK**
+- [x] **Step 1: Ensure the worker image has the docker SDK**
 
 Run: `grep -rn "docker" deploy/Dockerfile.python apps/api/pyproject.toml pyproject.toml | grep -iv dockerfile`. If the `docker` Python package is not an api dependency, add it to the api project's dependencies (it is already required by the docker runner-pool provider, so it likely belongs in the main dependency list — match however `redis`/optional deps are declared there).
 
-- [ ] **Step 2: Add the commented sandbox variant to `deploy/docker-compose.yml`** under the `worker` service's `environment:` block:
+- [x] **Step 2: Add the commented sandbox variant to `deploy/docker-compose.yml`** under the `worker` service's `environment:` block:
 
 ```yaml
       # --- Sandboxed execution (hardened / multi-tenant) ------------------
@@ -2256,16 +2256,16 @@ and under the worker's `volumes:`:
       # - /var/run/docker.sock:/var/run/docker.sock
 ```
 
-- [ ] **Step 3: Document in `docs/deployment.md`**
+- [x] **Step 3: Document in `docs/deployment.md`**
 
 Add a `## Sandboxed execution` section covering: what it is (per-run hardened containers, warm-pooled per org+env); the three modes (`off`/`auto`/`required`) and that MT forces `required`; the tier table (runc everywhere incl. Docker Desktop Win/mac, runsc on Linux/WSL2 with gVisor installed + install pointer to gvisor.dev/docs/user_guide/install, kata future); the compose socket-mount recipe from Step 2; resource-limit settings (`SANDBOX_MEM_LIMIT` etc.); the dedicated `noodle-sandbox` network and the note that stricter egress filtering is operator-supplied via `SANDBOX_NETWORK`; and the K8s direction (Jobs + runtimeClassName, follow-up slice). Keep it ~60 lines, same tone as the file's existing sections.
 
-- [ ] **Step 4: Validate compose syntax**
+- [x] **Step 4: Validate compose syntax**
 
 Run: `docker compose -f deploy/docker-compose.yml config -q` (if docker is available locally; otherwise `python -c "import yaml; yaml.safe_load(open('deploy/docker-compose.yml'))"`)
 Expected: no errors
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add deploy/docker-compose.yml deploy/Dockerfile.python docs/deployment.md apps/api/pyproject.toml pyproject.toml
@@ -2279,7 +2279,7 @@ git commit -m "docs(sandbox): compose sandbox variant, worker docker-sdk dep, de
 **Files:**
 - Create: `apps/api/tests/test_sandbox_integration.py`
 
-- [ ] **Step 1: Write the gated integration test**
+- [x] **Step 1: Write the gated integration test**
 
 ```python
 """Real-daemon sandbox integration. Skipped unless NOODLE_SANDBOX_IT=1.
@@ -2351,22 +2351,22 @@ def test_run_executes_in_real_container(monkeypatch):
 
 Adjust the graph dict to whatever minimal shape `tests/test_runs.py` uses for a passing single-node run (`grep -n "nodes.*code\|def.*graph" apps/api/tests/test_runs.py | head`) — the engine's node param schema is authoritative, not this plan.
 
-- [ ] **Step 2: Run gated (skipped) in CI mode**
+- [x] **Step 2: Run gated (skipped) in CI mode**
 
 Run: `cd apps/api && python -m pytest tests/test_sandbox_integration.py -v`
 Expected: 1 skipped
 
-- [ ] **Step 3: If a Docker daemon is available on this machine, run for real**
+- [x] **Step 3: If a Docker daemon is available on this machine, run for real**
 
 Run: `cd apps/api && NOODLE_SANDBOX_IT=1 python -m pytest tests/test_sandbox_integration.py -v` (PowerShell: `$env:NOODLE_SANDBOX_IT="1"; python -m pytest tests/test_sandbox_integration.py -v`)
 Expected: 1 passed (first run is slow — image build). If it fails, debug with `docker logs <noodle-sbx-...>` before changing code.
 
-- [ ] **Step 4: Full-suite verification**
+- [x] **Step 4: Full-suite verification**
 
 Run: `cd apps/api && python -m pytest tests/ -q`
 Expected: zero new failures vs. the branch baseline.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/tests/test_sandbox_integration.py
