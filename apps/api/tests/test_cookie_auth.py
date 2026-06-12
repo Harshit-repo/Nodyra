@@ -16,8 +16,12 @@ Each test covers one observable contract:
 
 import pytest
 from httpx import AsyncClient
+from fastapi import Depends, FastAPI, WebSocket
+from fastapi.testclient import TestClient
 
 from app.config import settings
+from app.db import get_session
+from app.security import resolve_org
 
 
 @pytest.fixture(autouse=True)
@@ -197,3 +201,29 @@ async def test_ws_ticket_is_consumed_on_first_use(client: AsyncClient):
     # Second consume: must be None (ticket deleted).
     user_id_again = await consume_ticket(ticket)
     assert user_id_again is None, "second consume must return None (single-use)"
+
+
+def test_global_org_dependency_accepts_websocket_connections(monkeypatch):
+    """The app-level org dependency runs for WebSockets too.
+
+    It must depend on Starlette's shared HTTPConnection type; depending on
+    Request only works for HTTP routes and raises during WS dependency solving.
+    """
+
+    monkeypatch.setattr(settings, "multi_tenancy_enabled", False)
+    app = FastAPI(dependencies=[Depends(resolve_org)])
+
+    async def override_get_session():
+        yield None
+
+    app.dependency_overrides[get_session] = override_get_session
+
+    @app.websocket("/ws")
+    async def websocket_route(websocket: WebSocket):
+        await websocket.accept()
+        await websocket.send_json({"ok": True})
+        await websocket.close()
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws") as websocket:
+            assert websocket.receive_json() == {"ok": True}

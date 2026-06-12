@@ -12,6 +12,7 @@ first use.  The WS endpoint then accepts ``?ticket=<token>`` instead of
 ``?token=<token>`` and rejects any ticket that has already been consumed.
 """
 
+import asyncio
 import secrets
 from datetime import UTC, datetime
 
@@ -22,6 +23,14 @@ from app.config import settings
 # ---------------------------------------------------------------------------
 
 _in_process: dict[str, tuple[str, datetime]] = {}  # ticket → (user_id, expires_at)
+
+# Standalone Redis client, cached per event loop. One long-lived loop in
+# production → exactly one client; never one per call (each WS open mints AND
+# consumes a ticket — a fresh from_url() per call leaks a connection pool per
+# WebSocket). Keyed by loop because a client whose pooled connections belong
+# to a closed loop raises on reuse (pytest creates a loop per test).
+_standalone_client = None
+_standalone_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _now() -> datetime:
@@ -37,14 +46,26 @@ async def _redis_client():
             return broker._redis
     except Exception:
         pass
-    # Try to build a standalone client if a redis_url is configured.
     if settings.redis_url:
-        try:
-            import redis.asyncio as aioredis
+        global _standalone_client, _standalone_loop
+        loop = asyncio.get_running_loop()
+        if _standalone_client is None or _standalone_loop is not loop:
+            if _standalone_client is not None:
+                try:
+                    await _standalone_client.aclose()
+                except Exception:
+                    pass  # connections belonged to a dead loop
+            try:
+                import redis.asyncio as aioredis
 
-            return aioredis.from_url(settings.redis_url, decode_responses=True)
-        except Exception:
-            pass
+                _standalone_client = aioredis.from_url(
+                    settings.redis_url, decode_responses=True
+                )
+                _standalone_loop = loop
+            except Exception:
+                _standalone_client = None
+                _standalone_loop = None
+        return _standalone_client
     return None
 
 

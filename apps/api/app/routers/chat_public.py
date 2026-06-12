@@ -12,7 +12,7 @@ Access modes controlled by the ``require_login`` param on the chat_trigger node:
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -85,6 +85,7 @@ async def get_public_chat_config(workflow_id: str) -> ChatPublicConfig:
 async def public_chat_turn(
     workflow_id: str,
     body: ChatTurnRequest,
+    request: Request,
     token: str | None = Query(default=None),
     authorization: str | None = Header(default=None),
     session: AsyncSession = Depends(get_session),
@@ -108,7 +109,7 @@ async def public_chat_turn(
                 )
         # else: no token configured — open access
     else:
-        await current_user(authorization=authorization, session=session)
+        await current_user(request, authorization=authorization, session=session)
 
     from app.tenancy import run_as_system
 

@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable
 from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import HTTPConnection
 
 from app.config import settings
 from app.db import get_session
@@ -72,7 +73,7 @@ def role_allows(role: str, minimum: str) -> bool:
 
 def _extract_token(
     authorization: str | None,
-    request: Request | None,
+    request: HTTPConnection | None,
 ) -> tuple[str | None, bool]:
     """Extract a Noodle session token from the request.
 
@@ -131,7 +132,7 @@ async def optional_current_user(
 async def _lenient_session_user(
     authorization: str | None,
     session: AsyncSession,
-    request: Request | None = None,
+    request: HTTPConnection | None = None,
 ) -> User | None:
     """The session user, or None — never raises.
 
@@ -154,7 +155,7 @@ async def _lenient_session_user(
 
 
 async def resolve_org(
-    request: Request,
+    request: HTTPConnection,
     x_org_id: str | None = Header(default=None, alias="X-Org-Id"),
     authorization: str | None = Header(default=None),
     session: AsyncSession = Depends(get_session),
