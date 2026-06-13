@@ -25,6 +25,7 @@ import {
 } from "./NodeDetails";
 import { isFromAiExpr } from "./toolParam";
 import { useEditor } from "./store";
+import { VariablePickerPopover } from "./VariablePickerPopover";
 import { asArtifactRef, artifactDownloadUrl, artifactSummary, formatBytes } from "./artifactValues";
 
 /**
@@ -63,6 +64,7 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
   // Reset when switching nodes so each node starts from its own value-derived
   // state. `undefined` for a group means "decide from saved values".
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const [pickerParam, setPickerParam] = useState<string | null>(null);
   useEffect(() => setOpenGroups({}), [nodeId]);
   if (!node) return null;
   const { manifest, params } = node.data;
@@ -180,6 +182,20 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
                   </span>
                 )}
                 {spec.required && <span className="field-req">required</span>}
+                {(spec.type === "string" || spec.type === "expression") &&
+                  !spec.credential &&
+                  spec.widget !== "hidden" && (
+                    <button
+                      type="button"
+                      className="var-pick-inline-btn"
+                      title="Pick a variable from upstream nodes"
+                      onClick={() =>
+                        setPickerParam((p) => (p === spec.name ? null : spec.name))
+                      }
+                    >
+                      $
+                    </button>
+                  )}
               </div>
               <FromAiParamControl
                 nodeId={node.id}
@@ -216,6 +232,27 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
                   onChange={(v) => setParam(spec.name, v)}
                   credentialContext={params}
                 />
+              )}
+              {pickerParam === spec.name && (
+                <div className="var-pick-inline-wrap">
+                  <VariablePickerPopover
+                    nodeId={node.id}
+                    onInsert={(expr) => {
+                      const current = String(params[spec.name] ?? "");
+                      const pos = current.length;
+                      const before = current.slice(0, pos);
+                      const opens = (before.match(/\{\{/g) ?? []).length;
+                      const closes = (before.match(/\}\}/g) ?? []).length;
+                      const insideExpr = opens > closes;
+                      const toInsert = insideExpr
+                        ? expr.replace(/^\{\{\s*/, "").replace(/\s*\}\}$/, "")
+                        : expr;
+                      setParam(spec.name, current + toInsert);
+                      setPickerParam(null);
+                    }}
+                    onClose={() => setPickerParam(null)}
+                  />
+                </div>
               )}
             </div>
           );
