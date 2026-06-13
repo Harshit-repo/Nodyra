@@ -1694,6 +1694,32 @@ function ExpressionEditorModal({
                 </ul>
               )}
             </div>
+            {state.parts && state.parts.some((p) => p.kind === "expr") && (
+              <div className="expr-parts-bar">
+                <span className="expr-parts-label">Resolved:</span>
+                {state.parts
+                  .filter((p) => p.kind === "expr" || p.kind === "error")
+                  .map((p, i) =>
+                    p.kind === "error" ? (
+                      <span key={i} className="expr-part-chip expr-part-chip--error" title={p.error}>
+                        <span className="expr-part-chip-raw">{p.raw}</span>
+                        <span className="expr-part-chip-arrow">→</span>
+                        <span className="expr-part-chip-val">⚠ error</span>
+                      </span>
+                    ) : (
+                      <span key={i} className="expr-part-chip">
+                        <span className="expr-part-chip-raw">
+                          {p.raw.replace(/^\{\{\s*/, "").replace(/\s*\}\}$/, "").slice(0, 20)}
+                        </span>
+                        <span className="expr-part-chip-arrow">→</span>
+                        <span className="expr-part-chip-val">
+                          {String(p.value === null || p.value === undefined ? "null" : p.value).slice(0, 18)}
+                        </span>
+                      </span>
+                    ),
+                  )}
+              </div>
+            )}
           </section>
           <section className="expr-modal-pane">
             <div className="expr-modal-pane-head">
