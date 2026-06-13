@@ -55,7 +55,7 @@ export function flattenOutputFields(
   if (value && typeof value === "object" && !Array.isArray(value)) {
     for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
       const fieldPath = path ? `${path}.${key}` : key;
-      const isExpandable = val !== null && typeof val === "object";
+      const isExpandable = val !== null && typeof val === "object" && depth < 2;
       fields.push({
         path: fieldPath,
         type: inferType(val),
@@ -63,7 +63,7 @@ export function flattenOutputFields(
         expression: buildNodeExpression(nodeId, fieldPath),
         isExpandable,
       });
-      if (isExpandable && depth < 2) {
+      if (isExpandable) {
         fields.push(...flattenOutputFields(val, nodeId, fieldPath, depth + 1));
       }
     }
@@ -116,7 +116,7 @@ export function getUpstreamNodes(
   for (const id of upstreamIds) {
     const node = nodeById.get(id);
     if (!node) continue;
-    const label = node.data.label ?? node.data.manifest.name;
+    const label = node.data.label ?? node.data.manifest?.name ?? node.id;
     const raw = runOutputs[id];
     const mainOutput =
       raw && typeof raw === "object"
