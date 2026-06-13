@@ -1,5 +1,5 @@
 import { Info, MagnifyingGlass, Plus, WarningCircle, X } from "@phosphor-icons/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, errorMessage, uploadArtifact } from "../api";
 import { categoryColor } from "../categories";
@@ -1446,6 +1446,12 @@ function ExpressionEditorModal({
   );
   const selectedUpstreamNode = upstreamNodes.find((n) => n.id === selectedUpstreamId) ?? upstreamNodes[0];
 
+  useEffect(() => {
+    if (upstreamNodes.length > 0 && !upstreamNodes.find((n) => n.id === selectedUpstreamId)) {
+      setSelectedUpstreamId(upstreamNodes[0]?.id ?? null);
+    }
+  }, [upstreamNodes, selectedUpstreamId]);
+
   function toggleSidebar() {
     setSidebarCollapsed((c) => {
       const next = !c;
@@ -1454,7 +1460,7 @@ function ExpressionEditorModal({
     });
   }
 
-  function startFieldDrag(e: React.DragEvent<HTMLElement>, expression: string) {
+  const startFieldDrag = useCallback((e: React.DragEvent<HTMLElement>, expression: string) => {
     e.dataTransfer.setData("text/plain", expression);
     e.dataTransfer.setData("application/x-noodle-expression", expression);
     e.dataTransfer.effectAllowed = "copy";
@@ -1464,7 +1470,7 @@ function ExpressionEditorModal({
     document.body.appendChild(ghost);
     e.dataTransfer.setDragImage(ghost, 12, 12);
     window.setTimeout(() => ghost.remove(), 0);
-  }
+  }, []);
 
   function updateSuggestions(val: string) {
     const pos = taRef.current?.selectionStart ?? val.length;
