@@ -18,6 +18,7 @@ import type {
   ParamSpec,
 } from "../types";
 import { DataPanel } from "./DataPanel";
+import { VariablePickerPopover } from "./VariablePickerPopover";
 import { TimezoneSelect } from "./fields/TimezoneSelect";
 import { fromAiExpr, isFromAiExpr, paramArgType } from "./toolParam";
 import { missingFor } from "./missingPackages";
@@ -1515,6 +1516,32 @@ function ExpressionEditorModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyKey]);
 
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const dollarPosRef = useRef<number | null>(null);
+
+  function insertExpression(expression: string) {
+    const ta = taRef.current;
+    const pos = ta?.selectionStart ?? value.length;
+
+    if (dollarPosRef.current !== null) {
+      const dollarPos = dollarPosRef.current;
+      dollarPosRef.current = null;
+      const inner = expression.replace(/^\{\{\s*/, "").replace(/\s*\}\}$/, "");
+      onChange(value.slice(0, dollarPos - 1) + inner + value.slice(dollarPos));
+      return;
+    }
+
+    const before = value.slice(0, pos);
+    const opens = (before.match(/\{\{/g) ?? []).length;
+    const closes = (before.match(/\}\}/g) ?? []).length;
+    const insideExpr = opens > closes;
+    const toInsert = insideExpr
+      ? expression.replace(/^\{\{\s*/, "").replace(/\s*\}\}$/, "")
+      : expression;
+    onChange(value.slice(0, pos) + toInsert + value.slice(pos));
+    setPickerOpen(false);
+  }
+
   function updateSuggestions(val: string) {
     const pos = taRef.current?.selectionStart ?? val.length;
     const s = computeSuggestions(val, pos, ctx);
@@ -1542,6 +1569,12 @@ function ExpressionEditorModal({
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === " " && (e.ctrlKey || e.metaKey) && nodeId) {
+      e.preventDefault();
+      dollarPosRef.current = null;
+      setPickerOpen(true);
+      return;
+    }
     if (suggestions.length === 0) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -1744,21 +1777,52 @@ function ExpressionEditorModal({
               )}
             </aside>
           )}
-          <section className="expr-modal-pane">
+          <section className="expr-modal-pane" style={{ position: "relative" }}>
             <div className="expr-modal-pane-head">
               <span>Expression</span>
-              <span className="muted expr-modal-hint">
-                Anything inside <code>{"{{ }}"}</code> is evaluated
-              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span className="muted expr-modal-hint">
+                  Anything inside <code>{"{{ }}"}</code> is evaluated
+                </span>
+                {nodeId && (
+                  <button
+                    type="button"
+                    className="btn btn-xs expr-pick-btn"
+                    title="Pick a variable (Ctrl+Space)"
+                    onClick={() => { dollarPosRef.current = null; setPickerOpen((o) => !o); }}
+                  >
+                    $ Pick variable
+                  </button>
+                )}
+              </div>
             </div>
             <div className="expr-modal-editor-wrap">
               <HighlightedTextarea
                 className="expr-modal-editor"
                 value={value}
-                onChange={(v) => { onChange(v); updateSuggestions(v); }}
+                onChange={(v) => {
+                  onChange(v);
+                  updateSuggestions(v);
+                  const pos = taRef.current?.selectionStart ?? v.length;
+                  const before = v.slice(0, pos);
+                  const opens = (before.match(/\{\{/g) ?? []).length;
+                  const closes = (before.match(/\}\}/g) ?? []).length;
+                  const insideExpr = opens > closes;
+                  if (insideExpr && v[pos - 1] === "$") {
+                    dollarPosRef.current = pos;
+                    setPickerOpen(true);
+                  }
+                }}
                 autoFocus
                 taRef={taRef}
-                onKeyDown={handleKeyDown}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape" && pickerOpen) {
+                    setPickerOpen(false);
+                    dollarPosRef.current = null;
+                    return;
+                  }
+                  handleKeyDown(e);
+                }}
               />
               {suggestions.length > 0 && (
                 <ul className="expr-autocomplete">
@@ -1799,6 +1863,15 @@ function ExpressionEditorModal({
                       </span>
                     ),
                   )}
+              </div>
+            )}
+            {pickerOpen && nodeId && (
+              <div className="expr-picker-anchor">
+                <VariablePickerPopover
+                  nodeId={nodeId}
+                  onInsert={insertExpression}
+                  onClose={() => { setPickerOpen(false); dollarPosRef.current = null; }}
+                />
               </div>
             )}
           </section>
