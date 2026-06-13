@@ -3705,7 +3705,13 @@ export function NodeDetails({
                       nodeId={node.id}
                       onInsert={(expr) => {
                         const current = String(params[spec.name] ?? "");
-                        setParam(spec.name, current + expr);
+                        const opens = (current.match(/\{\{/g) ?? []).length;
+                        const closes = (current.match(/\}\}/g) ?? []).length;
+                        const insideExpr = opens > closes;
+                        const toInsert = insideExpr
+                          ? expr.replace(/^\{\{\s*/, "").replace(/\s*\}\}$/, "")
+                          : expr;
+                        setParam(spec.name, current + toInsert);
                         setPickerParam(null);
                       }}
                       onClose={() => setPickerParam(null)}
