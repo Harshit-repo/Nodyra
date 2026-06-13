@@ -1,5 +1,5 @@
 import { Info, MagnifyingGlass, Plus, WarningCircle, X } from "@phosphor-icons/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api, errorMessage, uploadArtifact } from "../api";
 import { categoryColor } from "../categories";
@@ -24,6 +24,7 @@ import { missingFor } from "./missingPackages";
 import { useEditor } from "./store";
 import { useServerPlatform } from "../hooks/useServerPlatform";
 import { credentialMatchesParam } from "./node-details/credentials";
+import { getUpstreamNodes } from "./node-details/upstreamFields";
 import {
   buildLoadOptionsParams,
   matchesDisplayWhen,
@@ -1403,12 +1404,14 @@ function ExpressionEditorModal({
   value,
   onChange,
   ctx,
+  nodeId,
   onClose,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   ctx?: ExprContext;
+  nodeId?: string;
   onClose: () => void;
 }) {
   const [view, setView] = useState<ResultView>("text");
@@ -1426,6 +1429,42 @@ function ExpressionEditorModal({
   const dialogRef = useRef<HTMLDivElement>(null);
   // trapFocus:false — the editor + autocomplete drive their own Tab handling.
   useModalA11y(dialogRef, onClose, { trapFocus: false });
+
+  // Sidebar state
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem("noodle_expr_sidebar_collapsed") === "1"; } catch { return false; }
+  });
+  const allNodes = useEditor((s) => s.nodes);
+  const allEdges = useEditor((s) => s.edges);
+  const runOutputs = useEditor((s) => s.runOutputs);
+  const upstreamNodes = useMemo(
+    () => nodeId ? getUpstreamNodes(nodeId, allNodes, allEdges, runOutputs) : [],
+    [nodeId, allNodes, allEdges, runOutputs],
+  );
+  const [selectedUpstreamId, setSelectedUpstreamId] = useState<string | null>(
+    upstreamNodes[0]?.id ?? null,
+  );
+  const selectedUpstreamNode = upstreamNodes.find((n) => n.id === selectedUpstreamId) ?? upstreamNodes[0];
+
+  function toggleSidebar() {
+    setSidebarCollapsed((c) => {
+      const next = !c;
+      try { localStorage.setItem("noodle_expr_sidebar_collapsed", next ? "1" : "0"); } catch { /* */ }
+      return next;
+    });
+  }
+
+  function startFieldDrag(e: React.DragEvent<HTMLElement>, expression: string) {
+    e.dataTransfer.setData("text/plain", expression);
+    e.dataTransfer.setData("application/x-noodle-expression", expression);
+    e.dataTransfer.effectAllowed = "copy";
+    const ghost = document.createElement("div");
+    ghost.className = "expr-drag-ghost";
+    ghost.textContent = expression;
+    document.body.appendChild(ghost);
+    e.dataTransfer.setDragImage(ghost, 12, 12);
+    window.setTimeout(() => ghost.remove(), 0);
+  }
 
   function updateSuggestions(val: string) {
     const pos = taRef.current?.selectionStart ?? val.length;
@@ -1544,6 +1583,80 @@ function ExpressionEditorModal({
           </button>
         </header>
         <div className="expr-modal-body">
+          {upstreamNodes.length > 0 && (
+            <aside className={`expr-sidebar${sidebarCollapsed ? " expr-sidebar--collapsed" : ""}`}>
+              <div className="expr-sidebar-head">
+                {!sidebarCollapsed && <span className="expr-sidebar-title">Variables</span>}
+                <button
+                  type="button"
+                  className="expr-sidebar-collapse"
+                  title={sidebarCollapsed ? "Expand variable panel" : "Collapse variable panel"}
+                  onClick={toggleSidebar}
+                >
+                  {sidebarCollapsed ? "›" : "‹"}
+                </button>
+              </div>
+              {!sidebarCollapsed && (
+                <div className="expr-sidebar-body">
+                  {upstreamNodes.length > 1 && (
+                    <div className="expr-sidebar-node-select">
+                      <select
+                        className="expr-sidebar-dropdown"
+                        value={selectedUpstreamId ?? ""}
+                        onChange={(e) => setSelectedUpstreamId(e.target.value)}
+                      >
+                        {upstreamNodes.map((n) => (
+                          <option key={n.id} value={n.id}>
+                            {n.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {upstreamNodes.length === 1 && (
+                    <div className="expr-sidebar-node-single">{upstreamNodes[0].label}</div>
+                  )}
+                  <div className="expr-sidebar-fields">
+                    {(selectedUpstreamNode?.fields.length ?? 0) === 0 && (
+                      <p className="expr-sidebar-empty">No output data yet.</p>
+                    )}
+                    {selectedUpstreamNode?.fields.map((field) => (
+                      <div
+                        key={field.path}
+                        className="expr-sidebar-field"
+                        draggable
+                        onDragStart={(e) => startFieldDrag(e, field.expression)}
+                        title={`Drag to insert ${field.expression}`}
+                      >
+                        <span className="expr-sidebar-grip">⠿</span>
+                        <span className="expr-sidebar-name">{field.path}</span>
+                        <span className="expr-sidebar-type">{field.type}</span>
+                        <span className="expr-sidebar-preview">{field.valuePreview}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="expr-sidebar-meta">
+                    {[
+                      { path: "$run.id", expr: "{{ $run.id }}" },
+                      { path: "$run.status", expr: "{{ $run.status }}" },
+                      { path: "$env.KEY", expr: "{{ $env.KEY }}" },
+                    ].map((m) => (
+                      <div
+                        key={m.path}
+                        className="expr-sidebar-field expr-sidebar-field--meta"
+                        draggable
+                        onDragStart={(e) => startFieldDrag(e, m.expr)}
+                        title={`Drag to insert ${m.expr}`}
+                      >
+                        <span className="expr-sidebar-grip">⠿</span>
+                        <span className="expr-sidebar-name">{m.path}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </aside>
+          )}
           <section className="expr-modal-pane">
             <div className="expr-modal-pane-head">
               <span>Expression</span>
@@ -2008,12 +2121,14 @@ export function ParamField({
   onChange,
   credentialContext,
   exprContext,
+  nodeId,
 }: {
   spec: ParamSpec;
   value: unknown;
   onChange: (v: unknown) => void;
   credentialContext?: Record<string, unknown>;
   exprContext?: ExprContext;
+  nodeId?: string;
 }) {
   const [expanderOpen, setExpanderOpen] = useState(false);
   if (spec.credential) {
@@ -2168,6 +2283,7 @@ export function ParamField({
               value={current}
               onChange={onChange}
               ctx={exprContext}
+              nodeId={nodeId}
               onClose={() => setExpanderOpen(false)}
             />
           )}
@@ -3379,6 +3495,7 @@ export function NodeDetails({
                     value={value}
                     onChange={(v) => setParam(spec.name, v)}
                     credentialContext={params}
+                    nodeId={node.id}
                   />
                 )}
               </div>
