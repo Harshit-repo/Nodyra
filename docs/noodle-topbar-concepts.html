@@ -1,0 +1,1844 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Noodle Top Bar Concepts</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #080c13;
+        --panel: #0d121b;
+        --panel-2: #111827;
+        --panel-3: #151d2b;
+        --line: #253044;
+        --line-soft: #1a2332;
+        --text: #e7edf8;
+        --muted: #8d99ae;
+        --dim: #687386;
+        --blue: #4f9cff;
+        --blue-2: #2f7ee8;
+        --green: #32d583;
+        --green-soft: rgba(50, 213, 131, 0.12);
+        --yellow: #f8c65c;
+        --red: #ff6b6b;
+        --radius: 8px;
+        --shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-width: 1180px;
+        background:
+          linear-gradient(180deg, rgba(19, 27, 42, 0.92), var(--bg) 360px),
+          var(--bg);
+        color: var(--text);
+      }
+
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+
+      button {
+        border: 0;
+      }
+
+      .page {
+        max-width: 1680px;
+        margin: 0 auto;
+        padding: 32px 32px 56px;
+      }
+
+      .header {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 32px;
+        margin-bottom: 24px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 26px;
+        line-height: 1.15;
+        letter-spacing: 0;
+      }
+
+      .intro {
+        max-width: 760px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.55;
+      }
+
+      .meta {
+        color: var(--dim);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .stack {
+        display: grid;
+        gap: 22px;
+      }
+
+      .concept {
+        border: 1px solid var(--line-soft);
+        border-radius: 10px;
+        background: rgba(9, 14, 23, 0.72);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .concept-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line-soft);
+      }
+
+      .concept-title {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .concept-title h2 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 700;
+        letter-spacing: 0;
+      }
+
+      .concept-title span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .notes {
+        display: flex;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .note {
+        border: 1px solid var(--line-soft);
+        border-radius: 999px;
+        padding: 4px 8px;
+      }
+
+      .bar-wrap {
+        padding: 20px 16px;
+        background:
+          linear-gradient(90deg, rgba(255, 255, 255, 0.018), transparent),
+          #070b12;
+      }
+
+      .topbar {
+        display: grid;
+        align-items: center;
+        min-height: 58px;
+        border: 1px solid var(--line-soft);
+        background: rgba(12, 18, 29, 0.98);
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+      }
+
+      .group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .split {
+        height: 28px;
+        width: 1px;
+        background: var(--line);
+      }
+
+      .brand-mark {
+        position: relative;
+        width: 24px;
+        height: 24px;
+        flex: 0 0 24px;
+      }
+
+      .brand-mark::before,
+      .brand-mark::after {
+        content: "";
+        position: absolute;
+        border-radius: 999px;
+        background: var(--blue);
+      }
+
+      .brand-mark::before {
+        left: 3px;
+        top: 11px;
+        width: 18px;
+        height: 3px;
+        transform: rotate(-34deg);
+        box-shadow: 8px -6px 0 -1px var(--blue);
+      }
+
+      .brand-mark::after {
+        left: 4px;
+        top: 13px;
+        width: 6px;
+        height: 6px;
+        box-shadow:
+          9px -7px 0 -1px var(--blue),
+          18px -14px 0 -2px var(--blue);
+      }
+
+      .agent-name {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        color: var(--text);
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .agent-name.small {
+        font-size: 13px;
+      }
+
+      .workflow-title {
+        display: inline-flex;
+        align-items: center;
+        min-width: 180px;
+        max-width: 300px;
+        height: 34px;
+        border: 1px solid transparent;
+        border-radius: var(--radius);
+        color: var(--text);
+        background: transparent;
+        padding: 0 8px;
+        font-size: 15px;
+        font-weight: 760;
+        white-space: nowrap;
+      }
+
+      .workflow-title::after {
+        content: "";
+        width: 12px;
+        height: 12px;
+        margin-left: 8px;
+        opacity: 0;
+        background:
+          linear-gradient(currentColor, currentColor) 2px 9px / 8px 2px no-repeat,
+          linear-gradient(135deg, transparent 0 37%, currentColor 38% 62%, transparent 63%) 5px 2px / 7px 7px no-repeat;
+      }
+
+      .workflow-title:hover,
+      .workflow-title:focus-visible {
+        border-color: var(--line);
+        background: rgba(255, 255, 255, 0.035);
+        outline: 0;
+      }
+
+      .workflow-title:hover::after,
+      .workflow-title:focus-visible::after {
+        opacity: 0.72;
+      }
+
+      .chevron {
+        width: 7px;
+        height: 7px;
+        border-right: 2px solid currentColor;
+        border-bottom: 2px solid currentColor;
+        transform: rotate(45deg) translateY(-2px);
+        opacity: 0.72;
+      }
+
+      .status-line {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .status-line strong {
+        color: var(--text);
+        font-weight: 650;
+      }
+
+      .dot {
+        width: 4px;
+        height: 4px;
+        border-radius: 50%;
+        background: var(--dim);
+        flex: 0 0 auto;
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        min-height: 32px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #101725;
+        color: var(--muted);
+        padding: 0 11px;
+        font-size: 12px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      .chip.plain {
+        border-color: transparent;
+        background: transparent;
+        color: var(--muted);
+        padding-inline: 4px;
+      }
+
+      .chip.soft {
+        border-color: var(--line-soft);
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .chip.green {
+        border-color: rgba(50, 213, 131, 0.32);
+        background: var(--green-soft);
+        color: #9ff3c5;
+      }
+
+      .chip.warn {
+        border-color: rgba(248, 198, 92, 0.28);
+        background: rgba(248, 198, 92, 0.1);
+        color: #f4d692;
+      }
+
+      .chip.icon {
+        width: 34px;
+        padding: 0;
+      }
+
+      .toggle {
+        position: relative;
+        width: 34px;
+        height: 18px;
+        border-radius: 999px;
+        background: #263247;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+      }
+
+      .toggle::after {
+        content: "";
+        position: absolute;
+        left: 3px;
+        top: 3px;
+        width: 12px;
+        height: 12px;
+        border-radius: 999px;
+        background: #9ba7bb;
+      }
+
+      .toggle.on {
+        background: rgba(50, 213, 131, 0.24);
+      }
+
+      .toggle.on::after {
+        left: 19px;
+        background: var(--green);
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        min-height: 36px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #111827;
+        color: var(--text);
+        padding: 0 13px;
+        font-size: 12px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .btn.ghost {
+        background: transparent;
+        color: var(--muted);
+      }
+
+      .btn.flat {
+        border-color: transparent;
+        background: transparent;
+        color: var(--muted);
+      }
+
+      .btn.primary {
+        border-color: #5aa5ff;
+        background: linear-gradient(180deg, #63a9ff, #348cff);
+        color: #fff;
+        box-shadow: 0 10px 24px rgba(52, 140, 255, 0.22);
+      }
+
+      .btn.publish-draft {
+        border-color: #5aa5ff;
+        background: linear-gradient(180deg, #63a9ff, #348cff);
+        color: #fff;
+        box-shadow: 0 10px 24px rgba(52, 140, 255, 0.22);
+      }
+
+      .btn.publish-active {
+        border-color: rgba(50, 213, 131, 0.48);
+        background: linear-gradient(180deg, #34c982, #169b61);
+        color: #f3fff8;
+        box-shadow: 0 10px 24px rgba(50, 213, 131, 0.18);
+      }
+
+      .btn.success {
+        border-color: rgba(50, 213, 131, 0.5);
+        background: rgba(50, 213, 131, 0.12);
+        color: #90f0be;
+      }
+
+      .btn.dark-success {
+        border-color: rgba(50, 213, 131, 0.22);
+        background: #0f221b;
+        color: #7ee7ad;
+      }
+
+      .btn.icon {
+        width: 38px;
+        padding: 0;
+      }
+
+      .kbd {
+        color: var(--dim);
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .save-state {
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .save-state strong {
+        color: var(--blue);
+      }
+
+      .autosave-state {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .autosave-state::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: var(--green);
+        box-shadow: 0 0 0 4px rgba(50, 213, 131, 0.1);
+      }
+
+      .autosave-state.saving::before {
+        border: 2px solid rgba(255, 255, 255, 0.18);
+        border-top-color: var(--blue);
+        background: transparent;
+        animation: spin 900ms linear infinite;
+        box-shadow: none;
+      }
+
+      .autosave-state.warn::before {
+        background: var(--yellow);
+        box-shadow: 0 0 0 4px rgba(248, 198, 92, 0.1);
+      }
+
+      .env-orb {
+        position: relative;
+        isolation: isolate;
+        overflow: hidden;
+        min-width: 104px;
+        border-color: rgba(79, 156, 255, 0.28);
+        background:
+          radial-gradient(circle at 18px 50%, rgba(79, 156, 255, 0.34), transparent 18px),
+          linear-gradient(180deg, rgba(79, 156, 255, 0.12), rgba(79, 156, 255, 0.035));
+        color: #cfe3ff;
+      }
+
+      .env-orb::before,
+      .env-orb::after {
+        content: "";
+        position: absolute;
+        inset: auto;
+        border-radius: 999px;
+        z-index: -1;
+      }
+
+      .env-orb::before {
+        left: 12px;
+        top: 10px;
+        width: 12px;
+        height: 12px;
+        background: var(--blue);
+        box-shadow: 0 0 18px rgba(79, 156, 255, 0.78);
+        animation: env-pulse 2.2s ease-in-out infinite;
+      }
+
+      .env-orb::after {
+        left: 9px;
+        top: 7px;
+        width: 18px;
+        height: 18px;
+        border: 1px solid rgba(79, 156, 255, 0.48);
+        animation: env-ring 2.2s ease-out infinite;
+      }
+
+      .env-orb span {
+        margin-left: 18px;
+      }
+
+      .search {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 240px;
+        height: 34px;
+        border: 1px solid var(--line-soft);
+        border-radius: var(--radius);
+        background: #0b111c;
+        color: var(--dim);
+        padding: 0 11px;
+        font-size: 12px;
+      }
+
+      .search::before {
+        content: "";
+        width: 12px;
+        height: 12px;
+        border: 2px solid currentColor;
+        border-radius: 999px;
+        box-shadow: 5px 5px 0 -4px currentColor;
+        transform: rotate(-12deg);
+      }
+
+      .pill-tabs {
+        display: flex;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: #0b111c;
+        overflow: hidden;
+      }
+
+      .pill-tabs button {
+        min-height: 34px;
+        padding: 0 12px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        border-right: 1px solid var(--line-soft);
+      }
+
+      .pill-tabs button:last-child {
+        border-right: 0;
+      }
+
+      .pill-tabs .active {
+        background: var(--panel-3);
+        color: var(--text);
+      }
+
+      .version-strip {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .version-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 28px;
+        border: 1px solid var(--line-soft);
+        border-radius: 999px;
+        background: #0b111c;
+        padding: 0 10px;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+
+      .version-pill strong {
+        color: var(--text);
+      }
+
+      .runs-workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 390px;
+        min-height: 420px;
+        border: 1px solid var(--line-soft);
+        background: #090e17;
+      }
+
+      .mock-canvas {
+        position: relative;
+        min-height: 420px;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 18px 18px, rgba(255, 255, 255, 0.08) 1px, transparent 1px) 0 0 / 26px 26px,
+          linear-gradient(180deg, #0b111b, #080d15);
+      }
+
+      .mock-canvas-label {
+        position: absolute;
+        left: 16px;
+        top: 14px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .mock-edge {
+        position: absolute;
+        height: 2px;
+        transform-origin: left center;
+        background: linear-gradient(90deg, rgba(79, 156, 255, 0.4), rgba(79, 156, 255, 0.12));
+      }
+
+      .mock-node {
+        position: absolute;
+        min-width: 142px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #101827;
+        box-shadow: 0 14px 28px rgba(0, 0, 0, 0.26);
+        padding: 10px;
+        font-size: 12px;
+      }
+
+      .mock-node strong {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--text);
+      }
+
+      .mock-node span {
+        color: var(--muted);
+      }
+
+      .mock-node.success {
+        border-color: rgba(50, 213, 131, 0.35);
+      }
+
+      .mock-node.error {
+        border-color: rgba(255, 107, 107, 0.5);
+      }
+
+      .runs-sidecar,
+      .history-panel {
+        border-left: 1px solid var(--line-soft);
+        background: #0c121d;
+        padding: 14px;
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .panel-head h3 {
+        margin: 0;
+        font-size: 13px;
+      }
+
+      .panel-head span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .run-search {
+        display: flex;
+        height: 32px;
+        align-items: center;
+        border: 1px solid var(--line-soft);
+        border-radius: 7px;
+        color: var(--dim);
+        padding: 0 10px;
+        margin-bottom: 10px;
+        font-size: 12px;
+        background: #080d15;
+      }
+
+      .run-row,
+      .version-row {
+        display: grid;
+        gap: 8px;
+        border: 1px solid var(--line-soft);
+        border-radius: 8px;
+        background: #0f1725;
+        padding: 10px;
+        margin-bottom: 8px;
+      }
+
+      .run-row.active {
+        border-color: rgba(79, 156, 255, 0.5);
+        background: rgba(79, 156, 255, 0.09);
+      }
+
+      .run-row-top,
+      .version-row-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        font-size: 12px;
+      }
+
+      .run-row-meta,
+      .version-row-meta {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .run-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        font-weight: 750;
+        text-transform: uppercase;
+      }
+
+      .run-status::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: currentColor;
+      }
+
+      .run-status.success {
+        color: var(--green);
+      }
+
+      .run-status.error {
+        color: var(--red);
+      }
+
+      .run-status.running {
+        color: var(--blue);
+      }
+
+      .run-actions {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .btn.tiny {
+        min-height: 28px;
+        padding: 0 9px;
+        font-size: 11px;
+      }
+
+      .history-popover {
+        position: relative;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 330px;
+        min-height: 250px;
+        border: 1px solid var(--line-soft);
+        background: #090e17;
+      }
+
+      .history-panel {
+        border-left: 1px solid var(--line-soft);
+      }
+
+      .checkpoint {
+        border-style: dashed;
+        background: rgba(255, 255, 255, 0.025);
+      }
+
+      .node-run-list {
+        display: grid;
+        gap: 6px;
+        margin: 2px 0 10px;
+      }
+
+      .node-run-item {
+        display: grid;
+        grid-template-columns: 16px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid var(--line-soft);
+        border-radius: 7px;
+        background: rgba(255, 255, 255, 0.025);
+        padding: 7px 8px;
+        font-size: 11px;
+      }
+
+      .node-run-item strong {
+        display: block;
+        overflow: hidden;
+        color: var(--text);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .node-run-item span {
+        color: var(--muted);
+      }
+
+      .node-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: var(--muted);
+      }
+
+      .node-dot.success {
+        background: var(--green);
+      }
+
+      .node-dot.error {
+        background: var(--red);
+      }
+
+      .node-dot.skipped {
+        background: var(--dim);
+      }
+
+      .settings-menu {
+        position: relative;
+      }
+
+      .settings-popover {
+        position: absolute;
+        right: 0;
+        top: calc(100% + 8px);
+        z-index: 5;
+        width: 260px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: #0c121d;
+        box-shadow: 0 20px 42px rgba(0, 0, 0, 0.42);
+        padding: 10px;
+      }
+
+      .settings-popover h4 {
+        margin: 0 0 8px;
+        color: var(--text);
+        font-size: 12px;
+      }
+
+      .settings-field {
+        display: grid;
+        gap: 6px;
+        margin-bottom: 10px;
+      }
+
+      .settings-field label {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .settings-field input {
+        height: 32px;
+        border: 1px solid var(--line-soft);
+        border-radius: 7px;
+        background: #080d15;
+        color: var(--text);
+        padding: 0 10px;
+      }
+
+      .settings-action {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        border-top: 1px solid var(--line-soft);
+        padding-top: 10px;
+      }
+
+      .danger-text {
+        color: #ffb3b3;
+        font-size: 11px;
+      }
+
+      .bar-7 {
+        grid-template-columns: auto minmax(260px, 1fr) auto auto;
+        gap: 14px;
+        padding: 0 14px;
+      }
+
+      .bar-8 {
+        grid-template-columns: auto minmax(320px, 1fr) auto;
+        gap: 14px;
+        padding: 0 14px;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @keyframes env-pulse {
+        0%,
+        100% {
+          transform: scale(0.92);
+          opacity: 0.75;
+        }
+
+        50% {
+          transform: scale(1.12);
+          opacity: 1;
+        }
+      }
+
+      @keyframes env-ring {
+        0% {
+          transform: scale(0.7);
+          opacity: 0.8;
+        }
+
+        100% {
+          transform: scale(1.5);
+          opacity: 0;
+        }
+      }
+
+      .bar-1 {
+        grid-template-columns: auto minmax(220px, 1fr) auto auto auto;
+        gap: 14px;
+        padding: 0 14px;
+      }
+
+      .bar-2 {
+        grid-template-columns: auto minmax(260px, 1fr) auto auto;
+        gap: 16px;
+        padding: 0 14px;
+      }
+
+      .bar-3 {
+        grid-template-columns: auto 1fr auto;
+        gap: 16px;
+        padding: 0 14px;
+      }
+
+      .bar-4 {
+        grid-template-columns: auto minmax(260px, 1fr) auto;
+        gap: 14px;
+        padding: 0 14px;
+      }
+
+      .bar-5 {
+        grid-template-rows: 46px 42px;
+        padding: 0;
+      }
+
+      .bar-5 .row {
+        display: grid;
+        align-items: center;
+        gap: 14px;
+        padding: 0 14px;
+      }
+
+      .bar-5 .main {
+        grid-template-columns: auto minmax(260px, 1fr) auto;
+      }
+
+      .bar-5 .sub {
+        grid-template-columns: auto 1fr auto;
+        border-top: 1px solid var(--line-soft);
+        background: rgba(8, 13, 21, 0.68);
+      }
+
+      .bar-6 {
+        grid-template-columns: auto 1fr auto;
+        gap: 14px;
+        padding: 0 10px 0 14px;
+      }
+
+      .runtime-rail {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid var(--line-soft);
+        background: #0a101a;
+        border-radius: 10px;
+        padding: 5px;
+      }
+
+      .run-icon,
+      .save-icon,
+      .publish-icon,
+      .history-icon,
+      .more-icon {
+        position: relative;
+        width: 14px;
+        height: 14px;
+        flex: 0 0 14px;
+      }
+
+      .run-icon::before {
+        content: "";
+        position: absolute;
+        inset: 1px 2px;
+        clip-path: polygon(20% 0, 100% 50%, 20% 100%);
+        background: currentColor;
+      }
+
+      .save-icon::before {
+        content: "";
+        position: absolute;
+        inset: 1px;
+        border: 2px solid currentColor;
+        border-radius: 3px;
+      }
+
+      .save-icon::after {
+        content: "";
+        position: absolute;
+        left: 4px;
+        right: 4px;
+        bottom: 3px;
+        height: 4px;
+        background: currentColor;
+        border-radius: 1px;
+      }
+
+      .publish-icon::before {
+        content: "";
+        position: absolute;
+        left: 6px;
+        top: 1px;
+        width: 2px;
+        height: 12px;
+        background: currentColor;
+      }
+
+      .publish-icon::after {
+        content: "";
+        position: absolute;
+        left: 3px;
+        top: 1px;
+        width: 8px;
+        height: 8px;
+        border-top: 2px solid currentColor;
+        border-left: 2px solid currentColor;
+        transform: rotate(45deg);
+      }
+
+      .history-icon::before {
+        content: "";
+        position: absolute;
+        inset: 1px;
+        border: 2px solid currentColor;
+        border-radius: 999px;
+        border-left-color: transparent;
+      }
+
+      .history-icon::after {
+        content: "";
+        position: absolute;
+        left: 5px;
+        top: 3px;
+        width: 5px;
+        height: 5px;
+        border-left: 2px solid currentColor;
+        border-bottom: 2px solid currentColor;
+      }
+
+      .more-icon::before {
+        content: "...";
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: -6px;
+        text-align: center;
+        color: currentColor;
+        font-size: 17px;
+        letter-spacing: 1px;
+      }
+
+      .density-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 22px;
+      }
+
+      .mini-wrap .bar-wrap {
+        padding: 16px;
+      }
+
+      .mini-wrap .topbar {
+        min-height: 52px;
+      }
+
+      .mini-wrap .concept-head {
+        min-height: 59px;
+      }
+
+      @media (max-width: 1280px) {
+        body {
+          min-width: 1040px;
+        }
+
+        .search {
+          min-width: 180px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="header">
+        <div>
+          <h1>Noodle Editor Top Bar Concepts</h1>
+          <p class="intro">
+            HTML-only directions for an autosaving editor: editable workflow
+            name, no manual Save button, clearer version language, icon-only
+            history, animated environment state, and n8n-style previous runs
+            that can be inspected or copied back into the editor.
+          </p>
+        </div>
+        <div class="meta">Static prototype - no app code changed</div>
+      </header>
+
+      <div class="stack">
+        <section class="concept">
+          <div class="concept-head">
+            <div class="concept-title">
+              <h2>1. Grouped Essentials</h2>
+              <span>Closest to current layout, but calmer.</span>
+            </div>
+            <div class="notes">
+              <span class="note">Autosave replaces Save</span>
+              <span class="note">Editable workflow name</span>
+              <span class="note">History is icon-only</span>
+            </div>
+          </div>
+          <div class="bar-wrap">
+            <div class="topbar bar-1">
+              <div class="group">
+                <div class="brand-mark" aria-hidden="true"></div>
+                <div class="split"></div>
+                <button class="workflow-title">Customer support triage</button>
+              </div>
+
+              <div class="status-line">
+                <strong>Draft unpublished</strong>
+                <span class="dot"></span>
+                <span>v1 published</span>
+                <span class="dot"></span>
+                <span>5 nodes</span>
+                <span class="dot"></span>
+                <span class="autosave-state">Autosaved 12s ago</span>
+              </div>
+
+              <div class="group">
+                <button class="chip env-orb">
+                  <span>Global env</span>
+                </button>
+                <button class="chip soft">No timeout</button>
+                <span class="chip plain">MCP</span>
+                <span class="toggle" aria-hidden="true"></span>
+                <span class="chip plain">Inactive</span>
+              </div>
+
+              <div class="group">
+                <button class="btn ghost">Runs</button>
+                <button class="btn ghost">Functions</button>
+                <button class="btn ghost">Chat</button>
+                <button class="btn icon ghost" aria-label="History">
+                  <span class="history-icon"></span>
+                </button>
+              </div>
+
+              <div class="group">
+                <button class="btn dark-success">
+                  <span class="run-icon"></span>
+                  Run
+                </button>
+                <button class="btn primary">Publish</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="concept">
+          <div class="concept-head">
+            <div class="concept-title">
+              <h2>2. Publish-First</h2>
+              <span>Best when publishing is the main completion action.</span>
+            </div>
+            <div class="notes">
+              <span class="note">Run is secondary</span>
+              <span class="note">Autosave reads as state</span>
+              <span class="note">Publish is the commit</span>
+            </div>
+          </div>
+          <div class="bar-wrap">
+            <div class="topbar bar-2">
+              <div class="group">
+                <div class="brand-mark" aria-hidden="true"></div>
+                <button class="workflow-title">Invoice approval flow</button>
+              </div>
+
+              <div class="group">
+                <span class="chip warn">Unpublished draft</span>
+                <span class="status-line">Published version v1</span>
+                <span class="dot"></span>
+                <span class="status-line">5 nodes</span>
+              </div>
+
+              <div class="runtime-rail">
+                <button class="chip env-orb"><span>Global env</span></button>
+                <button class="chip plain">No timeout</button>
+                <span class="split"></span>
+                <span class="chip plain">MCP off</span>
+                <button class="chip icon" aria-label="Settings">
+                  <span class="more-icon"></span>
+                </button>
+              </div>
+
+              <div class="group">
+                <button class="btn ghost">Runs</button>
+                <button class="btn ghost">Chat</button>
+                <button class="btn success">
+                  <span class="run-icon"></span>
+                  Run
+                </button>
+                <span class="autosave-state saving">Saving draft</span>
+                <button class="btn ghost">Export</button>
+                <button class="btn icon ghost" aria-label="History">
+                  <span class="history-icon"></span>
+                </button>
+                <button class="btn publish-draft">Publish draft</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="concept">
+          <div class="concept-head">
+            <div class="concept-title">
+              <h2>3. Command Center</h2>
+              <span>For users who jump between tools often.</span>
+            </div>
+            <div class="notes">
+              <span class="note">Search / command palette</span>
+              <span class="note">Tabs replace many buttons</span>
+              <span class="note">Compact action cluster</span>
+            </div>
+          </div>
+          <div class="bar-wrap">
+            <div class="topbar bar-3">
+              <div class="group">
+                <div class="brand-mark" aria-hidden="true"></div>
+                <div class="split"></div>
+                <div>
+                  <div class="agent-name small">
+                    Customer support triage
+                    <span class="chevron" aria-hidden="true"></span>
+                  </div>
+                  <div class="status-line">Draft unpublished - v1 published - Autosaved</div>
+                </div>
+              </div>
+
+              <div class="group">
+                <div class="search">Search actions, nodes, runs...</div>
+                <div class="pill-tabs">
+                  <button class="active">Editor</button>
+                  <button>Runs</button>
+                  <button>Functions</button>
+                  <button>Chat</button>
+                </div>
+              </div>
+
+              <div class="group">
+                <button class="chip env-orb"><span>Global env</span></button>
+                <button class="btn dark-success">
+                  <span class="run-icon"></span>
+                  Run
+                </button>
+                <button class="btn icon ghost" aria-label="History">
+                  <span class="history-icon"></span>
+                </button>
+                <button class="btn primary">Publish</button>
+                <button class="btn icon ghost" aria-label="More">
+                  <span class="more-icon"></span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="concept">
+          <div class="concept-head">
+            <div class="concept-title">
+              <h2>4. Minimal Toolbar</h2>
+              <span>Most visual reduction; good for dense editors.</span>
+            </div>
+            <div class="notes">
+              <span class="note">Plain text metadata</span>
+              <span class="note">Icon-only utility actions</span>
+              <span class="note">One bright button</span>
+            </div>
+          </div>
+          <div class="bar-wrap">
+            <div class="topbar bar-4">
+              <div class="group">
+                <div class="brand-mark" aria-hidden="true"></div>
+                <button class="workflow-title">Weekly ops report</button>
+              </div>
+
+              <div class="status-line">
+                <strong>Draft unpublished</strong>
+                <span>v1 published</span>
+                <span>5 nodes</span>
+                <span>Global env</span>
+                <span>No timeout</span>
+                <span>MCP off</span>
+                <span>Autosaved 12s ago</span>
+              </div>
+
+              <div class="group">
+                <button class="btn flat">Runs</button>
+                <button class="btn flat">Functions</button>
+                <button class="btn flat">Chat</button>
+                <button class="btn icon ghost" aria-label="History">
+                  <span class="history-icon"></span>
+                </button>
+                <button class="btn dark-success">
+                  <span class="run-icon"></span>
+                  Run
+                </button>
+                <button class="btn primary">Publish</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="concept">
+          <div class="concept-head">
+            <div class="concept-title">
+              <h2>5. Two-Level Editor Bar</h2>
+              <span>Separates navigation from execution settings.</span>
+            </div>
+            <div class="notes">
+              <span class="note">Cleaner first row</span>
+              <span class="note">Settings stay visible</span>
+              <span class="note">Good when controls grow</span>
+            </div>
+          </div>
+          <div class="bar-wrap">
+            <div class="topbar bar-5">
+              <div class="row main">
+                <div class="group">
+                  <div class="brand-mark" aria-hidden="true"></div>
+                  <div class="split"></div>
+                  <button class="workflow-title">Lead enrichment</button>
+                </div>
+                <div class="status-line">
+                  <strong>Draft unpublished</strong>
+                  <span class="dot"></span>
+                  <span>Published v1</span>
+                  <span class="dot"></span>
+                  <span>5 nodes</span>
+                </div>
+                <div class="group">
+                  <button class="btn icon ghost" aria-label="History">
+                    <span class="history-icon"></span>
+                  </button>
+                  <button class="btn success">
+                    <span class="run-icon"></span>
+                    Run
+                  </button>
+                  <span class="autosave-state">Autosaved 12s ago</span>
+                  <button class="btn primary">Publish</button>
+                </div>
+              </div>
+              <div class="row sub">
+                <div class="group">
+                  <button class="chip green">Editor ready</button>
+                  <button class="chip env-orb"><span>Global env</span></button>
+                  <button class="chip soft">No timeout</button>
+                  <button class="chip soft">MCP inactive</button>
+                </div>
+                <div class="group">
+                  <button class="btn flat">Runs</button>
+                  <button class="btn flat">Functions</button>
+                  <button class="btn flat">Chat</button>
+                </div>
+                <div class="status-line">
+                  <span class="kbd">Ctrl+Enter</span>
+                  <span>Run selected node</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div class="density-grid">
+          <section class="concept mini-wrap">
+            <div class="concept-head">
+              <div class="concept-title">
+                <h2>6A. Compact Dense</h2>
+                <span>Smallest change for the existing bar.</span>
+              </div>
+            </div>
+            <div class="bar-wrap">
+              <div class="topbar bar-6">
+                <div class="group">
+                  <div class="brand-mark" aria-hidden="true"></div>
+                  <div class="split"></div>
+                  <button class="agent-name">Support triage</button>
+                </div>
+                <div class="status-line">
+                  <strong>Draft</strong>
+                  <span>unpublished</span>
+                  <span>v1 published</span>
+                  <span>5 nodes</span>
+                  <span>Global env</span>
+                  <span>No timeout</span>
+                  <span>MCP off</span>
+                  <span>Autosaved</span>
+                </div>
+                <div class="group">
+                  <button class="btn ghost">Runs</button>
+                  <button class="btn ghost">Functions</button>
+                  <button class="btn ghost">Chat</button>
+                  <button class="btn icon ghost" aria-label="History">
+                    <span class="history-icon"></span>
+                  </button>
+                  <button class="btn dark-success">Run</button>
+                  <button class="btn primary">Publish</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="concept mini-wrap">
+            <div class="concept-head">
+              <div class="concept-title">
+                <h2>6B. Product Header</h2>
+                <span>More app-like, less control-panel-like.</span>
+              </div>
+            </div>
+            <div class="bar-wrap">
+              <div class="topbar bar-6">
+                <div class="group">
+                  <div class="brand-mark" aria-hidden="true"></div>
+                  <button class="agent-name">
+                    Noodle
+                    <span class="chevron" aria-hidden="true"></span>
+                  </button>
+                  <span class="chip soft">Agent</span>
+                </div>
+                <div class="group">
+                  <div class="pill-tabs">
+                    <button class="active">Build</button>
+                    <button>Runs</button>
+                    <button>Chat</button>
+                  </div>
+                  <span class="status-line">Draft unpublished - 5 nodes - Autosaved</span>
+                </div>
+                <div class="group">
+                  <button class="btn ghost">Settings</button>
+                  <button class="btn icon ghost" aria-label="History">
+                    <span class="history-icon"></span>
+                  </button>
+                  <button class="btn success">Run</button>
+                  <button class="btn primary">Publish</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <section class="concept">
+          <div class="concept-head">
+            <div class="concept-title">
+              <h2>7. Selected Direction</h2>
+              <span>Publish-first topbar with runs sidecar, history, autosave, and settings.</span>
+            </div>
+            <div class="notes">
+              <span class="note">Full nodes shown</span>
+              <span class="note">Blue draft / green active</span>
+              <span class="note">Settings owns timeout + unpublish</span>
+            </div>
+          </div>
+          <div class="bar-wrap">
+            <div class="topbar bar-7">
+              <div class="group">
+                <div class="brand-mark" aria-hidden="true"></div>
+                <button class="workflow-title">Customer support triage</button>
+              </div>
+              <div class="version-strip">
+                <span class="version-pill"><strong>Draft</strong> unpublished</span>
+                <span class="version-pill">Published v4</span>
+                <span class="version-pill">5 nodes</span>
+                <span class="autosave-state saving">Saving draft</span>
+              </div>
+              <div class="group">
+                <button class="chip env-orb"><span>Global env</span></button>
+                <button class="chip soft">MCP off</button>
+              </div>
+              <div class="group">
+                <button class="btn icon ghost" aria-label="History">
+                  <span class="history-icon"></span>
+                </button>
+                <div class="settings-menu">
+                  <button class="btn ghost">Settings</button>
+                  <div class="settings-popover">
+                    <h4>Workflow settings</h4>
+                    <div class="settings-field">
+                      <label for="selected-timeout">Run timeout</label>
+                      <input id="selected-timeout" value="No timeout" />
+                    </div>
+                    <div class="settings-field">
+                      <label>Environment</label>
+                      <button class="chip env-orb"><span>Global env</span></button>
+                    </div>
+                    <div class="settings-action">
+                      <button class="btn tiny publish-active">Active workflow</button>
+                      <button class="btn tiny ghost">Unpublish</button>
+                    </div>
+                  </div>
+                </div>
+                <button class="btn dark-success">
+                  <span class="run-icon"></span>
+                  Run
+                </button>
+                <button class="btn publish-draft">Publish draft</button>
+              </div>
+            </div>
+
+            <div class="runs-workspace">
+              <div class="mock-canvas">
+                <div class="mock-canvas-label">
+                  <span class="run-status error">Run #1248 failed</span>
+                  <span>All 5 nodes from the executed version</span>
+                </div>
+                <div class="mock-edge" style="left: 182px; top: 106px; width: 108px; transform: rotate(9deg);"></div>
+                <div class="mock-edge" style="left: 392px; top: 122px; width: 104px; transform: rotate(-15deg);"></div>
+                <div class="mock-edge" style="left: 392px; top: 176px; width: 112px; transform: rotate(22deg);"></div>
+                <div class="mock-edge" style="left: 612px; top: 142px; width: 78px; transform: rotate(10deg);"></div>
+                <div class="mock-node success" style="left: 48px; top: 78px;">
+                  <strong>Webhook trigger</strong>
+                  <span>200 OK - 09:41</span>
+                </div>
+                <div class="mock-node success" style="left: 250px; top: 104px;">
+                  <strong>Classify ticket</strong>
+                  <span>confidence 0.92</span>
+                </div>
+                <div class="mock-node success" style="left: 474px; top: 66px;">
+                  <strong>Lookup customer</strong>
+                  <span>account matched</span>
+                </div>
+                <div class="mock-node error" style="left: 474px; top: 194px;">
+                  <strong>Create CRM task</strong>
+                  <span>missing account_id</span>
+                </div>
+                <div class="mock-node" style="left: 650px; top: 138px;">
+                  <strong>Slack alert</strong>
+                  <span>skipped after error</span>
+                </div>
+              </div>
+              <aside class="runs-sidecar">
+                <div class="panel-head">
+                  <div>
+                    <h3>Previous Runs</h3>
+                    <span>Open a run, inspect nodes, or copy it into draft</span>
+                  </div>
+                  <button class="btn icon ghost" aria-label="Close">
+                    <span class="more-icon"></span>
+                  </button>
+                </div>
+                <div class="run-search">Filter by status, node, input, or run id</div>
+                <div class="run-row active">
+                  <div class="run-row-top">
+                    <span class="run-status error">Failed</span>
+                    <span>#1248</span>
+                  </div>
+                  <div class="run-row-meta">
+                    <span>v4</span>
+                    <span>43s</span>
+                    <span>Webhook</span>
+                    <span>2 min ago</span>
+                  </div>
+                  <div class="node-run-list">
+                    <div class="node-run-item">
+                      <span class="node-dot success"></span>
+                      <div>
+                        <strong>Webhook trigger</strong>
+                        <span>input captured</span>
+                      </div>
+                      <span>11ms</span>
+                    </div>
+                    <div class="node-run-item">
+                      <span class="node-dot success"></span>
+                      <div>
+                        <strong>Classify ticket</strong>
+                        <span>priority high</span>
+                      </div>
+                      <span>1.8s</span>
+                    </div>
+                    <div class="node-run-item">
+                      <span class="node-dot success"></span>
+                      <div>
+                        <strong>Lookup customer</strong>
+                        <span>found account</span>
+                      </div>
+                      <span>640ms</span>
+                    </div>
+                    <div class="node-run-item">
+                      <span class="node-dot error"></span>
+                      <div>
+                        <strong>Create CRM task</strong>
+                        <span>missing account_id</span>
+                      </div>
+                      <span>error</span>
+                    </div>
+                    <div class="node-run-item">
+                      <span class="node-dot skipped"></span>
+                      <div>
+                        <strong>Slack alert</strong>
+                        <span>not executed</span>
+                      </div>
+                      <span>skipped</span>
+                    </div>
+                  </div>
+                  <div class="run-actions">
+                    <button class="btn tiny primary">Copy to editor</button>
+                    <button class="btn tiny ghost">Debug</button>
+                    <button class="btn tiny ghost">Retry failed</button>
+                    <button class="btn tiny ghost">View timeline</button>
+                  </div>
+                </div>
+                <div class="run-row">
+                  <div class="run-row-top">
+                    <span class="run-status success">Success</span>
+                    <span>#1247</span>
+                  </div>
+                  <div class="run-row-meta">
+                    <span>v4</span>
+                    <span>18s</span>
+                    <span>Manual</span>
+                    <span>18 min ago</span>
+                  </div>
+                  <div class="run-actions">
+                    <button class="btn tiny ghost">Open</button>
+                    <button class="btn tiny ghost">Copy to editor</button>
+                    <button class="btn tiny ghost">Rerun</button>
+                  </div>
+                </div>
+                <div class="run-row checkpoint">
+                  <div class="run-row-top">
+                    <strong>Autosave checkpoint</strong>
+                    <span>draft</span>
+                  </div>
+                  <div class="run-row-meta">
+                    <span>12s ago</span>
+                    <span>3 node changes</span>
+                    <span>not published</span>
+                  </div>
+                  <div class="run-actions">
+                    <button class="btn tiny ghost">Restore draft</button>
+                    <button class="btn tiny ghost">Diff against v4</button>
+                  </div>
+                </div>
+                <div class="run-row">
+                  <div class="run-row-top">
+                    <span class="run-status running">Running</span>
+                    <span>#1246</span>
+                  </div>
+                  <div class="run-row-meta">
+                    <span>v3</span>
+                    <span>queued</span>
+                    <span>Schedule</span>
+                    <span>now</span>
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </div>
+        </section>
+
+        <section class="concept">
+          <div class="concept-head">
+            <div class="concept-title">
+              <h2>8. History + Autosave</h2>
+              <span>Versions and autosave checkpoints stay separate.</span>
+            </div>
+            <div class="notes">
+              <span class="note">Published versions are immutable</span>
+              <span class="note">Autosaves are draft checkpoints</span>
+              <span class="note">Restore loads into draft</span>
+            </div>
+          </div>
+          <div class="bar-wrap">
+            <div class="topbar bar-8">
+              <div class="group">
+                <div class="brand-mark" aria-hidden="true"></div>
+                <button class="workflow-title">Partner onboarding</button>
+              </div>
+              <div class="version-strip">
+                <span class="version-pill"><strong>Draft</strong> autosaved</span>
+                <span class="version-pill">Published v8</span>
+                <span class="version-pill">11 nodes</span>
+                <span class="autosave-state warn">Unsaved local edit</span>
+              </div>
+              <div class="group">
+                <button class="chip env-orb"><span>Production env</span></button>
+                <button class="btn ghost">Runs</button>
+                <button class="btn icon ghost" aria-label="History">
+                  <span class="history-icon"></span>
+                </button>
+                <button class="btn dark-success">Run</button>
+                <button class="btn primary">Publish</button>
+              </div>
+            </div>
+
+            <div class="history-popover">
+              <div class="mock-canvas">
+                <div class="mock-node success" style="left: 90px; top: 72px;">
+                  <strong>Manual trigger</strong>
+                  <span>Draft canvas remains editable</span>
+                </div>
+                <div class="mock-node success" style="left: 345px; top: 150px;">
+                  <strong>Validate partner</strong>
+                  <span>Autosave keeps draft current</span>
+                </div>
+              </div>
+              <aside class="history-panel">
+                <div class="panel-head">
+                  <div>
+                    <h3>History</h3>
+                    <span>Restore always opens as draft</span>
+                  </div>
+                  <button class="btn tiny ghost">Compare</button>
+                </div>
+                <div class="version-row">
+                  <div class="version-row-top">
+                    <strong>Published v8</strong>
+                    <span>Current production</span>
+                  </div>
+                  <div class="version-row-meta">
+                    <span>Today 09:32</span>
+                    <span>Updated 2 deployments</span>
+                  </div>
+                  <div class="run-actions">
+                    <button class="btn tiny ghost">View</button>
+                    <button class="btn tiny ghost">Restore to draft</button>
+                  </div>
+                </div>
+                <div class="version-row checkpoint">
+                  <div class="version-row-top">
+                    <strong>Autosave checkpoint</strong>
+                    <span>Draft only</span>
+                  </div>
+                  <div class="version-row-meta">
+                    <span>12s ago</span>
+                    <span>Changed 3 nodes</span>
+                  </div>
+                  <div class="run-actions">
+                    <button class="btn tiny primary">Restore draft</button>
+                    <button class="btn tiny ghost">Diff</button>
+                  </div>
+                </div>
+                <div class="version-row">
+                  <div class="version-row-top">
+                    <strong>Published v7</strong>
+                    <span>Previous</span>
+                  </div>
+                  <div class="version-row-meta">
+                    <span>Yesterday</span>
+                    <span>Manual publish</span>
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </div>
+        </section>
+
+        <section class="concept">
+          <div class="concept-head">
+            <div class="concept-title">
+              <h2>9. Runs-First Topbar</h2>
+              <span>For heavy debugging sessions where run history is central.</span>
+            </div>
+            <div class="notes">
+              <span class="note">Recent run strip</span>
+              <span class="note">No dropdown dependency</span>
+              <span class="note">Quick copy/debug</span>
+            </div>
+          </div>
+          <div class="bar-wrap">
+            <div class="topbar bar-8">
+              <div class="group">
+                <div class="brand-mark" aria-hidden="true"></div>
+                <button class="workflow-title">Slack alert router</button>
+              </div>
+              <div class="group">
+                <button class="version-pill">
+                  <span class="run-status error">#812 failed</span>
+                </button>
+                <button class="version-pill">
+                  <span class="run-status success">#811 success</span>
+                </button>
+                <button class="version-pill">
+                  <span class="run-status success">#810 success</span>
+                </button>
+                <button class="btn tiny ghost">All runs</button>
+              </div>
+              <div class="group">
+                <span class="autosave-state">Autosaved</span>
+                <button class="chip env-orb"><span>Global env</span></button>
+                <button class="btn icon ghost" aria-label="History">
+                  <span class="history-icon"></span>
+                </button>
+                <button class="btn success">Run</button>
+                <button class="btn primary">Publish</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>
