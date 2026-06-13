@@ -1396,6 +1396,36 @@ function HighlightedTextarea({
   );
 }
 
+const EXPR_HISTORY_KEY = "noodle_expr_history";
+
+function readExprHistory(fieldKey: string): string[] {
+  try {
+    const data = JSON.parse(localStorage.getItem(EXPR_HISTORY_KEY) ?? "{}") as Record<string, unknown>;
+    const arr = data[fieldKey];
+    return Array.isArray(arr) ? (arr as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function appendExprHistory(fieldKey: string, value: string): void {
+  if (!value.trim()) return;
+  try {
+    const data = JSON.parse(localStorage.getItem(EXPR_HISTORY_KEY) ?? "{}") as Record<string, string[]>;
+    const existing = Array.isArray(data[fieldKey]) ? data[fieldKey] : [];
+    const deduped = [value, ...existing.filter((v) => v !== value)].slice(0, 10);
+    localStorage.setItem(EXPR_HISTORY_KEY, JSON.stringify({ ...data, [fieldKey]: deduped }));
+  } catch {
+    /* ignore */
+  }
+}
+
+function formatExpression(value: string): string {
+  return value
+    .replace(/\{\{\s*([\s\S]*?)\s*\}\}/g, (_, inner) => `{{ ${inner.trim()} }}`)
+    .trim();
+}
+
 /** n8n-style expand modal: editor on the left, live Result preview on the right.
  *  Result evaluates faithfully via the backend on a debounce, so HTML/text bodies
  *  are visible as they will be at runtime — no need to execute the workflow. */
@@ -1471,6 +1501,19 @@ function ExpressionEditorModal({
     e.dataTransfer.setDragImage(ghost, 12, 12);
     window.setTimeout(() => ghost.remove(), 0);
   }, []);
+
+  const historyKey = `${nodeId ?? ""}:${label}`;
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const history = readExprHistory(historyKey);
+
+  const latestValue = useRef(value);
+  latestValue.current = value;
+  useEffect(() => {
+    return () => {
+      appendExprHistory(historyKey, latestValue.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyKey]);
 
   function updateSuggestions(val: string) {
     const pos = taRef.current?.selectionStart ?? val.length;
@@ -1584,9 +1627,47 @@ function ExpressionEditorModal({
           <h2 id="expr-modal-title">
             Editing <span className="expr-modal-label">{label}</span>
           </h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
-            ✕
-          </button>
+          <div className="expr-modal-header-actions">
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              onClick={() => onChange(formatExpression(value))}
+              title="Normalise {{ }} spacing"
+            >
+              Format
+            </button>
+            <div className="expr-history-wrap">
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => setHistoryOpen((o) => !o)}
+                title="Recent values for this field"
+                disabled={history.length === 0}
+              >
+                History {history.length > 0 ? `(${history.length})` : ""}
+              </button>
+              {historyOpen && history.length > 0 && (
+                <ul className="expr-history-dropdown">
+                  {history.map((entry, i) => (
+                    <li key={i}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onChange(entry);
+                          setHistoryOpen(false);
+                        }}
+                      >
+                        {entry.slice(0, 60)}{entry.length > 60 ? "…" : ""}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
+              ✕
+            </button>
+          </div>
         </header>
         <div className="expr-modal-body">
           {upstreamNodes.length > 0 && (
