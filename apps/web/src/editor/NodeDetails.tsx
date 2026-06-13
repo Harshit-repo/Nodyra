@@ -3389,6 +3389,7 @@ export function NodeDetails({
   const [pkgBusy, setPkgBusy] = useState(false);
   const [pkgElapsed, setPkgElapsed] = useState(0);
   const [pkgDone, setPkgDone] = useState(false);
+  const [pickerParam, setPickerParam] = useState<string | null>(null);
   const { notify } = useToast();
   useEffect(() => setMode("inspector"), [nodeId]);
   // Guards the imperative install poller (addMissingToEnv) — it can run for up
@@ -3644,6 +3645,20 @@ export function NodeDetails({
                   )}
                   {fx && <span className="fx-badge" title="Contains expression">fx</span>}
                   {spec.required && <span className="field-req">required</span>}
+                  {(spec.type === "string" || spec.type === "expression") &&
+                    !spec.credential &&
+                    spec.widget !== "hidden" && (
+                      <button
+                        type="button"
+                        className="var-pick-inline-btn"
+                        title="Pick a variable from upstream nodes"
+                        onClick={() =>
+                          setPickerParam((p) => (p === spec.name ? null : spec.name))
+                        }
+                      >
+                        $
+                      </button>
+                    )}
                 </div>
                 <FromAiParamControl
                   nodeId={node.id}
@@ -3683,6 +3698,19 @@ export function NodeDetails({
                     credentialContext={params}
                     nodeId={node.id}
                   />
+                )}
+                {pickerParam === spec.name && (
+                  <div className="var-pick-inline-wrap">
+                    <VariablePickerPopover
+                      nodeId={node.id}
+                      onInsert={(expr) => {
+                        const current = String(params[spec.name] ?? "");
+                        setParam(spec.name, current + expr);
+                        setPickerParam(null);
+                      }}
+                      onClose={() => setPickerParam(null)}
+                    />
+                  </div>
                 )}
               </div>
             );
