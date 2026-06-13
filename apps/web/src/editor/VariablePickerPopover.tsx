@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   getUpstreamNodes,
@@ -12,6 +12,18 @@ interface Props {
   onClose: () => void;
 }
 
+function startDrag(e: React.DragEvent<HTMLElement>, expression: string) {
+  e.dataTransfer.setData("text/plain", expression);
+  e.dataTransfer.setData("application/x-noodle-expression", expression);
+  e.dataTransfer.effectAllowed = "copy";
+  const ghost = document.createElement("div");
+  ghost.className = "expr-drag-ghost";
+  ghost.textContent = expression;
+  document.body.appendChild(ghost);
+  e.dataTransfer.setDragImage(ghost, 12, 12);
+  window.setTimeout(() => ghost.remove(), 0);
+}
+
 export function VariablePickerPopover({ nodeId, onInsert, onClose }: Props) {
   const nodes = useEditor((s) => s.nodes);
   const edges = useEditor((s) => s.edges);
@@ -20,8 +32,14 @@ export function VariablePickerPopover({ nodeId, onInsert, onClose }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const allUpstream = getUpstreamNodes(nodeId, nodes, edges, runOutputs);
-  const filtered = searchUpstreamFields(allUpstream, query);
+  const allUpstream = useMemo(
+    () => getUpstreamNodes(nodeId, nodes, edges, runOutputs),
+    [nodeId, nodes, edges, runOutputs],
+  );
+  const filtered = useMemo(
+    () => searchUpstreamFields(allUpstream, query),
+    [allUpstream, query],
+  );
 
   useEffect(() => {
     searchRef.current?.focus();
@@ -42,18 +60,6 @@ export function VariablePickerPopover({ nodeId, onInsert, onClose }: Props) {
     document.addEventListener("mousedown", onMouseDown);
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, [onClose]);
-
-  function startDrag(e: React.DragEvent<HTMLElement>, expression: string) {
-    e.dataTransfer.setData("text/plain", expression);
-    e.dataTransfer.setData("application/x-noodle-expression", expression);
-    e.dataTransfer.effectAllowed = "copy";
-    const ghost = document.createElement("div");
-    ghost.className = "expr-drag-ghost";
-    ghost.textContent = expression;
-    document.body.appendChild(ghost);
-    e.dataTransfer.setDragImage(ghost, 12, 12);
-    window.setTimeout(() => ghost.remove(), 0);
-  }
 
   return (
     <div
@@ -91,10 +97,19 @@ export function VariablePickerPopover({ nodeId, onInsert, onClose }: Props) {
                 key={field.path}
                 className="var-picker-field"
                 draggable
+                tabIndex={0}
+                role="button"
                 onDragStart={(e) => startDrag(e, field.expression)}
                 onClick={() => {
                   onInsert(field.expression);
                   onClose();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onInsert(field.expression);
+                    onClose();
+                  }
                 }}
               >
                 <span className="var-picker-grip">⠿</span>
