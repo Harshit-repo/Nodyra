@@ -445,9 +445,19 @@ async def _execute_impl(
         else None
     )
 
-    incoming: dict[str, dict[str, tuple[str, str]]] = defaultdict(dict)
+    incoming: dict[
+        str,
+        dict[str, tuple[str, str] | list[tuple[str, str]]],
+    ] = defaultdict(dict)
     for edge in graph.edges:
-        incoming[edge.target][edge.target_input] = (edge.source, edge.source_output)
+        connection = (edge.source, edge.source_output)
+        current = incoming[edge.target].get(edge.target_input)
+        if current is None:
+            incoming[edge.target][edge.target_input] = connection
+        elif isinstance(current, list):
+            current.append(connection)
+        else:
+            incoming[edge.target][edge.target_input] = [current, connection]
 
     node_outputs: dict[str, dict[str, Any]] = {}
     results: dict[str, NodeRunResult] = {}

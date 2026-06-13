@@ -32,6 +32,13 @@ from noodle.engine.validation import _validate_input_kinds, _validate_output_kin
 
 
 PROCESS_ISOLATED_NODE_TYPES: frozenset[str] = frozenset({"code"})
+IncomingConnection = tuple[str, str]
+IncomingPortValue = IncomingConnection | list[IncomingConnection]
+IncomingMap = dict[str, dict[str, IncomingPortValue]]
+
+
+def _incoming_connections(value: IncomingPortValue) -> list[IncomingConnection]:
+    return value if isinstance(value, list) else [value]
 
 
 class _LengthCountingSink:
@@ -170,7 +177,7 @@ async def _run_one_node(
     *,
     nid: str,
     nodes_by_id: dict[str, Any],
-    incoming: dict[str, dict[str, tuple[str, str]]],
+    incoming: IncomingMap,
     node_outputs: dict[str, dict[str, Any]],
     cache: dict[str, dict[str, Any]],
     registry: NodeRegistry,
@@ -200,12 +207,15 @@ async def _run_one_node(
     edges_in = incoming.get(nid, {})
 
     skip_reason = None
-    for source, source_output in edges_in.values():
-        if source not in node_outputs:
-            skip_reason = f"upstream node '{source}' produced no output"
-            break
-        if source_output not in node_outputs[source]:
-            skip_reason = f"branch '{source_output}' of node '{source}' was not taken"
+    for incoming_value in edges_in.values():
+        for source, source_output in _incoming_connections(incoming_value):
+            if source not in node_outputs:
+                skip_reason = f"upstream node '{source}' produced no output"
+                break
+            if source_output not in node_outputs[source]:
+                skip_reason = f"branch '{source_output}' of node '{source}' was not taken"
+                break
+        if skip_reason is not None:
             break
     if skip_reason is not None:
         await finish(
@@ -238,7 +248,7 @@ async def _run_one_node(
         passthrough: Any = None
         for port in node_def.manifest.inputs:
             if port.name in edges_in:
-                source, source_output = edges_in[port.name]
+                source, source_output = _incoming_connections(edges_in[port.name])[-1]
                 passthrough = node_outputs[source][source_output]
                 break
         outputs = {output_names[0]: passthrough}
@@ -281,8 +291,15 @@ async def _run_one_node(
     kwargs: dict[str, Any] = {}
     for port in node_def.manifest.inputs:
         if port.name in edges_in:
-            source, source_output = edges_in[port.name]
-            kwargs[port.name] = node_outputs[source][source_output]
+            connections = _incoming_connections(edges_in[port.name])
+            values = [
+                node_outputs[source][source_output]
+                for source, source_output in connections
+            ]
+            if len(values) > 1 and getattr(port, "data_kind", "any") == "ai_tool":
+                kwargs[port.name] = values
+            else:
+                kwargs[port.name] = values[-1]
 
     try:
         _auto_expand_dataset_inputs(node_def, kwargs, graph_node.type)

@@ -294,6 +294,11 @@ class AgentActionRequest(BaseModel):
     allow_side_effects: bool = False
     approved_tool_call_ids: list[str] = Field(default_factory=list)
     rejected_tool_call_ids: list[str] = Field(default_factory=list)
+    # Results of calls that already executed before an approval pause. A
+    # request can pause more than once (one approval per side-effecting call),
+    # and each resume re-dispatches the same request — without this ledger an
+    # already-approved call would execute again on every later resume.
+    completed_results: list[ToolResult] = Field(default_factory=list)
 
 
 class AgentResumeInput(BaseModel):
@@ -303,6 +308,7 @@ class AgentResumeInput(BaseModel):
     messages_so_far: list[AIMessage]
     step: int
     max_steps: int
+    allow_side_effects: bool = False
 
 
 class AgentActionResponse(BaseModel):
@@ -318,6 +324,7 @@ class AgentActionResponse(BaseModel):
     messages_so_far: list[AIMessage]
     step: int
     max_steps: int
+    allow_side_effects: bool = False
 
     def as_resume_input(self) -> AgentResumeInput:
         return AgentResumeInput(
@@ -325,6 +332,7 @@ class AgentActionResponse(BaseModel):
             messages_so_far=self.messages_so_far,
             step=self.step,
             max_steps=self.max_steps,
+            allow_side_effects=self.allow_side_effects,
         )
 
 

@@ -13,9 +13,7 @@ from noodle.ai_runtime import (
     ToolAdapter,
     ToolResult,
 )
-
 from noodle.engine.types import EventCallback
-
 
 # Hard cap on the number of agent-loop iterations that resolve_agent_actions
 # will attempt before raising RuntimeError.  Guards against a buggy node that
@@ -69,6 +67,22 @@ def _agent_approval_key(agent_node_id: str, step: int, call_name: str, call_id: 
     return raw[:240]
 
 
+def _missing_required_arguments(tool: ToolAdapter, arguments: dict[str, Any]) -> list[str]:
+    """Required schema arguments that are absent or blank in ``arguments``.
+
+    Caught here — before the approval gate — so an operator is never asked to
+    approve a call the tool can't run, and the model gets a recoverable error
+    naming exactly what's missing instead of a silent bad invocation.
+    """
+    required = tool.schema.parameters.required or []
+    missing: list[str] = []
+    for name in required:
+        value = arguments.get(name)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            missing.append(name)
+    return missing
+
+
 async def _dispatch_agent_action_request(
     request: AgentActionRequest,
     *,
@@ -97,32 +111,47 @@ async def _dispatch_agent_action_request(
         }
     )
 
+    completed_by_id = {
+        result.tool_call_id: result for result in (request.completed_results or [])
+    }
     results: list[ToolResult] = []
     for call in request.tool_calls:
+        prior = completed_by_id.get(call.id)
+        if prior is not None:
+            # Executed before an earlier approval pause in this same request —
+            # replay the recorded result instead of running the tool again.
+            # Its lifecycle events were already emitted when it actually ran.
+            results.append(prior)
+            continue
         started = time.time()
-        await emit(
-            {
-                **AgentStepEvent(
-                    type="agent_tool_started",
-                    agent_node_id=agent_node_id,
-                    step=step,
-                    max_steps=max_steps,
-                    tool_call_id=call.id,
-                    tool_name=call.name,
-                ).model_dump(exclude_none=True),
-                "arguments": call.arguments,
-            }
-        )
-
         tool = tools.get(call.name)
         approval_key = _agent_approval_key(agent_node_id, step, call.name, call.id)
         approved_call_ids = set(request.approved_tool_call_ids or [])
         rejected_call_ids = set(request.rejected_tool_call_ids or [])
+        missing_args = (
+            _missing_required_arguments(tool, call.arguments)
+            if tool is not None
+            else []
+        )
         if tool is None:
             result = ToolResult(
                 tool_call_id=call.id,
                 name=call.name,
                 content=f"Unknown tool: {call.name}",
+                is_error=True,
+            )
+        elif missing_args:
+            # Checked before the approval gate: the operator should never be
+            # asked to approve a call the tool can't run, and the model gets a
+            # recoverable error naming exactly what to fix.
+            result = ToolResult(
+                tool_call_id=call.id,
+                name=call.name,
+                content=(
+                    f"Invalid call to tool {call.name!r}: missing required "
+                    f"argument(s): {', '.join(missing_args)}. Call the tool "
+                    "again with every required argument filled in."
+                ),
                 is_error=True,
             )
         elif call.id in rejected_call_ids:
@@ -159,7 +188,12 @@ async def _dispatch_agent_action_request(
             )
             if pause_on_approval:
                 raise AgentApprovalRequired(
-                    request=request,
+                    # Carry the results of calls that already ran (including
+                    # ones replayed from earlier pauses) so the post-approval
+                    # re-dispatch replays them instead of executing them again.
+                    request=request.model_copy(
+                        update={"completed_results": list(results)}
+                    ),
                     tool_call=call,
                     approval_key=approval_key,
                     message=message,
@@ -171,6 +205,19 @@ async def _dispatch_agent_action_request(
                 is_error=True,
             )
         else:
+            await emit(
+                {
+                    **AgentStepEvent(
+                        type="agent_tool_started",
+                        agent_node_id=agent_node_id,
+                        step=step,
+                        max_steps=max_steps,
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                    ).model_dump(exclude_none=True),
+                    "arguments": call.arguments,
+                }
+            )
             if tool.side_effecting and request.allow_side_effects:
                 await emit(
                     {
@@ -227,6 +274,7 @@ async def _dispatch_agent_action_request(
         messages_so_far=list(request.messages_so_far),
         step=next_step,
         max_steps=max_steps,
+        allow_side_effects=bool(request.allow_side_effects),
     )
     await emit(
         {

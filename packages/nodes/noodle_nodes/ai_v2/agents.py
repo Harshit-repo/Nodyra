@@ -23,6 +23,7 @@ from noodle_nodes.ai_v2.tools import collect_tool_adapters
 
 AI_CATEGORY = "AI"
 TOOL_SYSTEM_PREFIX = "Noodle tools available in this run:"
+_UNSET = object()  # sentinel for "not pre-parsed"
 
 
 def _as_text(value: Any) -> str:
@@ -79,15 +80,49 @@ def _tool_schemas(tool_value: Any) -> list[ToolSchema]:
     return schemas
 
 
+def _tool_argument_summary(schema: ToolSchema) -> str:
+    properties = schema.parameters.properties or {}
+    required = set(schema.parameters.required or [])
+    if not properties:
+        return "No arguments."
+    parts: list[str] = []
+    for name, prop in properties.items():
+        if not isinstance(prop, dict):
+            # JSON Schema allows boolean property schemas ("x": true), and
+            # external MCP servers control this payload — don't crash on them.
+            prop = {}
+        kind = str(prop.get("type") or "value")
+        description = str(prop.get("description") or "").strip()
+        marker = "required" if name in required else "optional"
+        detail = f"{name}: {kind}, {marker}"
+        if description:
+            detail = f"{detail} - {description}"
+        parts.append(detail)
+    return "Arguments: " + "; ".join(parts) + "."
+
+
 def _tool_instruction(tools: list[ToolSchema]) -> AIMessage | None:
-    names = ", ".join(schema.name for schema in tools if schema.name)
-    if not names:
+    lines: list[str] = []
+    for schema in tools:
+        name = str(schema.name or "").strip()
+        if not name:
+            continue
+        description = str(schema.description or "").strip()
+        if description:
+            lines.append(f"- {name}: {description} {_tool_argument_summary(schema)}")
+        else:
+            lines.append(f"- {name}: {_tool_argument_summary(schema)}")
+    if not lines:
         return None
     return AIMessage.system(
-        f"{TOOL_SYSTEM_PREFIX} {names}. "
-        "When the user's request can be fulfilled by a connected tool, call the "
-        "relevant tool instead of saying you cannot access external systems or "
-        "run commands. Ask for missing tool arguments if needed."
+        f"{TOOL_SYSTEM_PREFIX}\n"
+        + "\n".join(lines)
+        + "\nWhen the user's request can be fulfilled by a connected tool, call "
+        "the relevant tool instead of saying you cannot access external systems "
+        "or run commands. Provide every required argument from the tool schema. "
+        "Never call a tool with an empty argument object unless the schema has "
+        "no required arguments. Ask for missing tool arguments if needed. After "
+        "a tool returns, answer the user directly instead of returning raw JSON."
     )
 
 
@@ -150,6 +185,31 @@ def _messages_from_resume(resume: AgentResumeInput) -> list[AIMessage]:
     return messages
 
 
+def _last_tool_fallback_answer(messages: list[AIMessage]) -> str:
+    for message in reversed(messages):
+        if message.role != MessageRole.tool:
+            continue
+        content = str(message.content or "").strip()
+        if not content:
+            continue
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            return content
+        if isinstance(parsed, dict):
+            stdout = str(parsed.get("stdout") or "").strip()
+            stderr = str(parsed.get("stderr") or "").strip()
+            if stdout:
+                return stdout
+            if stderr:
+                return stderr
+        try:
+            return json.dumps(parsed, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            return content
+    return ""
+
+
 def _intermediate_steps(messages: list[AIMessage]) -> list[dict[str, Any]]:
     """Reconstruct an ordered tool-call trace from the conversation history.
 
@@ -191,13 +251,19 @@ def _final_output(
     stopped_reason: str = "",
     messages: list[AIMessage] | None = None,
     include_steps: bool = True,
+    pre_parsed: Any = _UNSET,
 ) -> dict[str, Any]:
     checked = response
     parsed: Any = None
     if isinstance(parser, OutputParserAdapter):
-        parsed = parser.parse(checked.text)
+        parsed = pre_parsed if pre_parsed is not _UNSET else parser.parse(checked.text)
+    answer_text = checked.text
+    if parser is None and str(answer_text or "").strip() in {"", "{}", "[]"}:
+        fallback = _last_tool_fallback_answer(messages or [])
+        if fallback:
+            answer_text = fallback
     output: dict[str, Any] = {
-        "answer": checked.text,
+        "answer": answer_text,
         "step": step,
         "provider": checked.provider,
         "model": checked.model,
@@ -282,7 +348,10 @@ def _final_output(
         "return_tool_trace": {
             "widget": "toggle",
             "display_name": "Return tool trace",
-            "description": "Include the ordered tool-call trace (intermediate_steps) in the output.",
+            "description": (
+                "Include the ordered tool-call trace (intermediate_steps) "
+                "in the output."
+            ),
             "group": "Options",
         },
         "timeout_seconds": {
@@ -317,7 +386,9 @@ def ai_agent_v2(
     steps_limit = max(1, min(25, int(max_steps or 4)))
     tool_schemas = _tool_schemas(tool)
     resume = runtime.get("agent_resume")
+    resume_allows_side_effects = False
     if isinstance(resume, AgentResumeInput):
+        resume_allows_side_effects = bool(resume.allow_side_effects)
         messages = _with_tool_instruction(
             _messages_from_resume(resume),
             tool_schemas,
@@ -364,7 +435,7 @@ def ai_agent_v2(
         legacy_allow = bool(runtime.get("allow_side_effects"))
         auto_approve_side_effects = (
             str(side_effect_approval or "").strip() == "auto_approve"
-        ) or legacy_allow
+        ) or legacy_allow or resume_allows_side_effects
         return AgentActionRequest(
             tool_calls=response.tool_calls,
             messages_so_far=messages,
@@ -372,6 +443,33 @@ def ai_agent_v2(
             max_steps=steps_limit,
             allow_side_effects=auto_approve_side_effects,
         )
+
+    pre_parsed: Any = _UNSET
+    if isinstance(parser, OutputParserAdapter):
+        try:
+            pre_parsed = parser.parse(response.text)
+        except Exception as exc:  # noqa: BLE001 - one corrective retry, any parser error
+            # Don't lose the whole agent run to a malformed final answer:
+            # show the model its reply and the validation error, and let it
+            # try once more. A second failure surfaces via _final_output.
+            pre_parsed = _UNSET  # new response will be parsed inside _final_output
+            correction = (
+                f"Your previous reply failed validation: {exc}. "
+                "Reply again and follow the required format exactly."
+            )
+            if parser.format_instructions:
+                correction = f"{correction}\n\n{parser.format_instructions}"
+            response = model.complete(
+                request.model_copy(
+                    update={
+                        "messages": [
+                            *messages,
+                            AIMessage.assistant(response.text),
+                            AIMessage.user(correction),
+                        ]
+                    }
+                )
+            )
 
     if isinstance(guardrail, GuardrailAdapter):
         response = guardrail.check(response)
@@ -386,4 +484,5 @@ def ai_agent_v2(
         step=step,
         messages=messages,
         include_steps=return_tool_trace,
+        pre_parsed=pre_parsed,
     )

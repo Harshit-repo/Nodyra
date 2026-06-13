@@ -783,6 +783,11 @@ def test_agent_v2_requests_tool_and_resumes_to_final() -> None:
     assert model.requests[0].messages[0].role == MessageRole.system
     assert "Noodle tools available" in model.requests[0].messages[0].content
     assert "lookup" in model.requests[0].messages[0].content
+    assert "query: string, required" in model.requests[0].messages[0].content
+    assert (
+        "Never call a tool with an empty argument object"
+        in model.requests[0].messages[0].content
+    )
     assert model.requests[0].messages[-1].role == MessageRole.user
     assert request.messages_so_far[-1].tool_calls[0].id == "call_1"
 
@@ -806,6 +811,92 @@ def test_agent_v2_requests_tool_and_resumes_to_final() -> None:
     assert output["parsed"] == {"answer": "done"}
     assert output["answer"] == '{"answer": "done"}'
     assert model.requests[1].messages[-1].role == MessageRole.tool
+
+
+def test_agent_v2_preserves_approve_all_for_followup_tool_calls() -> None:
+    model = ScriptedChatModel(
+        [
+            ChatResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call_2",
+                        name="lookup",
+                        arguments={"query": "Grace"},
+                    )
+                ],
+                model="test-model",
+                provider="test",
+            ),
+        ]
+    )
+    fn = registry.get("ai_agent_v2").func
+    prior_call = ToolCall(id="call_1", name="lookup", arguments={"query": "Ada"})
+    resume = AgentResumeInput(
+        tool_results=[
+            ToolResult(tool_call_id="call_1", name="lookup", content="Ada Lovelace")
+        ],
+        messages_so_far=[
+            AIMessage.user("Find people"),
+            AIMessage.assistant("", tool_calls=[prior_call]),
+        ],
+        step=1,
+        max_steps=4,
+        allow_side_effects=True,
+    )
+
+    request = fn(
+        input={"task": "Find people"},
+        model=model,
+        tool=DummyTool("lookup"),
+        side_effect_approval="require_approval",
+        agent_resume=resume,
+    )
+
+    assert isinstance(request, AgentActionRequest)
+    assert request.allow_side_effects is True
+    assert request.tool_calls[0].id == "call_2"
+
+
+def test_agent_v2_falls_back_to_tool_result_for_empty_json_reply() -> None:
+    model = ScriptedChatModel(
+        [ChatResponse(text="{}", model="test-model", provider="test")]
+    )
+    fn = registry.get("ai_agent_v2").func
+    prior_call = ToolCall(
+        id="call_1",
+        name="execute_command",
+        arguments={"command": "python --version"},
+    )
+    resume = AgentResumeInput(
+        tool_results=[
+            ToolResult(
+                tool_call_id="call_1",
+                name="execute_command",
+                content=json.dumps(
+                    {
+                        "stdout": "Python 3.12.8\n",
+                        "stderr": "",
+                        "returncode": 0,
+                    }
+                ),
+            )
+        ],
+        messages_so_far=[
+            AIMessage.user("Which Python version is installed?"),
+            AIMessage.assistant("", tool_calls=[prior_call]),
+        ],
+        step=1,
+        max_steps=4,
+    )
+
+    output = fn(
+        input={"task": "Which Python version is installed?"},
+        model=model,
+        tool=DummyTool("execute_command"),
+        agent_resume=resume,
+    )
+
+    assert output["answer"] == "Python 3.12.8"
 
 
 def test_agent_v2_returns_intermediate_steps_trace() -> None:
@@ -1090,3 +1181,69 @@ def test_raise_if_tools_unsupported_ignores_unrelated_errors() -> None:
     _raise_if_tools_unsupported(
         resp, service="openrouter", model="x", has_tools=True
     )
+
+
+def test_openai_normalize_response_joins_list_content_parts() -> None:
+    """Some OpenAI-compatible providers (via OpenRouter) return ``content`` as
+    a list of typed parts instead of a string; the text parts must be joined,
+    not stringified into a Python repr."""
+    from noodle_nodes.ai_v2.providers.openai import _normalize_response
+
+    body = {
+        "choices": [
+            {
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "Python "},
+                        {"type": "text", "text": "3.12.8"},
+                        {"type": "image_url", "image_url": {"url": "x"}},
+                    ]
+                },
+                "finish_reason": "stop",
+            }
+        ]
+    }
+    assert _normalize_response(body, "openrouter").text == "Python 3.12.8"
+
+
+def test_agent_v2_retries_once_when_parser_rejects_final_answer() -> None:
+    model = ScriptedChatModel(
+        [
+            ChatResponse(text="not json at all", model="m", provider="test"),
+            ChatResponse(text='{"answer": "fixed"}', model="m", provider="test"),
+        ]
+    )
+    parser = registry.get("ai_structured_output_parser").func(
+        schema='{"required": ["answer"]}'
+    )
+    fn = registry.get("ai_agent_v2").func
+
+    output = fn(input={"task": "Go"}, model=model, parser=parser)
+
+    assert output["parsed"] == {"answer": "fixed"}
+    assert output["answer"] == '{"answer": "fixed"}'
+    assert len(model.requests) == 2
+    # The corrective turn shows the model its failed reply and the error.
+    correction = model.requests[1].messages[-1]
+    assert correction.role == MessageRole.user
+    assert "failed validation" in correction.content
+    assert model.requests[1].messages[-2].content == "not json at all"
+
+
+def test_agent_v2_parser_failure_after_retry_propagates() -> None:
+    import pytest
+
+    model = ScriptedChatModel(
+        [
+            ChatResponse(text="not json", model="m", provider="test"),
+            ChatResponse(text="still not json", model="m", provider="test"),
+        ]
+    )
+    parser = registry.get("ai_structured_output_parser").func(
+        schema='{"required": ["answer"]}'
+    )
+    fn = registry.get("ai_agent_v2").func
+
+    with pytest.raises(Exception):  # noqa: B017 - parser's own error surfaces
+        fn(input={"task": "Go"}, model=model, parser=parser)
+    assert len(model.requests) == 2

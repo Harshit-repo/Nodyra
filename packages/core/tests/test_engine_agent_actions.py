@@ -268,6 +268,74 @@ async def test_agent_action_dispatches_multiple_tool_calls() -> None:
     assert tool.calls == [{"text": "one"}, {"text": "two"}]
 
 
+async def test_agent_tool_input_accepts_multiple_tool_sources() -> None:
+    reg = NodeRegistry()
+    tool_a = EchoTool(name="echo_a")
+    tool_b = EchoTool(name="echo_b")
+
+    @node(
+        name="Tool A",
+        id="tool_a",
+        inputs=[],
+        outputs=["tool"],
+        output_kinds={"tool": "ai_tool"},
+        registry=reg,
+    )
+    def tool_node_a() -> ToolAdapter:
+        return tool_a
+
+    @node(
+        name="Tool B",
+        id="tool_b",
+        inputs=[],
+        outputs=["tool"],
+        output_kinds={"tool": "ai_tool"},
+        registry=reg,
+    )
+    def tool_node_b() -> ToolAdapter:
+        return tool_b
+
+    @node(
+        name="Agent",
+        id="agent",
+        inputs=["tool"],
+        input_kinds={"tool": "ai_tool"},
+        registry=reg,
+    )
+    def agent(tool: Any = None) -> AgentActionRequest:
+        assert isinstance(tool, list)
+        assert len(tool) == 2
+        return AgentActionRequest(
+            tool_calls=[
+                ToolCall(id="call_1", name="echo_a", arguments={"text": "one"}),
+                ToolCall(id="call_2", name="echo_b", arguments={"text": "two"}),
+            ],
+            messages_so_far=[AIMessage.user("go")],
+            step=0,
+            max_steps=3,
+        )
+
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="ta", type="tool_a"),
+            GraphNode(id="tb", type="tool_b"),
+            GraphNode(id="a", type="agent"),
+        ],
+        edges=[
+            Edge(source="ta", source_output="tool", target="a", target_input="tool"),
+            Edge(source="tb", source_output="tool", target="a", target_input="tool"),
+        ],
+    )
+
+    result = await execute(graph, reg)
+
+    output = result.nodes["a"].outputs["main"]
+    assert isinstance(output, AgentActionResponse)
+    assert [r.content for r in output.tool_results] == ["echo:one", "echo:two"]
+    assert tool_a.calls == [{"text": "one"}]
+    assert tool_b.calls == [{"text": "two"}]
+
+
 async def test_agent_action_errors_when_max_steps_reached() -> None:
     reg = NodeRegistry()
 
@@ -367,7 +435,10 @@ async def test_agent_side_effecting_tool_runs_when_allowed() -> None:
     def agent(tool: ToolAdapter | None = None, **runtime: Any) -> Any:  # noqa: ARG001
         resume = runtime.get("agent_resume")
         if isinstance(resume, AgentResumeInput):
-            return resume.tool_results[0].model_dump()
+            return {
+                "allow_side_effects": resume.allow_side_effects,
+                "result": resume.tool_results[0].model_dump(),
+            }
         return AgentActionRequest(
             tool_calls=[
                 ToolCall(id="call_1", name="echo", arguments={"text": "write"})
@@ -388,8 +459,9 @@ async def test_agent_side_effecting_tool_runs_when_allowed() -> None:
     result = await execute(graph, reg, on_event=lambda event: _collect(events, event))
 
     output = result.nodes["a"].outputs["main"]
-    assert output["is_error"] is False
-    assert output["content"] == "echo:write"
+    assert output["allow_side_effects"] is True
+    assert output["result"]["is_error"] is False
+    assert output["result"]["content"] == "echo:write"
     assert tool.calls == [{"text": "write"}]
     assert "agent_tool_auto_approved" in [event["type"] for event in events]
 
@@ -517,6 +589,144 @@ async def test_agent_resumes_with_rejected_tool() -> None:
     assert output["is_error"] is True
     assert "denied by the operator" in output["content"]
     assert tool.calls == []
+
+
+async def test_approved_tool_not_rerun_after_second_approval_pause() -> None:
+    """Two side-effecting calls approved one at a time must each run once.
+
+    Approving call_1 resumes the run, which executes call_1 and pauses again on
+    call_2. The request stored at that second pause must carry call_1's result
+    so the final resume doesn't execute call_1 a second time.
+    """
+    reg = NodeRegistry()
+    tool = EchoTool(side_effecting=True)
+
+    @node(
+        name="Tool",
+        id="tool",
+        inputs=[],
+        outputs=["tool"],
+        output_kinds={"tool": "ai_tool"},
+        registry=reg,
+    )
+    def tool_node() -> ToolAdapter:
+        return tool
+
+    @node(
+        name="Agent",
+        id="agent",
+        inputs=["tool"],
+        input_kinds={"tool": "ai_tool"},
+        registry=reg,
+    )
+    def agent(tool: ToolAdapter | None = None, **runtime: Any) -> Any:  # noqa: ARG001
+        resume = runtime.get("agent_resume")
+        if isinstance(resume, AgentResumeInput):
+            return {
+                "results": [result.model_dump() for result in resume.tool_results],
+            }
+        return AgentActionRequest(
+            tool_calls=[
+                ToolCall(id="call_1", name="echo", arguments={"text": "one"}),
+                ToolCall(id="call_2", name="echo", arguments={"text": "two"}),
+            ],
+            messages_so_far=[AIMessage.user("go")],
+            step=0,
+            max_steps=3,
+        )
+
+    graph = WorkflowGraph(
+        nodes=[GraphNode(id="t", type="tool"), GraphNode(id="a", type="agent")],
+        edges=[
+            Edge(source="t", source_output="tool", target="a", target_input="tool")
+        ],
+    )
+
+    first = await execute(graph, reg, pause_on_approval=True)
+    assert first.status == RunStatus.waiting
+    state = first.nodes["a"].debug["agent_approval_state"]
+    assert state["tool_call_id"] == "call_1"
+    request = AgentActionRequest.model_validate(state["request"])
+    request.approved_tool_call_ids = ["call_1"]
+
+    second = await execute(
+        graph, reg, pause_on_approval=True, agent_action_resume={"a": request}
+    )
+    assert second.status == RunStatus.waiting
+    assert tool.calls == [{"text": "one"}]
+    state = second.nodes["a"].debug["agent_approval_state"]
+    assert state["tool_call_id"] == "call_2"
+    request = AgentActionRequest.model_validate(state["request"])
+    request.approved_tool_call_ids = ["call_1", "call_2"]
+
+    final = await execute(
+        graph, reg, pause_on_approval=True, agent_action_resume={"a": request}
+    )
+    assert final.status == RunStatus.success
+    # call_1 must NOT have executed a second time on the final resume.
+    assert tool.calls == [{"text": "one"}, {"text": "two"}]
+    output = final.nodes["a"].outputs["main"]
+    assert [r["content"] for r in output["results"]] == ["echo:one", "echo:two"]
+
+
+async def test_tool_call_missing_required_arguments_errors_without_running() -> None:
+    """A call missing required arguments gets an error result fed back to the
+    model instead of invoking the tool — and never reaches the approval gate,
+    so the operator is not asked to approve an invalid call."""
+    reg = NodeRegistry()
+    tool = EchoTool(side_effecting=True)
+
+    @node(
+        name="Tool",
+        id="tool",
+        inputs=[],
+        outputs=["tool"],
+        output_kinds={"tool": "ai_tool"},
+        registry=reg,
+    )
+    def tool_node() -> ToolAdapter:
+        return tool
+
+    @node(
+        name="Agent",
+        id="agent",
+        inputs=["tool"],
+        input_kinds={"tool": "ai_tool"},
+        registry=reg,
+    )
+    def agent(tool: ToolAdapter | None = None, **runtime: Any) -> Any:  # noqa: ARG001
+        resume = runtime.get("agent_resume")
+        if isinstance(resume, AgentResumeInput):
+            return resume.tool_results[0].model_dump()
+        return AgentActionRequest(
+            tool_calls=[ToolCall(id="call_1", name="echo", arguments={})],
+            messages_so_far=[AIMessage.user("go")],
+            step=0,
+            max_steps=3,
+        )
+
+    events: list[dict[str, Any]] = []
+    graph = WorkflowGraph(
+        nodes=[GraphNode(id="t", type="tool"), GraphNode(id="a", type="agent")],
+        edges=[
+            Edge(source="t", source_output="tool", target="a", target_input="tool")
+        ],
+    )
+    result = await execute(
+        graph,
+        reg,
+        pause_on_approval=True,
+        on_event=lambda event: _collect(events, event),
+    )
+
+    # Not waiting: the invalid call must not pause the run for approval.
+    assert result.status == RunStatus.success
+    assert tool.calls == []
+    output = result.nodes["a"].outputs["main"]
+    assert output["is_error"] is True
+    assert "text" in output["content"]
+    assert "required" in output["content"]
+    assert "agent_tool_approval_required" not in [e["type"] for e in events]
 
 
 async def test_agent_tool_dispatch_propagates_cancellation() -> None:
