@@ -366,7 +366,11 @@ async def update_workflow(
                 status.HTTP_400_BAD_REQUEST,
                 "A workflow cannot use itself as its error workflow.",
             )
-        if await session.get(Workflow, body.error_workflow_id) is None:
+        # Filtered select (not session.get) so a cross-org error_workflow_id is
+        # rejected by the ORM org-filter hook (R-2).
+        if await session.scalar(
+            select(Workflow).where(Workflow.id == body.error_workflow_id)
+        ) is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Error workflow not found")
         workflow.error_workflow_id = body.error_workflow_id
     if body.error_alerts is not None:

@@ -488,111 +488,128 @@ async def dispatch_provider_webhook(
     request: ProviderTriggerRequest,
 ) -> ProviderWebhookDispatch:
     """Verify and dispatch an inbound provider webhook delivery."""
+    from app.tenancy import run_as_org, run_as_system
+
+    # Provider callbacks are unauthenticated, so no org context is set on the
+    # request. Resolve the subscription's org up front (across all orgs) and
+    # scope the whole dispatch to it — otherwise every non-default-org provider
+    # trigger is filtered to the default org: the subscription lookup returns
+    # None (404, trigger never fires) and the RunEvent timeline rows get
+    # mis-stamped to the default org (R-13).
     async with SessionLocal() as session:
-        row, workflow, version = await _load_subscription_context(
-            session, subscription_id
-        )
-        registered = get_registered_provider_trigger(row.node_type)
-        spec = registered.spec
-        if spec.handle_event is None:
-            raise RuntimeError(f"Provider trigger {row.node_type} has no handler")
+        with run_as_system():
+            sub_org = await session.scalar(
+                select(ProviderTriggerSubscription.org_id).where(
+                    ProviderTriggerSubscription.id == subscription_id
+                )
+            )
 
-        graph = version.graph or {"nodes": [], "edges": []}
-        node_params = _node_params_by_id(graph).get(row.node_id, {})
-        params = await _resolved_params(
-            session,
-            workflow_id=workflow.id,
-            environment_id=workflow.environment_id,
-            params=node_params,
-        )
-        handler_start = time.perf_counter()
-        event = await asyncio.to_thread(spec.handle_event, request, params)
-        latency_ms = max(0, int((time.perf_counter() - handler_start) * 1000))
-        row.last_event_at = datetime.now(UTC)
-        await session.flush()
+    with run_as_org(sub_org):
+        async with SessionLocal() as session:
+            row, workflow, version = await _load_subscription_context(
+                session, subscription_id
+            )
+            registered = get_registered_provider_trigger(row.node_type)
+            spec = registered.spec
+            if spec.handle_event is None:
+                raise RuntimeError(f"Provider trigger {row.node_type} has no handler")
 
-        if event.payload is None or event.response_status >= 400:
+            graph = version.graph or {"nodes": [], "edges": []}
+            node_params = _node_params_by_id(graph).get(row.node_id, {})
+            params = await _resolved_params(
+                session,
+                workflow_id=workflow.id,
+                environment_id=workflow.environment_id,
+                params=node_params,
+            )
+            handler_start = time.perf_counter()
+            event = await asyncio.to_thread(spec.handle_event, request, params)
+            latency_ms = max(0, int((time.perf_counter() - handler_start) * 1000))
+            row.last_event_at = datetime.now(UTC)
+            await session.flush()
+
+            if event.payload is None or event.response_status >= 400:
+                _record_subscription_delivery(
+                    row,
+                    event.payload if isinstance(event.payload, dict) else None,
+                    response_status=event.response_status,
+                    latency_ms=latency_ms,
+                )
+                await session.commit()
+                return ProviderWebhookDispatch(
+                    status=event.response_status,
+                    body=event.response_body
+                    if event.response_body is not None
+                    else {"message": "Provider event acknowledged"},
+                    headers=event.response_headers,
+                )
+
+            dedupe_key = _dedupe_key(row.id, event.dedupe_key)
+            if dedupe_key:
+                seen = await session.scalar(
+                    select(Run.id)
+                    .where(Run.workflow_id == workflow.id)
+                    .where(Run.deduplication_key == dedupe_key)
+                    .limit(1)
+                )
+                if seen is not None:
+                    _record_subscription_delivery(
+                        row,
+                        event.payload if isinstance(event.payload, dict) else None,
+                        response_status=200,
+                        latency_ms=latency_ms,
+                        dedupe_key=dedupe_key,
+                        duplicate=True,
+                    )
+                    await session.commit()
+                    return ProviderWebhookDispatch(
+                        status=200,
+                        body={
+                            "message": "Duplicate provider delivery acknowledged",
+                            "runs": [],
+                        },
+                        headers=event.response_headers,
+                    )
             _record_subscription_delivery(
                 row,
                 event.payload if isinstance(event.payload, dict) else None,
                 response_status=event.response_status,
                 latency_ms=latency_ms,
+                dedupe_key=dedupe_key,
             )
             await session.commit()
-            return ProviderWebhookDispatch(
-                status=event.response_status,
-                body=event.response_body
-                if event.response_body is not None
-                else {"message": "Provider event acknowledged"},
-                headers=event.response_headers,
-            )
 
-        dedupe_key = _dedupe_key(row.id, event.dedupe_key)
-        if dedupe_key:
-            seen = await session.scalar(
-                select(Run.id)
-                .where(Run.workflow_id == workflow.id)
-                .where(Run.deduplication_key == dedupe_key)
-                .limit(1)
-            )
-            if seen is not None:
-                _record_subscription_delivery(
-                    row,
-                    event.payload if isinstance(event.payload, dict) else None,
-                    response_status=200,
-                    latency_ms=latency_ms,
-                    dedupe_key=dedupe_key,
-                    duplicate=True,
-                )
-                await session.commit()
-                return ProviderWebhookDispatch(
-                    status=200,
-                    body={
-                        "message": "Duplicate provider delivery acknowledged",
-                        "runs": [],
-                    },
-                    headers=event.response_headers,
-                )
-        _record_subscription_delivery(
-            row,
-            event.payload if isinstance(event.payload, dict) else None,
+        run_id = await start_run(
+            workflow.id,
+            version.graph or {"nodes": [], "edges": []},
+            version.version,
+            workflow_version_id=version.id,
+            mode="production",
+            trigger_type="provider",
+            cache={row.node_id: {"main": event.payload}},
+            trigger_node_id=row.node_id,
+            deduplication_key=dedupe_key,
+        )
+        await record_provider_trigger_event(
+            run_id,
+            subscription_id=row.id,
+            node_id=row.node_id,
+            provider=row.provider,
+            trigger_key=row.trigger_key,
+            dedupe_key=dedupe_key,
+            event_payload=event.payload,
             response_status=event.response_status,
             latency_ms=latency_ms,
-            dedupe_key=dedupe_key,
         )
-        await session.commit()
-
-    run_id = await start_run(
-        workflow.id,
-        version.graph or {"nodes": [], "edges": []},
-        version.version,
-        workflow_version_id=version.id,
-        mode="production",
-        trigger_type="provider",
-        cache={row.node_id: {"main": event.payload}},
-        trigger_node_id=row.node_id,
-        deduplication_key=dedupe_key,
-    )
-    await record_provider_trigger_event(
-        run_id,
-        subscription_id=row.id,
-        node_id=row.node_id,
-        provider=row.provider,
-        trigger_key=row.trigger_key,
-        dedupe_key=dedupe_key,
-        event_payload=event.payload,
-        response_status=event.response_status,
-        latency_ms=latency_ms,
-    )
-    body = event.response_body if event.response_body is not None else {}
-    if isinstance(body, dict):
-        body = {**body, "runs": [run_id]}
-    return ProviderWebhookDispatch(
-        status=event.response_status,
-        body=body,
-        headers=event.response_headers,
-        run_ids=[run_id],
-    )
+        body = event.response_body if event.response_body is not None else {}
+        if isinstance(body, dict):
+            body = {**body, "runs": [run_id]}
+        return ProviderWebhookDispatch(
+            status=event.response_status,
+            body=body,
+            headers=event.response_headers,
+            run_ids=[run_id],
+        )
 
 
 async def record_provider_trigger_event(

@@ -644,8 +644,11 @@ async def cancel_run(run_id: str) -> str | None:
     except Exception:  # noqa: BLE001 - container teardown is best-effort
         pass
 
+    from app.tenancy import run_as_system
+
     async with SessionLocal() as session:
-        run = await session.get(Run, run_id)
+        with run_as_system():
+            run = await session.get(Run, run_id)
         if run is None:
             return None
         if run.status in ("running", "queued", "waiting"):
@@ -1101,15 +1104,24 @@ async def _execute_run_impl(
     except Exception as exc:  # noqa: BLE001 - report any execution failure
         status = "error"
         logger.exception("run_id=%s execution failed: %s", run_id, exc)
-        broker.publish(
-            run_id,
-            redact_value(
-                {
-                    "type": "run_error",
-                    "error": f"{type(exc).__name__}: {exc}",
-                },
-                secret_values,
-            ),
+        error_payload = redact_value(
+            {
+                "type": "run_error",
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+            secret_values,
+        )
+        broker.publish(run_id, error_payload)
+        # Persist to run_events so callers (MCP get_run, UI) can surface the
+        # error message — without this, pre-execution failures (e.g. credential
+        # resolution) leave the run with status=error but zero diagnostic info.
+        run_event_sequence += 1
+        run_events.append(
+            {
+                "sequence": run_event_sequence,
+                "ts": datetime.now(UTC),
+                "event": _cap_output(error_payload, output_cap),
+            }
         )
 
     # Publish the terminal event BEFORE the DB session so that a DB failure

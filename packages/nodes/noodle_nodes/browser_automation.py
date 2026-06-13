@@ -6,15 +6,17 @@ No optional package is imported at module scope.
 
 from __future__ import annotations
 
-import io
 import json
 from typing import Any
+from xml.etree import ElementTree
+from defusedxml import DefusedXmlException as _DefusedXmlException
+from defusedxml.ElementTree import ParseError as _XmlParseError
+from defusedxml.ElementTree import fromstring as _safe_xml_fromstring
 
 from noodle.artifacts import is_artifact_ref as _is_artifact_ref
 from noodle.artifacts import read_bytes as _read_bytes
 from noodle.artifacts import write_bytes as _write_bytes
 from noodle.sdk import node
-
 
 # ---------------------------------------------------------------------------
 # html_extract
@@ -95,6 +97,122 @@ def html_extract_records(
     return {
         "records": records,
         "records_found": len(records),
+        "dataset": dataset,
+    }
+
+
+# ---------------------------------------------------------------------------
+# sitemap_crawl
+# ---------------------------------------------------------------------------
+
+@node(
+    name="Sitemap Crawl",
+    id="sitemap_crawl",
+    category="Browser & Web",
+    icon="globe",
+    requirements=["requests>=2.28"],
+    params={
+        "url": {"placeholder": "https://example.com/sitemap.xml"},
+        "max_urls": {"description": "Maximum URL entries to return."},
+        "include_nested_sitemaps": {
+            "description": "Fetch sitemapindex children when input is a sitemap index.",
+        },
+        "timeout_seconds": {"description": "HTTP timeout per sitemap request."},
+    },
+)
+def sitemap_crawl(
+    input=None,
+    url: str = "",
+    max_urls: int = 1000,
+    include_nested_sitemaps: bool = True,
+    timeout_seconds: float = 15.0,
+) -> dict:
+    """Parse a sitemap URL/XML and return discovered URLs as a DatasetRef."""
+    try:
+        import requests  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise RuntimeError("Sitemap Crawl requires requests>=2.28.") from exc
+
+    from noodle_nodes.datasets import records_to_dataset
+
+    source = url or (str(input) if input is not None and not _is_artifact_ref(input) else "")
+    if _is_artifact_ref(input):
+        source = _read_bytes(input).decode("utf-8", errors="replace")
+    if not source:
+        raise ValueError("url or XML input is required.")
+
+    def _load(candidate: str) -> tuple[str, str]:
+        if candidate.startswith(("http://", "https://")):
+            resp = requests.get(candidate, timeout=float(timeout_seconds or 15))
+            resp.raise_for_status()
+            return candidate, resp.text
+        return "input", candidate
+
+    records: list[dict[str, Any]] = []
+    queue = [source]
+    seen_sitemaps: set[str] = set()
+    max_count = max(1, int(max_urls or 1000))
+
+    while queue and len(records) < max_count and len(seen_sitemaps) < 25:
+        sitemap_ref = queue.pop(0)
+        location, xml_text = _load(sitemap_ref)
+        if location in seen_sitemaps:
+            continue
+        seen_sitemaps.add(location)
+
+        try:
+            root = _safe_xml_fromstring(xml_text.encode("utf-8"))
+        except (_XmlParseError, _DefusedXmlException) as exc:
+            raise ValueError(f"Invalid sitemap XML from {location}: {exc}") from exc
+
+        def _child_text(element: ElementTree.Element, local_name: str) -> str:
+            for child in element:
+                if child.tag.rsplit("}", 1)[-1] == local_name:
+                    return (child.text or "").strip()
+            return ""
+
+        root_name = root.tag.rsplit("}", 1)[-1]
+        if root_name == "sitemapindex":
+            for sitemap in root:
+                loc = _child_text(sitemap, "loc")
+                if not loc:
+                    continue
+                records.append(
+                    {
+                        "loc": loc,
+                        "type": "sitemap",
+                        "lastmod": _child_text(sitemap, "lastmod"),
+                        "source_sitemap": location,
+                    }
+                )
+                if include_nested_sitemaps and loc not in seen_sitemaps:
+                    queue.append(loc)
+                if len(records) >= max_count:
+                    break
+            continue
+
+        for url_el in root:
+            loc = _child_text(url_el, "loc")
+            if not loc:
+                continue
+            records.append(
+                {
+                    "loc": loc,
+                    "type": "url",
+                    "lastmod": _child_text(url_el, "lastmod"),
+                    "changefreq": _child_text(url_el, "changefreq"),
+                    "priority": _child_text(url_el, "priority"),
+                    "source_sitemap": location,
+                }
+            )
+            if len(records) >= max_count:
+                break
+
+    dataset = records_to_dataset(records, name="sitemap-urls.parquet") if records else None
+    return {
+        "records": records,
+        "url_count": sum(1 for row in records if row.get("type") == "url"),
+        "sitemap_count": len(seen_sitemaps),
         "dataset": dataset,
     }
 
@@ -211,8 +329,8 @@ def browser_screenshot(
         raise ValueError("url is required — set a URL in the node config or wire one as input.")
 
     try:
-        from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
         from playwright.sync_api import TimeoutError as PWTimeout  # type: ignore[import-not-found]
+        from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
     except ImportError as exc:
         raise RuntimeError(
             "playwright is required. Add playwright to the workflow environment, "
@@ -316,8 +434,8 @@ def browser_scrape(
         raise ValueError(f"selectors_json must be valid JSON: {exc}") from exc
 
     try:
-        from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
         from playwright.sync_api import TimeoutError as PWTimeout  # type: ignore[import-not-found]
+        from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
     except ImportError as exc:
         raise RuntimeError(
             "playwright is required. Add playwright to the workflow environment, "
@@ -448,8 +566,8 @@ def browser_click_fill(
         raise ValueError(f"actions_json must be valid JSON: {exc}") from exc
 
     try:
-        from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
         from playwright.sync_api import TimeoutError as PWTimeout  # type: ignore[import-not-found]
+        from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
     except ImportError as exc:
         raise RuntimeError(
             "playwright is required. Add playwright to the workflow environment, "
@@ -557,8 +675,8 @@ def browser_pdf_from_url(
         raise ValueError("url is required — set a URL in the node config or wire one as input.")
 
     try:
-        from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
         from playwright.sync_api import TimeoutError as PWTimeout  # type: ignore[import-not-found]
+        from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
     except ImportError as exc:
         raise RuntimeError(
             "playwright is required. Add playwright to the workflow environment, "

@@ -18,6 +18,7 @@
     "@types/dompurify": "^3.0.5",
     "@xyflow/react": "^12.3.5",
     "dompurify": "^3.4.8",
+    "lucide-react": "^1.18.0",
     "marked": "^18.0.5",
     "plotly.js-basic-dist-min": "^2.35.2",
     "react": "^18.3.1",

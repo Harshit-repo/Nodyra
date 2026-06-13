@@ -37,6 +37,13 @@ describe("NodeIcon", () => {
     expect(container.querySelector("svg")).not.toBeNull();
   });
 
+  it("renders planned package-level icons from Lucide", () => {
+    const { container } = render(<NodeIcon name="camera" size={16} />);
+    const svg = container.querySelector("svg");
+    expect(svg).not.toBeNull();
+    expect(svg?.classList.contains("lucide-camera")).toBe(true);
+  });
+
   it("renders CircleDashed for unknown non-brand icon names", () => {
     const { container } = render(<NodeIcon name="not-a-real-icon" size={16} />);
     expect(container.querySelector("svg")).not.toBeNull();

@@ -45,6 +45,41 @@ async def _create_workflow(client: AsyncClient) -> str:
     return workflow_id
 
 
+async def test_active_deployment_rejected_for_triggerless_workflow(
+    client: AsyncClient,
+) -> None:
+    """A workflow whose published graph has no trigger can't be activated —
+    the error surfaces at create/activate, not silently at every fire."""
+    workflow_id = (await client.post("/workflows", json={"name": "empty"})).json()[
+        "id"
+    ]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": {"nodes": [], "edges": []}})
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    # Active create is refused...
+    resp = await client.post(
+        "/deployments",
+        json={"workflow_id": workflow_id, "name": "nope", "active": True},
+    )
+    assert resp.status_code == 400
+    assert "trigger" in resp.json()["detail"].lower()
+
+    # ...a paused one is allowed, but activating it later is refused.
+    paused = await client.post(
+        "/deployments",
+        json={"workflow_id": workflow_id, "name": "paused", "active": False},
+    )
+    assert paused.status_code == 201
+    activate = await client.put(
+        f"/deployments/{paused.json()['id']}", json={"active": True}
+    )
+    assert activate.status_code == 400
+    # ...and run-now gives the same clear error rather than a generic failure.
+    run = await client.post(f"/deployments/{paused.json()['id']}/run")
+    assert run.status_code == 400
+    assert "trigger" in run.json()["detail"].lower()
+
+
 async def test_deployment_crud(client: AsyncClient) -> None:
     workflow_id = await _create_workflow(client)
     resp = await client.post(

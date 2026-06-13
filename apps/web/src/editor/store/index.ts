@@ -745,7 +745,7 @@ export interface EditorStore {
   runFromNode: (id: string, options?: RunOptions) => void;
   runFromTrigger: (id: string) => void;
 
-  startRun: (runId: string, targets?: string[]) => void;
+  startRun: (runId: string, targets?: string[], cache?: Record<string, unknown>) => void;
   applyRunEvent: (event: RunEvent) => void;
   applyRunInfo: (run: RunInfo) => void;
   clearRun: () => void;
@@ -1963,14 +1963,18 @@ export const useEditor = create<EditorStore>((set, get) => ({
     if (handler) void handler(undefined, { triggerNodeId: id });
   },
 
-  startRun: (runId, targets) => {
+  startRun: (runId, targets, cache?) => {
     const { nodes, edges, runStatus } = get();
+    const cachedIds = cache ? new Set(Object.keys(cache)) : new Set<string>();
     const planned = new Set<string>();
     const targetSet = targets && targets.length > 0 ? new Set(targets) : null;
     if (targetSet) {
       const visit = (id: string) => {
         if (planned.has(id)) return;
         planned.add(id);
+        // Stop walking into cached nodes — their outputs are already known and
+        // they won't re-execute, so their ancestors aren't needed either.
+        if (cachedIds.has(id)) return;
         for (const edge of edges) {
           if (edge.target === id) visit(edge.source);
         }
@@ -1988,11 +1992,13 @@ export const useEditor = create<EditorStore>((set, get) => ({
     // nodes are marked running immediately so the canvas shows a spinner for
     // every node involved in this execution, not only the current node.
     //
-    // For targeted runs (edge play button), clear the status of nodes NOT in
-    // the planned set so the canvas clearly shows only what's running.
+    // For targeted runs: preserve status for cached upstream nodes (they're
+    // being reused, not re-run) and clear nodes outside the execution scope.
     const nextStatus = targetSet
       ? Object.fromEntries(
-          Object.entries(runStatus).filter(([id]) => planned.has(id)),
+          Object.entries(runStatus).filter(
+            ([id]) => planned.has(id) || cachedIds.has(id),
+          ),
         )
       : { ...runStatus };
     // Agent sub-nodes (model / memory / tools) are driven by live agent events,
@@ -2001,6 +2007,8 @@ export const useEditor = create<EditorStore>((set, get) => ({
     const agentIds = collectAgentIds(nodes);
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     for (const id of planned) {
+      // Cached nodes already have their output; don't flash them to "running".
+      if (cachedIds.has(id)) continue;
       const node = nodeById.get(id);
       if (node && isAgentSubNode(node, edges, agentIds)) continue;
       nextStatus[id] = "running";

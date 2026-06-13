@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.models import Deployment, Run, Workflow, WorkflowVersion
+from app.tenancy import run_as_system
 from app.services.redaction import redact_value
 
 
@@ -59,25 +60,28 @@ async def dispatch_error_handlers(
     secret_values: list[str],
 ) -> None:
     async with session_factory() as session:
-        run = await session.get(Run, run_id)
+        with run_as_system():
+            run = await session.get(Run, run_id)
         if (
             run is None
             or run.status != "error"
             or run.triggered_by_error_run_id is not None
         ):
             return
-        workflow = await session.scalar(
-            select(Workflow)
-            .where(Workflow.id == run.workflow_id)
-            .options(selectinload(Workflow.versions))
-        )
+        with run_as_system():
+            workflow = await session.scalar(
+                select(Workflow)
+                .where(Workflow.id == run.workflow_id)
+                .options(selectinload(Workflow.versions))
+            )
         if workflow is None:
             return
-        deployment = (
-            await session.get(Deployment, run.deployment_id)
-            if run.deployment_id
-            else None
-        )
+        with run_as_system():
+            deployment = (
+                await session.get(Deployment, run.deployment_id)
+                if run.deployment_id
+                else None
+            )
         error_workflow_id = (
             deployment.error_workflow_id if deployment else None
         ) or workflow.error_workflow_id
@@ -109,11 +113,12 @@ async def dispatch_error_handlers(
         error_version: int | None = None
         error_version_id: str | None = None
         if error_workflow_id and error_workflow_id != run.workflow_id:
-            error_workflow = await session.scalar(
-                select(Workflow)
-                .where(Workflow.id == error_workflow_id)
-                .options(selectinload(Workflow.versions))
-            )
+            with run_as_system():
+                error_workflow = await session.scalar(
+                    select(Workflow)
+                    .where(Workflow.id == error_workflow_id)
+                    .options(selectinload(Workflow.versions))
+                )
             if error_workflow is not None and error_workflow.versions:
                 version: WorkflowVersion = error_workflow.versions[-1]
                 error_graph = version.graph or {"nodes": [], "edges": []}

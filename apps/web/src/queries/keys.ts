@@ -7,9 +7,13 @@ export const queryKeys = {
     ["workflows", workflowId, "provider-triggers"] as const,
   workflowRuns: (workflowId: string) =>
     ["workflows", workflowId, "runs"] as const,
+  workflowVersions: (workflowId: string) =>
+    ["workflows", workflowId, "versions"] as const,
 
   deployments: (workflowId?: string) =>
     ["deployments", workflowId ?? "all"] as const,
+  deploymentRuns: (deploymentId: string) =>
+    ["deployments", deploymentId, "runs"] as const,
   // Root prefixes for mutation invalidation — keep key shapes owned here so
   // a registry restructure can't silently strand stale cache entries.
   deploymentsRoot: ["deployments"] as const,

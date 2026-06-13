@@ -11,7 +11,8 @@ This module is consumed by the deployments router: when a deployment becomes
 
 Each finding is ``{node_id, type, kind, reason}``. ``kind`` is one of:
 ``code``, ``execute_command``, ``ssh``, ``filesystem``, ``http_private_ip``,
-``sql_with_expressions``. New kinds slot in here without touching the router.
+``sql_with_expressions``, ``network_egress``. The router treats every finding
+equally (kind is informational/UI-only), so new kinds slot in without touching it.
 """
 
 from __future__ import annotations
@@ -42,9 +43,22 @@ UNCONDITIONAL_UNSAFE: dict[str, str] = {
 # Node type ids whose params get conditionally inspected.
 SQL_NODE_TYPES: frozenset[str] = frozenset({"postgres_query", "mysql_query"})
 HTTP_NODE_TYPES: frozenset[str] = frozenset({"http_request"})
-# Reserved: anything that touches the host filesystem outside the artifact
-# store. None today, kept here so adding them is one line.
-FILESYSTEM_NODE_TYPES: frozenset[str] = frozenset()
+# Nodes that read/write the runner host filesystem outside the artifact store.
+# ``shapefile_read`` opens an arbitrary local ``path`` param (LFI) — same class
+# as a Code node reading server files, so it goes under the deploy-time gate (R-3).
+FILESYSTEM_NODE_TYPES: frozenset[str] = frozenset({"shapefile_read"})
+# Nodes that open raw network connections to a caller-supplied host (SSRF /
+# internal recon / credentialed egress). Unconditionally flagged because the
+# target is arbitrary and not subject to the http_request private-IP check (R-3).
+NETWORK_EGRESS_NODE_TYPES: frozenset[str] = frozenset(
+    {
+        "network_port_probe",   # TCP port scanner
+        "sftp_transfer",        # credentialed file transfer to any host
+        "ldap_query",           # credentialed directory query to any host
+        "certificate_inspect",  # connects to any host:port when ``host`` set
+        "sitemap_crawl",        # fetches an arbitrary URL
+    }
+)
 
 _EXPR_PATTERN = re.compile(r"\{\{.*?\}\}", re.DOTALL)
 _HOST_HEADER_KEYS: frozenset[str] = frozenset({"host"})
@@ -181,6 +195,19 @@ def classify(graph: dict | WorkflowGraph) -> list[dict[str, str]]:
                     "type": nt,
                     "kind": "filesystem",
                     "reason": f"node type '{nt}' reads/writes the runner host filesystem",
+                }
+            )
+
+        if nt in NETWORK_EGRESS_NODE_TYPES:
+            findings.append(
+                {
+                    "node_id": nid,
+                    "type": nt,
+                    "kind": "network_egress",
+                    "reason": (
+                        f"node type '{nt}' opens a raw network connection to a "
+                        "caller-supplied host (SSRF / internal recon)"
+                    ),
                 }
             )
 

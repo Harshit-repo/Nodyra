@@ -224,6 +224,7 @@ export interface WorkflowDetail {
   published_version: number;
   has_unpublished_changes: boolean;
   environment_id: string | null;
+  default_runner_pool_id?: string | null;
   error_workflow_id?: string | null;
   error_alerts?: Record<string, unknown>;
   run_timeout_seconds?: number | null;

@@ -7,10 +7,12 @@ import { HomeHeader } from "./HomeHeader";
 import {
   useCreateDeploymentMutation,
   useDeleteDeploymentMutation,
+  useDeploymentRuns,
   useDeployments,
   useRunDeploymentMutation,
   useUpdateDeploymentMutation,
   useWorkflows,
+  useWorkflowVersions,
 } from "./queries";
 import { useToast } from "./ToastProvider";
 import { useModalA11y } from "./useModalA11y";
@@ -48,11 +50,76 @@ function describeSchedule(d: Deployment): string {
   return `every ${every} ${d.schedule_interval || "hours"}`;
 }
 
+function runStatusClass(status: string): string {
+  if (status === "success") return "status-run-success";
+  if (status === "error") return "status-run-error";
+  if (status === "running" || status === "queued" || status === "waiting")
+    return "status-run-skipped";
+  return "status-run-skipped";
+}
+
+function DeploymentHistory({
+  deploymentId,
+  onOpenRun,
+}: {
+  deploymentId: string;
+  onOpenRun: (runId: string) => void;
+}) {
+  const runsQuery = useDeploymentRuns(deploymentId, { refetchInterval: 5000 });
+  const runs = (runsQuery.data ?? []).slice(0, 8);
+  const recent = runsQuery.data ?? [];
+  const finished = recent.filter(
+    (r) => r.status === "success" || r.status === "error",
+  );
+  const successRate = finished.length
+    ? Math.round(
+        (finished.filter((r) => r.status === "success").length /
+          finished.length) *
+          100,
+      )
+    : null;
+
+  return (
+    <div className="deploy-history">
+      <div className="deploy-history-head">
+        <span className="muted">Recent runs</span>
+        {successRate != null && (
+          <span className="muted">
+            {successRate}% success over last {finished.length}
+          </span>
+        )}
+      </div>
+      {runsQuery.isLoading && <p className="muted">Loading…</p>}
+      {!runsQuery.isLoading && runs.length === 0 && (
+        <p className="muted">No runs yet.</p>
+      )}
+      {runs.map((r) => (
+        <button
+          type="button"
+          key={r.id}
+          className="deploy-run-row"
+          onClick={() => onOpenRun(r.id)}
+          title="Open in Executions"
+        >
+          <span className={`run-pill ${runStatusClass(r.status)}`}>
+            {r.status}
+          </span>
+          <span className="muted">{r.trigger_type}</span>
+          <span className="muted">
+            {r.started_at ? when(r.started_at) : "—"}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function DeploymentsPage() {
   const navigate = useNavigate();
   const [editing, setEditing] = useState<Deployment | null>(null);
   const [creating, setCreating] = useState(false);
   const [unsafePrompt, setUnsafePrompt] = useState<UnsafePromptState | null>(null);
+  const [historyId, setHistoryId] = useState<string | null>(null);
   // Deployment ids with an action (run / toggle) in flight, so their row
   // controls disable and can't be double-fired while the request is pending.
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
@@ -208,65 +275,82 @@ export function DeploymentsPage() {
         {deployments && deployments.length > 0 && (
           <div className="deploy-list">
             {deployments.map((d) => (
-              <div className="deploy-row" key={d.id}>
-                <div className="deploy-main">
-                  <div className="deploy-name" title={d.name}>
-                    {d.name}
-                    <span
-                      className={`run-pill ${
-                        d.active ? "status-run-success" : "status-run-skipped"
-                      }`}
-                    >
-                      {d.active ? "active" : "paused"}
-                    </span>
+              <div className="deploy-item" key={d.id}>
+                <div className="deploy-row">
+                  <div className="deploy-main">
+                    <div className="deploy-name" title={d.name}>
+                      {d.name}
+                      <span
+                        className={`run-pill ${
+                          d.active ? "status-run-success" : "status-run-skipped"
+                        }`}
+                      >
+                        {d.active ? "active" : "paused"}
+                      </span>
+                    </div>
+                    <div className="deploy-meta">
+                      <Link to={`/workflows/${d.workflow_id}`}>
+                        {workflowName(d.workflow_id)}
+                      </Link>
+                      {" · "}
+                      {describeSchedule(d)}
+                      {d.workflow_version ? ` · pinned v${d.workflow_version}` : ""}
+                      {d.error_workflow_id
+                        ? ` · error → ${workflowName(d.error_workflow_id)}`
+                        : ""}
+                      {" · last fired "}
+                      {when(d.last_fired)}
+                    </div>
                   </div>
-                  <div className="deploy-meta">
-                    <Link to={`/workflows/${d.workflow_id}`}>
-                      {workflowName(d.workflow_id)}
-                    </Link>
-                    {" · "}
-                    {describeSchedule(d)}
-                    {d.workflow_version ? ` · pinned v${d.workflow_version}` : ""}
-                    {d.error_workflow_id
-                      ? ` · error workflow ${d.error_workflow_id.slice(0, 8)}`
-                      : ""}
-                    {" · last fired "}
-                    {when(d.last_fired)}
-                  </div>
-                </div>
-                <div className="deploy-actions">
-                  <label className="active-toggle">
-                    <input
-                      type="checkbox"
-                      checked={d.active}
+                  <div className="deploy-actions">
+                    <label className="active-toggle">
+                      <input
+                        type="checkbox"
+                        checked={d.active}
+                        disabled={busyIds.has(d.id)}
+                        onChange={(e) => void toggleActive(d, e.target.checked)}
+                      />
+                      <span className="active-track" />
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => void runNow(d)}
                       disabled={busyIds.has(d.id)}
-                      onChange={(e) => void toggleActive(d, e.target.checked)}
-                    />
-                    <span className="active-track" />
-                  </label>
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    onClick={() => void runNow(d)}
-                    disabled={busyIds.has(d.id)}
-                  >
-                    ▶ Run now
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
-                    onClick={() => setEditing(d)}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
-                    onClick={() => void remove(d)}
-                  >
-                    Delete
-                  </button>
+                    >
+                      ▶ Run now
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      onClick={() =>
+                        setHistoryId((cur) => (cur === d.id ? null : d.id))
+                      }
+                    >
+                      {historyId === d.id ? "Hide" : "History"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      onClick={() => setEditing(d)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      onClick={() => void remove(d)}
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
+                {historyId === d.id && (
+                  <DeploymentHistory
+                    deploymentId={d.id}
+                    onOpenRun={(runId) => navigate(`/executions?run=${runId}`)}
+                  />
+                )}
               </div>
             ))}
           </div>
@@ -394,6 +478,10 @@ function DeploymentDialog({
   const { notify } = useToast();
   const createDeploymentMutation = useCreateDeploymentMutation();
   const updateDeploymentMutation = useUpdateDeploymentMutation();
+  const versionsQuery = useWorkflowVersions(workflowId || null);
+  const versions = [...(versionsQuery.data ?? [])].sort(
+    (a, b) => b.version - a.version,
+  );
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalA11y(dialogRef, onClose);
 
@@ -581,33 +669,48 @@ function DeploymentDialog({
 
           <div className="field">
             <div className="field-label">
-              <span className="field-name">Pinned workflow version ID</span>
+              <span className="field-name">Pinned version</span>
             </div>
             <p className="field-desc">
-              Blank pins the latest published version when the deployment is
-              created. Set this to a specific version id for controlled rollout.
+              “Latest published” re-pins on each publish. Pick a specific version
+              for a controlled rollout.
             </p>
-            <input
+            <select
               className="field-input"
               value={workflowVersionId}
               onChange={(e) => setWorkflowVersionId(e.target.value)}
-              placeholder="workflow_version_id"
-            />
+            >
+              <option value="">Latest published</option>
+              {versions.map((v) => (
+                <option key={v.id} value={v.id}>
+                  v{v.version}
+                  {v.published ? "" : " (draft)"}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="field">
             <div className="field-label">
-              <span className="field-name">Error workflow ID</span>
+              <span className="field-name">Error workflow</span>
             </div>
             <p className="field-desc">
               Optional workflow to run when this deployment fails.
             </p>
-            <input
+            <select
               className="field-input"
               value={errorWorkflowId}
               onChange={(e) => setErrorWorkflowId(e.target.value)}
-              placeholder="workflow_id"
-            />
+            >
+              <option value="">None</option>
+              {workflows
+                .filter((w) => w.id !== workflowId)
+                .map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+            </select>
           </div>
 
           <label className="field-toggle">

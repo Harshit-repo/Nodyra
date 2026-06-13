@@ -88,6 +88,30 @@ export function useDeployments(
   });
 }
 
+export function useWorkflowVersions(
+  workflowId: string | null,
+  options?: QueryControls<Awaited<ReturnType<typeof api.listWorkflowVersions>>>,
+) {
+  return useQuery({
+    queryKey: queryKeys.workflowVersions(workflowId ?? "none"),
+    queryFn: () => api.listWorkflowVersions(workflowId ?? ""),
+    enabled: Boolean(workflowId) && (options?.enabled ?? true),
+    ...options,
+  });
+}
+
+export function useDeploymentRuns(
+  deploymentId: string | null,
+  options?: QueryControls<Awaited<ReturnType<typeof api.listDeploymentRuns>>>,
+) {
+  return useQuery({
+    queryKey: queryKeys.deploymentRuns(deploymentId ?? "none"),
+    queryFn: () => api.listDeploymentRuns(deploymentId ?? ""),
+    enabled: Boolean(deploymentId) && (options?.enabled ?? true),
+    ...options,
+  });
+}
+
 export function useCredentials(options?: QueryControls<Awaited<ReturnType<typeof api.listCredentials>>>) {
   return useQuery({
     queryKey: queryKeys.credentials,

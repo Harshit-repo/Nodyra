@@ -67,6 +67,23 @@ def run_as_system():
         current_org_id.reset(token)
 
 
+@contextmanager
+def run_as_org(org_id: str | None):
+    """Run a block scoped to a specific org.
+
+    For background/unauthenticated paths (e.g. provider webhook callbacks) that
+    have resolved which tenant a piece of work belongs to and must scope all
+    ORM access to it. ``None`` is a no-op (keeps the ambient context)."""
+    if org_id is None:
+        yield
+        return
+    token = current_org_id.set(org_id)
+    try:
+        yield
+    finally:
+        current_org_id.reset(token)
+
+
 def org_scoped_models() -> list[type]:
     """Every mapped class carrying an ``org_id`` column."""
     from app.db import Base  # late import: db imports tenancy at engine setup

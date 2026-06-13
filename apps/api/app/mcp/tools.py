@@ -20,7 +20,7 @@ from sqlalchemy.orm import selectinload
 
 import noodle_nodes  # noqa: F401 - registers built-in nodes
 from app.db import SessionLocal
-from app.models import NodeRun, Run, User, Workflow, WorkflowVersion
+from app.models import NodeRun, Run, RunEvent, User, Workflow, WorkflowVersion
 from app.services.audit import log_audit
 from app.services.runner import start_run
 from app.services.triggers import _await_run_terminal, _last_node_output
@@ -201,7 +201,7 @@ async def _get_run(session: AsyncSession, user: User | None, args: dict) -> Any:
     run = await session.get(Run, run_id, options=[selectinload(Run.node_runs)])
     if run is None:
         raise McpToolError(f"Run not found: {run_id}")
-    return {
+    result: dict[str, Any] = {
         "id": run.id,
         "workflow_id": run.workflow_id,
         "status": run.status,
@@ -217,6 +217,16 @@ async def _get_run(session: AsyncSession, user: User | None, args: dict) -> Any:
             for nr in run.node_runs
         ],
     }
+    if run.status == "error" and not result["nodes"]:
+        run_err_evt = await session.scalar(
+            select(RunEvent)
+            .where(RunEvent.run_id == run_id, RunEvent.event_type == "run_error")
+            .limit(1)
+        )
+        if run_err_evt is not None and isinstance(run_err_evt.payload, dict):
+            result["error"] = run_err_evt.payload.get("error")
+            result.pop("nodes")  # remove empty list; error field is the signal
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -245,9 +255,27 @@ async def _run_outcome(run_id: str, wait_seconds: float) -> dict:
                     )
                 )
             ).all()
-            result["errors"] = [
+            node_errors = [
                 {"node_id": nr.node_id, "error": nr.error} for nr in rows
             ]
+            if node_errors:
+                result["errors"] = node_errors
+            else:
+                # No node-level errors — check for a run-level error event
+                # (e.g. credential resolution or graph dispatch failure that
+                # occurred before any nodes ran).
+                run_err_evt = await session.scalar(
+                    select(RunEvent)
+                    .where(
+                        RunEvent.run_id == run_id,
+                        RunEvent.event_type == "run_error",
+                    )
+                    .limit(1)
+                )
+                if run_err_evt is not None and isinstance(run_err_evt.payload, dict):
+                    result["error"] = run_err_evt.payload.get("error")
+                else:
+                    result["errors"] = []
     return result
 
 
@@ -405,7 +433,7 @@ async def _publish_workflow(
     try:
         response = await publish_route(
             workflow_id,
-            WorkflowPublishRequest(notes=str(args.get("notes") or "") or None),
+            WorkflowPublishRequest(notes=str(args.get("notes") or "")),
             session,
             user,
         )

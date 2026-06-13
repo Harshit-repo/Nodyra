@@ -13,6 +13,7 @@ import {
   useSystemSettings,
   useUpdateEnvironmentMutation,
 } from "./queries";
+import { RunnerPoolSelect } from "./RunnerPoolSelect";
 import { useToast } from "./ToastProvider";
 import { useModalA11y } from "./useModalA11y";
 import type { Environment, RunnerPoolInfo } from "./types";
@@ -43,35 +44,6 @@ const SPAWN_HELP =
 const RUNNER_POOL_HELP =
   "Where workflows using this environment execute. Local (in-process) runs on the API host. Bind a remote runner pool to offload execution to registered agent/Docker/Kubernetes runners. A deployment or workflow-level pool override still takes precedence.";
 
-function PoolSelect({
-  pools,
-  value,
-  onChange,
-}: {
-  pools: RunnerPoolInfo[];
-  value: string | null;
-  onChange: (v: string | null) => void;
-}) {
-  return (
-    <>
-      <label className="field-label">
-        Execution target <InfoTip text={RUNNER_POOL_HELP} />
-      </label>
-      <select
-        className="field-input"
-        value={value ?? ""}
-        onChange={(e) => onChange(e.target.value || null)}
-      >
-        <option value="">Local (in-process)</option>
-        {pools.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name} ({p.provider} · {p.online_count}/{p.runner_count} online)
-          </option>
-        ))}
-      </select>
-    </>
-  );
-}
 
 type PoolMode = "fixed" | "elastic" | "spawn";
 
@@ -471,7 +443,12 @@ function CreateEnvModal({
           </>
         )}
 
-        <PoolSelect pools={pools} value={poolId} onChange={setPoolId} />
+        <RunnerPoolSelect
+          pools={pools}
+          value={poolId}
+          onChange={setPoolId}
+          label={<>Execution target <InfoTip text={RUNNER_POOL_HELP} /></>}
+        />
 
         <PoolModeFields
           mode={mode}
@@ -598,7 +575,12 @@ function EditEnvModal({
           onChange={(e) => setDescription(e.target.value)}
         />
 
-        <PoolSelect pools={pools} value={poolId} onChange={setPoolId} />
+        <RunnerPoolSelect
+          pools={pools}
+          value={poolId}
+          onChange={setPoolId}
+          label={<>Execution target <InfoTip text={RUNNER_POOL_HELP} /></>}
+        />
 
         <PoolModeFields
           mode={mode}

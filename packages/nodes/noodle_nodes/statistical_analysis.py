@@ -9,10 +9,23 @@ from __future__ import annotations
 
 import json
 import math
+from typing import Any
 
 from noodle.datasets import is_dataset_ref
-from noodle_nodes.datasets import materialize_dataset, records_to_dataset
 from noodle.sdk import node
+from noodle_nodes.datasets import materialize_dataset, records_to_dataset
+
+
+def _rows_from_input(value: Any) -> list[dict[str, Any]]:
+    if is_dataset_ref(value):
+        return materialize_dataset(value)
+    if isinstance(value, list):
+        return [row for row in value if isinstance(row, dict)]
+    if isinstance(value, dict):
+        if isinstance(value.get("records"), list):
+            return [row for row in value["records"] if isinstance(row, dict)]
+        return [value]
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -196,8 +209,8 @@ def distribution_fit(
 ) -> dict:
     """Fit named distributions to a data column; rank by KS statistic."""
     try:
-        from scipy import stats as _stats
         import numpy as _np
+        from scipy import stats as _stats
     except ImportError as exc:
         raise RuntimeError(
             "scipy is required. Add scipy to the workflow environment and rebuild it."
@@ -369,7 +382,7 @@ def regression_analysis(
     elif model_type == "logit":
         model = _sm.Logit(y, X).fit(disp=False)
     else:
-        raise ValueError(f"model_type must be 'ols' or 'logit'")
+        raise ValueError("model_type must be 'ols' or 'logit'")
 
     feat_names = ["const"] + feats
     ci = model.conf_int()
@@ -462,7 +475,7 @@ def monte_carlo_simulate(
     # old code re-parsed the string n_iterations times).
     import ast as _ast
 
-    from noodle.expr import _ExprValidator, _SAFE_BUILTINS
+    from noodle.expr import _SAFE_BUILTINS, _ExprValidator
 
     try:
         tree = _ast.parse(expression, mode="eval")
@@ -521,8 +534,8 @@ def bootstrap_ci(
 ) -> dict:
     """Bootstrap confidence interval for a column statistic."""
     try:
-        from scipy import stats as _stats
         import numpy as _np
+        from scipy import stats as _stats
     except ImportError as exc:
         raise RuntimeError(
             "scipy is required. Add scipy to the workflow environment and rebuild it."
@@ -784,7 +797,7 @@ def dimensionality_reduce(
         )
         X_reduced = reducer.fit_transform(X_scaled)
     else:
-        raise ValueError(f"method must be 'pca' or 'tsne'")
+        raise ValueError("method must be 'pca' or 'tsne'")
 
     out_rows = [
         {f"component_{j + 1}": float(X_reduced[i, j]) for j in range(X_reduced.shape[1])}
@@ -800,3 +813,253 @@ def dimensionality_reduce(
         summary["explained_variance_ratio"] = explained_variance
 
     return {"dataset": records_to_dataset(out_rows), **summary}
+
+
+# ---------------------------------------------------------------------------
+# seasonality_detect
+# ---------------------------------------------------------------------------
+
+
+@node(
+    name="Seasonality Detect",
+    id="seasonality_detect",
+    category="Statistical Analysis",
+    icon="activity",
+    requirements=["numpy>=1.24"],
+    output_kinds={"candidates": "dataset"},
+    outputs=["main", "candidates"],
+    params={
+        "value_column": {"description": "Numeric time-series value column."},
+        "min_period": {"description": "Minimum period/lag to evaluate."},
+        "max_period": {"description": "Maximum period/lag to evaluate."},
+        "top_n": {"description": "Number of candidate periods to return."},
+    },
+)
+def seasonality_detect(
+    input=None,
+    value_column: str = "value",
+    min_period: int = 2,
+    max_period: int = 52,
+    top_n: int = 5,
+) -> dict:
+    """Detect likely seasonal periods using autocorrelation scores."""
+    if input is None:
+        raise ValueError("input is required")
+    if not value_column:
+        raise ValueError("value_column is required")
+
+    try:
+        import numpy as _np
+    except ImportError as exc:
+        raise RuntimeError(
+            "numpy is required. Add numpy to the workflow environment and rebuild it."
+        ) from exc
+
+    rows = _rows_from_input(input)
+    values = [
+        float(row[value_column])
+        for row in rows
+        if value_column in row and row[value_column] is not None
+    ]
+    if len(values) < 6:
+        raise ValueError("seasonality_detect requires at least 6 numeric values")
+
+    arr = _np.asarray(values, dtype=float)
+    arr = arr - float(arr.mean())
+    std = float(arr.std())
+    if std == 0:
+        raise ValueError("value series is constant; seasonality cannot be detected")
+
+    low = max(1, int(min_period or 2))
+    high = min(max(low, int(max_period or 52)), max(1, len(arr) // 2))
+    candidates: list[dict[str, Any]] = []
+    for period in range(low, high + 1):
+        left = arr[:-period]
+        right = arr[period:]
+        if len(left) < 3:
+            continue
+        score = float(_np.corrcoef(left, right)[0, 1])
+        if not _np.isnan(score):
+            candidates.append({"period": period, "autocorrelation": score})
+
+    candidates.sort(key=lambda row: abs(float(row["autocorrelation"])), reverse=True)
+    selected = candidates[: max(1, int(top_n or 5))]
+    best = selected[0] if selected else None
+    return {
+        "main": {
+            "period": best["period"] if best else None,
+            "score": best["autocorrelation"] if best else None,
+            "n_points": len(values),
+            "periods_tested": len(candidates),
+        },
+        "candidates": records_to_dataset(selected) if selected else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# survival_analysis
+# ---------------------------------------------------------------------------
+
+
+@node(
+    name="Survival Analysis",
+    id="survival_analysis",
+    category="Statistical Analysis",
+    icon="activity",
+    requirements=["lifelines>=0.27", "pandas>=2.0"],
+    output_kinds={"survival_curve": "dataset"},
+    outputs=["main", "survival_curve"],
+    params={
+        "duration_column": {"description": "Observed duration/time-to-event column."},
+        "event_column": {"description": "Boolean/0-1 event observed column."},
+        "group_column": {"description": "Optional grouping column for Kaplan-Meier curves."},
+    },
+)
+def survival_analysis(
+    input=None,
+    duration_column: str = "duration",
+    event_column: str = "event",
+    group_column: str = "",
+) -> dict:
+    """Fit Kaplan-Meier survival curves, optionally by group."""
+    if input is None:
+        raise ValueError("input is required")
+    if not duration_column or not event_column:
+        raise ValueError("duration_column and event_column are required")
+
+    try:
+        import pandas as _pd
+        from lifelines import KaplanMeierFitter as _KaplanMeierFitter
+    except ImportError as exc:
+        raise RuntimeError(
+            "lifelines and pandas are required. Add them to the workflow "
+            "environment and rebuild it."
+        ) from exc
+
+    rows = _rows_from_input(input)
+    if not rows:
+        raise ValueError("input must contain records")
+    frame = _pd.DataFrame(rows)
+    for column in (duration_column, event_column):
+        if column not in frame.columns:
+            raise ValueError(f"missing required column: {column}")
+
+    if group_column and group_column in frame.columns:
+        groups = [(str(name), group) for name, group in frame.groupby(group_column)]
+    else:
+        groups = [("all", frame)]
+
+    curve_rows: list[dict[str, Any]] = []
+    summaries: list[dict[str, Any]] = []
+    for label, group in groups:
+        kmf = _KaplanMeierFitter()
+        kmf.fit(
+            durations=group[duration_column].astype(float),
+            event_observed=group[event_column].astype(bool),
+            label=label,
+        )
+        median = kmf.median_survival_time_
+        summaries.append(
+            {
+                "group": label,
+                "n": int(len(group)),
+                "events": int(group[event_column].astype(bool).sum()),
+                "median_survival_time": None if _pd.isna(median) else float(median),
+            }
+        )
+        survival_frame = kmf.survival_function_.reset_index()
+        timeline_column = survival_frame.columns[0]
+        estimate_column = survival_frame.columns[1]
+        for _, row in survival_frame.iterrows():
+            curve_rows.append(
+                {
+                    "group": label,
+                    "timeline": float(row[timeline_column]),
+                    "survival_probability": float(row[estimate_column]),
+                }
+            )
+
+    return {
+        "main": {
+            "groups": summaries,
+            "group_count": len(summaries),
+            "n_rows": int(len(frame)),
+        },
+        "survival_curve": records_to_dataset(curve_rows) if curve_rows else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# sensitivity_analysis
+# ---------------------------------------------------------------------------
+
+
+@node(
+    name="Sensitivity Analysis",
+    id="sensitivity_analysis",
+    category="Statistical Analysis",
+    icon="scales",
+    requirements=["SALib>=1.4", "numpy>=1.24"],
+    output_kinds={"indices": "dataset"},
+    outputs=["main", "indices"],
+    params={
+        "problem_json": {
+            "description": "SALib problem object with names and bounds.",
+            "multiline": True,
+        },
+        "outputs_json": {
+            "description": "Model output vector matching the generated samples.",
+            "multiline": True,
+        },
+    },
+)
+def sensitivity_analysis(
+    input=None,
+    problem_json: str = "",
+    outputs_json: str = "",
+) -> dict:
+    """Compute Sobol sensitivity indices from model outputs."""
+    if isinstance(input, dict):
+        problem_json = problem_json or json.dumps(input.get("problem") or {})
+        outputs_json = outputs_json or json.dumps(input.get("outputs") or [])
+    if not problem_json or not outputs_json:
+        raise ValueError("problem_json and outputs_json are required")
+
+    try:
+        import numpy as _np
+        from SALib.analyze import sobol as _sobol
+    except ImportError as exc:
+        raise RuntimeError(
+            "SALib and numpy are required. Add SALib and numpy to the workflow "
+            "environment and rebuild it."
+        ) from exc
+
+    try:
+        problem = json.loads(problem_json)
+        outputs = json.loads(outputs_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"problem_json and outputs_json must be valid JSON: {exc}") from exc
+    if not isinstance(problem, dict) or not isinstance(outputs, list):
+        raise ValueError("problem_json must be an object and outputs_json must be an array")
+    names = list(problem.get("names") or [])
+    if not names:
+        raise ValueError("problem_json must include a non-empty names array")
+
+    y = _np.asarray(outputs, dtype=float)
+    result = _sobol.analyze(problem, y, print_to_console=False)
+    rows = []
+    for index, name in enumerate(names):
+        rows.append(
+            {
+                "parameter": name,
+                "s1": float(result["S1"][index]),
+                "s1_conf": float(result["S1_conf"][index]),
+                "st": float(result["ST"][index]),
+                "st_conf": float(result["ST_conf"][index]),
+            }
+        )
+
+    return {
+        "main": {"parameter_count": len(names), "sample_count": int(len(y))},
+        "indices": records_to_dataset(rows),
+    }

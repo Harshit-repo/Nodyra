@@ -216,6 +216,78 @@ def test_web_feed_parse_raises_on_invalid_feed(store_ctx) -> None:
         web_feed_parse(input="<html><body>not a feed</body></html>")
 
 
+# ---------------------------------------------------------------------------
+# sitemap_crawl — XXE / entity expansion safety (F-SEC-1)
+# ---------------------------------------------------------------------------
+
+_VALID_SITEMAP = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://example.com/page1</loc></url>
+  <url><loc>https://example.com/page2</loc></url>
+</urlset>
+"""
+
+_BILLION_LAUGHS = """\
+<?xml version="1.0"?>
+<!DOCTYPE lolz [
+  <!ENTITY lol "lol">
+  <!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">
+  <!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;">
+  <!ENTITY lol4 "&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;">
+  <!ENTITY lol5 "&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;">
+]>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>&lol5;</loc></url>
+</urlset>
+"""
+
+_EXTERNAL_ENTITY = """\
+<?xml version="1.0"?>
+<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>&xxe;</loc></url>
+</urlset>
+"""
+
+
+def test_sitemap_crawl_rejects_entity_expansion_bomb(store_ctx) -> None:
+    """sitemap_crawl must raise ValueError on a billion-laughs XML bomb.
+
+    Before the fix: stdlib ElementTree.fromstring() expands entities, causing
+    exponential memory growth. After the fix: defusedxml raises ParseError
+    which is caught and re-raised as ValueError.
+
+    Pass the payload directly as `input` — the internal _load closure treats
+    any string that doesn't start with http(s):// as raw XML.
+    """
+    from noodle_nodes.browser_automation import sitemap_crawl
+
+    with pytest.raises(ValueError, match="(?i)(invalid|sitemap|xml|entity|dtd)"):
+        sitemap_crawl(input=_BILLION_LAUGHS)
+
+
+def test_sitemap_crawl_rejects_external_entity(store_ctx) -> None:
+    """sitemap_crawl must raise ValueError on an external-entity XXE payload.
+
+    Before the fix: stdlib ElementTree.fromstring() may follow SYSTEM URIs
+    and inject file contents into parsed fields. After the fix: defusedxml
+    blocks external entity references at parse time.
+    """
+    from noodle_nodes.browser_automation import sitemap_crawl
+
+    with pytest.raises(ValueError, match="(?i)(invalid|sitemap|xml|entity|dtd)"):
+        sitemap_crawl(input=_EXTERNAL_ENTITY)
+
+
+def test_sitemap_crawl_valid_xml_still_works(store_ctx) -> None:
+    """Valid sitemap XML must still be parsed correctly after the fix."""
+    pytest.importorskip("defusedxml")
+    from noodle_nodes.browser_automation import sitemap_crawl
+
+    result = sitemap_crawl(input=_VALID_SITEMAP)
+    assert result["url_count"] == 2
+
 
 # ---------------------------------------------------------------------------
 # browser_screenshot

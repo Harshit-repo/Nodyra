@@ -2,9 +2,10 @@ import { ReactFlowProvider } from "@xyflow/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useBlocker, useParams } from "react-router-dom";
 
-import { api, errorMessage, getToken, type RunStreamHandle, subscribeToRunEvents } from "./api";
+import { api, errorMessage, getOrgId, getToken, type RunStreamHandle, subscribeToRunEvents } from "./api";
 import { AiDraftModal } from "./AiDraftModal";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { RunnerPoolSelect } from "./RunnerPoolSelect";
 import { Canvas } from "./editor/Canvas";
 import { ChatPanel } from "./editor/ChatPanel";
 import { CommandPalette } from "./editor/CommandPalette";
@@ -28,6 +29,7 @@ import {
   useEnvironments,
   useNodes,
   usePinned,
+  useRunnerPools,
   useRuns,
   useWorkflow,
   useWorkflowCustomNodeManifests,
@@ -39,9 +41,11 @@ import type {
   AiDraftMode,
   AiFixStrategy,
   AiWorkflowDraftResponse,
+  Environment,
   GraphNode,
   RunEvent,
   RunInfo,
+  RunnerPoolInfo,
   WorkflowDetail,
   WorkflowGraph,
 } from "./types";
@@ -134,6 +138,106 @@ function buildPublishSummary(
   };
 }
 
+// ---- RunSettingsChip: stacked env+runner chip that opens a popover ----
+
+function RunSettingsChip({
+  environments,
+  environmentId,
+  onEnvChange,
+  pools,
+  defaultRunnerPoolId,
+  onRunnerChange,
+  saving,
+}: {
+  environments: Environment[];
+  environmentId: string | null;
+  onEnvChange: (id: string | null) => void;
+  pools: RunnerPoolInfo[];
+  defaultRunnerPoolId: string | null;
+  onRunnerChange: (id: string | null) => void;
+  saving: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const envName = environments.find((e) => e.id === environmentId)?.name ?? "No env";
+  const poolName = pools.find((p) => p.id === defaultRunnerPoolId)?.name ?? null;
+
+  return (
+    <div className="run-settings-wrap" ref={wrapRef}>
+      <button
+        type="button"
+        className={`run-settings-chip${open ? " is-open" : ""}`}
+        onClick={() => setOpen((v) => !v)}
+        title="Run settings"
+      >
+        {saving ? (
+          <span className="chip-saving">saving…</span>
+        ) : (
+          <>
+            <span className="chip-env">
+              {envName}
+              <span className="chip-caret">▾</span>
+            </span>
+            {poolName && (
+              <span className="chip-runner">
+                <span style={{ color: "#22c55e", lineHeight: 1 }}>●</span>
+                {poolName}
+              </span>
+            )}
+          </>
+        )}
+      </button>
+      {open && (
+        <div className="run-settings-popover">
+          <div className="rsp-title">Run settings</div>
+          <div className="rsp-section">
+            <div className="rsp-label">Environment</div>
+            <select
+              className="rsp-env-select"
+              value={environmentId ?? ""}
+              onChange={(e) => onEnvChange(e.target.value || null)}
+            >
+              {environments.map((env) => (
+                <option key={env.id} value={env.id}>
+                  {env.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="rsp-divider" />
+          <div className="rsp-section">
+            <div className="rsp-label">Runner override</div>
+            <RunnerPoolSelect
+              pools={pools}
+              value={defaultRunnerPoolId}
+              onChange={onRunnerChange}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Stable selectors defined outside the component so their references never
 // change between renders, preventing needless Zustand re-subscriptions.
 const selectHasTrigger = (s: EditorStore) => pickEditorRunTrigger(s.nodes) !== null;
@@ -201,12 +305,15 @@ export function EditorPage() {
   const nodesQuery = useNodes();
   const customNodesQuery = useWorkflowCustomNodeManifests(id ?? null);
   const environmentsQuery = useEnvironments();
+  const runnerPoolsQuery = useRunnerPools();
   const pinnedQuery = usePinned(id ?? null);
   const runsQuery = useRuns(id ?? null, { enabled: false });
   const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   const [name, setName] = useState("");
   const [active, setActive] = useState(false);
   const [environmentId, setEnvironmentId] = useState<string | null>(null);
+  const [defaultRunnerPoolId, setDefaultRunnerPoolId] = useState<string | null>(null);
+  const [chipSaving, setChipSaving] = useState(false);
   const [runTimeout, setRunTimeout] = useState<string>("");
   const [mcpEnabled, setMcpEnabled] = useState(false);
   const [mcpToolName, setMcpToolName] = useState("");
@@ -349,6 +456,7 @@ export function EditorPage() {
     setName(detail.name);
     setActive(detail.active);
     setEnvironmentId(detail.environment_id);
+    setDefaultRunnerPoolId(detail.default_runner_pool_id ?? null);
     setRunTimeout(
       detail.run_timeout_seconds != null ? String(detail.run_timeout_seconds) : "",
     );
@@ -518,6 +626,18 @@ export function EditorPage() {
     };
   }, [id, status, loadGraph, setPinned, openNdv]);
 
+  async function saveRunSetting(patch: { environment_id?: string | null; default_runner_pool_id?: string | null }) {
+    if (!id) return;
+    setChipSaving(true);
+    try {
+      await api.updateWorkflow(id, patch);
+    } catch {
+      // swallow — next explicit save will sync
+    } finally {
+      setChipSaving(false);
+    }
+  }
+
   function stopWebhookListen(): void {
     if (webhookTimerRef.current !== null) {
       window.clearInterval(webhookTimerRef.current);
@@ -565,6 +685,11 @@ export function EditorPage() {
     const headers: Record<string, string> = {};
     const token = getToken();
     if (token) headers.Authorization = `Bearer ${token}`;
+    // Send the active org so the export resolves to the right tenant. This GET
+    // bypasses the shared request() wrapper (it streams a blob), so the org
+    // header must be added explicitly or the export 404s for non-default orgs (R-10).
+    const orgId = getOrgId();
+    if (orgId) headers["X-Org-Id"] = orgId;
     try {
       const resp = await fetch(path, { headers, credentials: "include" });
       if (!resp.ok) {
@@ -600,6 +725,7 @@ export function EditorPage() {
         name: name.trim() || "Untitled workflow",
         active,
         environment_id: environmentId ?? undefined,
+        default_runner_pool_id: defaultRunnerPoolId,
         run_timeout_seconds: runTimeout === "" ? null : Math.max(0, parseFloat(runTimeout) || 0),
         mcp_enabled: mcpEnabled,
         mcp_tool_name: mcpToolName || null,
@@ -864,14 +990,14 @@ export function EditorPage() {
     );
   }
 
-  function connectRunStream(runId: string, targets?: string[]): void {
+  function connectRunStream(runId: string, targets?: string[], cache?: RunCache): void {
     // Tear down any prior run's stream before opening a new one — otherwise a
     // rapid re-run (or starting a second run) leaks the old socket and lets its
     // events keep mutating editor state for the wrong run.
     wsRef.current?.close();
     wsRef.current = null;
     setWaitingRunId(null);
-    startRun(runId, targets);
+    startRun(runId, targets, cache);
     wsRef.current = subscribeToRunEvents(runId, {
       onMessage: (data) => {
         const payload = data as RunEvent;
@@ -1035,7 +1161,7 @@ export function EditorPage() {
       if (cache && Object.keys(cache).length > 0) {
         notify(`Reused ${Object.keys(cache).length} upstream output(s).`, "info");
       }
-      connectRunStream(run_id, targets);
+      connectRunStream(run_id, targets, cache);
     } catch (err) {
       notify(`Could not start workflow run. ${errorMessage(err)}`, "error");
     }
@@ -1228,19 +1354,21 @@ export function EditorPage() {
           </span>
         </div>
         <div className="toolbar-right">
-          <select
-            className="toolbar-env"
-            title="Run environment"
-            value={environmentId ?? ""}
-            onChange={(e) => setEnvironmentId(e.target.value || null)}
-          >
-            {environments.length === 0 && <option value="">No environment</option>}
-            {environments.map((env) => (
-              <option key={env.id} value={env.id}>
-                {env.name}
-              </option>
-            ))}
-          </select>
+          <RunSettingsChip
+            environments={environments}
+            environmentId={environmentId}
+            onEnvChange={(envId) => {
+              setEnvironmentId(envId);
+              void saveRunSetting({ environment_id: envId });
+            }}
+            pools={runnerPoolsQuery.data ?? []}
+            defaultRunnerPoolId={defaultRunnerPoolId}
+            onRunnerChange={(poolId) => {
+              setDefaultRunnerPoolId(poolId);
+              void saveRunSetting({ default_runner_pool_id: poolId });
+            }}
+            saving={chipSaving}
+          />
           <input
             className="toolbar-timeout"
             type="number"

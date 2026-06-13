@@ -76,6 +76,27 @@ import {
   XCircle,
   type Icon,
 } from "@phosphor-icons/react";
+import {
+  Camera as LucideCamera,
+  CircleDot as LucideCircleDot,
+  Crosshair as LucideCrosshair,
+  FileCheck as LucideFileCheck,
+  FileJson as LucideFileJson,
+  FileKey as LucideFileKey,
+  FileSearch as LucideFileSearch,
+  Fingerprint as LucideFingerprint,
+  FolderSync as LucideFolderSync,
+  KeyRound as LucideKeyRound,
+  LocateFixed as LucideLocateFixed,
+  Map as LucideMap,
+  MapPin as LucideMapPin,
+  MousePointerClick as LucideMousePointerClick,
+  Network as LucideNetwork,
+  Route as LucideRoute,
+  ScanSearch as LucideScanSearch,
+  Shield as LucideShield,
+  type LucideIcon,
+} from "lucide-react";
 
 const ICON_MAP: Record<string, Icon> = {
   play: Play,
@@ -157,6 +178,30 @@ const ICON_MAP: Record<string, Icon> = {
   "thumbs-up": ThumbsUp,
   calculator: Calculator,
   rss: Rss,
+  "text-case": TextT,
+};
+
+const LUCIDE_ICON_MAP: Record<string, LucideIcon> = {
+  camera: LucideCamera,
+  "circle-dot": LucideCircleDot,
+  crosshair: LucideCrosshair,
+  "cursor-click": LucideMousePointerClick,
+  file: LucideFileSearch,
+  "file-check": LucideFileCheck,
+  "file-json": LucideFileJson,
+  "file-key": LucideFileKey,
+  "file-map": LucideMap,
+  "file-search": LucideFileSearch,
+  fingerprint: LucideFingerprint,
+  "folder-sync": LucideFolderSync,
+  "key-round": LucideKeyRound,
+  locate: LucideLocateFixed,
+  map: LucideMap,
+  "map-pin": LucideMapPin,
+  network: LucideNetwork,
+  route: LucideRoute,
+  "scan-search": LucideScanSearch,
+  shield: LucideShield,
 };
 
 // Inline SVG data for brand icons. Hex values are brand colors; very dark colors
@@ -374,9 +419,32 @@ export function NodeIcon({
     return <BrandNodeIcon slug={slug} size={size} className={className} />;
   }
 
-  const IconComponent = (name ? ICON_MAP[name] : undefined) ?? CircleDashed;
+  const IconComponent = name ? ICON_MAP[name] : undefined;
+  if (IconComponent) {
+    return (
+      <IconComponent
+        size={size}
+        weight="regular"
+        aria-hidden
+        className={className}
+      />
+    );
+  }
+
+  const LucideComponent = name ? LUCIDE_ICON_MAP[name] : undefined;
+  if (LucideComponent) {
+    return (
+      <LucideComponent
+        size={size}
+        strokeWidth={2}
+        aria-hidden
+        className={className}
+      />
+    );
+  }
+
   return (
-    <IconComponent
+    <CircleDashed
       size={size}
       weight="regular"
       aria-hidden

@@ -236,7 +236,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export interface WorkflowPatch {
   name?: string;
   active?: boolean;
-  environment_id?: string;
+  environment_id?: string | null;
+  default_runner_pool_id?: string | null;
   graph?: WorkflowGraph;
   error_workflow_id?: string | null;
   error_alerts?: Record<string, unknown>;

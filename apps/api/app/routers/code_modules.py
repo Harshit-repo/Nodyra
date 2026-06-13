@@ -98,7 +98,11 @@ router = APIRouter(prefix="/code-modules", tags=["code-modules"])
 
 
 async def _load(session: AsyncSession, module_id: str) -> CodeModule:
-    module = await session.get(CodeModule, module_id)
+    # populate_existing=True forces a real SELECT so the org-filter hook fires
+    # even when the row is already in the session identity map — same
+    # cross-tenant defence as credentials._load (R-1/R-11). CodeModule is
+    # org-scoped and the GET/preview routes have no extra permission gate.
+    module = await session.get(CodeModule, module_id, populate_existing=True)
     if module is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Code module not found")
     return module

@@ -94,6 +94,7 @@ class WorkflowDetail(BaseModel):
     published_version: int
     has_unpublished_changes: bool
     environment_id: str | None
+    default_runner_pool_id: str | None = None
     error_workflow_id: str | None = None
     error_alerts: dict[str, Any] = Field(default_factory=dict)
     allow_concurrent: bool = True
