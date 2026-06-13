@@ -231,6 +231,7 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
                   value={value}
                   onChange={(v) => setParam(spec.name, v)}
                   credentialContext={params}
+                  nodeId={node.id}
                 />
               )}
               {pickerParam === spec.name && (
