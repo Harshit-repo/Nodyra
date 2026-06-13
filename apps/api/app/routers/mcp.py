@@ -37,7 +37,13 @@ from app.mcp.tools import (
     list_workflow_tool_descriptors,
 )
 from app.models import User
-from app.security import _PERMISSION_MIN_ROLE, _role_for, current_user, role_allows
+from app.security import (
+    _PERMISSION_MIN_ROLE,
+    _REQUIRES_AUTHENTICATED,
+    _role_for,
+    current_user,
+    role_allows,
+)
 from app.tenancy import current_org_id
 
 logger = logging.getLogger(__name__)
@@ -63,7 +69,9 @@ async def _check_permission(
         return
     minimum = _PERMISSION_MIN_ROLE[permission]
     if user is None:
-        if settings.auth_required:
+        # Mirror require_permission: some permissions demand an authenticated
+        # actor even when auth_required is globally off (see security.py).
+        if settings.auth_required or permission in _REQUIRES_AUTHENTICATED:
             raise McpToolError("Authentication required for this tool.")
         return
     org_id = current_org_id.get() if settings.multi_tenancy_enabled else None
@@ -82,7 +90,9 @@ async def mcp_post(
     user: User | None = None
     if authorization:
         try:
-            user = await current_user(authorization=authorization, session=session)
+            user = await current_user(
+                request, authorization=authorization, session=session
+            )
         except HTTPException:
             return Response(
                 status_code=401, headers={"WWW-Authenticate": "Bearer"}

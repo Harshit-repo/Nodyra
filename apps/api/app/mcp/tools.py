@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -71,8 +71,15 @@ def _truncated(value: Any) -> Any:
 async def _load_workflow(session: AsyncSession, workflow_id: str) -> Workflow:
     if not workflow_id:
         raise McpToolError("workflow_id is required.")
+    # populate_existing: the instance may already sit in the session's
+    # identity map WITHOUT versions loaded (e.g. via _mcp_enabled_workflows),
+    # and a plain get() would skip the query — and the eager-load — entirely,
+    # leaving .versions to blow up on async lazy-load.
     workflow = await session.get(
-        Workflow, workflow_id, options=[selectinload(Workflow.versions)]
+        Workflow,
+        workflow_id,
+        options=[selectinload(Workflow.versions)],
+        populate_existing=True,
     )
     if workflow is None:
         raise McpToolError(f"Workflow not found: {workflow_id}")
@@ -97,19 +104,31 @@ async def _list_workflows(
 ) -> Any:
     limit = max(1, min(int(args.get("limit") or 50), 200))
     search = str(args.get("search") or "").strip().lower()
-    rows = (
-        await session.scalars(
-            select(Workflow)
-            .options(selectinload(Workflow.versions))
-            .order_by(Workflow.updated_at.desc())
-            .limit(500)
+    # Filter and cap in SQL, and don't eager-load every workflow's full
+    # version history just to count nodes — agents call this at the start of
+    # nearly every session, and with hundreds of versioned workflows that was
+    # tens of MB of graph JSON per call.
+    stmt = select(Workflow).order_by(Workflow.updated_at.desc()).limit(limit)
+    if search:
+        stmt = stmt.where(func.lower(Workflow.name).contains(search, autoescape=True))
+    rows = (await session.scalars(stmt)).all()
+
+    # Workflows without a draft fall back to the latest version's graph for
+    # node_count — fetch only those graphs, in one query.
+    need_version = [wf.id for wf in rows if not wf.draft_graph]
+    latest_graph: dict[str, dict] = {}
+    if need_version:
+        versions = await session.scalars(
+            select(WorkflowVersion)
+            .where(WorkflowVersion.workflow_id.in_(need_version))
+            .order_by(WorkflowVersion.workflow_id, WorkflowVersion.version.desc())
         )
-    ).all()
+        for v in versions.all():
+            latest_graph.setdefault(v.workflow_id, v.graph or EMPTY_GRAPH)
+
     out: list[dict] = []
     for wf in rows:
-        if search and search not in wf.name.lower():
-            continue
-        graph = _draft_graph(wf)
+        graph = wf.draft_graph or latest_graph.get(wf.id, EMPTY_GRAPH)
         out.append(
             {
                 "id": wf.id,
@@ -120,8 +139,6 @@ async def _list_workflows(
                 "mcp_enabled": bool(wf.mcp_enabled),
             }
         )
-        if len(out) >= limit:
-            break
     return {"workflows": out}
 
 
@@ -264,6 +281,10 @@ async def run_workflow_by_id(
         raise McpToolError(str(exc)) from exc
     except RuntimeError as exc:
         raise McpToolError(str(exc)) from exc
+    # Release the request-scoped connection before the (up to 300 s) wait —
+    # _run_outcome opens its own session, and holding this one open would pin
+    # a pooled connection per concurrent MCP run_workflow call.
+    await session.close()
     return await _run_outcome(run_id, wait_seconds)
 
 
@@ -574,10 +595,11 @@ def workflow_tool_name(workflow: Workflow) -> str:
 
 
 async def _mcp_enabled_workflows(session: AsyncSession) -> list[Workflow]:
+    # No version eager-load: descriptors only need the mcp_* columns, and the
+    # call path re-loads the chosen workflow (with versions) by id anyway.
     rows = await session.scalars(
         select(Workflow)
         .where(Workflow.mcp_enabled.is_(True))
-        .options(selectinload(Workflow.versions))
         .order_by(Workflow.updated_at.desc())
     )
     return list(rows.all())
@@ -586,10 +608,12 @@ async def _mcp_enabled_workflows(session: AsyncSession) -> list[Workflow]:
 async def list_workflow_tool_descriptors(session: AsyncSession) -> list[dict]:
     out: list[dict] = []
     static_names = {t.name for t in STATIC_TOOLS}
+    seen: set[str] = set()
     for wf in await _mcp_enabled_workflows(session):
         name = workflow_tool_name(wf)
-        if name in static_names:
+        if name in static_names or name in seen:
             continue
+        seen.add(name)
         schema = wf.mcp_parameters_schema
         out.append(
             {

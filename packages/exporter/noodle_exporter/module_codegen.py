@@ -15,6 +15,8 @@ import re
 
 from noodle.models import GraphNode, WorkflowGraph
 
+from .codegen import slugify
+
 _DEFAULT_NODE_FIELDS = GraphNode(id="_", type="_").model_dump(exclude={"id", "type", "params"})
 
 _HEADER_TEMPLATE = '''"""Noodle workflow: __NAME__ (code-first export)
@@ -177,11 +179,6 @@ if __name__ == "__main__":
 '''
 
 
-def _slugify(name: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-    return slug or "workflow"
-
-
 def _identifier(node_id: str, used: set) -> str:
     base = re.sub(r"\W", "_", node_id) or "node_fn"
     if base[0].isdigit() or keyword.iskeyword(base):
@@ -316,7 +313,7 @@ def workflow_to_module(
         finished_blocks.append(block)
 
     header = _HEADER_TEMPLATE.replace("__NAME__", name).replace(
-        "__SLUG__", _slugify(name)
+        "__SLUG__", slugify(name)
     )
     footer = (
         _FOOTER_TEMPLATE.replace("__DELEGATES__", repr(delegates))

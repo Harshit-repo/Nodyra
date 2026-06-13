@@ -11,7 +11,7 @@ guard as the AI HTTP tool.
 from __future__ import annotations
 
 import json
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -109,7 +109,7 @@ def _result_to_text(result: Any) -> str:
 
 
 class McpToolAdapter(ToolAdapter):
-    """Calls one remote MCP tool; a fresh session per invocation."""
+    """Calls one remote MCP tool; session opened once and reused across calls."""
 
     def __init__(
         self,
@@ -121,6 +121,8 @@ class McpToolAdapter(ToolAdapter):
         self._config = config
         self._schema = schema
         self._side_effecting = bool(side_effecting)
+        self._session: ClientSession | None = None
+        self._exit_stack: AsyncExitStack | None = None
 
     @property
     def schema(self) -> ToolSchema:
@@ -135,9 +137,33 @@ class McpToolAdapter(ToolAdapter):
             f"{self._schema.name}: MCP tools are async-only (invoke_async)"
         )
 
+    async def _ensure_session(self) -> ClientSession:
+        if self._session is not None:
+            return self._session
+        stack = AsyncExitStack()
+        try:
+            session = await stack.enter_async_context(_mcp_session(self._config))
+        except BaseException:
+            await stack.aclose()
+            raise
+        self._exit_stack = stack
+        self._session = session
+        return session
+
     async def invoke_async(self, arguments: dict[str, Any]) -> str:
-        async with _mcp_session(self._config) as session:
+        try:
+            session = await self._ensure_session()
             result = await session.call_tool(self._schema.name, dict(arguments or {}))
+        except Exception:
+            # Session-level failure — reset so the next call gets a fresh session.
+            if self._exit_stack is not None:
+                try:
+                    await self._exit_stack.aclose()
+                except Exception:
+                    pass
+            self._session = None
+            self._exit_stack = None
+            raise
         text = _result_to_text(result)
         if getattr(result, "isError", False):
             raise RuntimeError(text or f"{self._schema.name}: tool returned an error")
