@@ -9,7 +9,7 @@ Also hosts the batch-runs endpoint that dispatches a parameter matrix as
 N parallel workflow runs.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import (
     APIRouter,
@@ -18,23 +18,37 @@ from fastapi import (
     Header,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     WebSocket,
     status,
 )
-from sqlalchemy import select
+from fastapi.responses import FileResponse, HTMLResponse
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import SessionLocal, get_session
-from app.models import Artifact, Run, RunBatch, Runner, RunnerPool, Workflow, WorkflowVersion
+from app.models import (
+    Artifact,
+    Run,
+    RunBatch,
+    Runner,
+    RunnerPool,
+    RunQueueEntry,
+    Workflow,
+    WorkflowVersion,
+)
 from app.schemas import (
+    FleetSummary,
     RegistrationTokenRequest,
     RegistrationTokenResponse,
     RunBatchCreate,
     RunBatchInfo,
+    RunnerFleetHealth,
     RunnerInfo,
     RunnerPoolCreate,
+    RunnerPoolHealth,
     RunnerPoolInfo,
     RunnerPoolUpdate,
     RunnerUpdate,
@@ -54,6 +68,163 @@ from app.services.runner import start_run
 from app.services.ssh_onboard import onboard_machine
 
 router = APIRouter(prefix="/runner-pools", tags=["runner-pools"])
+
+
+# ---------------------------------------------------------------------------
+# Wheel index (program A2) — lets a runner on a clean machine install the
+# unpublished noodle-* packages. Public: the wheels are the OSS noodle packages
+# (no secrets) and uv sends no auth header. Exempted in main._AUTH_EXEMPT_PREFIXES.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/wheels", response_class=HTMLResponse, include_in_schema=False)
+@router.get("/wheels/", response_class=HTMLResponse, include_in_schema=False)
+async def runner_wheel_index() -> HTMLResponse:
+    """A ``--find-links`` page the agent points uv at. Built on first hit."""
+    from app.services.wheel_index import ensure_wheels
+
+    wheels = await ensure_wheels()
+    links = "\n".join(f'<a href="{w.name}">{w.name}</a><br>' for w in wheels)
+    return HTMLResponse(
+        f"<!doctype html><html><body>\n{links}\n</body></html>"
+    )
+
+
+@router.get("/wheels/{filename}", include_in_schema=False)
+async def runner_wheel_file(filename: str) -> FileResponse:
+    from app.services.wheel_index import wheels_dir
+
+    # Path-traversal guard: serve only a plain ``*.whl`` basename present in
+    # the cache directory.
+    if "/" in filename or "\\" in filename or not filename.endswith(".whl"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "wheel not found")
+    target = wheels_dir() / filename
+    if target.name != filename or not target.is_file():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "wheel not found")
+    return FileResponse(
+        target, media_type="application/octet-stream", filename=filename
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fleet health (program A6)
+# ---------------------------------------------------------------------------
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+@router.get("/health", response_model=RunnerFleetHealth)
+async def runner_fleet_health(
+    session: AsyncSession = Depends(get_session),
+) -> RunnerFleetHealth:
+    """Live fleet + per-pool health: capacity, queue depth, 24h success, and
+    whether a dispatcher is actually leasing each pool's provider. Powers the
+    Runner Pools health strip and the "no dispatcher reachable" banner."""
+    from app.services.dispatcher_health import live_providers
+
+    now = datetime.now(UTC)
+    pools = (await session.scalars(select(RunnerPool))).all()
+    runners = (await session.scalars(select(Runner))).all()
+    runners_by_pool: dict[str, list[Runner]] = {}
+    for runner in runners:
+        runners_by_pool.setdefault(runner.pool_id, []).append(runner)
+
+    # Queued depth + oldest available per pool (None key = local/in-process).
+    queued_rows = (
+        await session.execute(
+            select(
+                RunQueueEntry.runner_pool_id,
+                func.count().label("n"),
+                func.min(RunQueueEntry.available_at).label("oldest"),
+            )
+            .where(RunQueueEntry.status == "queued")
+            .group_by(RunQueueEntry.runner_pool_id)
+        )
+    ).all()
+    queued_by_pool = {pid: (n, oldest) for pid, n, oldest in queued_rows}
+
+    # 24h success rate per pool.
+    cutoff = now - timedelta(hours=24)
+    run_rows = (
+        await session.execute(
+            select(Run.runner_pool_id, Run.status, func.count().label("n"))
+            .where(Run.finished_at >= cutoff, Run.status.in_(("success", "error")))
+            .group_by(Run.runner_pool_id, Run.status)
+        )
+    ).all()
+    runs_by_pool: dict[str, dict[str, int]] = {}
+    for pid, run_status, n in run_rows:
+        runs_by_pool.setdefault(pid, {})[run_status] = n
+
+    in_flight = (
+        await session.scalar(
+            select(func.count()).select_from(Run).where(Run.status == "running")
+        )
+    ) or 0
+    live = await live_providers()
+
+    pool_healths: list[RunnerPoolHealth] = []
+    runners_total = 0
+    runners_online = 0
+    for pool in pools:
+        prunners = runners_by_pool.get(pool.id, [])
+        runners_total += len(prunners)
+        online = sum(1 for r in prunners if r.status in ("online", "busy"))
+        runners_online += online
+        cap_used = sum(r.current_runs for r in prunners)
+        cap_total = sum(r.max_concurrent_runs for r in prunners) or (
+            pool.max_concurrent_runs
+        )
+        qn, oldest = queued_by_pool.get(pool.id, (0, None))
+        oldest_aware = _as_utc(oldest)
+        oldest_secs = (
+            (now - oldest_aware).total_seconds() if oldest_aware else None
+        )
+        stats = runs_by_pool.get(pool.id, {})
+        succeeded = stats.get("success", 0)
+        finished = succeeded + stats.get("error", 0)
+        pool_healths.append(
+            RunnerPoolHealth(
+                pool_id=pool.id,
+                provider=pool.provider,
+                queue_depth=qn,
+                oldest_queued_seconds=oldest_secs,
+                capacity_used=cap_used,
+                capacity_total=cap_total,
+                online_count=online,
+                runner_count=len(prunners),
+                success_24h=(succeeded / finished) if finished else None,
+                dispatcher_reachable=pool.provider in live,
+            )
+        )
+
+    total_queue = sum(n for n, _ in queued_by_pool.values())
+    stuck = sorted(
+        {
+            h.provider
+            for h in pool_healths
+            if h.queue_depth > 0 and not h.dispatcher_reachable
+        }
+    )
+    # Local (no-pool) entries stuck when no dispatcher leases "local".
+    if queued_by_pool.get(None, (0, None))[0] > 0 and "local" not in live:
+        stuck = sorted({*stuck, "local"})
+
+    return RunnerFleetHealth(
+        fleet=FleetSummary(
+            runners_online=runners_online,
+            runners_total=runners_total,
+            queue_depth=total_queue,
+            in_flight=in_flight,
+            providers_dispatchable=sorted(live),
+            providers_stuck=stuck,
+        ),
+        pools=pool_healths,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +435,7 @@ async def update_runner(
 )
 async def create_registration_token(
     pool_id: str,
+    request: Request,
     body: RegistrationTokenRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> RegistrationTokenResponse:
@@ -303,8 +475,14 @@ async def create_registration_token(
     expires_at = datetime.fromtimestamp(
         datetime.now(UTC).timestamp() + ttl, tz=UTC
     )
+    # Prefer the operator-configured public URL; fall back to the URL this
+    # request came in on (correct in single-host setups). The web origin is
+    # never used — a runner must reach the API directly, not the SPA.
+    api_url = (settings.public_api_url or "").rstrip("/") or str(
+        request.base_url
+    ).rstrip("/")
     return RegistrationTokenResponse(
-        token=token, runner_id=runner.id, expires_at=expires_at
+        token=token, runner_id=runner.id, expires_at=expires_at, api_url=api_url
     )
 
 

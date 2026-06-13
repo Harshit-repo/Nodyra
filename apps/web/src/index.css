@@ -3514,6 +3514,199 @@ kbd {
 .status-dot.offline {
   background: var(--ink-3);
 }
+.status-dot.warn {
+  background: #e0b341;
+}
+
+/* --- Runner Pools: fleet summary + per-pool health (program A6) --- */
+.fleet-bar {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.fleet-stat {
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  padding: 13px 15px;
+}
+.fleet-k {
+  display: block;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.fleet-v {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-top: 6px;
+  font-size: 22px;
+  font-weight: 700;
+}
+.fleet-v small {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.fleet-v.fleet-warn {
+  color: #e0b341;
+}
+
+.pool-provider-badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--surface-3);
+  color: var(--accent-2);
+}
+
+.pool-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 2px;
+  padding: 11px 16px;
+  background: rgba(224, 179, 65, 0.12);
+  border-top: 1px solid rgba(224, 179, 65, 0.28);
+  border-bottom: 1px solid rgba(224, 179, 65, 0.28);
+  color: #f0cd83;
+  font-size: 13px;
+}
+.pool-banner strong {
+  color: #f6dca6;
+}
+.pool-banner code {
+  background: rgba(0, 0, 0, 0.25);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.pool-health {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-top: 1px solid var(--line-2);
+  margin-top: 12px;
+}
+.phc {
+  padding: 11px 16px;
+  border-right: 1px solid var(--line-2);
+}
+.phc:last-child {
+  border-right: 0;
+}
+.phc-k {
+  display: block;
+  color: var(--ink-3);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.phc-v {
+  display: block;
+  margin-top: 4px;
+  font-size: 17px;
+  font-weight: 700;
+}
+.phc-v small {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.phc-v.phc-ok {
+  color: #57c98a;
+}
+.phc-v.phc-warn {
+  color: #e0b341;
+}
+.phc-sub {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.hbar {
+  height: 6px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  margin-top: 8px;
+  overflow: hidden;
+}
+.hbar > i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+}
+
+.runner-table {
+  margin-top: 4px;
+}
+.runner-thead,
+.runner-trow {
+  display: grid;
+  grid-template-columns: 1.7fr 1.2fr 1fr 0.9fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 4px;
+}
+.runner-thead {
+  color: var(--ink-3);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.runner-trow {
+  border-top: 1px solid var(--line-2);
+  font-size: 13px;
+}
+.rt-name {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-weight: 600;
+}
+.rt-seen {
+  font-weight: 500;
+  margin-left: 4px;
+}
+.rt-labels {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.rt-cap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cap-bar {
+  flex: 1;
+  max-width: 70px;
+  height: 6px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.cap-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+}
+.rt-act {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
 .runner-install {
   margin-top: 8px;
   background: var(--surface-2);

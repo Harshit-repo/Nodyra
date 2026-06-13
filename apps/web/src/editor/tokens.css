@@ -18,4 +18,12 @@
   --editor-warning-text: #ffd479;
   --editor-info-bg: rgba(102, 178, 255, 0.1);
   --editor-info-border: rgba(102, 178, 255, 0.22);
+
+  /* Semantic aliases used in inline styles — map to editor palette values
+     so components resolve correctly instead of falling back to the raw
+     default (e.g. "red") when these vars were previously undefined. */
+  --color-danger: var(--editor-danger-text);
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-surface-alt: #1e1e1e;
+  --color-text: #d4d4d4;
 }

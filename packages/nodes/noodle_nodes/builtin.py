@@ -73,6 +73,7 @@ def _as_list(value: Any) -> list:
 
 
 @node(name="Manual Trigger", id="manual_trigger", category="Triggers", icon="play",
+      role="trigger",
       inputs=[], params={"data": {"description": "Sample payload for test runs."}})
 def manual_trigger(data: dict | None = None) -> dict:
     """Start the workflow on demand. Useful while building and testing."""
@@ -80,6 +81,7 @@ def manual_trigger(data: dict | None = None) -> dict:
 
 
 @node(name="Schedule Trigger", id="schedule_trigger", category="Triggers", icon="clock",
+      role="trigger",
       inputs=[], params={
           "interval": {"choices": ["minutes", "hours", "days"]},
           "every": {"description": "Run once per this many intervals."},
@@ -108,6 +110,7 @@ def schedule_trigger(
 
 
 @node(name="Webhook", id="webhook_trigger", category="Triggers", icon="webhook",
+      role="trigger",
       inputs=[], params={
           # --- Core (always shown) ---
           "http_method": {"choices": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
@@ -265,6 +268,7 @@ def webhook_trigger(
 
 
 @node(name="API Endpoint", id="api_endpoint", category="Triggers", icon="webhook",
+      role="trigger",
       inputs=[], outputs=["main"], params={
           "base_path": {
               "placeholder": "customers",
@@ -340,6 +344,7 @@ def api_endpoint(
 
 
 @node(name="Error Trigger", id="error_trigger", category="Triggers", icon="alert",
+      role="trigger",
       inputs=[], params={
           "error": {
               "description": (
@@ -370,6 +375,7 @@ def error_trigger(error: dict | None = None) -> dict:
 
 
 @node(name="Chat Trigger", id="chat_trigger", category="Triggers", icon="chat",
+      role="trigger",
       inputs=[],
       param_groups={"Options": [
           "initial_message", "input_placeholder", "title",
@@ -1083,7 +1089,7 @@ def _http_backoff_seconds(attempt: int) -> float:
     return min(2.0 ** attempt, 30.0)
 
 
-@node(name="HTTP Request", id="http_request", category="Transform", icon="globe", params={
+@node(name="HTTP Request", id="http_request", category="API", icon="globe", params={
     "url": {"placeholder": "https://api.example.com/data"},
     "method": {"choices": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
     "headers": {
@@ -1167,7 +1173,7 @@ def http_request(input: Any = None, url: str = "", method: str = "GET",
     return payload
 
 
-@node(name="GraphQL Request", id="graphql_request", category="Transform", icon="globe", params={
+@node(name="GraphQL Request", id="graphql_request", category="API", icon="globe", params={
     "url": {"placeholder": "https://api.example.com/graphql"},
     "query": {"multiline": True, "description": "GraphQL query or mutation."},
     "variables": {"description": "GraphQL variables object.", "key_value": True},
@@ -1216,7 +1222,7 @@ def graphql_request(
 @node(
     name="Respond to Webhook",
     id="respond_to_webhook",
-    category="Transform",
+    category="API",
     icon="webhook",
     params={
         "status_code": {
@@ -1259,7 +1265,7 @@ def _b64url_decode(payload: str) -> bytes:
     return base64.urlsafe_b64decode((payload + padding).encode("ascii"))
 
 
-@node(name="JWT", id="jwt", category="Transform", icon="key", params={
+@node(name="JWT", id="jwt", category="API", icon="key", params={
     "operation": {"choices": ["sign", "verify", "decode"]},
     "secret": {"description": "HMAC secret for sign/verify. Not required for decode."},
     "algorithm": {"group": "Options", "choices": ["HS256", "HS384", "HS512"]},

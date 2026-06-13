@@ -364,15 +364,21 @@ function edgeChangeId(change: EdgeChange): string {
 
 export const TRIGGER_CATEGORY = "Triggers";
 
+export function isTriggerManifest(manifest: NodeManifest | null | undefined): boolean {
+  return Boolean(
+    manifest && (manifest.role === "trigger" || manifest.category === TRIGGER_CATEGORY),
+  );
+}
+
 export function pickEditorRunTrigger(nodes: NoodleNode[]): NoodleNode | null {
-  const triggers = nodes.filter((n) => n.data.manifest?.category === TRIGGER_CATEGORY);
+  const triggers = nodes.filter((n) => isTriggerManifest(n.data.manifest));
   if (triggers.length === 0) return null;
   const manual = triggers.find((n) => n.data.manifest?.id === "manual_trigger");
   return manual ?? triggers[0];
 }
 
 export function isTriggerNode(node: NoodleNode | undefined): boolean {
-  return Boolean(node && node.data.manifest?.category === TRIGGER_CATEGORY);
+  return Boolean(node && isTriggerManifest(node.data.manifest));
 }
 
 function deriveSwitchOutputs(rules: unknown): string[] {

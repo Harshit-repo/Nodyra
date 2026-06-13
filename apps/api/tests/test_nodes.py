@@ -76,6 +76,29 @@ async def test_list_nodes_returns_manifests(client: AsyncClient) -> None:
     assert legacy_agent["replacement_id"] == "ai_agent_v2"
 
 
+async def test_list_nodes_filters_api_category(client: AsyncClient) -> None:
+    resp = await client.get("/nodes?category=API")
+    assert resp.status_code == 200
+    manifests = resp.json()
+    ids = {m["id"] for m in manifests}
+    assert {
+        "respond_to_webhook",
+        "http_request",
+        "graphql_request",
+        "jwt",
+    } <= ids
+    assert "webhook_trigger" not in ids
+    assert "api_endpoint" not in ids
+    assert {m["category"] for m in manifests} == {"API"}
+
+    trigger_resp = await client.get("/nodes?category=Triggers")
+    assert trigger_resp.status_code == 200
+    triggers = trigger_resp.json()
+    trigger_ids = {m["id"] for m in triggers}
+    assert {"webhook_trigger", "api_endpoint"} <= trigger_ids
+    assert next(m for m in triggers if m["id"] == "api_endpoint")["role"] == "trigger"
+
+
 async def test_generated_node_source_endpoint_uses_stored_source(
     client: AsyncClient,
 ) -> None:

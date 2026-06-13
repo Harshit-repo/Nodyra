@@ -69,9 +69,7 @@ def _is_due(params: dict, last: datetime, now: datetime) -> bool:
         # "0 9 * * *" really means 09:00 *local* (not 09:00 UTC). croniter
         # respects the tzinfo of the base datetime. Resolution chain:
         # node-level ``tz`` → app-wide default (settings.app_timezone) → UTC.
-        raw_tz_name = (
-            str(params.get("tz", "") or "").strip() or settings.app_timezone
-        )
+        raw_tz_name = str(params.get("tz", "") or "").strip() or settings.app_timezone
         tz = _resolve_tz(raw_tz_name)
         if tz is None:
             # Unknown IANA name — refuse to fire rather than silently use UTC.
@@ -153,9 +151,7 @@ async def _resolve_node_auth(
         )
 
 
-def _matches_basic_auth(
-    auth_header: str | None, expected_user: str, expected_pass: str
-) -> bool:
+def _matches_basic_auth(auth_header: str | None, expected_user: str, expected_pass: str) -> bool:
     if not auth_header or not auth_header.lower().startswith("basic "):
         return False
     import base64
@@ -170,9 +166,7 @@ def _matches_basic_auth(
     return user == expected_user and password == expected_pass
 
 
-def _webhook_auth_passes(
-    node_params: dict, resolved: dict, headers: dict, query: dict
-) -> bool:
+def _webhook_auth_passes(node_params: dict, resolved: dict, headers: dict, query: dict) -> bool:
     """Return True if the incoming request satisfies the node's auth_type."""
     auth_type = str(node_params.get("auth_type") or "none").lower()
     if auth_type == "none":
@@ -312,14 +306,12 @@ def _webhook_hmac_passes(
     lower_headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
     provided = lower_headers.get(header_name, "")
     if prefix and provided.startswith(prefix):
-        provided = provided[len(prefix):]
+        provided = provided[len(prefix) :]
     expected = hmac.new(secret.encode(), raw_body or b"", digestmod).hexdigest()
     return hmac.compare_digest(provided.strip(), expected)
 
 
-def _webhook_ip_allowed(
-    node_params: dict, client_ip: str | None, headers: dict
-) -> bool:
+def _webhook_ip_allowed(node_params: dict, client_ip: str | None, headers: dict) -> bool:
     """Return True if ``client_ip`` is permitted by the node's ip_allowlist.
 
     An empty allowlist permits everyone. A non-empty allowlist with no parseable
@@ -384,9 +376,7 @@ def _webhook_dedup_key(node_params: dict, request_payload: dict) -> str | None:
     return key or None
 
 
-def _webhook_on_received_response(
-    node_params: dict, request_payload: dict
-) -> dict | None:
+def _webhook_on_received_response(node_params: dict, request_payload: dict) -> dict | None:
     """Shape the immediate ``On Received`` response for a webhook node.
 
     Returns ``None`` to use the default JSON ack (``response_data`` unset or the
@@ -422,15 +412,13 @@ def _webhook_on_received_response(
         headers_spec = node_params.get("response_headers") or {}
         headers: dict[str, str] = {}
         if isinstance(headers_spec, dict):
-            headers = {
-                str(k): str(evaluate(v, ctx)) for k, v in headers_spec.items()
-            }
+            headers = {str(k): str(evaluate(v, ctx)) for k, v in headers_spec.items()}
         return {"status": code, "headers": headers, "body": body, "no_body": False}
     return None
 
 
 def _capture_raw_body_artifact(
-    raw_body: bytes, headers: dict, run_id: str, node_id: str
+    raw_body: bytes, headers: dict, run_id: str, node_id: str, *, org_id: str | None = None
 ) -> dict | None:
     """Write the raw request bytes as an artifact for ``run_id``.
 
@@ -450,8 +438,7 @@ def _capture_raw_body_artifact(
         return None
     lower_headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
     content_type = (
-        lower_headers.get("content-type", "").split(";")[0].strip()
-        or "application/octet-stream"
+        lower_headers.get("content-type", "").split(";")[0].strip() or "application/octet-stream"
     )
     ext = mimetypes.guess_extension(content_type) or ".bin"
     store = LocalArtifactStore(
@@ -459,6 +446,7 @@ def _capture_raw_body_artifact(
         run_id,
         max_bytes=settings.max_artifact_bytes,
         max_count=settings.max_artifacts_per_run,
+        key_prefix=org_id or "",
     )
     token = current_node_id.set(node_id)
     try:
@@ -511,9 +499,7 @@ async def _await_run_terminal(run_id: str, timeout: float) -> str | None:
     try:
         while True:
             async with SessionLocal() as session:
-                status = await session.scalar(
-                    select(Run.status).where(Run.id == run_id)
-                )
+                status = await session.scalar(select(Run.status).where(Run.id == run_id))
             if status in _TERMINAL_RUN_STATES:
                 return str(status)
             remaining = deadline - loop.time()
@@ -521,9 +507,7 @@ async def _await_run_terminal(run_id: str, timeout: float) -> str | None:
                 return None
             # Wake early when the broker signals completion; otherwise poll.
             with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(
-                    asyncio.shield(broker_task), timeout=min(0.25, remaining)
-                )
+                await asyncio.wait_for(asyncio.shield(broker_task), timeout=min(0.25, remaining))
     finally:
         if not broker_task.done():
             broker_task.cancel()
@@ -578,9 +562,7 @@ async def wait_for_webhook_result(
         recorded = getattr(run, "webhook_response", None) if run else None
         if mode == "Respond Node" and isinstance(recorded, dict):
             return {
-                "status": _int_or(
-                    recorded.get("status_code") or recorded.get("status"), 200
-                ),
+                "status": _int_or(recorded.get("status_code") or recorded.get("status"), 200),
                 "headers": recorded.get("headers") or {},
                 "body": recorded.get("body"),
                 "no_body": False,
@@ -683,9 +665,7 @@ def _match_api_route(
         params = _match_webhook_path(template, path)
         if params is None:
             continue
-        specificity = sum(
-            1 for seg in _path_segments(template) if not seg.startswith("{")
-        )
+        specificity = sum(1 for seg in _path_segments(template) if not seg.startswith("{"))
         if best is None or specificity > best[0]:
             best = (specificity, str(route.get("output") or ""), params)
     if best is None:
@@ -723,9 +703,7 @@ async def dispatch_webhook(
     sync_info: dict | None = None
     headers = request_payload.get("headers") or {}
     query = request_payload.get("query") or {}
-    workflows = (
-        await _all_workflows() if prefer_draft else await _active_workflows()
-    )
+    workflows = await _all_workflows() if prefer_draft else await _active_workflows()
     async with SessionLocal() as dispatch_session:
         for workflow in workflows:
             graph: dict | None = None
@@ -786,7 +764,9 @@ async def dispatch_webhook(
                     ip_rejected = True
                     continue
                 resolved_auth = await _resolve_node_auth(
-                    node_params, workflow.id, workflow.environment_id,
+                    node_params,
+                    workflow.id,
+                    workflow.environment_id,
                     session=dispatch_session,
                 )
                 if not _webhook_auth_passes(node_params, resolved_auth, headers, query):
@@ -818,15 +798,16 @@ async def dispatch_webhook(
                 node_payload = {**request_payload, "params": matched_params}
                 raw_ref: dict | None = None
                 pre_run_id: str | None = None
-                if (
-                    str(node_params.get("raw_body") or "off").lower() == "on"
-                    and raw_body
-                ):
+                if str(node_params.get("raw_body") or "off").lower() == "on" and raw_body:
                     from uuid import uuid4
 
                     pre_run_id = uuid4().hex
                     raw_ref = _capture_raw_body_artifact(
-                        raw_body, headers, pre_run_id, node["id"]
+                        raw_body,
+                        headers,
+                        pre_run_id,
+                        node["id"],
+                        org_id=getattr(workflow, "org_id", None),
                     )
                     if raw_ref is not None:
                         node_payload = {**node_payload, "raw_body": raw_ref}
@@ -886,9 +867,7 @@ async def dispatch_webhook(
 async def _all_workflows() -> list[Workflow]:
     """Used by the editor test URL — draft-mode dispatch ignores `active`."""
     async with SessionLocal() as session:
-        result = await session.scalars(
-            select(Workflow).options(selectinload(Workflow.versions))
-        )
+        result = await session.scalars(select(Workflow).options(selectinload(Workflow.versions)))
         return list(result.all())
 
 
@@ -936,6 +915,7 @@ async def _execute_poll(
                 node_params = node.get("params") or {}
                 break
         from app.services.credentials import resolve_credential_refs
+
         resolved = await resolve_credential_refs(
             session,
             node_params,
@@ -1050,10 +1030,7 @@ async def _tick() -> None:
         deployments = (
             await session.scalars(select(Deployment).where(Deployment.active.is_(True)))
         ).all()
-        states = {
-            s.workflow_id: s
-            for s in (await session.scalars(select(ScheduleState))).all()
-        }
+        states = {s.workflow_id: s for s in (await session.scalars(select(ScheduleState))).all()}
 
         wf_by_id = {wf.id: wf for wf in workflows}
         deployments_by_workflow: dict[str, list[Deployment]] = {}
@@ -1063,18 +1040,14 @@ async def _tick() -> None:
         # Batch-load the pinned versions referenced by active deployments so the
         # loop below doesn't issue one ``session.get(WorkflowVersion)`` per
         # deployment every tick.
-        dep_version_ids = {
-            d.workflow_version_id for d in deployments if d.workflow_version_id
-        }
+        dep_version_ids = {d.workflow_version_id for d in deployments if d.workflow_version_id}
         versions_by_id: dict[str, WorkflowVersion] = {}
         if dep_version_ids:
             versions_by_id = {
                 v.id: v
                 for v in (
                     await session.scalars(
-                        select(WorkflowVersion).where(
-                            WorkflowVersion.id.in_(dep_version_ids)
-                        )
+                        select(WorkflowVersion).where(WorkflowVersion.id.in_(dep_version_ids))
                     )
                 ).all()
             }
@@ -1126,11 +1099,7 @@ async def _tick() -> None:
             latest = workflow.versions[-1]
             graph = latest.graph or {}
             schedule = next(
-                (
-                    n
-                    for n in graph.get("nodes", [])
-                    if n.get("type") == "schedule_trigger"
-                ),
+                (n for n in graph.get("nodes", []) if n.get("type") == "schedule_trigger"),
                 None,
             )
             if schedule is None:

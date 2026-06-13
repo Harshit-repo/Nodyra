@@ -126,6 +126,16 @@ export function useRunnerPools(
   });
 }
 
+export function useRunnerFleetHealth(
+  options?: QueryControls<Awaited<ReturnType<typeof runnerPoolsApi.health>>>,
+) {
+  return useQuery({
+    queryKey: queryKeys.runnerFleetHealth,
+    queryFn: runnerPoolsApi.health,
+    ...options,
+  });
+}
+
 export function useRunnerPoolRunners(
   poolId: string | null,
   options?: QueryControls<Awaited<ReturnType<typeof runnerPoolsApi.listRunners>>>,

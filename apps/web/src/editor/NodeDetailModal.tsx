@@ -4,7 +4,7 @@ import { categoryColor } from "../categories";
 import { isBrandIconName, NodeIcon } from "../NodeIcon";
 import { useModalA11y } from "../useModalA11y";
 import { NDVPanels } from "./NDVPanels";
-import { useEditor } from "./store";
+import { isTriggerManifest, useEditor } from "./store";
 
 export function NodeDetailModal({ nodeId }: { nodeId: string }) {
   const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
@@ -19,7 +19,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
   const nameSavedTimerRef = useRef<number | null>(null);
   const toggleDisabled = useEditor((s) => s.toggleDisabled);
   const deleteNode = useEditor((s) => s.deleteNode);
-  const isTrigger = node?.data.manifest?.category === "Triggers";
+  const isTrigger = isTriggerManifest(node?.data.manifest);
   // Only allow running a node individually when it is wired to a trigger.
   const hasTriggerUpstream = useEditor((s) => {
     if (!node || isTrigger) return true;
@@ -29,8 +29,8 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
       if (arr) arr.push(e.source);
       else bySource.set(e.target, [e.source]);
     }
-    const catById = new Map(
-      s.nodes.map((n) => [n.id, n.data.manifest?.category]),
+    const triggerById = new Map(
+      s.nodes.map((n) => [n.id, isTriggerManifest(n.data.manifest)]),
     );
     const visited = new Set<string>([node.id]);
     const queue = [node.id];
@@ -39,7 +39,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
       for (const prev of bySource.get(cur) ?? []) {
         if (visited.has(prev)) continue;
         visited.add(prev);
-        if (catById.get(prev) === "Triggers") return true;
+        if (triggerById.get(prev)) return true;
         queue.push(prev);
       }
     }

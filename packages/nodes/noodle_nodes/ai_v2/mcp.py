@@ -253,17 +253,23 @@ async def mcp_call_tool(
     arguments: Any = None,
 ) -> Any:
     """Call one tool on an external MCP server and return its result."""
-    if not str(tool_name or "").strip():
+    name = str(tool_name or "").strip()
+    if not name:
         raise ValueError("mcp_call_tool: tool_name is required")
     config = _config_from_credentials(credentials)
     args = _parse_arguments(arguments)
     if not args and isinstance(input, dict):
         args = input
-    async with _mcp_session(config) as session:
-        result = await session.call_tool(str(tool_name).strip(), args)
-    text = _result_to_text(result)
-    if getattr(result, "isError", False):
-        raise RuntimeError(text or f"mcp_call_tool: {tool_name} returned an error")
+    schema = ToolSchema(name=name, description="", parameters=ToolParameterSchema())
+    adapter = McpToolAdapter(config=config, schema=schema)
+    try:
+        text = await adapter.invoke_async(args)
+    finally:
+        if adapter._exit_stack is not None:
+            try:
+                await adapter._exit_stack.aclose()
+            except Exception:
+                pass
     try:
         return json.loads(text)
     except ValueError:

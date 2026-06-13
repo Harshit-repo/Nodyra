@@ -783,6 +783,38 @@ class RunnerInfo(BaseModel):
     updated_at: datetime
 
 
+class RunnerPoolHealth(BaseModel):
+    """Live health for one pool (program A6) — feeds the pool card's health
+    strip and the "no dispatcher reachable" banner."""
+
+    pool_id: str
+    provider: str
+    queue_depth: int
+    oldest_queued_seconds: float | None
+    capacity_used: int
+    capacity_total: int
+    online_count: int
+    runner_count: int
+    success_24h: float | None  # 0..1 over runs finished in the last 24h
+    dispatcher_reachable: bool
+
+
+class FleetSummary(BaseModel):
+    runners_online: int
+    runners_total: int
+    queue_depth: int
+    in_flight: int
+    # Providers a dispatcher is leasing right now, and providers that have
+    # queued runs but nothing dispatching them (the degraded state).
+    providers_dispatchable: list[str]
+    providers_stuck: list[str]
+
+
+class RunnerFleetHealth(BaseModel):
+    fleet: FleetSummary
+    pools: list[RunnerPoolHealth]
+
+
 class RegistrationTokenRequest(BaseModel):
     """Optional machine details captured when minting a token.
 
@@ -799,6 +831,10 @@ class RegistrationTokenResponse(BaseModel):
     token: str
     runner_id: str
     expires_at: datetime
+    # The URL a runner should dial back to. Derived from PUBLIC_API_URL when set,
+    # otherwise the request's own base URL — never the web origin, which is wrong
+    # for any split web/API deployment. The install snippet uses this verbatim.
+    api_url: str
 
 
 class RunnerUpdate(BaseModel):

@@ -7,11 +7,10 @@ rename migration is needed.
 """
 
 import pytest
+import pytest_asyncio
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
-
-import pytest_asyncio
 
 from app import models
 from app.config import settings
@@ -57,6 +56,23 @@ def test_make_artifact_store_uses_org_prefix(tmp_path, monkeypatch):
     assert ref["storage_key"].startswith("org-z/runs/run9/")
 
 
+def test_webhook_raw_body_capture_uses_org_prefix(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "artifacts_dir", str(tmp_path))
+    from app.services.triggers import _capture_raw_body_artifact
+
+    ref = _capture_raw_body_artifact(
+        b"payload",
+        {"content-type": "text/plain"},
+        "run-webhook",
+        "hook",
+        org_id="org-z",
+    )
+
+    assert ref is not None
+    assert ref["storage_key"].startswith("org-z/runs/run-webhook/hook/")
+    assert (tmp_path / ref["storage_key"]).read_bytes() == b"payload"
+
+
 def test_local_backend_delete_run_reclaims_both_layouts(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "artifacts_dir", str(tmp_path))
     from app.services.artifact_backends import LocalBackend
@@ -76,9 +92,7 @@ def test_local_backend_delete_run_reclaims_both_layouts(tmp_path, monkeypatch):
 @pytest_asyncio.fixture
 async def session(tmp_path):
     install_org_filter()
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///{tmp_path / 'art.db'}", poolclass=NullPool
-    )
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'art.db'}", poolclass=NullPool)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     maker = async_sessionmaker(engine, expire_on_commit=False)
@@ -174,7 +188,10 @@ async def test_artifact_of_foreign_org_run_is_404(session, monkeypatch):
         await session.flush()
         session.add(
             models.Artifact(
-                id="artb", run_id=run.id, node_id="n", name="a.bin",
+                id="artb",
+                run_id=run.id,
+                node_id="n",
+                name="a.bin",
                 storage_key="org-b/runs/x/n/a.bin",
             )
         )
@@ -195,5 +212,62 @@ async def test_artifact_of_foreign_org_run_is_404(session, monkeypatch):
     try:
         row = await _get_artifact(session, "artb")
         assert row.id == "artb"
+    finally:
+        current_org_id.reset(token)
+
+
+async def test_runless_artifact_is_scoped_by_storage_key(session, monkeypatch):
+    from app.routers.artifacts import _get_artifact
+
+    monkeypatch.setattr(settings, "multi_tenancy_enabled", True)
+    token = current_org_id.set("org-b")
+    try:
+        session.add_all(
+            [
+                models.Organization(id=DEFAULT_ORG_ID, name="D", slug="default"),
+                models.Organization(id="org-a", name="A", slug="a"),
+                models.Organization(id="org-b", name="B", slug="b"),
+                models.Artifact(
+                    id="upload-b",
+                    run_id=None,
+                    node_id=None,
+                    name="b.txt",
+                    storage_key="org-b/uploads/upload-b/b.txt",
+                ),
+                models.Artifact(
+                    id="legacy-upload",
+                    run_id=None,
+                    node_id=None,
+                    name="legacy.txt",
+                    storage_key="uploads/legacy-upload/legacy.txt",
+                ),
+            ]
+        )
+        await session.commit()
+    finally:
+        current_org_id.reset(token)
+
+    token = current_org_id.set("org-a")
+    try:
+        with pytest.raises(HTTPException) as exc:
+            await _get_artifact(session, "upload-b")
+        assert exc.value.status_code == 404
+    finally:
+        current_org_id.reset(token)
+
+    token = current_org_id.set("org-b")
+    try:
+        row = await _get_artifact(session, "upload-b")
+        assert row.id == "upload-b"
+        with pytest.raises(HTTPException) as exc:
+            await _get_artifact(session, "legacy-upload")
+        assert exc.value.status_code == 404
+    finally:
+        current_org_id.reset(token)
+
+    token = current_org_id.set(DEFAULT_ORG_ID)
+    try:
+        row = await _get_artifact(session, "legacy-upload")
+        assert row.id == "legacy-upload"
     finally:
         current_org_id.reset(token)

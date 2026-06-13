@@ -21,6 +21,7 @@ export const queryKeys = {
 
   environments: ["environments"] as const,
   runnerPools: ["runner-pools"] as const,
+  runnerFleetHealth: ["runner-pools", "health"] as const,
   runnerPoolRunners: (poolId: string) =>
     ["runner-pools", poolId, "runners"] as const,
   systemSettings: ["system-settings"] as const,

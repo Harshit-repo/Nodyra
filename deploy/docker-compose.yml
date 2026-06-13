@@ -51,9 +51,12 @@ services:
       REDIS_URL: redis://redis:6379/0
       QUEUE_BACKEND: redis
       # Control plane: runs are enqueued here and executed by the worker
-      # service below. Keep DISPATCH_ROLE=inline instead if you use agent or
-      # kubernetes runner pools (their WebSockets terminate on the API).
-      DISPATCH_ROLE: disabled
+      # service below. ``control`` keeps that split (the worker still runs all
+      # local + docker execution) while ALSO dispatching agent/kubernetes
+      # runner pools — their WebSockets terminate on this API replica, so it
+      # must be the one that leases their runs. Use ``disabled`` only if you
+      # run no agent/kubernetes pools.
+      DISPATCH_ROLE: control
       SCHEDULER_ROLE: leader
       CORS_ORIGINS: http://localhost:5173
       ENABLE_INPROCESS_SCHEDULER: "true"

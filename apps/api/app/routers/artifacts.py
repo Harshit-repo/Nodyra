@@ -1,3 +1,5 @@
+import contextlib
+import logging
 import uuid
 from pathlib import Path
 
@@ -12,7 +14,6 @@ from app.models import Artifact, Run
 from app.schemas import ArtifactInfo, DatasetQueryRequest, DatasetQueryResult
 from app.security import require_permission
 from app.services.artifact_backends import (
-    _artifact_base_dir,
     _resolve_local_path,
     get_backend,
 )
@@ -21,6 +22,20 @@ from app.services.datasets_query import DatasetQueryError, run_dataset_query
 from app.tenancy import DEFAULT_ORG_ID, active_org_id
 
 router = APIRouter(tags=["artifacts"])
+logger = logging.getLogger(__name__)
+
+
+def _runless_artifact_visible(row: Artifact) -> bool:
+    """Run-less uploads have no org_id column; their storage key carries it."""
+    if not settings.multi_tenancy_enabled:
+        return True
+    org_id = active_org_id() or DEFAULT_ORG_ID
+    storage_key = str(row.storage_key or "")
+    if storage_key.startswith(f"{org_id}/"):
+        return True
+    # Legacy pre-namespace uploads were stored as uploads/{artifact_id}/...
+    # and belong to the default org after MT is enabled.
+    return org_id == DEFAULT_ORG_ID and storage_key.startswith("uploads/")
 
 
 def _info(row: Artifact) -> ArtifactInfo:
@@ -52,6 +67,8 @@ async def _get_artifact(session: AsyncSession, artifact_id: str) -> Artifact:
     if row.run_id is not None and (
         await session.get(Run, row.run_id, populate_existing=True) is None
     ):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Artifact not found")
+    if row.run_id is None and not _runless_artifact_visible(row):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Artifact not found")
     return row
 
@@ -153,9 +170,7 @@ async def query_artifact(
             "SQL query is only supported for Parquet-backed datasets",
         )
     try:
-        result = await asyncio.to_thread(
-            run_dataset_query, row, payload.sql, payload.limit
-        )
+        result = await asyncio.to_thread(run_dataset_query, row, payload.sql, payload.limit)
     except DatasetQueryError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return DatasetQueryResult(**result)
@@ -209,6 +224,32 @@ async def upload_artifact(
     artifact_path.write_bytes(content)
 
     backend = get_backend()
+    storage_backend = "local"
+    if backend.name != "local":
+        upload_row = Artifact(
+            id=artifact_id,
+            run_id=None,
+            node_id=None,
+            name=filename,
+            kind="upload",
+            content_type=content_type,
+            size_bytes=len(content),
+            storage_backend=backend.name,
+            storage_key=storage_key,
+        )
+        try:
+            backend.upload_from_local(upload_row, artifact_path)
+        except Exception:  # noqa: BLE001 - keep the local file as a fallback
+            logger.exception(
+                "upload_artifact: failed to rehome upload %s to backend %s; keeping local",
+                artifact_id,
+                backend.name,
+            )
+        else:
+            storage_backend = backend.name
+            with contextlib.suppress(OSError):
+                artifact_path.unlink(missing_ok=True)
+
     row = Artifact(
         id=artifact_id,
         run_id=None,
@@ -217,7 +258,7 @@ async def upload_artifact(
         kind="upload",
         content_type=content_type,
         size_bytes=len(content),
-        storage_backend=backend.name,
+        storage_backend=storage_backend,
         storage_key=storage_key,
     )
     session.add(row)
@@ -231,9 +272,7 @@ async def upload_artifact(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_permission("artifact:delete"))],
 )
-async def delete_artifact(
-    artifact_id: str, session: AsyncSession = Depends(get_session)
-) -> None:
+async def delete_artifact(artifact_id: str, session: AsyncSession = Depends(get_session)) -> None:
     row = await _get_artifact(session, artifact_id)
     delete_artifact_files([row])
     await session.delete(row)

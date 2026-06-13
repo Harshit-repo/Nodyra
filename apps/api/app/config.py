@@ -18,13 +18,22 @@ class Settings(BaseSettings):
     #   inline   -> this process leases its own durable-queue entries and
     #               executes them (single-process default; today's behaviour)
     #   worker   -> standalone execution role, started via
-    #               ``python -m app.worker_main`` (no HTTP surface)
+    #               ``python -m app.worker_main`` (no HTTP surface). Leases
+    #               local + docker entries (execution it can host itself).
+    #   control  -> control plane that ALSO dispatches agent/kubernetes pools:
+    #               parks every run on the durable queue (like ``disabled``)
+    #               but runs a dispatch loop leasing only the WS-terminating
+    #               providers {agent, kubernetes}, whose run assignment must
+    #               originate from the process holding the runner WebSocket
+    #               (this one). Pair with a ``worker`` for local/docker.
     #   disabled -> pure control plane: no dispatch loop, no runtime pool;
     #               every run is parked on the durable queue for workers.
-    # worker/disabled require Redis (run events must cross processes — the
-    # in-process broker would strand WebSocket clients on the API replica)
+    #               Agent/kubernetes pools STAY queued (nothing leases them) —
+    #               use ``control`` instead when you run those pools.
+    # worker/control/disabled require Redis (run events must cross processes —
+    # the in-process broker would strand WebSocket clients on the API replica)
     # and Postgres (SKIP LOCKED queue leasing). See dispatch_topology_errors().
-    dispatch_role: Literal["inline", "worker", "disabled"] = "inline"
+    dispatch_role: Literal["inline", "worker", "control", "disabled"] = "inline"
     # ``ingress`` (default) is the production posture: this process serves the
     # public ``/webhook/{path}`` routes. ``inline`` is the same routing for a
     # minimal single-user setup. ``disabled`` unmounts the public webhook routes
@@ -355,8 +364,9 @@ class Settings(BaseSettings):
             warnings.append(
                 "dispatch_role=disabled: agent/kubernetes runner-pool runs "
                 "need their WebSocket-terminating API replica to dispatch "
-                "them; in an api+worker split those pools stay queued. Keep "
-                "one replica with dispatch_role=inline if you use them."
+                "them; in an api+worker split those pools stay queued. Use "
+                "dispatch_role=control on the API replica (keeps the split — "
+                "the worker still runs local/docker) if you use those pools."
             )
         return warnings
 

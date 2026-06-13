@@ -23,8 +23,10 @@ from typing import Any
 from sqlalchemy import select
 
 from app.config import settings
+from app.db import SessionLocal
 from app.models import Run, Runner, RunnerPool
 from app.services.executors.base import EventCallback
+from app.tenancy import DEFAULT_ORG_ID, current_org_id, run_as_system
 from noodle.serialization import serialize_value
 
 logger = logging.getLogger("app.services.remote_dispatch")
@@ -283,11 +285,26 @@ async def resolve_remote_subworkflow(conn: _AgentConnection, msg: dict) -> None:
     callback_id = msg.get("callback_id", "")
     try:
         call = SubworkflowCall.from_payload(msg)
-        _timeout = settings.subworkflow_spawn_timeout_seconds or None
-        coro = resolve_subworkflow(call)
-        result = await (
-            asyncio.wait_for(coro, timeout=_timeout) if _timeout else coro
-        )
+
+        # Resolve the parent run's org so the workflow fetch and credential
+        # resolution inside resolve_subworkflow see the correct tenant.
+        org_id = DEFAULT_ORG_ID
+        if call.parent_run_id:
+            with run_as_system():
+                async with SessionLocal() as _s:
+                    parent = await _s.get(Run, call.parent_run_id)
+                    if parent is not None and parent.org_id:
+                        org_id = parent.org_id
+
+        ctx_token = current_org_id.set(org_id)
+        try:
+            _timeout = settings.subworkflow_spawn_timeout_seconds or None
+            coro = resolve_subworkflow(call)
+            result = await (
+                asyncio.wait_for(coro, timeout=_timeout) if _timeout else coro
+            )
+        finally:
+            current_org_id.reset(ctx_token)
         await conn.send({
             "type": "call_workflow_response",
             "callback_id": callback_id,

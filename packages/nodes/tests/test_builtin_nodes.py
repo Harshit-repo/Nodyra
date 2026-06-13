@@ -53,6 +53,33 @@ def test_usable_as_tool_defaults() -> None:
     assert manifests["ai_chat_model_openai"].usable_as_tool is False
 
 
+def test_api_support_nodes_are_categorized_and_trigger_nodes_stay_triggers() -> None:
+    manifests = {m.id: m for m in registry.manifests()}
+    api_support_node_ids = {
+        "respond_to_webhook",
+        "http_request",
+        "graphql_request",
+        "jwt",
+    }
+    assert {manifests[node_id].category for node_id in api_support_node_ids} == {"API"}
+
+    # MT architecture check: inbound API nodes stay in the Triggers category,
+    # carry trigger role, and cannot be used as agent tools.
+    for node_id in {"webhook_trigger", "api_endpoint"}:
+        manifest = manifests[node_id]
+        assert manifest.category == "Triggers"
+        assert manifest.role.value == "trigger"
+        assert manifest.inputs == []
+        assert manifest.usable_as_tool is False
+
+    # Outbound API clients retain SSRF protection in node tests below and remain
+    # regular executable/tool-capable nodes.
+    for node_id in {"http_request", "graphql_request"}:
+        manifest = manifests[node_id]
+        assert manifest.role.value == "executable"
+        assert manifest.usable_as_tool is True
+
+
 def test_expected_integration_nodes_are_registered() -> None:
     ids = {m.id for m in registry.manifests()}
     expected = {

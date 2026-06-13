@@ -135,6 +135,7 @@ class RunnerAgent:
                     str(env.get("python_version") or "3.12"),
                     list(env.get("packages") or []),
                     packages_hash,
+                    wheel_index_url=self._cfg.wheel_index_url,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.exception("env build failed run_id=%s", run_id)
@@ -219,6 +220,15 @@ def _cmd_start(args: argparse.Namespace) -> None:
         raise SystemExit(
             "No config found. Run 'noodle-runner register ...' first."
         )
+    # uv emits box-drawing characters (╰─▶) in its resolver output; on a
+    # Windows console defaulting to cp1252 that crashes the logging StreamHandler
+    # with UnicodeEncodeError mid-build, burying the real env-build error. Make
+    # both streams UTF-8 tolerant before installing the handler.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):  # pragma: no cover - non-TextIO
+            pass
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",

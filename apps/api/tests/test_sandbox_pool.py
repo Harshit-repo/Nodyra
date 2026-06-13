@@ -1,12 +1,13 @@
 """SandboxWorker lifecycle: spawn, ready handshake, protocol, teardown."""
+
 import asyncio
 
 import pytest
+from tests.sandbox_fakes import FakeDockerClient
 
 from app.config import settings
 from app.services.container_runtime import IMAGE_SCHEMA_VERSION
 from app.services.sandbox_pool import SandboxWorker
-from tests.sandbox_fakes import FakeDockerClient
 
 ENV = {"id": "env1", "packages_hash": "h1", "python_version": "3.12", "packages": []}
 
@@ -16,8 +17,11 @@ def test_spawn_waits_for_ready_and_is_hardened():
 
     async def scenario():
         return await SandboxWorker.spawn(
-            client, key=("org1", "env1"), env_payload=ENV,
-            runtime="runsc", network="noodle-sandbox",
+            client,
+            key=("org1", "env1"),
+            env_payload=ENV,
+            runtime="runsc",
+            network="noodle-sandbox",
         )
 
     worker = asyncio.run(scenario())
@@ -36,8 +40,11 @@ def test_spawn_ready_timeout_kills_container(monkeypatch):
 
     async def scenario():
         await SandboxWorker.spawn(
-            client, key=("org1", "env1"), env_payload=ENV,
-            runtime="runc", network="noodle-sandbox",
+            client,
+            key=("org1", "env1"),
+            env_payload=ENV,
+            runtime="runc",
+            network="noodle-sandbox",
         )
 
     with pytest.raises(RuntimeError, match="ready"):
@@ -49,11 +56,20 @@ def test_spawn_container_dies_before_ready():
     client = FakeDockerClient(auto_ready=False)
 
     async def scenario():
-        task = asyncio.create_task(SandboxWorker.spawn(
-            client, key=("o", "e"), env_payload=ENV,
-            runtime="runc", network="noodle-sandbox",
-        ))
-        await asyncio.sleep(0.1)
+        task = asyncio.create_task(
+            SandboxWorker.spawn(
+                client,
+                key=("o", "e"),
+                env_payload=ENV,
+                runtime="runc",
+                network="noodle-sandbox",
+            )
+        )
+        for _ in range(50):
+            if client.containers_made:
+                break
+            await asyncio.sleep(0.02)
+        assert client.containers_made
         client.containers_made[0].sock._sock.feed_eof()
         await task
 
@@ -67,8 +83,11 @@ def test_spawn_container_dies_before_ready():
 
 async def _spawned_worker(client):
     return await SandboxWorker.spawn(
-        client, key=("org1", "env1"), env_payload=ENV,
-        runtime="runc", network="noodle-sandbox",
+        client,
+        key=("org1", "env1"),
+        env_payload=ENV,
+        runtime="runc",
+        network="noodle-sandbox",
     )
 
 
@@ -87,8 +106,12 @@ def test_run_forwards_events_and_returns_status():
             events.append(e)
 
         status = await worker.run(
-            "run1", graph={"nodes": []}, cache=None, targets=None,
-            workflow_modules=[], on_event=on_event,
+            "run1",
+            graph={"nodes": []},
+            cache=None,
+            targets=None,
+            workflow_modules=[],
+            on_event=on_event,
         )
         return status, events, worker
 
@@ -114,8 +137,9 @@ def test_run_container_death_marks_dead():
             pass
 
         with pytest.raises(RuntimeError):
-            await worker.run("run1", graph={}, cache=None, targets=None,
-                             workflow_modules=[], on_event=on_event)
+            await worker.run(
+                "run1", graph={}, cache=None, targets=None, workflow_modules=[], on_event=on_event
+            )
         return worker
 
     worker = asyncio.run(scenario())
@@ -134,8 +158,9 @@ def test_run_timeout_marks_dead(monkeypatch):
             pass
 
         with pytest.raises(RuntimeError, match="read failed"):
-            await worker.run("run1", graph={}, cache=None, targets=None,
-                             workflow_modules=[], on_event=on_event)
+            await worker.run(
+                "run1", graph={}, cache=None, targets=None, workflow_modules=[], on_event=on_event
+            )
         return worker
 
     worker = asyncio.run(scenario())
@@ -156,8 +181,9 @@ def test_run_runtime_error_event_is_dirty():
         async def on_event(e):
             events.append(e)
 
-        status = await worker.run("run1", graph={}, cache=None, targets=None,
-                                  workflow_modules=[], on_event=on_event)
+        status = await worker.run(
+            "run1", graph={}, cache=None, targets=None, workflow_modules=[], on_event=on_event
+        )
         return status, events, worker
 
     status, events, worker = asyncio.run(scenario())
@@ -186,18 +212,32 @@ def test_call_workflow_bridged_to_resolver():
         async def on_event(e):
             pass
 
-        run_task = asyncio.create_task(worker.run(
-            "run1", graph={}, cache=None, targets=None, workflow_modules=[],
-            on_event=on_event, subworkflow_resolver=resolver,
-        ))
-        sock.feed({"type": "call_workflow", "callback_id": "cb1",
-                   "request_id": "run1", "workflow_id": "wf2", "input": None,
-                   "depth": 1, "call_chain": ["wf1"]})
+        run_task = asyncio.create_task(
+            worker.run(
+                "run1",
+                graph={},
+                cache=None,
+                targets=None,
+                workflow_modules=[],
+                on_event=on_event,
+                subworkflow_resolver=resolver,
+            )
+        )
+        sock.feed(
+            {
+                "type": "call_workflow",
+                "callback_id": "cb1",
+                "request_id": "run1",
+                "workflow_id": "wf2",
+                "input": None,
+                "depth": 1,
+                "call_chain": ["wf1"],
+            }
+        )
         await asyncio.wait_for(resolved.wait(), 3)
         # wait until the response hits the wire, then finish the run
         for _ in range(50):
-            if any(m.get("type") == "call_workflow_response"
-                   for m in sock.sent_messages()):
+            if any(m.get("type") == "call_workflow_response" for m in sock.sent_messages()):
                 break
             await asyncio.sleep(0.05)
         sock.feed({"type": "result", "status": "success"})
@@ -207,8 +247,9 @@ def test_call_workflow_bridged_to_resolver():
     status, messages = asyncio.run(scenario())
     assert status == "success"
     responses = [m for m in messages if m.get("type") == "call_workflow_response"]
-    assert responses == [{"type": "call_workflow_response", "callback_id": "cb1",
-                          "result": {"answer": 42}}]
+    assert responses == [
+        {"type": "call_workflow_response", "callback_id": "cb1", "result": {"answer": 42}}
+    ]
 
 
 def test_call_workflow_resolver_error_replied():
@@ -224,16 +265,30 @@ def test_call_workflow_resolver_error_replied():
         async def on_event(e):
             pass
 
-        run_task = asyncio.create_task(worker.run(
-            "run1", graph={}, cache=None, targets=None, workflow_modules=[],
-            on_event=on_event, subworkflow_resolver=resolver,
-        ))
-        sock.feed({"type": "call_workflow", "callback_id": "cb2",
-                   "request_id": "run1", "workflow_id": "missing", "input": None,
-                   "depth": 1, "call_chain": []})
+        run_task = asyncio.create_task(
+            worker.run(
+                "run1",
+                graph={},
+                cache=None,
+                targets=None,
+                workflow_modules=[],
+                on_event=on_event,
+                subworkflow_resolver=resolver,
+            )
+        )
+        sock.feed(
+            {
+                "type": "call_workflow",
+                "callback_id": "cb2",
+                "request_id": "run1",
+                "workflow_id": "missing",
+                "input": None,
+                "depth": 1,
+                "call_chain": [],
+            }
+        )
         for _ in range(50):
-            if any(m.get("type") == "call_workflow_error"
-                   for m in sock.sent_messages()):
+            if any(m.get("type") == "call_workflow_error" for m in sock.sent_messages()):
                 break
             await asyncio.sleep(0.05)
         sock.feed({"type": "result", "status": "error"})
@@ -261,10 +316,14 @@ def _dispatch(pool, run_id, org="org1", env="env1"):
         pass
 
     return pool.dispatch(
-        run_id, org_id=org, env_id=env,
-        env_payload={"id": env, "packages_hash": "h1",
-                     "python_version": "3.12", "packages": []},
-        graph={}, cache=None, targets=None, workflow_modules=[],
+        run_id,
+        org_id=org,
+        env_id=env,
+        env_payload={"id": env, "packages_hash": "h1", "python_version": "3.12", "packages": []},
+        graph={},
+        cache=None,
+        targets=None,
+        workflow_modules=[],
         on_event=on_event,
     )
 
@@ -339,13 +398,24 @@ def test_stale_image_not_reused():
         async def on_event(e):
             pass
 
-        t2 = asyncio.create_task(pool.dispatch(
-            "r2", org_id="org1", env_id="env1",
-            env_payload={"id": "env1", "packages_hash": "CHANGED",
-                         "python_version": "3.12", "packages": []},
-            graph={}, cache=None, targets=None, workflow_modules=[],
-            on_event=on_event,
-        ))
+        t2 = asyncio.create_task(
+            pool.dispatch(
+                "r2",
+                org_id="org1",
+                env_id="env1",
+                env_payload={
+                    "id": "env1",
+                    "packages_hash": "CHANGED",
+                    "python_version": "3.12",
+                    "packages": [],
+                },
+                graph={},
+                cache=None,
+                targets=None,
+                workflow_modules=[],
+                on_event=on_event,
+            )
+        )
         await asyncio.sleep(0.2)
         client.containers_made[1].sock._sock.feed({"type": "result", "status": "success"})
         await t2
@@ -364,9 +434,7 @@ def test_recycle_after_max_runs(monkeypatch):
         for rid in ("r1", "r2"):
             t = asyncio.create_task(_dispatch(pool, rid))
             await asyncio.sleep(0.2)
-            client.containers_made[-1].sock._sock.feed(
-                {"type": "result", "status": "success"}
-            )
+            client.containers_made[-1].sock._sock.feed({"type": "result", "status": "success"})
             await t
 
     asyncio.run(scenario())
@@ -383,9 +451,7 @@ def test_warm_total_cap_evicts_lru(monkeypatch):
         for rid, org in (("r1", "orgA"), ("r2", "orgB")):
             t = asyncio.create_task(_dispatch(pool, rid, org=org))
             await asyncio.sleep(0.2)
-            client.containers_made[-1].sock._sock.feed(
-                {"type": "result", "status": "success"}
-            )
+            client.containers_made[-1].sock._sock.feed({"type": "result", "status": "success"})
             await t
 
     asyncio.run(scenario())
@@ -478,3 +544,32 @@ def test_init_required_with_daemon(monkeypatch):
     assert asyncio.run(sp.init_sandbox()) == "runsc"
     assert fresh.enabled
     assert "noodle-sandbox" in client.networks.existing
+
+
+async def test_execute_run_passes_org_to_impl_when_tracing_disabled(monkeypatch):
+    """Sandbox pooling keys must not depend on OpenTelemetry being enabled."""
+    from app.services import runner
+    from app.tenancy import current_org_id
+
+    seen = {}
+    monkeypatch.setattr(settings, "multi_tenancy_enabled", True)
+    monkeypatch.setattr(runner.tracing, "enabled", lambda: False)
+
+    async def fake_resolve_run_org(run_id):
+        assert run_id == "run-org"
+        return "org-sandbox"
+
+    async def fake_execute_run_impl(*args, trace_org=None, **kwargs):
+        seen["trace_org"] = trace_org
+        seen["ambient_org"] = current_org_id.get()
+        return "success"
+
+    monkeypatch.setattr(runner, "_resolve_run_org", fake_resolve_run_org)
+    monkeypatch.setattr(runner, "_execute_run_impl", fake_execute_run_impl)
+    token = current_org_id.set(None)
+    try:
+        await runner._execute_run("run-org", "wf", {}, None)
+        assert seen == {"trace_org": "org-sandbox", "ambient_org": "org-sandbox"}
+        assert current_org_id.get() is None
+    finally:
+        current_org_id.reset(token)

@@ -668,10 +668,39 @@ export interface RunnerInfo {
   updated_at: string;
 }
 
+export interface RunnerPoolHealth {
+  pool_id: string;
+  provider: string;
+  queue_depth: number;
+  oldest_queued_seconds: number | null;
+  capacity_used: number;
+  capacity_total: number;
+  online_count: number;
+  runner_count: number;
+  success_24h: number | null;
+  dispatcher_reachable: boolean;
+}
+
+export interface FleetSummary {
+  runners_online: number;
+  runners_total: number;
+  queue_depth: number;
+  in_flight: number;
+  providers_dispatchable: string[];
+  providers_stuck: string[];
+}
+
+export interface RunnerFleetHealth {
+  fleet: FleetSummary;
+  pools: RunnerPoolHealth[];
+}
+
 export interface RegistrationTokenResponse {
   token: string;
   runner_id: string;
   expires_at: string;
+  /** URL the runner should dial back to (from the API, not the SPA origin). */
+  api_url: string;
 }
 
 export interface RunBatchInfo {

@@ -9,9 +9,9 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
-
 from sqlalchemy.exc import IntegrityError
 
+from app import tracing
 from app.config import settings
 from app.db import SessionLocal, engine
 from app.models import Environment, Run, RunQueueEntry
@@ -42,7 +42,7 @@ from app.routers import (
     webhooks,
     workflows,
 )
-from app import tracing
+from app.services import expr_preview
 from app.services.crypto import verify_token
 from app.services.events import broker_reaper_loop
 from app.services.queue import run_queue_dispatch_loop
@@ -51,7 +51,6 @@ from app.services.remote_dispatch import (
     dispatcher,
     runner_heartbeat_loop,
 )
-from app.services import expr_preview
 from app.services.retention import retention_loop
 from app.services.runner import (
     drain_active_runs,
@@ -69,9 +68,7 @@ async def _ensure_global_environment() -> None:
     try:
         async with SessionLocal() as session:
             existing = (
-                await session.scalars(
-                    select(Environment).where(Environment.is_global.is_(True))
-                )
+                await session.scalars(select(Environment).where(Environment.is_global.is_(True)))
             ).all()
             if len(existing) > 1:
                 logger.warning(
@@ -106,62 +103,64 @@ async def _mark_interrupted_runs() -> None:
     """
     logger = logging.getLogger("noodle")
     try:
-        async with SessionLocal() as session:
-            result = await session.scalars(
-                select(Run).where(Run.status.in_(("running", "waiting")))
-            )
-            runs = result.all()
-            if not runs:
-                return
-            run_ids = [r.id for r in runs]
-            now = datetime.now(UTC)
-            for run in runs:
-                run.status = "cancelled"
-                run.finished_at = now
+        from app.tenancy import run_as_system
 
-            # Cancel matching queue entries so they are not re-dispatched.
-            queue_entries = (
-                await session.scalars(
-                    select(RunQueueEntry).where(RunQueueEntry.run_id.in_(run_ids))
+        with run_as_system():
+            async with SessionLocal() as session:
+                result = await session.scalars(
+                    select(Run).where(Run.status.in_(("running", "waiting")))
                 )
-            ).all()
-            for entry in queue_entries:
-                entry.status = "cancelled"
-                entry.leased_by = None
-                entry.lease_expires_at = None
+                runs = result.all()
+                if runs:
+                    run_ids = [r.id for r in runs]
+                    now = datetime.now(UTC)
+                    for run in runs:
+                        run.status = "cancelled"
+                        run.finished_at = now
 
-            await session.commit()
-            logger.warning(
-                "startup: cancelled %d interrupted run(s): %s",
-                len(runs),
-                run_ids,
-            )
+                    # Cancel matching queue entries so they are not re-dispatched.
+                    queue_entries = (
+                        await session.scalars(
+                            select(RunQueueEntry).where(RunQueueEntry.run_id.in_(run_ids))
+                        )
+                    ).all()
+                    for entry in queue_entries:
+                        entry.status = "cancelled"
+                        entry.leased_by = None
+                        entry.lease_expires_at = None
 
-        # Also clean up any run_queue rows stuck as "running" whose
-        # corresponding run is already in a terminal state.  This can
-        # happen when a previous restart cancelled the Run record but
-        # crashed before updating the queue entry.
-        async with SessionLocal() as session:
-            orphaned = (
-                await session.scalars(
-                    select(RunQueueEntry)
-                    .join(Run, RunQueueEntry.run_id == Run.id)
-                    .where(
-                        RunQueueEntry.status == "running",
-                        Run.status.in_(("cancelled", "error", "success")),
+                    await session.commit()
+                    logger.warning(
+                        "startup: cancelled %d interrupted run(s): %s",
+                        len(runs),
+                        run_ids,
                     )
-                )
-            ).all()
-            if orphaned:
-                for entry in orphaned:
-                    entry.status = "cancelled"
-                    entry.leased_by = None
-                    entry.lease_expires_at = None
-                await session.commit()
-                logger.warning(
-                    "startup: cancelled %d orphaned queue entry(ies) with terminal runs",
-                    len(orphaned),
-                )
+
+            # Also clean up any run_queue rows stuck as "running" whose
+            # corresponding run is already in a terminal state.  This can
+            # happen when a previous restart cancelled the Run record but
+            # crashed before updating the queue entry.
+            async with SessionLocal() as session:
+                orphaned = (
+                    await session.scalars(
+                        select(RunQueueEntry)
+                        .join(Run, RunQueueEntry.run_id == Run.id)
+                        .where(
+                            RunQueueEntry.status == "running",
+                            Run.status.in_(("cancelled", "error", "success")),
+                        )
+                    )
+                ).all()
+                if orphaned:
+                    for entry in orphaned:
+                        entry.status = "cancelled"
+                        entry.leased_by = None
+                        entry.lease_expires_at = None
+                    await session.commit()
+                    logger.warning(
+                        "startup: cancelled %d orphaned queue entry(ies) with terminal runs",
+                        len(orphaned),
+                    )
     except Exception:  # noqa: BLE001 - DB may not be migrated yet; not fatal
         logging.getLogger("noodle").exception(
             "startup: _mark_interrupted_runs failed — stale 'running' rows may persist"
@@ -207,20 +206,24 @@ async def lifespan(app: FastAPI):
     if settings.dispatch_role == "worker":
         topology_errors.append(
             "dispatch_role=worker is the standalone worker entrypoint "
-            "(python -m app.worker_main); API replicas use inline or disabled."
+            "(python -m app.worker_main); API replicas use inline, control, "
+            "or disabled."
         )
     if topology_errors:
         raise RuntimeError("startup aborted:\n  - " + "\n  - ".join(topology_errors))
+    # ``inline`` owns local execution (warm subprocess pool, sandbox, idle
+    # reaper, interrupted-run recovery). ``control`` runs a dispatch loop but
+    # only for agent/kubernetes (no local pool), so local-execution startup is
+    # gated on ``dispatch_inline`` while the loop itself runs for both.
     dispatch_inline = settings.dispatch_role == "inline"
+    run_dispatch_loop = settings.dispatch_role in ("inline", "control")
 
     # Pin the app's default timezone — explicit .env override wins, otherwise
     # ask the OS. This becomes the fallback for any schedule_trigger that
     # doesn't set its own ``tz``.
     if not settings.app_timezone:
         settings.app_timezone = _detect_local_timezone()
-    logging.getLogger("noodle").info(
-        "noodle app timezone: %s", settings.app_timezone
-    )
+    logging.getLogger("noodle").info("noodle app timezone: %s", settings.app_timezone)
 
     await _ensure_global_environment()
 
@@ -290,9 +293,7 @@ async def lifespan(app: FastAPI):
     # because every replica should reap its own pool.
     reaper = (
         asyncio.create_task(_as_system(idle_reaper_loop)())
-        if dispatch_inline
-        and settings.use_subprocess_runner
-        and settings.runner_idle_seconds > 0
+        if dispatch_inline and settings.use_subprocess_runner and settings.runner_idle_seconds > 0
         else None
     )
     # Pin the run-event broker transport once: Redis (fans out across
@@ -305,15 +306,13 @@ async def lifespan(app: FastAPI):
     # Broker reaper: every replica owns its own pub/sub buffer, so it
     # always runs (independent of the scheduler flag).
     broker_reaper = asyncio.create_task(broker_reaper_loop())
-    # The dispatch loop only runs where execution is owned (dispatch_role=
-    # inline). Control-plane replicas (disabled) enqueue only; workers run
-    # their own loop via app.worker_main. The agent-WS heartbeat and cloud
-    # idle-terminate loops stay on the API regardless — agent connections
-    # terminate here.
+    # The dispatch loop runs where execution is owned: ``inline`` (everything)
+    # and ``control`` (agent/kubernetes only — those WebSockets terminate on
+    # this replica). ``disabled`` enqueues only; workers run their own loop via
+    # app.worker_main. The agent-WS heartbeat and cloud idle-terminate loops
+    # stay on the API regardless — agent connections terminate here.
     queue_loop = (
-        asyncio.create_task(_as_system(run_queue_dispatch_loop)())
-        if dispatch_inline
-        else None
+        asyncio.create_task(_as_system(run_queue_dispatch_loop)()) if run_dispatch_loop else None
     )
     cloud_idle = asyncio.create_task(_as_system(cloud_idle_terminate_loop)())
     heartbeat = asyncio.create_task(_as_system(runner_heartbeat_loop)())
@@ -389,7 +388,9 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
     plain-text 500, so clients can always parse the response body."""
     logger = logging.getLogger("noodle")
     req_id = request.headers.get("x-request-id", "")
-    logger.exception("Unhandled exception on %s %s (req=%s)", request.method, request.url.path, req_id)
+    logger.exception(
+        "Unhandled exception on %s %s (req=%s)", request.method, request.url.path, req_id
+    )
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error", "request_id": req_id},
@@ -438,10 +439,9 @@ async def _security_headers(request: Request, call_next):
             "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com"
         )
     else:
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'none'; frame-ancestors 'none'"
-        )
+        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
     return response
+
 
 _AUTH_EXEMPT_PREFIXES = (
     "/auth",
@@ -451,6 +451,7 @@ _AUTH_EXEMPT_PREFIXES = (
     "/provider-webhook",
     "/internal",
     "/runner-pools/ws",  # agent runner WS — uses its own token query param
+    "/runner-pools/wheels",  # public OSS wheel index (uv sends no auth header)
     # OAuth provider redirect lands here via top-level browser navigation with
     # no bearer token. The callback is authenticated by the HMAC-signed `state`
     # param (see app.services.oauth.decode_oauth_state), so it is safe to exempt
@@ -575,14 +576,22 @@ async def auth_gate(request: Request, call_next):
         query_token = request.query_params.get("token")
         if query_token and verify_token(query_token) is not None:
             return await call_next(request)
-        return JSONResponse(
-            {"detail": "Authentication required"}, status_code=401
-        )
+        return JSONResponse({"detail": "Authentication required"}, status_code=401)
     if verify_token(header.removeprefix("Bearer ")) is None:
-        return JSONResponse(
-            {"detail": "Invalid or expired token"}, status_code=401
-        )
+        return JSONResponse({"detail": "Invalid or expired token"}, status_code=401)
     return await call_next(request)
+
+
+@app.middleware("http")
+async def _tenant_context_scope(request: Request, call_next):
+    """Clear request tenant context even when auth/org resolution fails."""
+    from app.tenancy import current_org_id
+
+    token = current_org_id.set(None)
+    try:
+        return await call_next(request)
+    finally:
+        current_org_id.reset(token)
 
 
 # Registered last → outermost middleware (Starlette prepends each add_middleware).
@@ -595,6 +604,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 app.include_router(health.router)
 app.include_router(nodes.router)

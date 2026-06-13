@@ -21,9 +21,9 @@ from app.config import settings
 from app.models import (
     Organization,
     Run,
-    RunQueueEntry,
     Runner,
     RunnerPool,
+    RunQueueEntry,
     Workflow,
 )
 from app.services.queue import requeue_expired_leases
@@ -142,6 +142,54 @@ async def test_queue_requeue_skips_non_default_org_without_system(client):
     assert acted == 1, "requeue with run_as_system must process org-b entries"
 
 
+async def test_startup_interrupted_cleanup_runs_as_system(client, monkeypatch):
+    """Startup recovery must cancel interrupted runs outside the default org."""
+    import app.main as main_module
+
+    org_b_id = "org-b-startup-" + uuid.uuid4().hex[:8]
+    wf_id = str(uuid.uuid4())
+    run_id = str(uuid.uuid4())
+    entry_id = str(uuid.uuid4())
+    now = datetime.now(UTC)
+
+    await _insert(
+        queue_module.SessionLocal,
+        Organization(id=org_b_id, name="Org B Startup", slug=org_b_id),
+        Workflow(id=wf_id, org_id=org_b_id, name="WF Startup", active=True),
+        Run(
+            id=run_id,
+            org_id=org_b_id,
+            workflow_id=wf_id,
+            status="running",
+            started_at=now,
+        ),
+        RunQueueEntry(
+            id=entry_id,
+            org_id=org_b_id,
+            run_id=run_id,
+            workflow_id=wf_id,
+            status="running",
+            leased_by="worker",
+            lease_expires_at=now + timedelta(seconds=30),
+            attempts=1,
+            max_attempts=3,
+        ),
+    )
+    monkeypatch.setattr(main_module, "SessionLocal", queue_module.SessionLocal)
+
+    await main_module._mark_interrupted_runs()
+
+    async with queue_module.SessionLocal() as session:
+        with run_as_system():
+            run = await session.get(Run, run_id)
+            entry = await session.get(RunQueueEntry, entry_id)
+    assert run.status == "cancelled"
+    assert run.finished_at is not None
+    assert entry.status == "cancelled"
+    assert entry.leased_by is None
+    assert entry.lease_expires_at is None
+
+
 async def test_scheduler_session_isolates_org_b_workflows(client):
     """Scheduler session queries are org-filtered without run_as_system()."""
     org_b_id = "org-b-sched-" + uuid.uuid4().hex[:8]
@@ -160,23 +208,17 @@ async def test_scheduler_session_isolates_org_b_workflows(client):
                 select(Workflow).where(Workflow.active.is_(True), Workflow.id == wf_id)
             )
         ).all()
-    assert len(rows) == 0, (
-        "scheduler session without run_as_system must not see org-b workflows"
-    )
+    assert len(rows) == 0, "scheduler session without run_as_system must not see org-b workflows"
 
     # With run_as_system: must be visible
     async with triggers_module.SessionLocal() as session:
         with run_as_system():
             rows = (
                 await session.scalars(
-                    select(Workflow).where(
-                        Workflow.active.is_(True), Workflow.id == wf_id
-                    )
+                    select(Workflow).where(Workflow.active.is_(True), Workflow.id == wf_id)
                 )
             ).all()
-    assert len(rows) == 1, (
-        "scheduler session with run_as_system must see org-b workflows"
-    )
+    assert len(rows) == 1, "scheduler session with run_as_system must see org-b workflows"
 
 
 async def test_heartbeat_skips_non_default_org_runs_without_system(client):
@@ -240,9 +282,7 @@ async def test_heartbeat_skips_non_default_org_runs_without_system(client):
 
     async with remote_dispatch_module.SessionLocal() as session:
         with run_as_system():
-            status_val = await session.scalar(
-                select(Run.status).where(Run.id == run_id)
-            )
+            status_val = await session.scalar(select(Run.status).where(Run.id == run_id))
     assert status_val == "running", (
         "heartbeat without run_as_system must not requeue org-b in-flight runs"
     )
@@ -269,9 +309,7 @@ async def test_heartbeat_skips_non_default_org_runs_without_system(client):
 
     async with remote_dispatch_module.SessionLocal() as session:
         with run_as_system():
-            status_val = await session.scalar(
-                select(Run.status).where(Run.id == run_id)
-            )
+            status_val = await session.scalar(select(Run.status).where(Run.id == run_id))
     assert status_val in ("pending", "queued"), (
         "heartbeat with run_as_system must requeue org-b in-flight runs when runner is stale"
     )
@@ -306,10 +344,9 @@ def test_main_loop_tasks_all_wrapped_in_as_system():
     # no DB queries, so org filtering is irrelevant there.
     _EXEMPT = {"broker_reaper_loop()"}
     bare_calls = [
-        c for c in create_task_calls
-        if "_as_system(" not in c
-        and "_make_loop_task(" not in c
-        and c not in _EXEMPT
+        c
+        for c in create_task_calls
+        if "_as_system(" not in c and "_make_loop_task(" not in c and c not in _EXEMPT
     ]
     assert not bare_calls, (
         f"Found asyncio.create_task calls NOT wrapped in _as_system or "

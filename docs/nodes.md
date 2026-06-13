@@ -54,7 +54,7 @@ def http_request(input: Any = None, url: str = "", method: str = "GET") -> Any:
 
 ### Categories and icons
 
-Set `category` to one of `Triggers`, `Logic`, `AI`, `Data`, `Transform`,
+Set `category` to one of `Triggers`, `API`, `Logic`, `AI`, `Data`, `Transform`,
 `Integrations`, `Utility`. The editor colours nodes by category. `icon` is a
 name from the built-in icon set (`play`, `clock`, `webhook`, `branch`,
 `switch`, `filter`, `merge`, `pencil`, `sort`, `limit`, `aggregate`,

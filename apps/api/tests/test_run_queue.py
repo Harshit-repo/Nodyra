@@ -243,6 +243,57 @@ async def test_heartbeat_extends_lease(session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_lease_provider_filter_separates_agent_and_local(session) -> None:
+    """A1: the dispatch-loop provider filter keeps the WS-terminating control
+    replica ({agent, kubernetes}) and the worker ({local, docker}) from
+    stealing each other's entries — so agent runs never starve behind a worker
+    that can't host their WebSocket, and local runs never block on control."""
+    from app.models import RunnerPool
+    from app.services import queue
+
+    agent_pool = RunnerPool(name="agents", provider="agent")
+    docker_pool = RunnerPool(name="dock", provider="docker")
+    session.add_all([agent_pool, docker_pool])
+    await session.flush()
+
+    now = datetime.now(UTC)
+    session.add_all(
+        [
+            RunQueueEntry(run_id="local", workflow_id="wf", runner_pool_id=None,
+                          available_at=now),
+            RunQueueEntry(run_id="agent", workflow_id="wf",
+                          runner_pool_id=agent_pool.id, available_at=now),
+            RunQueueEntry(run_id="docker", workflow_id="wf",
+                          runner_pool_id=docker_pool.id, available_at=now),
+        ]
+    )
+    await session.commit()
+
+    control_providers = frozenset({"agent", "kubernetes"})
+    worker_providers = frozenset({"local", "docker"})
+
+    # control leases only the agent entry...
+    leased = await queue.lease(session, worker_id="control",
+                               providers=control_providers)
+    await session.commit()
+    assert leased is not None and leased.run_id == "agent"
+
+    # ...and cannot touch the remaining local/docker entries.
+    assert await queue.lease(session, worker_id="control",
+                             providers=control_providers) is None
+
+    # the worker drains local + docker, never the agent entry.
+    drained = set()
+    for _ in range(2):
+        got = await queue.lease(session, worker_id="worker",
+                                providers=worker_providers)
+        await session.commit()
+        assert got is not None
+        drained.add(got.run_id)
+    assert drained == {"local", "docker"}
+
+
+@pytest.mark.asyncio
 async def test_complete_marks_completed(session) -> None:
     from app.services import queue
 

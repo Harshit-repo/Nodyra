@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { NodeManifest, ParamSpec, PortSpec, WorkflowGraph } from "../types";
-import { useEditor } from "./store";
+import { isTriggerNode, pickEditorRunTrigger, useEditor } from "./store";
 
 function port(name: string, data_kind: PortSpec["data_kind"] = "any"): PortSpec {
   return { name, description: "", data_kind };
@@ -18,6 +18,7 @@ function apiManifest(): NodeManifest {
   return {
     id: "api_endpoint", name: "API Endpoint", category: "Triggers", version: "1",
     description: "", icon: null,
+    role: "trigger",
     inputs: [], outputs: [port("main")],
     params: [param("base_path", ""), param("routes", [])],
   };
@@ -82,5 +83,14 @@ describe("store api_endpoint outputs", () => {
 
     const node = useEditor.getState().nodes[0];
     expect(node.data.outputsOverride).toEqual(["main"]);
+  });
+
+  it("treats API Endpoint as a trigger", () => {
+    useEditor.getState().setManifests([apiManifest()]);
+    useEditor.getState().loadGraph(graphWithRoutes(ROUTES));
+
+    const node = useEditor.getState().nodes[0];
+    expect(isTriggerNode(node)).toBe(true);
+    expect(pickEditorRunTrigger(useEditor.getState().nodes)?.id).toBe("api");
   });
 });

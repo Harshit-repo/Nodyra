@@ -35,6 +35,7 @@ def _install_run_id_filter() -> None:
             return
     root.addFilter(_RunIdFilter())
 
+
 from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
@@ -53,7 +54,7 @@ from app.models import (
     WorkflowVersion,
 )
 from app.services import queue as run_queue
-from app.services import run_alerts, run_persistence, run_resume
+from app.services import run_alerts, run_persistence, run_resume, sandbox_pool
 from app.services.artifacts import (
     collect_artifact_refs,
     make_artifact_store,
@@ -62,7 +63,6 @@ from app.services.artifacts import (
 from app.services.credentials import resolve_credential_refs
 from app.services.events import broker
 from app.services.executors.base import RunExecutionContext
-from app.services import sandbox_pool
 from app.services.executors.local import LocalExecutor
 from app.services.executors.remote import RemoteExecutor
 from app.services.executors.sandbox import SandboxExecutor
@@ -130,26 +130,39 @@ _extract_webhook_response = run_persistence._extract_webhook_response
 
 
 def _build_ctx(
-    *, run_id: str, workflow_id: str, graph: dict, cache: dict | None,
-    targets: list[str] | None, environment_id: str | None,
-    runner_pool_id: str | None, env_payload: dict | None,
-    workflow_modules: list[dict], run_timeout: float | None,
+    *,
+    run_id: str,
+    workflow_id: str,
+    graph: dict,
+    cache: dict | None,
+    targets: list[str] | None,
+    environment_id: str | None,
+    runner_pool_id: str | None,
+    env_payload: dict | None,
+    workflow_modules: list[dict],
+    run_timeout: float | None,
     agent_action_resume: dict[str, AgentActionRequest] | None,
     subworkflow_meta: dict | None = None,
     org_id: str | None = None,
 ) -> RunExecutionContext:
     return {
-        "run_id": run_id, "workflow_id": workflow_id, "org_id": org_id,
+        "run_id": run_id,
+        "workflow_id": workflow_id,
+        "org_id": org_id,
         "graph": graph,
-        "cache": cache, "targets": targets, "environment_id": environment_id,
-        "runner_pool_id": runner_pool_id, "env_payload": env_payload,
-        "workflow_modules": workflow_modules, "run_timeout": run_timeout,
+        "cache": cache,
+        "targets": targets,
+        "environment_id": environment_id,
+        "runner_pool_id": runner_pool_id,
+        "env_payload": env_payload,
+        "workflow_modules": workflow_modules,
+        "run_timeout": run_timeout,
         "default_timeouts": _engine_default_timeouts(),
         "pause_on_approval": True,
         "agent_action_resume": (
-            {nid: req.model_dump(mode="json")
-             for nid, req in agent_action_resume.items()}
-            if agent_action_resume else None
+            {nid: req.model_dump(mode="json") for nid, req in agent_action_resume.items()}
+            if agent_action_resume
+            else None
         ),
         "subworkflow_meta": subworkflow_meta,
     }
@@ -167,6 +180,7 @@ def _engine_default_timeouts() -> dict[str, float]:
     if code_timeout and code_timeout > 0:
         timeouts["code"] = code_timeout
     return timeouts
+
 
 # A2: the local executor wraps the warm-subprocess pool path. The resolver
 # lives in app.services.subworkflows (A3); _active_runs is shared by
@@ -225,6 +239,7 @@ def _seed_parameters(
 async def _build_env_payload_for_run(env_id: str | None) -> dict:
     """Build the env descriptor sent to a remote runner."""
     from app.models import Environment  # noqa: PLC0415
+
     if env_id is None:
         return build_env_payload("default", "3.12", [])
     async with SessionLocal() as session:
@@ -235,6 +250,65 @@ async def _build_env_payload_for_run(env_id: str | None) -> dict:
 
 
 async def start_run(
+    workflow_id: str,
+    graph: dict,
+    version: int,
+    *,
+    workflow_version_id: str | None = None,
+    deployment_id: str | None = None,
+    triggered_by_error_run_id: str | None = None,
+    mode: str = "manual",
+    trigger_type: str = "manual",
+    targets: list[str] | None = None,
+    cache: dict[str, dict] | None = None,
+    parameters: dict | None = None,
+    trigger_node_id: str | None = None,
+    deduplication_key: str | None = None,
+    run_id: str | None = None,
+) -> str:
+    """Public run launcher that restores any caller tenant context.
+
+    ``_start_run_impl`` needs the workflow's org as the ambient context while
+    it stamps DB rows and spawns the execution task. The caller may be a request
+    for another org, a webhook with default-org context, or a system scheduler
+    loop. Always reset the caller's ContextVar token on the way out so one run
+    cannot pin a long-lived background loop to its org.
+    """
+    org_token = None
+    if settings.multi_tenancy_enabled:
+        from app.models import Workflow as _Workflow
+        from app.tenancy import current_org_id, run_as_system
+
+        with run_as_system():
+            async with SessionLocal() as _org_session:
+                _wf_org = await _org_session.scalar(
+                    select(_Workflow.org_id).where(_Workflow.id == workflow_id)
+                )
+        if _wf_org:
+            org_token = current_org_id.set(_wf_org)
+    try:
+        return await _start_run_impl(
+            workflow_id,
+            graph,
+            version,
+            workflow_version_id=workflow_version_id,
+            deployment_id=deployment_id,
+            triggered_by_error_run_id=triggered_by_error_run_id,
+            mode=mode,
+            trigger_type=trigger_type,
+            targets=targets,
+            cache=cache,
+            parameters=parameters,
+            trigger_node_id=trigger_node_id,
+            deduplication_key=deduplication_key,
+            run_id=run_id,
+        )
+    finally:
+        if org_token is not None:
+            current_org_id.reset(org_token)
+
+
+async def _start_run_impl(
     workflow_id: str,
     graph: dict,
     version: int,
@@ -266,37 +340,12 @@ async def start_run(
             chosen = first_trigger_node(graph, prefer_manual=True)
             if chosen is None:
                 raise ValueError("Workflow needs a trigger to run.")
-            trigger_node_id = (
-                chosen["id"] if isinstance(chosen, dict) else chosen.id
-            )
+            trigger_node_id = chosen["id"] if isinstance(chosen, dict) else chosen.id
         targets = resolve_trigger_targets(graph, trigger_node_id, None)
     elif not targets_have_trigger(graph, targets):
-        raise ValueError(
-            "Connect a trigger upstream before running this step."
-        )
+        raise ValueError("Connect a trigger upstream before running this step.")
 
-    cache = _seed_parameters(
-        graph, cache, parameters, trigger_id=trigger_node_id
-    )
-
-    # Multi-tenancy: pin the request/task context to the WORKFLOW's org for
-    # everything that follows (Run row stamping, credential resolution, the
-    # background execution task — which inherits this context). Callers reach
-    # here from every trigger path: user requests (context already matches),
-    # webhook ingress (context is the default org), and system loops
-    # (scheduler/queue, context unscoped) — the workflow row is the one
-    # source of truth for which tenant a run belongs to.
-    if settings.multi_tenancy_enabled:
-        from app.models import Workflow as _Workflow
-        from app.tenancy import current_org_id, run_as_system
-
-        with run_as_system():
-            async with SessionLocal() as _org_session:
-                _wf_org = await _org_session.scalar(
-                    select(_Workflow.org_id).where(_Workflow.id == workflow_id)
-                )
-        if _wf_org:
-            current_org_id.set(_wf_org)
+    cache = _seed_parameters(graph, cache, parameters, trigger_id=trigger_node_id)
 
     logger.info(
         "dispatch workflow_id=%s mode=%s trigger_type=%s trigger_node_id=%s "
@@ -314,7 +363,8 @@ async def start_run(
         # Resolve runner pool with a clear precedence chain:
         #   1. Deployment override (most specific)
         #   2. Workflow default pool
-        #   3. The pool bound to the workflow's Environment
+        #   3. The pool bound to the workflow's effective Environment — the
+        #      explicit one, or the global env for implicit-Global workflows
         #   4. None -> in-process runtime pool
         runner_pool_id: str | None = None
         if deployment_id:
@@ -330,10 +380,17 @@ async def start_run(
             if wf_obj is None:
                 wf_obj = await session.get(Workflow, workflow_id)
             env_id = wf_obj.environment_id if wf_obj else None
-            if env_id:
-                env_obj = await session.get(Environment, env_id)
-                if env_obj is not None:
-                    runner_pool_id = env_obj.runner_pool_id
+            env_obj = await session.get(Environment, env_id) if env_id else None
+            if env_obj is None:
+                # Implicit-Global workflows (no explicit environment_id) still
+                # execute in the global env, so they must honour the pool bound
+                # to it. Without this fallback the Environments page's "runs here
+                # execute on <pool>" binding is silently ignored for them.
+                env_obj = await session.scalar(
+                    select(Environment).where(Environment.is_global.is_(True))
+                )
+            if env_obj is not None:
+                runner_pool_id = env_obj.runner_pool_id
         if wf_obj is None:
             wf_obj = await session.get(Workflow, workflow_id)
 
@@ -350,11 +407,7 @@ async def start_run(
             with run_as_system():
                 org = await session.get(Organization, wf_obj.org_id)
                 if org is not None and org.execution_isolation == "dedicated_pool":
-                    pool = (
-                        await session.get(RunnerPool, runner_pool_id)
-                        if runner_pool_id
-                        else None
-                    )
+                    pool = await session.get(RunnerPool, runner_pool_id) if runner_pool_id else None
                     if (
                         pool is None
                         or pool.org_id != org.id
@@ -437,8 +490,11 @@ async def start_run(
         # (parked rather than blocking a coroutine on the pool semaphore; the
         # dispatch loop leases it when capacity frees — visible queue depth +
         # restart durability). Synchronous runs (tests) always execute inline.
+        # ``control`` parks runs like ``disabled`` (it owns no local/docker
+        # execution — a worker does); its dispatch loop then leases only the
+        # agent/kubernetes entries whose WebSocket terminates on this replica.
         queue_locally = not settings.run_synchronously and (
-            settings.dispatch_role == "disabled"
+            settings.dispatch_role in ("disabled", "control")
             or (
                 settings.local_queue_enabled
                 and runner_pool_id is None
@@ -472,20 +528,32 @@ async def start_run(
             attributes={"noodle.run_id": run_id, "noodle.workflow_id": workflow_id},
         ):
             trace_carrier = tracing.inject_context()
-            await run_queue.enqueue(
+            entry = await run_queue.enqueue(
                 session,
                 run_id=run_id,
                 workflow_id=workflow_id,
                 runner_pool_id=runner_pool_id,
                 reason=(
-                    ("dispatch_disabled" if settings.dispatch_role == "disabled" else "local_capacity")
+                    (
+                        "dispatch_disabled"
+                        if settings.dispatch_role in ("disabled", "control")
+                        else "local_capacity"
+                    )
                     if queue_locally
                     else "start_run"
                 ),
                 trace_context=trace_carrier,
                 replay_seed=park_seed,
             )
+            if not queue_locally:
+                # This process owns immediate execution. Keep the queue ledger
+                # for observability/completion bookkeeping, but make it
+                # non-leaseable before commit so a dispatch loop woken by a
+                # nearby enqueue cannot execute the same run a second time.
+                entry.status = "running"
         await session.commit()
+        if queue_locally:
+            await run_queue.notify_queue_workers()
 
     # Editor "manual" and "test" (test-URL webhook) runs iterate on the
     # draft; any production trigger (webhook, schedule, deployment, error
@@ -495,9 +563,7 @@ async def start_run(
     # use_draft=false, deployment "Run now") and must NOT prefer drafts.
     # "test" runs anchor workflow_version_id to the latest version for
     # history sanity but still execute the draft, hence the mode split.
-    prefer_draft = mode == "test" or (
-        mode == "manual" and workflow_version_id is None
-    )
+    prefer_draft = mode == "test" or (mode == "manual" and workflow_version_id is None)
 
     # Parked for the local durable queue — the dispatch loop owns it now.
     if queue_locally:
@@ -509,8 +575,13 @@ async def start_run(
             _active_runs[run_id] = current
         try:
             await _execute_run(
-                run_id, workflow_id, graph, targets, cache,
-                prefer_draft=prefer_draft, runner_pool_id=runner_pool_id,
+                run_id,
+                workflow_id,
+                graph,
+                targets,
+                cache,
+                prefer_draft=prefer_draft,
+                runner_pool_id=runner_pool_id,
                 trace_carrier=trace_carrier,
             )
         finally:
@@ -518,8 +589,13 @@ async def start_run(
     else:
         task = asyncio.create_task(
             _execute_run(
-                run_id, workflow_id, graph, targets, cache,
-                prefer_draft=prefer_draft, runner_pool_id=runner_pool_id,
+                run_id,
+                workflow_id,
+                graph,
+                targets,
+                cache,
+                prefer_draft=prefer_draft,
+                runner_pool_id=runner_pool_id,
                 trace_carrier=trace_carrier,
             )
         )
@@ -635,25 +711,46 @@ async def _execute_run(
     """Tracing wrapper: opens the run.execute span (parented on ``trace_carrier``
     when given, else ambient context) around the real executor. A plain
     pass-through when tracing is off."""
-    if not tracing.enabled():
-        await _execute_run_impl(
-            run_id, workflow_id, graph_dict, targets, cache,
-            prefer_draft=prefer_draft, runner_pool_id=runner_pool_id,
-            agent_action_resume=agent_action_resume,
-        )
-        return
     org_id = await _resolve_run_org(run_id)
-    attrs = {"noodle.run_id": run_id, "noodle.workflow_id": workflow_id}
-    if org_id:
-        attrs["noodle.org_id"] = org_id
-    with tracing.span("run.execute", carrier=trace_carrier, attributes=attrs) as sp:
-        status = await _execute_run_impl(
-            run_id, workflow_id, graph_dict, targets, cache,
-            prefer_draft=prefer_draft, runner_pool_id=runner_pool_id,
-            agent_action_resume=agent_action_resume, trace_org=org_id,
-        )
-        if sp is not None:
-            sp.set_attribute("noodle.status", status)
+    org_token = None
+    if settings.multi_tenancy_enabled:
+        from app.tenancy import current_org_id
+
+        org_token = current_org_id.set(org_id)
+    try:
+        if not tracing.enabled():
+            await _execute_run_impl(
+                run_id,
+                workflow_id,
+                graph_dict,
+                targets,
+                cache,
+                prefer_draft=prefer_draft,
+                runner_pool_id=runner_pool_id,
+                agent_action_resume=agent_action_resume,
+                trace_org=org_id,
+            )
+            return
+        attrs = {"noodle.run_id": run_id, "noodle.workflow_id": workflow_id}
+        if org_id:
+            attrs["noodle.org_id"] = org_id
+        with tracing.span("run.execute", carrier=trace_carrier, attributes=attrs) as sp:
+            status = await _execute_run_impl(
+                run_id,
+                workflow_id,
+                graph_dict,
+                targets,
+                cache,
+                prefer_draft=prefer_draft,
+                runner_pool_id=runner_pool_id,
+                agent_action_resume=agent_action_resume,
+                trace_org=org_id,
+            )
+            if sp is not None:
+                sp.set_attribute("noodle.status", status)
+    finally:
+        if org_token is not None:
+            current_org_id.reset(org_token)
 
 
 async def _execute_run_impl(
@@ -680,16 +777,17 @@ async def _execute_run_impl(
     secret_values: list[str] = []
     # A3: sub-workflow context (draft preference, depth/chain seed) travels
     # as explicit meta through the engine / run protocol — no ContextVars.
-    sub_meta = meta_for_root_run(
-        run_id=run_id, workflow_id=workflow_id, prefer_draft=prefer_draft
-    )
+    sub_meta = meta_for_root_run(run_id=run_id, workflow_id=workflow_id, prefer_draft=prefer_draft)
     run_id_token = _log_run_id.set(run_id)
     _install_run_id_filter()
     # A5: node-type lookup for node.execute span attributes; only consulted
     # (and only built) when tracing is enabled.
     trace_node_types: dict[str, str] = (
-        {str(n.get("id")): str(n.get("type") or "")
-         for n in graph_dict.get("nodes", []) if isinstance(n, dict)}
+        {
+            str(n.get("id")): str(n.get("type") or "")
+            for n in graph_dict.get("nodes", [])
+            if isinstance(n, dict)
+        }
         if tracing.enabled()
         else {}
     )
@@ -708,17 +806,13 @@ async def _execute_run_impl(
         artifact_refs.extend(collect_artifact_refs(clean))
         broker.publish(run_id, clean)
         if clean.get("type") == "node_finished":
-            tracing.record_node_span(
-                clean, node_types=trace_node_types, org_id=trace_org
-            )
+            tracing.record_node_span(clean, node_types=trace_node_types, org_id=trace_org)
             node_events[clean["node_id"]] = clean
             path = clean.get("iteration_path")
             run_key = (clean["node_id"], tuple(path) if isinstance(path, list) else ())
             node_run_records[run_key] = clean
             debug = clean.get("debug")
-            guardrail_events = (
-                debug.get("guardrail_events") if isinstance(debug, dict) else None
-            )
+            guardrail_events = debug.get("guardrail_events") if isinstance(debug, dict) else None
             if isinstance(guardrail_events, list):
                 for raw_guardrail_event in guardrail_events:
                     if not isinstance(raw_guardrail_event, dict):
@@ -787,13 +881,9 @@ async def _execute_run_impl(
             secret_values = []
 
         async with SessionLocal() as session:
-            graph_dict = await resolve_credential_refs(
-                session, graph_dict, workflow_id=workflow_id
-            )
+            graph_dict = await resolve_credential_refs(session, graph_dict, workflow_id=workflow_id)
             if cache is not None:
-                cache = await resolve_credential_refs(
-                    session, cache, workflow_id=workflow_id
-                )
+                cache = await resolve_credential_refs(session, cache, workflow_id=workflow_id)
             await session.commit()
 
         # Gather user code modules visible to this workflow:
@@ -839,8 +929,11 @@ async def _execute_run_impl(
                 try:
                     outcome = await remote_executor.execute(
                         _build_ctx(
-                            run_id=run_id, workflow_id=workflow_id,
-                            graph=graph_dict, cache=cache, targets=targets,
+                            run_id=run_id,
+                            workflow_id=workflow_id,
+                            graph=graph_dict,
+                            cache=cache,
+                            targets=targets,
                             environment_id=env_id,
                             runner_pool_id=runner_pool_id,
                             env_payload=env_payload,
@@ -884,10 +977,14 @@ async def _execute_run_impl(
                 env_payload = await _build_env_payload_for_run(env_id)
                 outcome = await sandbox_executor.execute(
                     _build_ctx(
-                        run_id=run_id, workflow_id=workflow_id,
+                        run_id=run_id,
+                        workflow_id=workflow_id,
                         org_id=trace_org,
-                        graph=graph_dict, cache=cache, targets=targets,
-                        environment_id=env_id, runner_pool_id=None,
+                        graph=graph_dict,
+                        cache=cache,
+                        targets=targets,
+                        environment_id=env_id,
+                        runner_pool_id=None,
                         env_payload=env_payload,
                         workflow_modules=workflow_modules,
                         run_timeout=run_timeout,
@@ -900,10 +997,15 @@ async def _execute_run_impl(
             else:
                 outcome = await local_executor.execute(
                     _build_ctx(
-                        run_id=run_id, workflow_id=workflow_id,
-                        graph=graph_dict, cache=cache, targets=targets,
-                        environment_id=env_id, runner_pool_id=None,
-                        env_payload=None, workflow_modules=workflow_modules,
+                        run_id=run_id,
+                        workflow_id=workflow_id,
+                        graph=graph_dict,
+                        cache=cache,
+                        targets=targets,
+                        environment_id=env_id,
+                        runner_pool_id=None,
+                        env_payload=None,
+                        workflow_modules=workflow_modules,
                         run_timeout=run_timeout,
                         agent_action_resume=agent_action_resume,
                         subworkflow_meta=sub_meta.to_payload(),
@@ -941,9 +1043,7 @@ async def _execute_run_impl(
                     )
             pool_key_token = engine_pool_key.set(env_id)
             _run_org = await _resolve_run_org(run_id)
-            limits_token = org_run_limits.set(
-                await _org_run_limits_for(_run_org)
-            )
+            limits_token = org_run_limits.set(await _org_run_limits_for(_run_org))
             artifact_token = artifact_store.set(
                 make_artifact_store(
                     run_id,
@@ -960,8 +1060,10 @@ async def _execute_run_impl(
                 # reached via the engine's subworkflow resolver call
                 # ``execute`` directly WITHOUT this slot, so a parent waiting
                 # on a child never deadlocks (mirrors the subprocess split).
-                _eff_timeout = run_timeout if (run_timeout and run_timeout > 0) else (
-                    settings.workflow_run_timeout_seconds or None
+                _eff_timeout = (
+                    run_timeout
+                    if (run_timeout and run_timeout > 0)
+                    else (settings.workflow_run_timeout_seconds or None)
                 )
                 async with runtime_pool.global_slot():
                     coro = execute(
@@ -978,9 +1080,7 @@ async def _execute_run_impl(
                         subworkflow_meta=sub_meta,
                     )
                     result = await (
-                        asyncio.wait_for(coro, timeout=_eff_timeout)
-                        if _eff_timeout
-                        else coro
+                        asyncio.wait_for(coro, timeout=_eff_timeout) if _eff_timeout else coro
                     )
                 status = str(result.status)
             finally:
@@ -1016,21 +1116,21 @@ async def _execute_run_impl(
     # (e.g. a connection reset during the persist below) never leaves the
     # client's WebSocket waiting indefinitely for a run_finished that won't come.
     if status == "waiting":
-        broker.publish(
-            run_id, {"type": "run_waiting", "run_id": run_id, "status": status}
-        )
+        broker.publish(run_id, {"type": "run_waiting", "run_id": run_id, "status": status})
     else:
-        broker.publish(
-            run_id, {"type": "run_finished", "run_id": run_id, "status": status}
-        )
+        broker.publish(run_id, {"type": "run_finished", "run_id": run_id, "status": status})
 
     # SessionLocal / start_run are resolved from this module's globals at call
     # time so the test-suite swaps (conftest, monkeypatch) keep applying.
     await run_persistence.persist_run_outcome(
         SessionLocal,
-        run_id=run_id, status=status, graph_dict=graph_dict,
-        node_events=node_events, node_run_records=node_run_records,
-        run_events=run_events, output_cap=output_cap,
+        run_id=run_id,
+        status=status,
+        graph_dict=graph_dict,
+        node_events=node_events,
+        node_run_records=node_run_records,
+        run_events=run_events,
+        output_cap=output_cap,
     )
 
     try:
@@ -1040,8 +1140,11 @@ async def _execute_run_impl(
 
     if status == "error":
         await run_alerts.dispatch_error_handlers(
-            SessionLocal, start_run,
-            run_id=run_id, node_events=node_events, secret_values=secret_values,
+            SessionLocal,
+            start_run,
+            run_id=run_id,
+            node_events=node_events,
+            secret_values=secret_values,
         )
 
     _log_run_id.reset(run_id_token)
@@ -1167,11 +1270,13 @@ async def _execute_queued_entry(run_id: str) -> None:
         lease_carrier = tracing.inject_context() or entry_trace_carrier
 
     await _execute_run(
-        run_id, workflow_id, graph_dict, targets, cache,
+        run_id,
+        workflow_id,
+        graph_dict,
+        targets,
+        cache,
         prefer_draft=ran_draft,
         runner_pool_id=runner_pool_id,
         agent_action_resume=agent_action_resume,
         trace_carrier=lease_carrier,
     )
-
-

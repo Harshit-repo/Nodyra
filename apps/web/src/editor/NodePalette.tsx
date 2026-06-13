@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CATEGORY_ORDER, categoryColor } from "../categories";
 import { isBrandIconName, NodeIcon } from "../NodeIcon";
 import type { NodeManifest } from "../types";
-import { useEditor } from "./store";
+import { isTriggerManifest, useEditor } from "./store";
 
 const FAVORITES_KEY = "noodle_palette_favorites";
 const RECENTS_KEY = "noodle_palette_recent";
@@ -88,8 +88,8 @@ function integrationOf(node: NodeManifest): string | null {
 
 function recommendedIdsFor(manifest: NodeManifest | null): string[] {
   if (!manifest) return [];
-  if (manifest.category === "Triggers") {
-    return ["http_request", "code", "filter", "switch", "slack"];
+  if (isTriggerManifest(manifest)) {
+    return ["respond_to_webhook", "http_request", "code", "filter", "switch", "slack"];
   }
   if (manifest.id === "http_request") {
     return ["records_to_dataset", "code", "filter", "limit", "google_sheets", "slack"];
@@ -112,7 +112,7 @@ function recommendedIdsFor(manifest: NodeManifest | null): string[] {
 function nodeBadges(node: NodeManifest): string[] {
   const badges: string[] = [];
   if (node.deprecated) badges.push("Deprecated");
-  if (node.category === "Triggers") badges.push("Trigger");
+  if (isTriggerManifest(node)) badges.push("Trigger");
   else badges.push("Action");
   if (node.params.some((param) => param.type === "credential")) badges.push("Auth");
   if (["code", "execute_command", "ssh_execute"].includes(node.id)) badges.push("Unsafe");

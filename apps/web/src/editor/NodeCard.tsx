@@ -9,7 +9,7 @@ import { categoryColor } from "../categories";
 import { isBrandIconName, NodeIcon } from "../NodeIcon";
 import { missingFor } from "./missingPackages";
 import { SdkModal } from "./SdkModal";
-import { type NoodleNode, useEditor } from "./store";
+import { isTriggerManifest, type NoodleNode, useEditor } from "./store";
 import { useServerPlatform } from "../hooks/useServerPlatform";
 
 const TILE = 72;
@@ -276,7 +276,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const isChatTrigger = manifest.id === "chat_trigger";
   const runFromNode = useEditor((s) => s.runFromNode);
   const runFromTrigger = useEditor((s) => s.runFromTrigger);
-  const isTrigger = manifest.category === "Triggers";
+  const isTrigger = isTriggerManifest(manifest);
   const devMode = useEditor((s) => s.devMode);
   const [sdkModalOpen, setSdkModalOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -297,8 +297,8 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       if (arr) arr.push(e.source);
       else bySource.set(e.target, [e.source]);
     }
-    const catById = new Map(
-      storeNodes.map((n) => [n.id, n.data.manifest?.category]),
+    const triggerById = new Map(
+      storeNodes.map((n) => [n.id, isTriggerManifest(n.data.manifest)]),
     );
     const visited = new Set<string>([id]);
     const queue = [id];
@@ -307,7 +307,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       for (const prev of bySource.get(cur) ?? []) {
         if (visited.has(prev)) continue;
         visited.add(prev);
-        if (catById.get(prev) === "Triggers") return true;
+        if (triggerById.get(prev)) return true;
         queue.push(prev);
       }
     }

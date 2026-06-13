@@ -8,6 +8,7 @@ read and recover from — the router renders it as an ``isError`` tool result.
 """
 
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -26,6 +27,8 @@ from app.services.triggers import _await_run_terminal, _last_node_output
 from noodle.models import WorkflowGraph
 from noodle.sdk import registry as node_registry
 from noodle_exporter import slugify
+
+logger = logging.getLogger(__name__)
 
 EMPTY_GRAPH: dict = {"nodes": [], "edges": []}
 MAX_WAIT_SECONDS = 300.0
@@ -612,6 +615,12 @@ async def list_workflow_tool_descriptors(session: AsyncSession) -> list[dict]:
     for wf in await _mcp_enabled_workflows(session):
         name = workflow_tool_name(wf)
         if name in static_names or name in seen:
+            logger.warning(
+                "MCP tool name collision: '%s' (workflow %s) shadows an earlier "
+                "definition — set a unique mcp_tool_name on this workflow",
+                name,
+                wf.id,
+            )
             continue
         seen.add(name)
         schema = wf.mcp_parameters_schema

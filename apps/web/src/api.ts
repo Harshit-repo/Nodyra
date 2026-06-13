@@ -29,6 +29,7 @@ import type {
   OrgMemberInfo,
   OrgSettingsInfo,
   OrgUsageDay,
+  RunnerFleetHealth,
   RunnerInfo,
   RunnerPoolInfo,
   RegistrationTokenResponse,
@@ -939,6 +940,8 @@ export function subscribeToRunEvents(
 
 export const runnerPoolsApi = {
   list: () => request<RunnerPoolInfo[]>("/runner-pools"),
+
+  health: () => request<RunnerFleetHealth>("/runner-pools/health"),
 
   create: (body: {
     name: string;

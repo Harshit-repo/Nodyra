@@ -22,6 +22,7 @@ docstring); callers map between the two.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import socket
 from datetime import UTC, datetime, timedelta
@@ -32,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import SessionLocal
 from app.models import Run, RunnerPool, RunQueueEntry
+from app.services import dispatcher_health
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,62 @@ logger = logging.getLogger(__name__)
 DEFAULT_LEASE_SECONDS = 30
 RETRY_BACKOFF_BASE_SECONDS = 5
 RETRY_BACKOFF_MAX_SECONDS = 300
+
+# ---------------------------------------------------------------------------
+# Dispatch wakeup — eliminates the full poll interval on new work
+# ---------------------------------------------------------------------------
+
+_QUEUE_NOTIFY_CHANNEL = "noodle:queue:notify"
+_wakeup: asyncio.Event | None = None
+
+
+def _get_wakeup() -> asyncio.Event:
+    """Per-process asyncio.Event; lazy so it is bound to the running loop."""
+    global _wakeup
+    if _wakeup is None:
+        _wakeup = asyncio.Event()
+    return _wakeup
+
+
+async def notify_queue_workers() -> None:
+    """Wake dispatch loops — in-process immediately, other processes via Redis.
+
+    Call this *after* committing the transaction that inserted the queue entry
+    so any woken worker can actually see the new row.
+    """
+    _get_wakeup().set()
+    try:
+        from app.redis_client import redis_client  # noqa: PLC0415
+        await redis_client.publish(_QUEUE_NOTIFY_CHANNEL, "1")
+    except Exception:  # Redis unavailable — polling fallback is still correct
+        pass
+
+
+async def _redis_queue_subscriber() -> None:
+    """Subscribe to cross-process queue notifications and set the local wakeup.
+
+    Runs as a background task inside ``run_queue_dispatch_loop``. Any Redis
+    error causes a silent exit; the dispatch loop falls back to its configured
+    poll interval.
+    """
+    try:
+        from app.redis_client import redis_client  # noqa: PLC0415
+        pubsub = redis_client.pubsub()
+        try:
+            await pubsub.subscribe(_QUEUE_NOTIFY_CHANNEL)
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    _get_wakeup().set()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("queue Redis subscriber exited; dispatch loop falls back to polling")
+        finally:
+            with contextlib.suppress(Exception):
+                await pubsub.unsubscribe(_QUEUE_NOTIFY_CHANNEL)
+                await pubsub.aclose()
+    except Exception:  # redis_client import failure (no Redis configured)
+        pass
 
 
 def _lease_seconds(override: int | None = None) -> int:
@@ -692,15 +750,38 @@ async def run_queue_dispatch_loop() -> None:
 
     # Provider capability by role (program A1): a standalone worker can host
     # local subprocess runs and docker-pool runs; agent/kubernetes pools need
-    # the WebSocket-terminating API process, so their entries are left for a
-    # dispatch_role=inline replica. Inline leases everything (today's mode).
+    # the WebSocket-terminating API process (their run assignment routes through
+    # the in-memory _agents connection held by that replica), so a ``control``
+    # API leases only those. ``inline`` leases everything (single-process).
     role = settings.dispatch_role
-    providers = frozenset({"local", "docker"}) if role == "worker" else None
+    if role == "worker":
+        providers = frozenset({"local", "docker"})
+    elif role == "control":
+        providers = frozenset({"agent", "kubernetes"})
+    else:
+        providers = None
+
+    # Cross-process wakeup via Redis pub/sub; falls back to polling silently.
+    subscriber_task = asyncio.create_task(_redis_queue_subscriber())
 
     try:
         while True:
-            await asyncio.sleep(settings.queue_dispatch_poll_seconds)
+            # Wait for a notify() call (in-process or cross-process via Redis)
+            # or fall through after the configured poll interval.
             try:
+                await asyncio.wait_for(
+                    _get_wakeup().wait(),
+                    timeout=settings.queue_dispatch_poll_seconds,
+                )
+            except asyncio.TimeoutError:
+                pass
+            _get_wakeup().clear()
+            try:
+                # A6: advertise that this process is leasing its providers, so
+                # the Runner Pools health endpoint can tell a pool whose runs
+                # nothing dispatches from one that's simply at capacity.
+                await dispatcher_health.record_heartbeat(role)
+
                 async with SessionLocal() as session:
                     requeued = await requeue_expired_leases(session)
                     await session.commit()
@@ -756,6 +837,9 @@ async def run_queue_dispatch_loop() -> None:
             except Exception:  # noqa: BLE001 - never let one tick kill the loop
                 logger.exception("queue dispatch loop tick failed")
     finally:
+        subscriber_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await subscriber_task
         # Best-effort drain on shutdown so in-flight runs persist their state.
         if in_flight:
             await asyncio.wait(
