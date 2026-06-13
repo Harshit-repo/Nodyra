@@ -6,12 +6,19 @@ import { api, errorMessage } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { HomeHeader } from "./HomeHeader";
 import { Logo } from "./Logo";
+import {
+  useCreateWorkflowMutation,
+  useCredentials,
+  useDeleteWorkflowMutation,
+  useDeployments,
+  useEnvironments,
+  useUpdateWorkflowMutation,
+  useWorkflowProviderTriggers,
+  useWorkflows,
+} from "./queries";
 import { useToast } from "./ToastProvider";
 import { useModalA11y } from "./useModalA11y";
 import type {
-  Credential,
-  Deployment,
-  Environment,
   ProviderTriggerStatusCounts,
   ProviderTriggerSubscription,
   WorkflowSummary,
@@ -98,6 +105,7 @@ function CreateModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const { notify } = useToast();
+  const createWorkflow = useCreateWorkflowMutation();
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalA11y(dialogRef, onClose);
 
@@ -106,11 +114,11 @@ function CreateModal({
     setBusy(true);
     setError("");
     try {
-      const created = await api.createWorkflow(name.trim() || "Untitled workflow");
       const template = TEMPLATES.find((item) => item.id === templateId);
-      if (template?.graph) {
-        await api.updateWorkflow(created.id, { graph: template.graph() });
-      }
+      const created = await createWorkflow.mutateAsync({
+        name: name.trim() || "Untitled workflow",
+        graph: template?.graph?.(),
+      });
       notify(
         template?.id === "blank" ? "Workflow created." : "Template created.",
         "success",
@@ -185,11 +193,6 @@ function CreateModal({
 }
 
 export function WorkflowsPage() {
-  const [workflows, setWorkflows] = useState<WorkflowSummary[] | null>(null);
-  const [deployments, setDeployments] = useState<Deployment[] | null>(null);
-  const [credentials, setCredentials] = useState<Credential[] | null>(null);
-  const [environments, setEnvironments] = useState<Environment[] | null>(null);
-  const [error, setError] = useState("");
   const [modal, setModal] = useState(false);
   const [modalTemplateId, setModalTemplateId] = useState("blank");
   const [query, setQuery] = useState("");
@@ -207,41 +210,38 @@ export function WorkflowsPage() {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [providerModalWorkflow, setProviderModalWorkflow] =
     useState<WorkflowSummary | null>(null);
-  const [providerRows, setProviderRows] =
-    useState<ProviderTriggerSubscription[] | null>(null);
-  const [providerError, setProviderError] = useState("");
   const navigate = useNavigate();
   const { notify } = useToast();
+  const deleteWorkflow = useDeleteWorkflowMutation();
+  const updateWorkflow = useUpdateWorkflowMutation();
+  const duplicateWorkflow = useCreateWorkflowMutation();
 
-  const isMountedRef = useRef(true);
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => { isMountedRef.current = false; };
-  }, []);
-
-  function load() {
-    setError("");
-    api
-      .listWorkflows()
-      .then((wfs) => { if (isMountedRef.current) setWorkflows(wfs); })
-      .catch((err) => { if (isMountedRef.current) setError(String(err)); });
-    void Promise.allSettled([
-      api.listDeployments(),
-      api.listCredentials(),
-      api.listEnvironments(),
-    ]).then(([deploymentResult, credentialResult, environmentResult]) => {
-      if (!isMountedRef.current) return;
-      if (deploymentResult.status === "fulfilled") {
-        setDeployments(deploymentResult.value);
-      }
-      if (credentialResult.status === "fulfilled") {
-        setCredentials(credentialResult.value);
-      }
-      if (environmentResult.status === "fulfilled") {
-        setEnvironments(environmentResult.value);
-      }
-    });
-  }
+  const workflowsQuery = useWorkflows({
+    refetchInterval: (query) =>
+      query.state.data?.some((wf) => wf.last_run_status === "running")
+        ? 3000
+        : false,
+  });
+  const deploymentsQuery = useDeployments();
+  const credentialsQuery = useCredentials();
+  const environmentsQuery = useEnvironments();
+  const providerTriggersQuery = useWorkflowProviderTriggers(
+    providerModalWorkflow?.id ?? null,
+    { enabled: providerModalWorkflow !== null },
+  );
+  const workflows = workflowsQuery.data ?? null;
+  const deployments = deploymentsQuery.data ?? null;
+  const credentials = credentialsQuery.data ?? null;
+  const environments = environmentsQuery.data ?? null;
+  const error =
+    workflowsQuery.isError && !workflowsQuery.data
+      ? errorMessage(workflowsQuery.error)
+      : "";
+  const providerRows = providerTriggersQuery.data ?? null;
+  const providerError =
+    providerTriggersQuery.isError && !providerTriggersQuery.data
+      ? errorMessage(providerTriggersQuery.error)
+      : "";
 
   function openCreate(templateId = "blank"): void {
     setModalTemplateId(templateId);
@@ -254,40 +254,12 @@ export function WorkflowsPage() {
     setSort("updated");
   }
 
-  useEffect(load, []);
-
-  // Poll while any workflow's most recent run is still in-flight so the
-  // "Running runs" counter and per-card badges stay fresh without a manual
-  // page refresh.
-  const hasRunning = useMemo(
-    () => workflows?.some((wf) => wf.last_run_status === "running") ?? false,
-    [workflows],
-  );
-  useEffect(() => {
-    if (!hasRunning) return;
-    let consecutiveErrors = 0;
-    const timer = window.setInterval(() => {
-      api
-        .listWorkflows()
-        .then((wfs) => {
-          consecutiveErrors = 0;
-          if (isMountedRef.current) setWorkflows(wfs);
-        })
-        .catch(() => {
-          consecutiveErrors += 1;
-          if (consecutiveErrors >= 3) window.clearInterval(timer);
-        });
-    }, 3000);
-    return () => window.clearInterval(timer);
-  }, [hasRunning]);
-
   async function remove(id: string) {
     setDeleteBusy(true);
     try {
-      await api.deleteWorkflow(id);
+      await deleteWorkflow.mutateAsync(id);
       notify("Workflow deleted.", "success");
       setPendingDelete(null);
-      load();
     } catch (err) {
       notify(`Could not delete workflow. ${errorMessage(err)}`, "error");
     } finally {
@@ -299,10 +271,11 @@ export function WorkflowsPage() {
     setOpenMenuId(null);
     try {
       const detail = await api.getWorkflow(wf.id);
-      const created = await api.createWorkflow(`Copy of ${wf.name}`);
-      await api.updateWorkflow(created.id, { graph: detail.graph });
+      await duplicateWorkflow.mutateAsync({
+        name: `Copy of ${wf.name}`,
+        graph: detail.graph,
+      });
       notify(`"${wf.name}" duplicated.`, "success");
-      load();
     } catch {
       notify("Could not duplicate workflow.", "error");
     }
@@ -312,12 +285,12 @@ export function WorkflowsPage() {
     if (!pendingRename || renameBusy) return;
     setRenameBusy(true);
     try {
-      await api.updateWorkflow(pendingRename.id, {
-        name: renameName.trim() || pendingRename.name,
+      await updateWorkflow.mutateAsync({
+        id: pendingRename.id,
+        patch: { name: renameName.trim() || pendingRename.name },
       });
       notify("Workflow renamed.", "success");
       setPendingRename(null);
-      load();
     } catch {
       notify("Could not rename workflow.", "error");
     } finally {
@@ -347,19 +320,10 @@ export function WorkflowsPage() {
   ): Promise<void> {
     event.stopPropagation();
     setProviderModalWorkflow(wf);
-    setProviderRows(null);
-    setProviderError("");
-    try {
-      setProviderRows(await api.listWorkflowProviderTriggers(wf.id));
-    } catch (err) {
-      setProviderError(String(err));
-    }
   }
 
   function closeProviderStatus(): void {
     setProviderModalWorkflow(null);
-    setProviderRows(null);
-    setProviderError("");
   }
 
   // Inline dialogs in this always-mounted page: activate modal a11y only while
@@ -384,6 +348,7 @@ export function WorkflowsPage() {
         if (statusFilter === "inactive" && wf.active) return false;
         if (statusFilter === "draft" && !wf.has_unpublished_changes) return false;
         if (statusFilter === "failed" && wf.last_run_status !== "error") return false;
+        if (statusFilter === "running" && wf.last_run_status !== "running") return false;
         if (statusFilter === "provider_error" && counts.error === 0) return false;
         return true;
       })
@@ -445,23 +410,48 @@ export function WorkflowsPage() {
 
         {workflows && workflows.length > 0 && (
           <div className="dashboard-grid" aria-label="Operational summary">
-            <button type="button" onClick={() => setStatusFilter("active")}>
+            <button
+              type="button"
+              className={statusFilter === "active" ? "is-selected" : ""}
+              aria-pressed={statusFilter === "active"}
+              onClick={() => setStatusFilter("active")}
+            >
               <strong>{stats.active}</strong>
               <span>Active</span>
             </button>
-            <button type="button" onClick={() => setStatusFilter("draft")}>
+            <button
+              type="button"
+              className={statusFilter === "draft" ? "is-selected" : ""}
+              aria-pressed={statusFilter === "draft"}
+              onClick={() => setStatusFilter("draft")}
+            >
               <strong>{stats.drafts}</strong>
               <span>Drafts</span>
             </button>
-            <button type="button" onClick={() => setStatusFilter("failed")}>
+            <button
+              type="button"
+              className={statusFilter === "failed" ? "is-selected" : ""}
+              aria-pressed={statusFilter === "failed"}
+              onClick={() => setStatusFilter("failed")}
+            >
               <strong>{stats.failed}</strong>
               <span>Failed runs</span>
             </button>
-            <button type="button" onClick={() => setStatusFilter("provider_error")}>
+            <button
+              type="button"
+              className={statusFilter === "provider_error" ? "is-selected" : ""}
+              aria-pressed={statusFilter === "provider_error"}
+              onClick={() => setStatusFilter("provider_error")}
+            >
               <strong>{stats.providerErrors}</strong>
               <span>Trigger errors</span>
             </button>
-            <button type="button" onClick={() => setStatusFilter("all")}>
+            <button
+              type="button"
+              className={statusFilter === "running" ? "is-selected" : ""}
+              aria-pressed={statusFilter === "running"}
+              onClick={() => setStatusFilter("running")}
+            >
               <strong>{stats.running}</strong>
               <span>Running runs</span>
             </button>
@@ -522,6 +512,7 @@ export function WorkflowsPage() {
             <option value="inactive">Inactive</option>
             <option value="draft">Draft changes</option>
             <option value="failed">Failed recently</option>
+            <option value="running">Running</option>
             <option value="provider_error">Trigger errors</option>
           </select>
           <select

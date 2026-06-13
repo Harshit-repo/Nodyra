@@ -186,24 +186,31 @@ async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/** Auth/tenancy headers shared by every API request: Bearer when a token is
+ * stored, otherwise the CSRF double-submit header for cookie-auth mode, plus
+ * the active org. Content-Type is NOT set here — FormData uploads must let
+ * the browser pick the multipart boundary. */
+function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
   const token = getToken();
-  const baseHeaders: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
   if (token) {
-    baseHeaders.Authorization = `Bearer ${token}`;
+    headers.Authorization = `Bearer ${token}`;
   } else {
     // Cookie-auth mode: Bearer is absent but a CSRF cookie may be present.
     // Echo it in the request header so the server-side CSRF double-submit
     // check passes for state-changing requests.
     const csrfToken = _getCookie(CSRF_COOKIE_NAME);
-    if (csrfToken) baseHeaders[CSRF_HEADER_NAME] = csrfToken;
+    if (csrfToken) headers[CSRF_HEADER_NAME] = csrfToken;
   }
   const orgId = getOrgId();
-  if (orgId) baseHeaders["X-Org-Id"] = orgId;
+  if (orgId) headers["X-Org-Id"] = orgId;
+  return headers;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = {
-    ...baseHeaders,
+    "Content-Type": "application/json",
+    ...authHeaders(),
     ...((init?.headers as Record<string, string>) ?? {}),
   };
   const resp = await safeFetch(BASE + path, { ...init, headers });
@@ -710,9 +717,9 @@ export const api = {
 };
 
 export async function uploadArtifact(file: File): Promise<ArtifactInfo> {
-  const token = getToken();
-  const headers: Record<string, string> = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
+  // Same auth headers as request() — in cookie-auth mode the CSRF header is
+  // required or the server's CSRF gate rejects the upload with 403.
+  const headers = authHeaders();
   const body = new FormData();
   body.append("file", file);
   const resp = await safeFetch(`${BASE}/artifacts/upload`, {
@@ -858,18 +865,25 @@ export function subscribeToRunEvents(
     if (closedByCaller) return;
     // Fetch a single-use WS ticket so the token doesn't appear in server
     // access logs (?token= query param is visible there; ?ticket= is not).
-    // Fall back to the legacy ?token= param if the ticket request fails
-    // (e.g. auth is disabled in dev mode).
+    // A ticket is needed for BOTH auth modes: bearer (localStorage token)
+    // and cookie sessions (httpOnly cookie — getToken() is null but the
+    // ticket endpoint authenticates via the cookie). Only a fully anonymous
+    // client (auth disabled in dev) skips it; calling it anonymously would
+    // 401 and trip the global unauthorized handler.
     let wsUrl = _runEventsBaseUrl(runId);
     const bearerToken = getToken();
-    if (bearerToken) {
+    const hasSession = Boolean(bearerToken) || getUser() !== null;
+    if (hasSession) {
       try {
         const { ticket } = await request<{ ticket: string }>("/auth/ws-ticket", {
           method: "POST",
         });
         wsUrl += `?ticket=${encodeURIComponent(ticket)}`;
       } catch {
-        wsUrl += `?token=${encodeURIComponent(bearerToken)}`;
+        // Legacy fallback — only possible with a bearer token; a cookie
+        // session has nothing to put in the URL and connects unauthenticated
+        // (the server will close 1008 and route back to login).
+        if (bearerToken) wsUrl += `?token=${encodeURIComponent(bearerToken)}`;
       }
     }
     socket = new WebSocket(wsUrl);

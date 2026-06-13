@@ -20,11 +20,15 @@ import {
   Plus,
   Scissors,
   TreeStructure,
+  X,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import type { Connection, Edge } from "@xyflow/react";
 
+import { categoryColor } from "../categories";
+import { NodeIcon } from "../NodeIcon";
+import type { NodeManifest } from "../types";
 import { CANVAS_STARTERS } from "../workflowTemplates";
 import { useToast } from "../ToastProvider";
 import { LoopFrame } from "./LoopFrame";
@@ -48,6 +52,90 @@ const nodeTypes = {
   loopFrame: LoopFrame,
 };
 const edgeTypes = { default: NoodleEdge };
+const CANVAS_QUICK_ADD_LIMIT = 8;
+const CANVAS_QUICK_ADD_WIDTH = 252;
+const CANVAS_QUICK_ADD_MAX_HEIGHT = 300;
+
+interface CanvasQuickAddState {
+  x: number;
+  y: number;
+  flowX: number;
+  flowY: number;
+  query: string;
+  insertEdgeId?: string;
+}
+
+function rankCanvasQuickNode(node: NodeManifest, query: string): number {
+  if (!query) return 1000;
+  const q = query.toLowerCase();
+  const id = node.id.toLowerCase();
+  const name = node.name.toLowerCase();
+  const category = node.category.toLowerCase();
+  const description = (node.description ?? "").toLowerCase();
+  if (id === q) return 0;
+  if (name === q) return 1;
+  if (id.startsWith(q)) return 10;
+  if (name.startsWith(q)) return 11;
+  if (category.startsWith(q)) return 20;
+  if (name.includes(q)) return 30;
+  if (id.includes(q)) return 31;
+  if (category.includes(q)) return 40;
+  if (description.includes(q)) return 50;
+  return 1000;
+}
+
+function clampCanvasQuickAddPosition(x: number, y: number): { x: number; y: number } {
+  if (typeof window === "undefined") return { x, y };
+  return {
+    x: Math.max(12, Math.min(window.innerWidth - CANVAS_QUICK_ADD_WIDTH - 12, x)),
+    y: Math.max(12, Math.min(window.innerHeight - CANVAS_QUICK_ADD_MAX_HEIGHT - 12, y)),
+  };
+}
+
+function edgeBridgeHandles(
+  nodes: NoodleNode[],
+  edge: Edge | undefined,
+  manifest: NodeManifest,
+): { input: string; output: string } | null {
+  if (!edge || manifest.inputs.length === 0 || manifest.outputs.length === 0) return null;
+  const input = manifest.inputs[0]?.name;
+  const output = manifest.outputs[0]?.name;
+  if (!input || !output) return null;
+  const candidateId = "__edge_insert_candidate__";
+  const candidate = {
+    id: candidateId,
+    type: manifest.id === "map_group" ? "mapGroup" : "noodle",
+    position: { x: 0, y: 0 },
+    data: {
+      manifest,
+      params: {},
+      disabled: false,
+      outputsOverride: null,
+      onError: "stop",
+      retryOnFail: false,
+      retries: 1,
+      retryWaitSeconds: 0,
+      retryBackoff: false,
+      alwaysOutputData: false,
+      timeoutSeconds: null,
+    },
+  } as NoodleNode;
+  const candidateNodes = [...nodes, candidate];
+  const sourceCheck = validateConnection(candidateNodes, {
+    source: edge.source,
+    sourceHandle: edge.sourceHandle ?? null,
+    target: candidateId,
+    targetHandle: input,
+  });
+  if (!sourceCheck.ok) return null;
+  const targetCheck = validateConnection(candidateNodes, {
+    source: candidateId,
+    sourceHandle: output,
+    target: edge.target,
+    targetHandle: edge.targetHandle ?? null,
+  });
+  return targetCheck.ok ? { input, output } : null;
+}
 
 function quickFixLabel(quickFixId: ConnectionCheck["quickFixId"]): string {
   switch (quickFixId) {
@@ -131,8 +219,9 @@ function CanvasControls() {
   const addStickyNote = useEditor((s) => s.addStickyNote);
   const showLoopFrames = useEditor((s) => s.showLoopFrames);
   const toggleLoopFrames = useEditor((s) => s.toggleLoopFrames);
+  const collapseToMetanode = useEditor((s) => s.collapseToMetanode);
   const hasLoop = useEditor((s) =>
-    s.nodes.some((n) => n.data.manifest?.id === "loop_start"),
+    s.nodes.some((n) => n.data?.manifest?.id === "loop_start"),
   );
   const nodes = useEditor((s) => s.nodes);
   const running = useEditor((s) => s.running);
@@ -150,6 +239,13 @@ function CanvasControls() {
     const selected = s.nodes.filter((node) => node.selected).length;
     return selected || (s.selectedId ? 1 : 0);
   });
+  const selectedMetanodeCandidates = useMemo(
+    () =>
+      nodes
+        .filter((node) => node.selected && node.data?.manifest && node.data.manifest.id !== "meta_node")
+        .map((node) => node.id),
+    [nodes],
+  );
 
   const [expanded, setExpanded] = useState(true);
 
@@ -260,6 +356,23 @@ function CanvasControls() {
         >
           <Note size={14} weight="bold" />
         </button>
+        <button
+          type="button"
+          title={
+            selectedMetanodeCandidates.length >= 2
+              ? `Group ${selectedMetanodeCandidates.length} selected nodes into metanode`
+              : "Select at least 2 nodes to create a metanode"
+          }
+          aria-label="Group selected nodes into metanode"
+          disabled={selectedMetanodeCandidates.length < 2}
+          onClick={() => {
+            const id = collapseToMetanode(selectedMetanodeCandidates);
+            if (id) notify(`Grouped ${selectedMetanodeCandidates.length} nodes into a metanode.`, "success");
+            else notify("Can't group: that selection would create a cycle.", "error");
+          }}
+        >
+          <BoundingBox size={14} weight="bold" />
+        </button>
         {hasLoop && (
           <button
             type="button"
@@ -292,11 +405,13 @@ function CanvasControls() {
 export function Canvas() {
   const nodes = useEditor((s) => s.nodes);
   const edges = useEditor((s) => s.edges);
+  const manifests = useEditor((s) => s.manifests);
   const onNodesChange = useEditor((s) => s.onNodesChange);
   const showLoopFrames = useEditor((s) => s.showLoopFrames);
   const onEdgesChange = useEditor((s) => s.onEdgesChange);
   const onConnect = useEditor((s) => s.onConnect);
   const addNode = useEditor((s) => s.addNode);
+  const insertNodeBetweenEdge = useEditor((s) => s.insertNodeBetweenEdge);
   const addBodyNode = useEditor((s) => s.addBodyNode);
   const childWorkflows = useEditor((s) => s.childWorkflows);
   const loadGraph = useEditor((s) => s.loadGraph);
@@ -325,8 +440,11 @@ export function Canvas() {
   interface CtxMenu { x: number; y: number; nodeId?: string }
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
   const [metaPreviewId, setMetaPreviewId] = useState<string | null>(null);
+  const [quickAdd, setQuickAdd] = useState<CanvasQuickAddState | null>(null);
+  const [quickAddActiveIndex, setQuickAddActiveIndex] = useState(0);
   const [ctxActiveIndex, setCtxActiveIndex] = useState(0);
   const ctxMenuRef = useRef<HTMLDivElement | null>(null);
+  const quickAddInputRef = useRef<HTMLInputElement | null>(null);
 
   const onDrop = useCallback(
     (event: DragEvent) => {
@@ -367,6 +485,95 @@ export function Canvas() {
     event.dataTransfer.dropEffect = "move";
   }, []);
 
+  const visibleManifests = useMemo(
+    () => manifests.filter((manifest) => !manifest.hidden),
+    [manifests],
+  );
+
+  const quickAddResults = useMemo(() => {
+    const query = quickAdd?.query.trim().toLowerCase() ?? "";
+    const insertEdge = quickAdd?.insertEdgeId
+      ? edges.find((edge) => edge.id === quickAdd.insertEdgeId)
+      : undefined;
+    const bridgeableManifests = insertEdge
+      ? visibleManifests.filter((manifest) => edgeBridgeHandles(nodes, insertEdge, manifest))
+      : visibleManifests;
+    if (query) {
+      return bridgeableManifests
+        .filter((manifest) => rankCanvasQuickNode(manifest, query) < 1000)
+        .sort((a, b) => {
+          const rank = rankCanvasQuickNode(a, query) - rankCanvasQuickNode(b, query);
+          return rank !== 0 ? rank : a.name.localeCompare(b.name);
+        })
+        .slice(0, CANVAS_QUICK_ADD_LIMIT);
+    }
+    const preferred = ["http_request", "code", "filter", "switch", "records_to_dataset", "duckdb_sql", "google_sheets", "slack"];
+    const byId = new Map(bridgeableManifests.map((manifest) => [manifest.id, manifest]));
+    const seen = new Set<string>();
+    return [
+      ...preferred.map((id) => byId.get(id)).filter((node): node is NodeManifest => Boolean(node)),
+      ...bridgeableManifests,
+    ]
+      .filter((node) => {
+        if (seen.has(node.id)) return false;
+        seen.add(node.id);
+        return true;
+      })
+      .slice(0, CANVAS_QUICK_ADD_LIMIT);
+  }, [edges, nodes, quickAdd?.insertEdgeId, quickAdd?.query, visibleManifests]);
+
+  const openQuickAddAt = useCallback((clientX: number, clientY: number) => {
+    const clamped = clampCanvasQuickAddPosition(clientX, clientY);
+    const position = screenToFlowPosition({ x: clientX, y: clientY });
+    setQuickAdd({
+      x: clamped.x,
+      y: clamped.y,
+      flowX: position.x,
+      flowY: position.y,
+      query: "",
+    });
+    setQuickAddActiveIndex(0);
+    setCtxMenu(null);
+  }, [screenToFlowPosition]);
+
+  const openEdgeQuickAddAt = useCallback((edgeId: string, clientX: number, clientY: number) => {
+    const clamped = clampCanvasQuickAddPosition(clientX, clientY);
+    const position = screenToFlowPosition({ x: clientX, y: clientY });
+    setQuickAdd({
+      x: clamped.x,
+      y: clamped.y,
+      flowX: position.x,
+      flowY: position.y,
+      query: "",
+      insertEdgeId: edgeId,
+    });
+    setQuickAddActiveIndex(0);
+    setCtxMenu(null);
+  }, [screenToFlowPosition]);
+
+  const addQuickNode = useCallback((manifest: NodeManifest, index = 0) => {
+    if (!quickAdd) return;
+    const offset = (index % 3) * 28;
+    if (quickAdd.insertEdgeId) {
+      const result = insertNodeBetweenEdge(quickAdd.insertEdgeId, manifest.id, {
+        x: quickAdd.flowX + offset,
+        y: quickAdd.flowY + offset,
+      });
+      if (result.ok) {
+        notify(`${manifest.name} inserted into the connection.`, "success");
+        setQuickAdd(null);
+      } else {
+        notify(result.message ?? "That node cannot be inserted into this connection.", "error");
+      }
+      return;
+    }
+    addNode(manifest.id, {
+      x: quickAdd.flowX + offset,
+      y: quickAdd.flowY + offset,
+    });
+    setQuickAdd(null);
+  }, [addNode, insertNodeBetweenEdge, notify, quickAdd]);
+
   useEffect(() => {
     function onFitView(): void {
       void fitView({ padding: 0.22, duration: 220 });
@@ -374,6 +581,32 @@ export function Canvas() {
     window.addEventListener("noodle:fit-view", onFitView);
     return () => window.removeEventListener("noodle:fit-view", onFitView);
   }, [fitView]);
+
+  useEffect(() => {
+    function onOpenEdgeQuickAdd(event: Event): void {
+      const detail = (event as CustomEvent<{
+        edgeId?: string;
+        clientX?: number;
+        clientY?: number;
+      }>).detail;
+      if (!detail?.edgeId || typeof detail.clientX !== "number" || typeof detail.clientY !== "number") {
+        return;
+      }
+      openEdgeQuickAddAt(detail.edgeId, detail.clientX, detail.clientY);
+    }
+    window.addEventListener("noodle:open-edge-quick-add", onOpenEdgeQuickAdd);
+    return () => window.removeEventListener("noodle:open-edge-quick-add", onOpenEdgeQuickAdd);
+  }, [openEdgeQuickAddAt]);
+
+  useEffect(() => {
+    if (!quickAdd) return;
+    setQuickAddActiveIndex(0);
+    window.setTimeout(() => quickAddInputRef.current?.focus(), 0);
+  }, [quickAdd?.x, quickAdd?.y]);
+
+  useEffect(() => {
+    setQuickAddActiveIndex((index) => Math.min(index, Math.max(0, quickAddResults.length - 1)));
+  }, [quickAddResults.length]);
 
   useEffect(() => {
     function onAutoLayout(): void {
@@ -527,6 +760,14 @@ export function Canvas() {
     [labeledEdges, childWorkflows],
   );
 
+  const selectedMetanodeIds = useMemo(
+    () =>
+      nodes
+        .filter((node) => node.selected && node.data?.manifest && node.data.manifest.id !== "meta_node")
+        .map((node) => node.id),
+    [nodes],
+  );
+
   const contextMenuItems = ctxMenu
     ? ctxMenu.nodeId
       ? [
@@ -539,11 +780,10 @@ export function Canvas() {
           },
           ...(() => {
             const ctxNode = nodes.find((n) => n.id === ctxMenu.nodeId);
-            const isMeta = ctxNode?.data.manifest?.id === "meta_node";
-            const selectedIds = nodes.filter((n) => n.selected).map((n) => n.id);
+            const isMeta = ctxNode?.data?.manifest?.id === "meta_node";
             const groupIds =
-              selectedIds.length >= 2
-                ? selectedIds
+              ctxNode?.selected && selectedMetanodeIds.length >= 2
+                ? selectedMetanodeIds
                 : ctxMenu.nodeId
                   ? [ctxMenu.nodeId]
                   : [];
@@ -609,6 +849,27 @@ export function Canvas() {
           },
         ]
       : [
+          ...(
+            selectedMetanodeIds.length >= 2
+              ? [
+                  {
+                    label: `Group ${selectedMetanodeIds.length} nodes into metanode`,
+                    action: () => {
+                      const id = collapseToMetanode(selectedMetanodeIds);
+                      if (id) notify(`Grouped ${selectedMetanodeIds.length} nodes into a metanode.`, "success");
+                      else notify("Can't group: that selection would create a cycle.", "error");
+                      setCtxMenu(null);
+                    },
+                  },
+                ]
+              : []
+          ),
+          {
+            label: "Quick add node",
+            action: () => {
+              openQuickAddAt(ctxMenu.x, ctxMenu.y);
+            },
+          },
           {
             label: "Paste",
             action: () => {
@@ -669,8 +930,42 @@ export function Canvas() {
     }
   }
 
+  function updateQuickAddQuery(value: string): void {
+    setQuickAdd((current) => current ? { ...current, query: value } : current);
+    setQuickAddActiveIndex(0);
+  }
+
+  function handleQuickAddKeyDown(e: React.KeyboardEvent<HTMLInputElement>): void {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      setQuickAdd(null);
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setQuickAddActiveIndex((index) => Math.min(index + 1, Math.max(0, quickAddResults.length - 1)));
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setQuickAddActiveIndex((index) => Math.max(0, index - 1));
+      return;
+    }
+    if (e.key === "Enter") {
+      const node = quickAddResults[quickAddActiveIndex] ?? quickAddResults[0];
+      if (!node) return;
+      e.preventDefault();
+      addQuickNode(node, quickAddActiveIndex);
+    }
+  }
+
   return (
-    <div className="canvas" onDrop={onDrop} onDragOver={onDragOver} onClick={() => setCtxMenu(null)}>
+    <div
+      className="canvas"
+      onDrop={onDrop}
+      onDragOver={onDragOver}
+      onClick={() => setCtxMenu(null)}
+    >
       <ReactFlow
         nodes={allNodes}
         edges={allEdges}
@@ -680,16 +975,19 @@ export function Canvas() {
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}
         isValidConnection={isValidConnection}
-        onNodeClick={(_, node) => setSelected(node.id)}
+        onNodeClick={(_, node) => {
+          setSelected(node.id);
+          setQuickAdd(null);
+        }}
         onNodeDoubleClick={(_, node) => {
           const sn = nodes.find((n) => n.id === node.id);
-          if (sn?.data.manifest?.id === "meta_node") {
+          if (sn?.data?.manifest?.id === "meta_node") {
             setMetaPreviewId(node.id);
             return;
           }
           if (node.type === "noodle" || node.type === "mapGroup") openNdv(node.id);
         }}
-        onPaneClick={() => { setSelected(null); setCtxMenu(null); }}
+        onPaneClick={() => { setSelected(null); setCtxMenu(null); setQuickAdd(null); }}
         onNodeContextMenu={onNodeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
         selectionOnDrag
@@ -763,6 +1061,72 @@ export function Canvas() {
               {item.label}
             </button>
           ))}
+        </div>
+      )}
+
+      {quickAdd && (
+        <div
+          className="canvas-quick-add"
+          role="dialog"
+          aria-label={quickAdd.insertEdgeId ? "Insert node into connection" : "Quick add node"}
+          style={{ left: quickAdd.x, top: quickAdd.y }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="canvas-quick-add-head">
+            <strong>{quickAdd.insertEdgeId ? "Insert node" : "Add node"}</strong>
+            <button
+              type="button"
+              aria-label="Close quick add"
+              title="Close"
+              onClick={() => setQuickAdd(null)}
+            >
+              <X size={12} weight="bold" />
+            </button>
+          </div>
+          <input
+            ref={quickAddInputRef}
+            className="canvas-quick-add-input"
+            placeholder={quickAdd.insertEdgeId ? "Search compatible nodes..." : "Search nodes..."}
+            value={quickAdd.query}
+            onChange={(event) => updateQuickAddQuery(event.target.value)}
+            onKeyDown={handleQuickAddKeyDown}
+          />
+          <div className="canvas-quick-add-list" role="listbox" aria-label="Matching nodes">
+            {quickAddResults.map((node, index) => {
+              const color = categoryColor(node.category);
+              return (
+                <button
+                  type="button"
+                  key={node.id}
+                  className={`canvas-quick-add-item${quickAddActiveIndex === index ? " is-active" : ""}`}
+                  role="option"
+                  aria-selected={quickAddActiveIndex === index}
+                  title={node.description}
+                  onMouseEnter={() => setQuickAddActiveIndex(index)}
+                  onClick={() => addQuickNode(node, index)}
+                >
+                  <span
+                    className="canvas-quick-add-glyph"
+                    style={{ color, background: `${color}1f` }}
+                    aria-hidden
+                  >
+                    <NodeIcon name={node.icon} size={13} />
+                  </span>
+                  <span className="canvas-quick-add-body">
+                    <span>{node.name}</span>
+                    <small>{node.category}</small>
+                  </span>
+                </button>
+              );
+            })}
+            {quickAddResults.length === 0 && (
+              <div className="canvas-quick-add-empty">
+                {quickAdd.insertEdgeId
+                  ? "No compatible nodes fit this connection."
+                  : `No nodes match "${quickAdd.query}".`}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

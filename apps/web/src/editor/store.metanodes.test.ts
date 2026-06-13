@@ -37,6 +37,34 @@ function load(graph: WorkflowGraph) {
 }
 
 describe("metanode collapse / ungroup", () => {
+  it("inserts a node between an existing edge", () => {
+    load(chainGraph());
+    const result = useEditor.getState().insertNodeBetweenEdge("A->B", "code", { x: 120, y: 80 });
+    expect(result.ok).toBe(true);
+
+    const state = useEditor.getState();
+    const inserted = state.nodes.find((node) => node.id === result.nodeId);
+    expect(inserted).toBeTruthy();
+    expect(inserted!.data.manifest.id).toBe("code");
+    expect(inserted!.position).toEqual({ x: 120, y: 80 });
+    expect(state.selectedId).toBe(result.nodeId);
+    expect(state.edges.some((edge) => edge.id === "A->B")).toBe(false);
+    expect(state.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: "A",
+        sourceHandle: "main",
+        target: result.nodeId,
+        targetHandle: "input",
+      }),
+      expect.objectContaining({
+        source: result.nodeId,
+        sourceHandle: "main",
+        target: "B",
+        targetHandle: "input",
+      }),
+    ]));
+  });
+
   it("collapses a selection into a metanode with derived boundary ports", () => {
     load(chainGraph());
     const id = useEditor.getState().collapseToMetanode(["B", "C"]);

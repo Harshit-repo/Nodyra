@@ -1,12 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
-import { api, runnerPoolsApi } from "./api";
 import { useConfirm } from "./ConfirmProvider";
 import { HomeHeader } from "./HomeHeader";
 import { useCan } from "./permissions";
+import {
+  useCreateRunnerPoolMutation,
+  useCreateRunnerRegistrationTokenMutation,
+  useDeleteRunnerMutation,
+  useDeleteRunnerPoolMutation,
+  useEnvironments,
+  useRunnerPoolRunners,
+  useRunnerPools,
+  useSshOnboardRunnerMutation,
+  useUpdateRunnerMutation,
+  useUpdateRunnerPoolMutation,
+} from "./queries";
 import { useModalA11y } from "./useModalA11y";
 import type {
-  Environment,
   RegistrationTokenResponse,
   RunnerInfo,
   RunnerPoolInfo,
@@ -344,6 +354,8 @@ function PoolDialog({
   const [config, setConfig] = useState<Config>(pool?.provider_config ?? {});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const createPool = useCreateRunnerPoolMutation();
+  const updatePool = useUpdateRunnerPoolMutation();
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalA11y(dialogRef, onClose);
 
@@ -353,13 +365,16 @@ function PoolDialog({
     setError(null);
     try {
       if (editing) {
-        await runnerPoolsApi.update(pool!.id, {
-          name: name.trim(),
-          max_concurrent_runs: maxConcurrent,
-          provider_config: cleanConfig(config),
+        await updatePool.mutateAsync({
+          poolId: pool!.id,
+          body: {
+            name: name.trim(),
+            max_concurrent_runs: maxConcurrent,
+            provider_config: cleanConfig(config),
+          },
         });
       } else {
-        await runnerPoolsApi.create({
+        await createPool.mutateAsync({
           name: name.trim(),
           provider,
           max_concurrent_runs: maxConcurrent,
@@ -480,6 +495,7 @@ function SSHOnboardDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [log, setLog] = useState<string | null>(null);
+  const sshOnboard = useSshOnboardRunnerMutation();
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalA11y(dialogRef, onClose);
 
@@ -489,19 +505,22 @@ function SSHOnboardDialog({
     setError(null);
     try {
       const labels = parseLabels(labelsText);
-      const res = await runnerPoolsApi.sshOnboard(poolId, {
-        host: host.trim(),
-        port: Number(port) || 22,
-        username: username.trim(),
-        auth_method: authMethod,
-        password: authMethod === "password" ? password : undefined,
-        private_key: authMethod === "key" ? privateKey : undefined,
-        passphrase: authMethod === "key" ? passphrase || undefined : undefined,
-        api_url: apiUrl.trim() || undefined,
-        use_systemd: useSystemd,
-        name: name.trim() || undefined,
-        max_concurrent_runs: Number(maxConcurrent) || 1,
-        capabilities: Object.keys(labels).length ? labels : undefined,
+      const res = await sshOnboard.mutateAsync({
+        poolId,
+        body: {
+          host: host.trim(),
+          port: Number(port) || 22,
+          username: username.trim(),
+          auth_method: authMethod,
+          password: authMethod === "password" ? password : undefined,
+          private_key: authMethod === "key" ? privateKey : undefined,
+          passphrase: authMethod === "key" ? passphrase || undefined : undefined,
+          api_url: apiUrl.trim() || undefined,
+          use_systemd: useSystemd,
+          name: name.trim() || undefined,
+          max_concurrent_runs: Number(maxConcurrent) || 1,
+          capabilities: Object.keys(labels).length ? labels : undefined,
+        },
       });
       setLog(res.install_log || "Onboarded.");
       onDone();
@@ -642,6 +661,7 @@ function AddMachineDialog({
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState<RegistrationTokenResponse | null>(null);
   const [copied, setCopied] = useState(false);
+  const createToken = useCreateRunnerRegistrationTokenMutation();
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalA11y(dialogRef, onClose);
 
@@ -650,10 +670,13 @@ function AddMachineDialog({
     setError(null);
     try {
       const labels = parseLabels(labelsText);
-      const res = await runnerPoolsApi.createRegistrationToken(poolId, {
-        name: name.trim() || undefined,
-        max_concurrent_runs: Number(maxConcurrent) || 1,
-        capabilities: Object.keys(labels).length ? labels : undefined,
+      const res = await createToken.mutateAsync({
+        poolId,
+        body: {
+          name: name.trim() || undefined,
+          max_concurrent_runs: Number(maxConcurrent) || 1,
+          capabilities: Object.keys(labels).length ? labels : undefined,
+        },
       });
       setToken(res);
       onDone();
@@ -771,6 +794,7 @@ function EditRunnerDialog({
   const [labelsText, setLabelsText] = useState(labelsToText(runner.capabilities));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const updateRunner = useUpdateRunnerMutation();
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalA11y(dialogRef, onClose);
 
@@ -779,10 +803,14 @@ function EditRunnerDialog({
     setBusy(true);
     setError(null);
     try {
-      await runnerPoolsApi.updateRunner(poolId, runner.id, {
-        name: name.trim(),
-        max_concurrent_runs: Number(maxConcurrent) || 1,
-        capabilities: parseLabels(labelsText),
+      await updateRunner.mutateAsync({
+        poolId,
+        runnerId: runner.id,
+        body: {
+          name: name.trim(),
+          max_concurrent_runs: Number(maxConcurrent) || 1,
+          capabilities: parseLabels(labelsText),
+        },
       });
       onSaved();
     } catch (e) {
@@ -848,25 +876,16 @@ function PoolCard({
   canWrite: boolean;
   boundEnvs: string[];
 }) {
-  const [runners, setRunners] = useState<RunnerInfo[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [sshOpen, setSshOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editingRunner, setEditingRunner] = useState<RunnerInfo | null>(null);
   const confirm = useConfirm();
-
-  const loadRunners = useCallback(async () => {
-    try {
-      setRunners(await runnerPoolsApi.listRunners(pool.id));
-    } catch {
-      /* ignore */
-    }
-  }, [pool.id]);
-
-  useEffect(() => {
-    if (expanded) void loadRunners();
-  }, [expanded, loadRunners]);
+  const deletePool = useDeleteRunnerPoolMutation();
+  const deleteRunner = useDeleteRunnerMutation();
+  const runnersQuery = useRunnerPoolRunners(pool.id, { enabled: expanded });
+  const runners = runnersQuery.data ?? [];
 
   const summary = poolConfigSummary(pool);
   const pillClass =
@@ -925,7 +944,7 @@ function PoolCard({
                   body: "This pool and all its registered runners will be removed.",
                 });
                 if (!ok) return;
-                await runnerPoolsApi.delete(pool.id);
+                await deletePool.mutateAsync(pool.id);
                 onChanged();
               }}
             >
@@ -984,8 +1003,10 @@ function PoolCard({
                             confirmLabel: "Remove",
                           });
                           if (!ok) return;
-                          await runnerPoolsApi.deleteRunner(pool.id, r.id);
-                          await loadRunners();
+                          await deleteRunner.mutateAsync({
+                            poolId: pool.id,
+                            runnerId: r.id,
+                          });
                           onChanged();
                         }}
                       >
@@ -1042,7 +1063,7 @@ function PoolCard({
           poolId={pool.id}
           onClose={() => setSshOpen(false)}
           onDone={() => {
-            void loadRunners();
+            void runnersQuery.refetch();
             onChanged();
           }}
         />
@@ -1053,7 +1074,7 @@ function PoolCard({
           poolId={pool.id}
           onClose={() => setAddOpen(false)}
           onDone={() => {
-            void loadRunners();
+            void runnersQuery.refetch();
             onChanged();
           }}
         />
@@ -1066,7 +1087,7 @@ function PoolCard({
           onClose={() => setEditingRunner(null)}
           onSaved={() => {
             setEditingRunner(null);
-            void loadRunners();
+            void runnersQuery.refetch();
           }}
         />
       )}
@@ -1075,28 +1096,20 @@ function PoolCard({
 }
 
 export function RunnerPoolsPage() {
-  const [pools, setPools] = useState<RunnerPoolInfo[] | null>(null);
-  const [environments, setEnvironments] = useState<Environment[]>([]);
   const [creating, setCreating] = useState(false);
-  const [error, setError] = useState("");
   const canWrite = useCan("runner_pool:write");
+  const poolsQuery = useRunnerPools();
+  const environmentsQuery = useEnvironments();
+  const pools = poolsQuery.data ?? null;
+  const environments = environmentsQuery.data ?? [];
+  const error =
+    poolsQuery.isError && !poolsQuery.data
+      ? poolsQuery.error.message
+      : "";
 
-  const load = useCallback(async () => {
-    try {
-      setPools(await runnerPoolsApi.list());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-    try {
-      setEnvironments(await api.listEnvironments());
-    } catch {
-      /* environments are optional context for binding display */
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  function refreshPools(): void {
+    void poolsQuery.refetch();
+  }
 
   const envsByPool = environments.reduce<Record<string, string[]>>(
     (acc, env) => {
@@ -1171,7 +1184,7 @@ export function RunnerPoolsPage() {
                 key={pool.id}
                 pool={pool}
                 canWrite={canWrite}
-                onChanged={() => void load()}
+                onChanged={refreshPools}
                 boundEnvs={envsByPool[pool.id] ?? []}
               />
             ))}
@@ -1183,7 +1196,7 @@ export function RunnerPoolsPage() {
             onClose={() => setCreating(false)}
             onSaved={() => {
               setCreating(false);
-              void load();
+              refreshPools();
             }}
           />
         )}

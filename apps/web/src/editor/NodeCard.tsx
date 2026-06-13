@@ -209,6 +209,10 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const hasBrandIcon = isBrandIconName(manifest.icon);
   const color = categoryColor(manifest.category);
   const { inputs } = manifest;
+  const isAgentToolProvider =
+    Boolean(data.toolMode) ||
+    manifest.role === "tool" ||
+    manifest.outputs.some((port) => port.data_kind === "ai_tool");
   // In tool mode the node is invoked by the Agent, not wired from upstream, so
   // it exposes only its `tool` output — hide every incoming port.
   const sideInputs = data.toolMode
@@ -321,7 +325,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   if (runStatus) tileClass.push(`run-${runStatus}`);
   if (agentActive) {
     tileClass.push("agent-active", `agent-active-${agentActive}`);
-    if (data.toolMode) tileClass.push("agent-active-tool");
+    if (isAgentToolProvider) tileClass.push("agent-active-tool");
   }
   const nodeClass = ["node"];
   if (isAgentV2) nodeClass.push("agent-node");
@@ -736,7 +740,14 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       >
         <NodeIcon name={manifest.icon} size={hasBrandIcon ? 54 : 26} />
 
-        {runStatus && (
+        {agentActive === "running" ? (
+          <span
+            className="node-status status-agent-running"
+            title="In use by agent"
+          >
+            <span className="node-pulse-dot" />
+          </span>
+        ) : runStatus ? (
           <span className={`node-status status-run-${runStatus}`}>
             {runStatus === "running" ? (
               <span className="node-spinner" />
@@ -744,22 +755,14 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
               STATUS_GLYPH[runStatus] ?? ""
             )}
           </span>
-        )}
+        ) : null}
 
-        {!runStatus && agentActive && (
+        {!runStatus && agentActive && agentActive !== "running" && (
           <span
             className={`node-status status-agent-${agentActive}`}
-            title={
-              agentActive === "running"
-                ? "In use by agent"
-                : agentActive === "error"
-                  ? "Agent tool failed"
-                  : "Used by agent"
-            }
+            title={agentActive === "error" ? "Agent tool failed" : "Used by agent"}
           >
-            {agentActive === "running" ? (
-              <span className="node-pulse-dot" />
-            ) : agentActive === "error" ? (
+            {agentActive === "error" ? (
               "!"
             ) : (
               "✓"
@@ -830,7 +833,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
             <Handle
               key={`out-${name}`}
               type="source"
-              position={Position.Right}
+              position={isToolPort ? Position.Top : Position.Right}
               id={name}
               title={isToolPort ? "tool: AI tool" : `${name}: ${portKindLabel(effectiveKind)}`}
               className={
@@ -839,7 +842,9 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
                   : portHandleClass(manifest.id, name, effectiveKind)
               }
               style={{
-                top: portTop(i, outputNames.length),
+                ...(isToolPort
+                  ? { left: "50%", top: -5 }
+                  : { top: portTop(i, outputNames.length) }),
                 background: isToolPort
                   ? PORT_KIND_COLOR.ai_tool
                   : semanticPortColor(manifest.id, name, effectiveKind),
@@ -854,8 +859,9 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
           const isToolPort = Boolean(data.toolMode) && name === "tool";
           const displayName = isToolPort ? "tool" : name;
           const shouldShow =
+            !isToolPort &&
             displayName !== "main" &&
-            (outputNames.length > 1 || effectiveKind === "dataset" || isToolPort);
+            (outputNames.length > 1 || effectiveKind === "dataset");
           if (!shouldShow) return null;
           return (
             <span

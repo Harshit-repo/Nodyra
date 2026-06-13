@@ -38,6 +38,7 @@ function agentManifest(): NodeManifest {
       port("input"),
       port("model", "ai_language_model"),
       port("memory", "ai_memory"),
+      port("tool", "ai_tool"),
     ],
     outputs: [port("main", "main")],
     params: [],
@@ -138,6 +139,20 @@ describe("store agent activity highlighting", () => {
       agent_node_id: "agent",
       tool_name: "fetch",
       tool_call_id: "call-1",
+    });
+
+    const { agentActive, agentToolCalls } = useEditor.getState();
+    expect(agentActive.tool1).toBe("running");
+    expect(agentToolCalls["call-1"]).toBe("tool1");
+  });
+
+  it("agent_action_requested lights pending tool calls before they start", () => {
+    useEditor.getState().startRun("run-1");
+    useEditor.getState().applyRunEvent({
+      type: "agent_action_requested",
+      agent_node_id: "agent",
+      step: 0,
+      tool_calls: [{ id: "call-1", name: "fetch" }],
     });
 
     const { agentActive, agentToolCalls } = useEditor.getState();

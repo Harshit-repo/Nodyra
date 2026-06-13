@@ -1,9 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
-import { api, ApiError, errorMessage } from "./api";
+import { ApiError, errorMessage } from "./api";
 import { useConfirm } from "./ConfirmProvider";
 import { HomeHeader } from "./HomeHeader";
+import {
+  useCreateDeploymentMutation,
+  useDeleteDeploymentMutation,
+  useDeployments,
+  useRunDeploymentMutation,
+  useUpdateDeploymentMutation,
+  useWorkflows,
+} from "./queries";
 import { useToast } from "./ToastProvider";
 import { useModalA11y } from "./useModalA11y";
 import type { Deployment, WorkflowSummary } from "./types";
@@ -42,9 +50,6 @@ function describeSchedule(d: Deployment): string {
 
 export function DeploymentsPage() {
   const navigate = useNavigate();
-  const [deployments, setDeployments] = useState<Deployment[] | null>(null);
-  const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
-  const [error, setError] = useState("");
   const [editing, setEditing] = useState<Deployment | null>(null);
   const [creating, setCreating] = useState(false);
   const [unsafePrompt, setUnsafePrompt] = useState<UnsafePromptState | null>(null);
@@ -53,6 +58,17 @@ export function DeploymentsPage() {
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const { notify } = useToast();
   const confirm = useConfirm();
+  const deploymentsQuery = useDeployments();
+  const workflowsQuery = useWorkflows();
+  const runDeploymentMutation = useRunDeploymentMutation();
+  const updateDeploymentMutation = useUpdateDeploymentMutation();
+  const deleteDeploymentMutation = useDeleteDeploymentMutation();
+  const deployments = deploymentsQuery.data ?? null;
+  const workflows = workflowsQuery.data ?? [];
+  const error =
+    deploymentsQuery.isError && !deploymentsQuery.data
+      ? errorMessage(deploymentsQuery.error)
+      : "";
 
   function setBusy(id: string, busy: boolean): void {
     setBusyIds((current) => {
@@ -63,28 +79,11 @@ export function DeploymentsPage() {
     });
   }
 
-  function refresh(): void {
-    api
-      .listDeployments()
-      .then(setDeployments)
-      .catch((err) => setError(String(err)));
-  }
-
-  useEffect(() => {
-    refresh();
-    api
-      .listWorkflows()
-      .then(setWorkflows)
-      .catch(() => {
-        /* nav unaffected */
-      });
-  }, []);
-
   async function runNow(d: Deployment): Promise<void> {
     if (busyIds.has(d.id)) return;
     setBusy(d.id, true);
     try {
-      const { run_id } = await api.runDeployment(d.id);
+      const { run_id } = await runDeploymentMutation.mutateAsync(d.id);
       notify("Deployment run started.", "success");
       navigate(`/executions?run=${run_id}`);
     } catch (err) {
@@ -101,13 +100,15 @@ export function DeploymentsPage() {
   ): Promise<void> {
     setBusy(d.id, true);
     try {
-      await api.updateDeployment(d.id, {
-        active,
-        ...(approveUnsafe ? { approve_unsafe_nodes: true } : {}),
+      await updateDeploymentMutation.mutateAsync({
+        id: d.id,
+        body: {
+          active,
+          ...(approveUnsafe ? { approve_unsafe_nodes: true } : {}),
+        },
       });
       notify(active ? "Deployment activated." : "Deployment paused.", "success");
       setUnsafePrompt(null);
-      refresh();
     } catch (err) {
       if (
         active &&
@@ -145,9 +146,8 @@ export function DeploymentsPage() {
     });
     if (!ok) return;
     try {
-      await api.deleteDeployment(d.id);
+      await deleteDeploymentMutation.mutateAsync(d.id);
       notify("Deployment deleted.", "success");
-      refresh();
     } catch (err) {
       notify(`Could not delete deployment. ${errorMessage(err)}`, "error");
     }
@@ -283,7 +283,7 @@ export function DeploymentsPage() {
             onSaved={() => {
               setCreating(false);
               setEditing(null);
-              refresh();
+              void deploymentsQuery.refetch();
             }}
           />
         )}
@@ -392,6 +392,8 @@ function DeploymentDialog({
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const { notify } = useToast();
+  const createDeploymentMutation = useCreateDeploymentMutation();
+  const updateDeploymentMutation = useUpdateDeploymentMutation();
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalA11y(dialogRef, onClose);
 
@@ -411,20 +413,23 @@ function DeploymentDialog({
     setSaving(true);
     try {
       if (initial) {
-        await api.updateDeployment(initial.id, {
-          name: name.trim(),
-          schedule_cron: cron,
-          schedule_interval: interval,
-          schedule_every: Math.max(1, every),
-          schedule_tz: tz,
-          default_parameters: parsed,
-          active,
-          workflow_version_id: workflowVersionId.trim() || undefined,
-          error_workflow_id: errorWorkflowId.trim() || undefined,
+        await updateDeploymentMutation.mutateAsync({
+          id: initial.id,
+          body: {
+            name: name.trim(),
+            schedule_cron: cron,
+            schedule_interval: interval,
+            schedule_every: Math.max(1, every),
+            schedule_tz: tz,
+            default_parameters: parsed,
+            active,
+            workflow_version_id: workflowVersionId.trim() || undefined,
+            error_workflow_id: errorWorkflowId.trim() || undefined,
+          },
         });
         notify("Deployment updated.", "success");
       } else {
-        await api.createDeployment({
+        await createDeploymentMutation.mutateAsync({
           workflow_id: workflowId,
           name: name.trim(),
           schedule_cron: cron,

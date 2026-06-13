@@ -1,12 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { api, runnerPoolsApi } from "./api";
+import { errorMessage } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { HomeHeader } from "./HomeHeader";
 import { PackageDrawer } from "./PackageDrawer";
+import {
+  useCreateEnvironmentMutation,
+  useDeleteEnvironmentMutation,
+  useEnvironments,
+  useRebuildEnvironmentMutation,
+  useRunnerPools,
+  useSystemSettings,
+  useUpdateEnvironmentMutation,
+} from "./queries";
 import { useToast } from "./ToastProvider";
 import { useModalA11y } from "./useModalA11y";
-import type { Environment, RunnerPoolInfo, SystemSettings } from "./types";
+import type { Environment, RunnerPoolInfo } from "./types";
 
 const BACKEND_BADGE: Record<string, { label: string; color: string }> = {
   venv:   { label: "venv",   color: "#22c55e" },
@@ -338,6 +347,7 @@ function CreateEnvModal({
   const [backendTab, setBackendTab] = useState<BackendTab>("venv");
   const [channelInput, setChannelInput] = useState("conda-forge");
   const [indexUrlInput, setIndexUrlInput] = useState("");
+  const createEnvironment = useCreateEnvironmentMutation();
 
   async function submit() {
     if (!name.trim() || busy) return;
@@ -353,7 +363,7 @@ function CreateEnvModal({
           : backendTab === "venv" && indexUrlList.length > 0
           ? { index_urls: indexUrlList }
           : {};
-      await api.createEnvironment({
+      await createEnvironment.mutateAsync({
         name: name.trim(),
         python_version: python,
         description: description.trim(),
@@ -535,6 +545,7 @@ function EditEnvModal({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const updateEnvironment = useUpdateEnvironmentMutation();
 
   async function save() {
     if (busy) return;
@@ -542,12 +553,15 @@ function EditEnvModal({
     setError("");
     try {
       const pool = packPool(mode, fixedSize, elasticMin, elasticMax, spawnMax);
-      await api.updateEnvironment(env.id, {
-        name: name.trim(),
-        description: description.trim(),
-        runner_pool_id: poolId,
-        runner_pool_set: true,
-        ...pool,
+      await updateEnvironment.mutateAsync({
+        id: env.id,
+        body: {
+          name: name.trim(),
+          description: description.trim(),
+          runner_pool_id: poolId,
+          runner_pool_set: true,
+          ...pool,
+        },
       });
       onSaved();
     } catch (err) {
@@ -649,6 +663,8 @@ function EnvCard({
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const rebuildEnvironment = useRebuildEnvironmentMutation();
+  const deleteEnvironment = useDeleteEnvironmentMutation();
   const effectiveWorkers = env.effective_pool_max || env.runner_pool_size || 1;
   const maxRam =
     env.worker_rss_estimate_bytes && env.worker_rss_estimate_bytes > 0
@@ -656,14 +672,14 @@ function EnvCard({
       : null;
 
   async function rebuild() {
-    await api.rebuildEnvironment(env.id);
+    await rebuildEnvironment.mutateAsync(env.id);
     onChanged();
   }
 
   async function del() {
     setDeleteBusy(true);
     try {
-      await api.deleteEnvironment(env.id);
+      await deleteEnvironment.mutateAsync(env.id);
       setConfirmDelete(false);
       onChanged();
     } finally {
@@ -778,40 +794,37 @@ function EnvCard({
 }
 
 export function EnvironmentsPage() {
-  const [environments, setEnvironments] = useState<Environment[] | null>(null);
-  const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(
-    null,
-  );
-  const [pools, setPools] = useState<RunnerPoolInfo[]>([]);
-  const [error, setError] = useState("");
   const [modal, setModal] = useState(false);
   const { notify } = useToast();
   // Track previous statuses to fire toasts on transitions
   const prevStatuses = useRef<Record<string, string>>({});
   const buildPollStarted = useRef<Record<string, number>>({});
   const buildPollTimedOut = useRef<Set<string>>(new Set());
+  const environmentsQuery = useEnvironments({
+    refetchInterval: (query) => {
+      const building =
+        query.state.data?.filter(
+          (env) => env.status === "pending" || env.status === "building",
+        ) ?? [];
+      if (building.length === 0) return false;
+      return building.every((env) => buildPollTimedOut.current.has(env.id))
+        ? false
+        : 2500;
+    },
+  });
+  const poolsQuery = useRunnerPools();
+  const settingsQuery = useSystemSettings();
+  const environments = environmentsQuery.data ?? null;
+  const systemSettings = settingsQuery.data ?? null;
+  const pools = poolsQuery.data ?? [];
+  const error =
+    environmentsQuery.isError && !environmentsQuery.data
+      ? errorMessage(environmentsQuery.error)
+      : "";
 
-  function load() {
-    api
-      .listEnvironments()
-      .then(setEnvironments)
-      .catch((err) => setError(String(err)));
+  function refreshEnvironments() {
+    void environmentsQuery.refetch();
   }
-
-  useEffect(load, []);
-  useEffect(() => {
-    runnerPoolsApi
-      .list()
-      .then(setPools)
-      .catch(() => {
-        // Runner pools are optional context; absence just means local-only.
-      });
-  }, []);
-  useEffect(() => {
-    api.getSystemSettings().then(setSystemSettings).catch(() => {
-      // Workspace settings are best-effort context; missing is fine.
-    });
-  }, []);
 
   // Fire toasts when env build status transitions.
   useEffect(() => {
@@ -869,11 +882,6 @@ export function EnvironmentsPage() {
         });
       }
     }
-    if (building.every((env) => buildPollTimedOut.current.has(env.id))) {
-      return;
-    }
-    const timer = window.setTimeout(load, 2500);
-    return () => window.clearTimeout(timer);
   }, [environments, notify]);
 
   const workspaceCap = systemSettings?.max_concurrent_runs ?? null;
@@ -945,7 +953,7 @@ export function EnvironmentsPage() {
                 <EnvCard
                   key={env.id}
                   env={env}
-                  onChanged={load}
+                  onChanged={refreshEnvironments}
                   workspaceCap={workspaceCap}
                   rssSoftBudget={rssSoftBudget}
                   pools={pools}
@@ -961,7 +969,7 @@ export function EnvironmentsPage() {
           onClose={() => setModal(false)}
           onCreated={() => {
             setModal(false);
-            load();
+            refreshEnvironments();
           }}
           workspaceCap={workspaceCap}
           rssSoftBudget={rssSoftBudget}

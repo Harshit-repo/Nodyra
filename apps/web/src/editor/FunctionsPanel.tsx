@@ -1,11 +1,18 @@
 import { useEffect, useState } from "react";
 
-import { api } from "../api";
+import { api, errorMessage } from "../api";
 import { useConfirm } from "../ConfirmProvider";
+import {
+  useCodeModules,
+  useCreateCodeModuleMutation,
+  useDeleteCodeModuleMutation,
+  useEnvironments,
+  usePreviewCodeModuleMutation,
+  useUpdateCodeModuleMutation,
+} from "../queries";
 import type {
   CodeModule,
   CodeModuleFunctionPreview,
-  Environment,
   WorkflowGraph,
 } from "../types";
 
@@ -26,7 +33,6 @@ export function FunctionsPanel({
   onChanged: () => void;
   onApplyStarterGraph: (graph: WorkflowGraph) => void;
 }) {
-  const [modules, setModules] = useState<CodeModule[] | null>(null);
   const [selected, setSelected] = useState<CodeModule | null>(null);
   const [name, setName] = useState("");
   const [contents, setContents] = useState("");
@@ -38,32 +44,23 @@ export function FunctionsPanel({
   const [saving, setSaving] = useState(false);
   const [includeUndecorated, setIncludeUndecorated] = useState(false);
   const [error, setError] = useState("");
-  const [environments, setEnvironments] = useState<Environment[]>([]);
   const [installTargetEnv, setInstallTargetEnv] = useState<string>("");
   const [installing, setInstalling] = useState<string | null>(null);
   const confirm = useConfirm();
-
-  async function refresh(): Promise<void> {
-    try {
-      const list = await api.listCodeModules({
-        visible_to_workflow: workflowId,
-      });
-      setModules(list);
-    } catch (e) {
-      setError(String(e));
-    }
-  }
+  const modulesQuery = useCodeModules({ visible_to_workflow: workflowId });
+  const environmentsQuery = useEnvironments();
+  const createModule = useCreateCodeModuleMutation();
+  const updateModule = useUpdateCodeModuleMutation();
+  const deleteModule = useDeleteCodeModuleMutation();
+  const previewModule = usePreviewCodeModuleMutation();
+  const modules = modulesQuery.data ?? null;
+  const environments = environmentsQuery.data ?? [];
 
   useEffect(() => {
-    void refresh();
-    api
-      .listEnvironments()
-      .then(setEnvironments)
-      .catch(() => {
-        /* env picker stays empty; non-fatal */
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workflowId]);
+    if (modulesQuery.isError && !modulesQuery.data) {
+      setError(errorMessage(modulesQuery.error));
+    }
+  }, [modulesQuery.data, modulesQuery.error, modulesQuery.isError]);
 
   // When the preview tells us which env the workflow uses, default the
   // install dropdown to that one (the user can override).
@@ -84,7 +81,7 @@ export function FunctionsPanel({
       await api.addPackage(installTargetEnv, pkg);
       if (selected) {
         // Refresh the preview so the package drops out of missing_in_env.
-        const p = await api.previewCodeModule(selected.id);
+        const p = await previewModule.mutateAsync(selected.id);
         setPreview(p);
       }
     } catch (e) {
@@ -120,16 +117,19 @@ export function FunctionsPanel({
     try {
       let saved: CodeModule;
       if (selected) {
-        saved = await api.updateCodeModule(selected.id, {
-          name,
-          contents,
-          include_undecorated: includeUndecorated,
+        saved = await updateModule.mutateAsync({
+          id: selected.id,
+          body: {
+            name,
+            contents,
+            include_undecorated: includeUndecorated,
+          },
         });
       } else {
         if (newScope === "environment" && !newScopeEnvId) {
           throw new Error("Pick an environment for environment-scoped modules.");
         }
-        saved = await api.createCodeModule({
+        saved = await createModule.mutateAsync({
           scope: newScope,
           workflow_id: newScope === "workflow" ? workflowId : null,
           environment_id: newScope === "environment" ? newScopeEnvId : null,
@@ -138,13 +138,13 @@ export function FunctionsPanel({
           include_undecorated: includeUndecorated,
         });
       }
-      const p = await api.previewCodeModule(saved.id);
+      const p = await previewModule.mutateAsync(saved.id);
       setPreview(p);
       setSelected(saved);
-      await refresh();
+      await modulesQuery.refetch();
       onChanged();
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -154,15 +154,16 @@ export function FunctionsPanel({
     setIncludeUndecorated(next);
     if (!selected) return;
     try {
-      const saved = await api.updateCodeModule(selected.id, {
-        include_undecorated: next,
+      const saved = await updateModule.mutateAsync({
+        id: selected.id,
+        body: { include_undecorated: next },
       });
       setSelected(saved);
-      const p = await api.previewCodeModule(saved.id);
+      const p = await previewModule.mutateAsync(saved.id);
       setPreview(p);
       onChanged();
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     }
   }
 
@@ -173,17 +174,17 @@ export function FunctionsPanel({
     });
     if (!ok) return;
     try {
-      await api.deleteCodeModule(m.id);
+      await deleteModule.mutateAsync(m.id);
       if (selected?.id === m.id) {
         setSelected(null);
         setName("");
         setContents("");
         setPreview(null);
       }
-      await refresh();
+      await modulesQuery.refetch();
       onChanged();
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     }
   }
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { api, type RunApprovalInfo } from "./api";
+import { api, type RunApprovalDecision, type RunApprovalInfo } from "./api";
 
 /**
  * Tool-approval list for a run: shows pending/decided agent-tool approvals and,
@@ -41,7 +41,7 @@ export function RunApprovalsPanel({
 
   async function decide(
     approvalId: string,
-    decision: "approve" | "reject",
+    decision: RunApprovalDecision,
   ): Promise<void> {
     setPendingId(approvalId);
     try {
@@ -106,6 +106,14 @@ export function RunApprovalsPanel({
                 onClick={() => void decide(approval.id, "approve")}
               >
                 Approve
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                disabled={pendingId === approval.id}
+                onClick={() => void decide(approval.id, "approve_all")}
+              >
+                Approve all
               </button>
               <button
                 type="button"

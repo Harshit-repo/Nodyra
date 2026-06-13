@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { categoryColor } from "../categories";
 import { isBrandIconName, NodeIcon } from "../NodeIcon";
+import { useModalA11y } from "../useModalA11y";
 import { NDVPanels } from "./NDVPanels";
 import { useEditor } from "./store";
 
@@ -13,6 +14,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState("");
   const [nameSaved, setNameSaved] = useState(false);
+  const modalRef = useRef<HTMLDivElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const nameSavedTimerRef = useRef<number | null>(null);
   const toggleDisabled = useEditor((s) => s.toggleDisabled);
@@ -44,14 +46,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
     return false;
   });
   const canRunStep = isTrigger || hasTriggerUpstream;
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") closeNdv();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [closeNdv]);
+  useModalA11y(modalRef, closeNdv, { trapFocus: false });
 
   useEffect(
     () => () => {
@@ -94,9 +89,11 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
     <div className="modal-overlay ndv-overlay" onClick={closeNdv}>
       <div
         className="ndv-modal"
+        ref={modalRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Node details"
+        aria-labelledby="ndv-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <header className="ndv-head">
@@ -110,6 +107,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
             <div>
               {editingName ? (
                 <input
+                  id="ndv-title"
                   ref={nameInputRef}
                   className="ndv-name-input"
                   value={nameVal}
@@ -122,6 +120,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
                 />
               ) : (
                 <h3
+                  id="ndv-title"
                   className="ndv-name-editable"
                   title="Click to rename for this workflow"
                   onClick={() => { setNameVal(currentNode.data.label || manifest.name); setEditingName(true); }}

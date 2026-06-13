@@ -1186,9 +1186,10 @@ export function DataPanel({
         : effectiveView === "html"
           ? htmlPreview ?? ""
           : pretty(display);
+  const panelClassName = `ndv-panel${empty ? " ndv-panel-empty-data" : ""}`;
 
   return (
-    <section className="ndv-panel">
+    <section className={panelClassName}>
       <header className="ndv-panel-head">
         <h3>
           {title}

@@ -1,0 +1,21 @@
+:root {
+  --editor-toolbar-height: 53px;
+  --editor-space-2xs: 5px;
+  --editor-space-xs: 6px;
+  --editor-space-sm: 8px;
+  --editor-space-md: 14px;
+  --editor-space-lg: 16px;
+  --editor-radius-control: 6px;
+  --editor-radius-tight: 5px;
+  --editor-radius-pill: 999px;
+  --editor-z-dropdown: 20;
+  --editor-z-panel: 40;
+  --editor-danger-bg: rgba(229, 102, 79, 0.12);
+  --editor-danger-border: rgba(229, 102, 79, 0.2);
+  --editor-danger-text: #ef8d6f;
+  --editor-warning-bg: rgba(255, 212, 121, 0.1);
+  --editor-warning-border: rgba(255, 212, 121, 0.22);
+  --editor-warning-text: #ffd479;
+  --editor-info-bg: rgba(102, 178, 255, 0.1);
+  --editor-info-border: rgba(102, 178, 255, 0.22);
+}

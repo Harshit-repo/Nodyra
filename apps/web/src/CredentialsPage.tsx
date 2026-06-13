@@ -8,6 +8,13 @@ import {
   getLlmVariant,
   visibleCredentialFields,
 } from "./llmProviders";
+import {
+  useCredentialTypes,
+  useCredentials,
+  useDeleteCredentialMutation,
+  useRefreshCredentialMutation,
+  useTestCredentialMutation,
+} from "./queries";
 import { useToast } from "./ToastProvider";
 import { useModalA11y } from "./useModalA11y";
 import type { Credential, CredentialTestResponse, CredentialTypeInfo } from "./types";
@@ -1169,9 +1176,6 @@ function CreateCredentialModal({
 }
 
 export function CredentialsPage() {
-  const [credentials, setCredentials] = useState<Credential[] | null>(null);
-  const [credentialTypes, setCredentialTypes] = useState<CredentialTypeInfo[] | null>(null);
-  const [error, setError] = useState("");
   const [modal, setModal] = useState(false);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -1183,6 +1187,18 @@ export function CredentialsPage() {
   >({});
   const { notify } = useToast();
   const confirm = useConfirm();
+  const credentialsQuery = useCredentials();
+  const credentialTypesQuery = useCredentialTypes();
+  const deleteCredentialMutation = useDeleteCredentialMutation();
+  const refreshCredentialMutation = useRefreshCredentialMutation();
+  const testCredentialMutation = useTestCredentialMutation();
+  const credentials = credentialsQuery.data ?? null;
+  const credentialTypes: CredentialTypeInfo[] | null =
+    credentialTypesQuery.data ?? null;
+  const error =
+    credentialsQuery.isError && !credentialsQuery.data
+      ? errorMessage(credentialsQuery.error)
+      : "";
   const credentialPresets = useMemo(
     () => mergedCredentialPresets(credentialTypes),
     [credentialTypes],
@@ -1216,25 +1232,6 @@ export function CredentialsPage() {
     );
   }, [credentials, presetsByType]);
 
-  function load() {
-    Promise.allSettled([api.listCredentials(), api.listCredentialTypes()])
-      .then(([credentialsResult, typesResult]) => {
-        if (credentialsResult.status === "fulfilled") {
-          setCredentials(credentialsResult.value);
-        } else {
-          setError(String(credentialsResult.reason));
-        }
-        if (typesResult.status === "fulfilled") {
-          setCredentialTypes(typesResult.value);
-        } else {
-          setCredentialTypes(null);
-        }
-      })
-      .catch((err) => setError(String(err)));
-  }
-
-  useEffect(load, []);
-
   async function remove(id: string, name: string) {
     const ok = await confirm({
       title: "Delete credential?",
@@ -1242,9 +1239,8 @@ export function CredentialsPage() {
     });
     if (!ok) return;
     try {
-      await api.deleteCredential(id);
+      await deleteCredentialMutation.mutateAsync(id);
       notify("Credential deleted.", "success");
-      load();
     } catch (err) {
       notify(`Could not delete credential. ${errorMessage(err)}`, "error");
     }
@@ -1253,11 +1249,14 @@ export function CredentialsPage() {
   async function testCredential(cred: Credential): Promise<void> {
     setTesting((current) => ({ ...current, [cred.id]: true }));
     try {
-      const result = await api.testCredential(cred.id, {
-        workflow_id: cred.workflow_id,
-        environment_id: cred.environment_id,
-        runner_pool_id: cred.runner_pool_id,
-        context: {},
+      const result = await testCredentialMutation.mutateAsync({
+        id: cred.id,
+        body: {
+          workflow_id: cred.workflow_id,
+          environment_id: cred.environment_id,
+          runner_pool_id: cred.runner_pool_id,
+          context: {},
+        },
       });
       setTestResults((current) => ({ ...current, [cred.id]: result }));
       notify(
@@ -1274,9 +1273,8 @@ export function CredentialsPage() {
   async function refreshCredential(cred: Credential): Promise<void> {
     setRefreshing((current) => ({ ...current, [cred.id]: true }));
     try {
-      await api.refreshCredential(cred.id);
+      await refreshCredentialMutation.mutateAsync(cred.id);
       notify("Credential refreshed.", "success");
-      load();
     } catch (err) {
       notify(String(err), "error");
     } finally {
@@ -1446,7 +1444,7 @@ export function CredentialsPage() {
           onClose={() => setModal(false)}
           onCreated={() => {
             setModal(false);
-            load();
+            void credentialsQuery.refetch();
           }}
         />
       )}

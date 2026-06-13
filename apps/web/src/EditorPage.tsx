@@ -2,7 +2,7 @@ import { ReactFlowProvider } from "@xyflow/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useBlocker, useParams } from "react-router-dom";
 
-import { api, errorMessage, type RunStreamHandle, subscribeToRunEvents } from "./api";
+import { api, errorMessage, getToken, type RunStreamHandle, subscribeToRunEvents } from "./api";
 import { AiDraftModal } from "./AiDraftModal";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Canvas } from "./editor/Canvas";
@@ -248,6 +248,7 @@ export function EditorPage() {
   const { notify } = useToast();
   const wsRef = useRef<RunStreamHandle | null>(null);
   const webhookTimerRef = useRef<number | null>(null);
+  const listenPathRef = useRef<string | null>(null);
   const runsMenuRef = useRef<HTMLDivElement | null>(null);
   const aiAbortRef = useRef<AbortController | null>(null);
   const saveInProgressRef = useRef(false);
@@ -522,6 +523,10 @@ export function EditorPage() {
       window.clearInterval(webhookTimerRef.current);
       webhookTimerRef.current = null;
     }
+    if (listenPathRef.current) {
+      void api.stopListen(listenPathRef.current).catch(() => undefined);
+      listenPathRef.current = null;
+    }
     setWebhookListen(null);
   }
 
@@ -555,6 +560,31 @@ export function EditorPage() {
       (dirty || childDirty) &&
       currentLocation.pathname !== nextLocation.pathname,
   );
+
+  async function triggerExport(path: string, filename: string): Promise<void> {
+    const headers: Record<string, string> = {};
+    const token = getToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+    try {
+      const resp = await fetch(path, { headers, credentials: "include" });
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => resp.statusText);
+        notify(`Export failed: ${body}`, "error");
+        return;
+      }
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      notify(`Export failed: ${errorMessage(err)}`, "error");
+    }
+  }
 
   async function save(
     options: { notifySuccess?: boolean } = {},
@@ -882,6 +912,19 @@ export function EditorPage() {
     });
   }
 
+  function startChatCanvasRun(runId: string): void {
+    // The chat panel owns the live run socket for chat turns. Reuse its events
+    // to animate the canvas instead of opening a second editor stream.
+    wsRef.current?.close();
+    wsRef.current = null;
+    setWaitingRunId(null);
+    startRun(runId);
+  }
+
+  function applyChatRunEvent(event: RunEvent): void {
+    applyRunEvent(event);
+  }
+
   async function startWebhookTestRun(
     node: GraphNode,
     targets?: string[],
@@ -897,11 +940,13 @@ export function EditorPage() {
     setNodeOutput(node.id, undefined);
     try {
       await api.clearWebhook(path);
+      await api.startListen(path);
     } catch (err) {
       setMessage(String(err));
       return;
     }
 
+    listenPathRef.current = path;
     setWebhookListen({ nodeId: node.id, path, url, targets: runTargets });
     notify("Listening for test webhook.", "info");
     webhookTimerRef.current = window.setInterval(async () => {
@@ -1067,6 +1112,16 @@ export function EditorPage() {
         window.dispatchEvent(new Event("noodle:auto-layout"));
         return;
       }
+      if (e.shiftKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        window.dispatchEvent(new Event("noodle:toggle-node-palette"));
+        return;
+      }
+      if (e.shiftKey && e.key.toLowerCase() === "i") {
+        e.preventDefault();
+        window.dispatchEvent(new Event("noodle:toggle-inspector"));
+        return;
+      }
       if (e.shiftKey && e.key.toLowerCase() === "n") {
         e.preventDefault();
         useEditor.getState().addStickyNote({ x: 200 + Math.random() * 200, y: 200 + Math.random() * 100 });
@@ -1162,7 +1217,7 @@ export function EditorPage() {
             value={name}
             aria-label="Workflow name"
             onChange={(e) => setName(e.target.value)}
-            onBlur={() => { if (dirty) void save({ notifySuccess: false }); }}
+            onBlur={() => { if (dirty || name.trim() !== (workflow?.name ?? "")) void save({ notifySuccess: false }); }}
             spellCheck={false}
           />
           <span className="toolbar-meta">
@@ -1309,24 +1364,21 @@ export function EditorPage() {
                 className="export-dropdown"
                 onMouseLeave={() => setExportOpen(false)}
               >
-                <a
-                  href={`/api/workflows/${id}/export.py`}
-                  onClick={() => setExportOpen(false)}
+                <button
+                  onClick={() => { setExportOpen(false); void triggerExport(`/api/workflows/${id}/export.py`, `${name || "workflow"}.py`); }}
                 >
                   Python script (.py)
-                </a>
-                <a
-                  href={`/api/workflows/${id}/export/docker`}
-                  onClick={() => setExportOpen(false)}
+                </button>
+                <button
+                  onClick={() => { setExportOpen(false); void triggerExport(`/api/workflows/${id}/export/docker`, `${name || "workflow"}-docker.zip`); }}
                 >
                   Docker bundle (.zip)
-                </a>
-                <a
-                  href={`/api/workflows/${id}/export.module.py`}
-                  onClick={() => setExportOpen(false)}
+                </button>
+                <button
+                  onClick={() => { setExportOpen(false); void triggerExport(`/api/workflows/${id}/export.module.py`, `${name || "workflow"}_module.py`); }}
                 >
                   Python module (code-first .py)
-                </a>
+                </button>
               </div>
             )}
           </div>
@@ -1542,6 +1594,12 @@ export function EditorPage() {
               <span>Auto-layout</span>
               <kbd>Shift</kbd>
               <kbd>L</kbd>
+              <span>Toggle node picker</span>
+              <kbd>Shift</kbd>
+              <kbd>P</kbd>
+              <span>Toggle inspector</span>
+              <kbd>Shift</kbd>
+              <kbd>I</kbd>
               <span>Add group frame</span>
               <kbd>Shift</kbd>
               <kbd>G</kbd>
@@ -1644,7 +1702,8 @@ export function EditorPage() {
           title={chatTriggerParams?.title ?? "Chat"}
           placeholder={chatTriggerParams?.input_placeholder ?? "Type a message…"}
           initialMessage={chatTriggerParams?.initial_message ?? ""}
-          onRun={(runId) => connectRunStream(runId)}
+          onRun={startChatCanvasRun}
+          onRunEvent={applyChatRunEvent}
           onClose={closeChat}
           onViewRun={(runId) => viewRun(runId)}
           live

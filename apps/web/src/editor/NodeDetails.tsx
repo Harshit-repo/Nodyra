@@ -1,7 +1,7 @@
-import { Info } from "@phosphor-icons/react";
+import { Info, MagnifyingGlass, Plus, WarningCircle, X } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 
-import { api, uploadArtifact } from "../api";
+import { api, errorMessage, uploadArtifact } from "../api";
 import { categoryColor } from "../categories";
 import {
   LLM_PROVIDER_VARIANTS,
@@ -13,7 +13,6 @@ import { useModalA11y } from "../useModalA11y";
 import { useToast } from "../ToastProvider";
 import type {
   Credential,
-  CredentialParamSpec,
   NodeManifest,
   NodeSource,
   ParamSpec,
@@ -24,6 +23,53 @@ import { fromAiExpr, isFromAiExpr, paramArgType } from "./toolParam";
 import { missingFor } from "./missingPackages";
 import { useEditor } from "./store";
 import { useServerPlatform } from "../hooks/useServerPlatform";
+import { credentialMatchesParam } from "./node-details/credentials";
+import {
+  buildLoadOptionsParams,
+  matchesDisplayWhen,
+} from "./node-details/displayRules";
+import {
+  computeSuggestions,
+  EXPR_RE,
+  EXPR_RE_GLOBAL,
+  type ExprContext,
+  formatResultText,
+  getTokenBeforeCursor,
+  type PreviewPart,
+  type ResultView,
+} from "./node-details/expressions";
+import { formatParamLabel, isSecretField } from "./node-details/labels";
+import { mergeOptions } from "./node-details/options";
+import {
+  PackageInstallPanel,
+  SystemRequirementsPanel,
+} from "./node-details/PackageInstallPanel";
+import { ResourceOperationSelector } from "./node-details/ResourceOperationSelector";
+import {
+  WEBHOOK_AUTH_TYPE_OPTIONS,
+  webhookCredentialSpec,
+  webhookHiddenParam,
+  webhookParamLabel,
+} from "./node-details/webhookRules";
+
+export { credentialMatchesParam } from "./node-details/credentials";
+export {
+  applyResourceOperation,
+  buildLoadOptionsParams,
+  matchesDisplayWhen,
+} from "./node-details/displayRules";
+export { computeSuggestions, type ExprContext } from "./node-details/expressions";
+export { formatParamLabel } from "./node-details/labels";
+export { mergeOptions } from "./node-details/options";
+export { ResourceOperationSelector } from "./node-details/ResourceOperationSelector";
+export {
+  groupActiveByValue,
+  paramGroup,
+  WEBHOOK_AUTH_TYPE_OPTIONS,
+  webhookCredentialSpec,
+  webhookHiddenParam,
+  webhookParamLabel,
+} from "./node-details/webhookRules";
 
 const PACKAGE_INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 const PACKAGE_INSTALL_POLL_MS = 2000;
@@ -91,198 +137,6 @@ function makeCredentialRef(id: string, key: string): CredentialRef {
   return { __noodle_credential__: true, id, key };
 }
 
-// Catch-all credential types accepted by any picker regardless of declared type.
-const GENERIC_CRED_TYPES = ["generic", "apiKey", "oauth2"];
-
-/** Decide whether a stored credential is eligible for a node param's picker.
- *
- *  A credential qualifies when its type lines up with the param's declared
- *  credential type (or it is a generic catch-all) AND it carries the field(s)
- *  the node will read.
- *
- *  Multi-field credentials — the single "Credentials" picker, `key === "*"` —
- *  legitimately store only a *subset* of the declared fields: an Ollama
- *  `llm_provider` credential has no `api_key`, a non-Azure one has no
- *  `azure_endpoint`, and so on. Requiring every declared field hides every
- *  partially-filled credential and surfaces it as "⚠ Missing", so a multi-field
- *  credential matches when it carries *at least one* declared field. */
-export function credentialMatchesParam(
-  cred: Pick<Credential, "type" | "keys">,
-  meta: CredentialParamSpec | null | undefined,
-  targetKey: string,
-): boolean {
-  if (
-    meta?.type &&
-    cred.type !== meta.type &&
-    !GENERIC_CRED_TYPES.includes(cred.type)
-  ) {
-    return false;
-  }
-  if (meta?.multi) {
-    const fields = meta.fields?.length ? meta.fields : [meta.key];
-    return fields.some((field) => cred.keys.includes(field));
-  }
-  return cred.keys.includes(targetKey);
-}
-
-/** Query params for a dynamic-options fetch: the selected credential's id, the
- *  standard provider/base_url/workflow context, plus any of the field's own
- *  `depends_on` params that carry a string value (e.g. a chosen spreadsheet_id
- *  the loader needs to list that sheet's tabs). Empties are skipped; the
- *  credential dependency is an object ref, so it's forwarded as credential_id
- *  above rather than a raw string. */
-export function buildLoadOptionsParams(
-  credential: { id: string } | null,
-  params: Record<string, unknown>,
-  dependsOn: string[] = [],
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (credential?.id) out.credential_id = credential.id;
-  for (const key of ["provider", "base_url", "workflow_id", ...dependsOn]) {
-    const value = params[key];
-    if (typeof value === "string" && value.trim()) out[key] = value.trim();
-  }
-  return out;
-}
-
-/** Evaluate a param's `display_when` against the current param values. Supports:
- *   - `{ param, value }` / `{ param, values: [...] }` — a single equality check
- *   - `{ conditions: [cond, ...] }` — every condition must match (AND)
- *   - `{ any: [group, ...] }` — at least one group matches (OR of AND groups)
- *  Consolidated integration nodes use the nested forms to gate a field on both
- *  the selected resource and operation. Absent/non-object ⇒ always visible. */
-export function matchesDisplayWhen(
-  displayWhen: Record<string, unknown> | null | undefined,
-  params: Record<string, unknown>,
-): boolean {
-  if (!displayWhen || typeof displayWhen !== "object") return true;
-  if (Array.isArray(displayWhen.any)) {
-    return (displayWhen.any as unknown[]).some((group) =>
-      matchesDisplayWhen(group as Record<string, unknown>, params),
-    );
-  }
-  if (Array.isArray(displayWhen.conditions)) {
-    return (displayWhen.conditions as unknown[]).every((cond) =>
-      matchesDisplayWhen(cond as Record<string, unknown>, params),
-    );
-  }
-  const paramName = String(displayWhen.param ?? "");
-  if (!paramName) return true;
-  const currentVal = String(params[paramName] ?? "");
-  if (Array.isArray(displayWhen.values)) {
-    return displayWhen.values.map(String).includes(currentVal);
-  }
-  return currentVal === String(displayWhen.value ?? "");
-}
-
-/** Recompute params after a resource/operation switch on a consolidated
- *  integration node: set the new selection and drop any param that is no longer
- *  visible (so a saved node never carries dead config from another operation).
- *  Params without a display_when (e.g. the shared credential) are preserved. */
-export function applyResourceOperation(
-  manifest: NodeManifest,
-  params: Record<string, unknown>,
-  resource: string,
-  operation: string,
-): Record<string, unknown> {
-  const next: Record<string, unknown> = { ...params, resource, operation };
-  for (const spec of manifest.params) {
-    if (spec.display_when && !matchesDisplayWhen(spec.display_when, next)) {
-      delete next[spec.name];
-    }
-  }
-  return next;
-}
-
-/** Two-level Resource → Operation selector shown at the top of a consolidated
- *  integration node's params. Operations filter to the chosen resource; the rest
- *  of the fields reshape via each param's display_when. */
-export function ResourceOperationSelector({
-  manifest,
-  params,
-  onChange,
-}: {
-  manifest: NodeManifest;
-  params: Record<string, unknown>;
-  onChange: (next: Record<string, unknown>) => void;
-}) {
-  const resources = manifest.integration?.resources ?? [];
-  if (resources.length === 0) return null;
-
-  const currentResource =
-    resources.find((r) => r.id === String(params.resource ?? ""))?.id ??
-    resources[0].id;
-  const resourceDef =
-    resources.find((r) => r.id === currentResource) ?? resources[0];
-  const operations = resourceDef.operations ?? [];
-  const currentOperation =
-    operations.find((o) => o.id === String(params.operation ?? ""))?.id ??
-    operations[0]?.id ??
-    "";
-  const operationDef = operations.find((o) => o.id === currentOperation);
-
-  return (
-    <div className="ro-selector">
-      <div className="ro-grid">
-        <label className="ro-field">
-          <span className="field-name">Resource</span>
-          <select
-            className="field-input"
-            value={currentResource}
-            onChange={(e) => {
-              const res = resources.find((r) => r.id === e.target.value);
-              const firstOp = res?.operations[0]?.id ?? "";
-              onChange(
-                applyResourceOperation(manifest, params, e.target.value, firstOp),
-              );
-            }}
-          >
-            {resources.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="ro-field">
-          <span className="field-name">Operation</span>
-          <select
-            className="field-input"
-            value={currentOperation}
-            onChange={(e) =>
-              onChange(
-                applyResourceOperation(
-                  manifest,
-                  params,
-                  currentResource,
-                  e.target.value,
-                ),
-              )
-            }
-          >
-            {operations.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      {operationDef?.description && (
-        <p className="ro-desc field-desc">{operationDef.description}</p>
-      )}
-    </div>
-  );
-}
-
-/** Combine fetched options with the current free-text value so a typed,
- *  unlisted value is never lost and never duplicated. */
-export function mergeOptions(fetched: string[], current: string): string[] {
-  const list = [...fetched];
-  if (current && !list.includes(current)) list.unshift(current);
-  return list;
-}
-
 function credentialScopeLabel(cred: Credential): string {
   if (cred.scope === "workflow" && cred.workflow_id) {
     return `workflow ${cred.workflow_id.slice(0, 8)}`;
@@ -294,6 +148,40 @@ function credentialScopeLabel(cred: Credential): string {
     return `runner ${cred.runner_pool_id}`;
   }
   return cred.scope;
+}
+
+function credentialTypeLabel(type: string): string {
+  return CRED_TYPE_LABELS[type] ?? formatParamLabel(type);
+}
+
+function credentialFieldLabel(field: string): string {
+  return CRED_FIELD_LABELS[field] ?? formatParamLabel(field);
+}
+
+function credentialFieldSummary(cred: Credential): string {
+  if (cred.keys.length === 0) return "No stored fields";
+  const visible = cred.keys.slice(0, 3).map(credentialFieldLabel).join(", ");
+  const extra = cred.keys.length > 3 ? ` +${cred.keys.length - 3}` : "";
+  return `${visible}${extra}`;
+}
+
+function credentialMatchesSearch(cred: Credential, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  return [
+    cred.name,
+    cred.type,
+    credentialTypeLabel(cred.type),
+    cred.description,
+    cred.scope,
+    credentialScopeLabel(cred),
+    ...cred.keys,
+    ...cred.keys.map(credentialFieldLabel),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+    .includes(needle);
 }
 
 function JsonField({
@@ -745,37 +633,12 @@ const CRED_TYPE_LABELS: Record<string, string> = {
   mysql: "MySQL Account",
 };
 
-// Acronyms preserved in uppercase when auto-titling snake_case param names.
-const PARAM_LABEL_ACRONYMS = new Set([
-  "http", "https", "url", "uri", "id", "aws", "api", "sms", "ip", "ips",
-  "json", "xml", "os", "csv", "jwt", "oauth", "oauth2", "sql", "cors",
-  "tls", "ssl", "ssh", "tcp", "udp", "dns", "ai", "ldap", "smtp", "ftp",
-  "sftp", "gcs", "s3", "rss", "uuid", "md5", "sha", "html", "css", "rgb",
-  "cli", "io", "cdn", "cpu", "ram", "gpu", "rgb",
-]);
-
-export function formatParamLabel(name: string): string {
-  if (!name) return "";
-  return name
-    .split(/[_\s]+/)
-    .filter(Boolean)
-    .map((word) => {
-      const lower = word.toLowerCase();
-      if (PARAM_LABEL_ACRONYMS.has(lower)) return lower.toUpperCase();
-      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-    })
-    .join(" ");
-}
-
-function isSecretField(name: string): boolean {
-  return /password|secret|key|token|private|uri|url|connection/i.test(name);
-}
-
 function CredentialCreateModal({
   credType,
   fields,
   typeLabel,
   workflowId,
+  credentialContext,
   onClose,
   onCreated,
 }: {
@@ -783,6 +646,7 @@ function CredentialCreateModal({
   fields: string[];
   typeLabel: string;
   workflowId: string | null;
+  credentialContext?: Record<string, unknown>;
   onClose: () => void;
   onCreated: (id: string, key: string, credential: Credential) => void;
 }) {
@@ -831,8 +695,16 @@ function CredentialCreateModal({
 
   function collectData(): Record<string, string> {
     const data: Record<string, string> = {};
-    if (isLlm && fieldValues.provider) data.provider = fieldValues.provider;
-    for (const f of renderedFields) {
+    if (isLlm && fieldValues.provider) {
+      data.provider = fieldValues.provider;
+      if (variant?.apiKey === "required" && !fieldValues.api_key?.trim()) {
+        throw new Error("Enter API key.");
+      }
+    }
+    const fieldsToPersist = isLlm
+      ? visibleCredentialFields(fieldValues.provider, true)
+      : renderedFields;
+    for (const f of fieldsToPersist) {
       if (fieldValues[f]?.trim()) data[f] = fieldValues[f].trim();
     }
     return data;
@@ -854,7 +726,7 @@ function CredentialCreateModal({
       notify("Credential created.", "success");
       onCreated(created.id, refKey, created);
     } catch (err) {
-      setError(String(err));
+      setError(errorMessage(err));
       setBusy(false);
     }
   }
@@ -867,7 +739,7 @@ function CredentialCreateModal({
       const result = await api.testCredentialDraft({
         type: credType,
         data: collectData(),
-        context: {},
+        context: credentialContext ?? {},
       });
       notify(
         result.ok ? "Credential connected." : result.message,
@@ -876,7 +748,7 @@ function CredentialCreateModal({
       if (!result.ok) setError(result.message);
     } catch (err) {
       // Inside the credential modal/field → inline error (toast would duplicate).
-      setError(String(err));
+      setError(errorMessage(err));
     } finally {
       setTesting(false);
     }
@@ -893,74 +765,96 @@ function CredentialCreateModal({
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="cred-quick-modal-head">
+        <div className="credential-modal-head cred-quick-modal-head">
           <div>
             <h2 id="cred-quick-modal-title">New credential</h2>
-            <p className="muted">{displayLabel}</p>
+            <p className="muted">
+              Create a {displayLabel} credential for this node.
+            </p>
           </div>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm cred-quick-close"
-            onClick={onClose}
-            aria-label="Close"
-          >
-            ✕
-          </button>
+          <div className="cred-quick-head-actions">
+            <span className="cred-type">{credType}</span>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm cred-quick-close"
+              onClick={onClose}
+              aria-label="Close"
+            >
+              <X size={14} weight="bold" />
+            </button>
+          </div>
         </div>
 
-        <label className="credential-form-field">
-          <span>Name</span>
-          <input
-            className="field-input"
-            placeholder="My credential"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void handleCreate();
-            }}
-          />
-        </label>
+        <div className="cred-quick-summary">
+          <div>
+            <span>Type</span>
+            <strong>{displayLabel}</strong>
+          </div>
+          <div>
+            <span>Fields</span>
+            <strong>
+              {renderedFields.length > 0
+                ? renderedFields.map(credentialFieldLabel).join(", ")
+                : "Custom credential"}
+            </strong>
+          </div>
+        </div>
 
-        {isLlm && (
+        <div className="credential-form-grid cred-quick-grid">
           <label className="credential-form-field">
-            <span>Provider</span>
-            <select
-              className="field-input"
-              value={fieldValues.provider}
-              onChange={(e) => onProviderChange(e.target.value)}
-            >
-              {LLM_PROVIDER_VARIANTS.map((v) => (
-                <option key={v.value} value={v.value}>
-                  {v.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-
-        {renderedFields.map((field) => (
-          <label key={field} className="credential-form-field">
-            <span>
-              {CRED_FIELD_LABELS[field] ?? field}
-              {isLlm &&
-              field === "api_key" &&
-              variant?.apiKey === "required"
-                ? " *"
-                : ""}
-            </span>
+            <span>Name *</span>
             <input
               className="field-input"
-              type={isSecretField(field) ? "password" : "text"}
-              placeholder={CRED_FIELD_LABELS[field] ?? field}
-              value={fieldValues[field] ?? ""}
-              onChange={(e) => setField(field, e.target.value)}
+              placeholder="My credential"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void handleCreate();
-                if (e.key === "Escape") onClose();
               }}
             />
           </label>
-        ))}
+
+          {isLlm && (
+            <label className="credential-form-field">
+              <span>Provider</span>
+              <select
+                className="field-input"
+                value={fieldValues.provider}
+                onChange={(e) => onProviderChange(e.target.value)}
+              >
+                {LLM_PROVIDER_VARIANTS.map((v) => (
+                  <option key={v.value} value={v.value}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          {renderedFields.map((field) => (
+            <label key={field} className="credential-form-field">
+              <span>
+                {credentialFieldLabel(field)}
+                {isLlm &&
+                field === "api_key" &&
+                variant?.apiKey === "required"
+                  ? " *"
+                  : ""}
+              </span>
+              <input
+                className="field-input"
+                type={isSecretField(field) ? "password" : "text"}
+                placeholder={credentialFieldLabel(field)}
+                value={fieldValues[field] ?? ""}
+                onChange={(e) => setField(field, e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void handleCreate();
+                  if (e.key === "Escape") onClose();
+                }}
+              />
+            </label>
+          ))}
+        </div>
 
         {isLlm &&
           variant !== null &&
@@ -976,25 +870,36 @@ function CredentialCreateModal({
           )}
 
         {workflowId && (
-          <div className="cred-quick-scope">
-            <label>
+          <div className="cred-quick-scope" role="radiogroup" aria-label="Credential scope">
+            <label className={scope === "workflow" ? "is-selected" : ""}>
               <input
                 type="radio"
                 checked={scope === "workflow"}
                 onChange={() => setScope("workflow")}
               />
-              This workflow only
+              <span>
+                <strong>This workflow</strong>
+                <small>Only available inside the current workflow.</small>
+              </span>
             </label>
-            <label>
+            <label className={scope === "global" ? "is-selected" : ""}>
               <input
                 type="radio"
                 checked={scope === "global"}
                 onChange={() => setScope("global")}
               />
-              Global (all workflows)
+              <span>
+                <strong>Global</strong>
+                <small>Reusable from every workflow.</small>
+              </span>
             </label>
           </div>
         )}
+
+        <div className="credential-security-note">
+          Secret values are encrypted at rest and are not returned by the API
+          after creation.
+        </div>
 
         {error && <p className="error-text">{error}</p>}
 
@@ -1016,7 +921,7 @@ function CredentialCreateModal({
           </button>
           <button
             type="button"
-            className="btn btn-sm"
+            className="btn btn-primary btn-sm"
             disabled={busy || !name.trim()}
             onClick={() => void handleCreate()}
           >
@@ -1049,9 +954,12 @@ function CredentialParamField({
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [credentialQuery, setCredentialQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState("");
+  const pickerRef = useRef<HTMLDivElement>(null);
   const { notify } = useToast();
 
   function load(): void {
@@ -1062,17 +970,41 @@ function CredentialParamField({
         setCredentials(items);
         setError("");
       })
-      .catch((err) => setError(String(err)))
+      .catch((err) => setError(errorMessage(err)))
       .finally(() => setLoading(false));
   }
 
   useEffect(load, []);
 
+  useEffect(() => {
+    if (!pickerOpen) return;
+    function closeOnOutside(event: MouseEvent): void {
+      if (
+        event.target instanceof Node &&
+        pickerRef.current &&
+        !pickerRef.current.contains(event.target)
+      ) {
+        setPickerOpen(false);
+      }
+    }
+    function closeOnEscape(event: KeyboardEvent): void {
+      if (event.key === "Escape") setPickerOpen(false);
+    }
+    document.addEventListener("mousedown", closeOnOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [pickerOpen]);
+
   const matching = credentials.filter((cred) =>
     credentialMatchesParam(cred, meta, targetKey),
   );
+  const visibleMatching = matching.filter((cred) =>
+    credentialMatchesSearch(cred, credentialQuery),
+  );
 
-  const selectedValue = selected ? `${selected.id}:${selected.key}` : "";
   const selectedCredential = selected
     ? credentials.find((cred) => cred.id === selected.id)
     : undefined;
@@ -1111,12 +1043,11 @@ function CredentialParamField({
       notify("Moved to credential store.", "success");
       load();
     } catch (err) {
-      setError(String(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
   }
-
   async function testSelectedCredential(): Promise<void> {
     if (!selected) return;
     setTesting(true);
@@ -1133,61 +1064,165 @@ function CredentialParamField({
       if (!result.ok) setError(result.message);
     } catch (err) {
       // Inside the credential modal/field → inline error (toast would duplicate).
-      setError(String(err));
+      setError(errorMessage(err));
     } finally {
       setTesting(false);
     }
   }
 
+  function selectCredential(cred: Credential): void {
+    onChange(makeCredentialRef(cred.id, targetKey));
+    setPickerOpen(false);
+    setCredentialQuery("");
+    setError("");
+  }
+
+  function openCreateModal(): void {
+    setPickerOpen(false);
+    setModalOpen(true);
+    setError("");
+  }
+
+  const pickerTitle = loading
+    ? "Loading credentials..."
+    : selectedCredential
+      ? selectedCredential.name
+      : selectedMissing && selected
+        ? `Missing credential ${selected.id.slice(0, 8)}`
+        : "Select credential";
+  const pickerMeta = loading
+    ? "Fetching saved credentials"
+    : selectedCredential
+      ? `${credentialTypeLabel(selectedCredential.type)} · ${credentialScopeLabel(
+          selectedCredential,
+        )} · ${credentialFieldSummary(selectedCredential)}`
+      : matching.length === 0
+        ? `No saved ${credentialTypeLabel(meta?.type ?? spec.name)} credentials yet`
+        : `${matching.length} matching credential${matching.length === 1 ? "" : "s"}`;
+
   return (
     <div className="credential-param">
-      <div className="credential-select-row">
-        <select
-          className="field-input"
-          value={selectedValue}
-          disabled={loading}
-          onChange={(e) => {
-            const val = e.target.value;
-            if (!val) { onChange(""); return; }
-            const colonIdx = val.indexOf(":");
-            const id = val.slice(0, colonIdx);
-            const key = val.slice(colonIdx + 1);
-            onChange(id && key ? makeCredentialRef(id, key) : "");
-          }}
-        >
-          <option value="">
-            {loading
-              ? "Loading…"
-              : matching.length === 0
-                ? "No matching credentials — add one →"
-                : "— Select credential —"}
-          </option>
-          {selectedMissing && selected && (
-            <option value={selectedValue}>
-              ⚠ Missing: {selected.id.slice(0, 8)}
-            </option>
-          )}
-          {matching.map((cred) => (
-            <option
-              key={`${cred.id}:${targetKey}`}
-              value={`${cred.id}:${targetKey}`}
-            >
-              {cred.name}
-              {cred.scope !== "global"
-                ? ` · ${credentialScopeLabel(cred)}`
-                : ""}
-            </option>
-          ))}
-        </select>
+      <div className="credential-select-row" ref={pickerRef}>
+        <div className="credential-picker">
+          <button
+            type="button"
+            className={`credential-picker-trigger${
+              selectedCredential ? " has-selection" : ""
+            }${selectedMissing ? " is-warning" : ""}`}
+            disabled={loading}
+            aria-haspopup="listbox"
+            aria-expanded={pickerOpen}
+            onClick={() => setPickerOpen((open) => !open)}
+          >
+            <span className="credential-picker-main">
+              <span className="credential-picker-title">{pickerTitle}</span>
+              <span className="credential-picker-meta">{pickerMeta}</span>
+            </span>
+            <span className="credential-picker-caret" aria-hidden="true">
+              ▾
+            </span>
+          </button>
 
-        <button
-          type="button"
-          className="btn btn-sm btn-ghost cred-add-btn"
-          title="Add new credential"
-          onClick={() => setModalOpen(true)}
-        >
-          +
-        </button>
+          {pickerOpen && (
+            <div className="credential-picker-menu">
+              <label className="credential-picker-search">
+                <MagnifyingGlass size={14} aria-hidden="true" />
+                <input
+                  autoFocus
+                  placeholder="Search credentials"
+                  value={credentialQuery}
+                  onChange={(e) => setCredentialQuery(e.target.value)}
+                />
+              </label>
+
+              <div className="credential-picker-list" role="listbox">
+                {visibleMatching.length > 0 ? (
+                  visibleMatching.map((cred) => {
+                    const isSelected = selected?.id === cred.id;
+                    return (
+                      <button
+                        type="button"
+                        className={`credential-picker-option${
+                          isSelected ? " is-selected" : ""
+                        }`}
+                        key={`${cred.id}:${targetKey}`}
+                        role="option"
+                        aria-selected={isSelected}
+                        onClick={() => selectCredential(cred)}
+                      >
+                        <span className="credential-picker-option-head">
+                          <strong>{cred.name}</strong>
+                          <span>{credentialScopeLabel(cred)}</span>
+                        </span>
+                        <span className="credential-picker-option-meta">
+                          {credentialTypeLabel(cred.type)} ·{" "}
+                          {credentialFieldSummary(cred)}
+                        </span>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="credential-picker-empty">
+                    <strong>
+                      {matching.length === 0
+                        ? "No matching credentials"
+                        : "No search results"}
+                    </strong>
+                    <span>
+                      {matching.length === 0
+                        ? `Create a ${credentialTypeLabel(
+                            meta?.type ?? spec.name,
+                          )} credential for this node.`
+                        : "Try a different name, type, scope, or field."}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="credential-picker-foot">
+                {selected && (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    onClick={() => {
+                      onChange("");
+                      setPickerOpen(false);
+                    }}
+                  >
+                    Clear selection
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary"
+                  onClick={openCreateModal}
+                >
+                  <Plus size={13} weight="bold" />
+                  New credential
+                </button>
+                <a
+                  className="credentials-tab-link"
+                  href="/credentials"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Manage credentials
+                </a>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {!pickerOpen && (
+          <button
+            type="button"
+            className="btn btn-sm btn-primary cred-add-btn"
+            onClick={openCreateModal}
+          >
+            <Plus size={13} weight="bold" />
+            New
+          </button>
+        )}
 
         {selected && (
           <button
@@ -1201,8 +1236,19 @@ function CredentialParamField({
         )}
       </div>
 
+      {selectedMissing && selected && (
+        <div className="credential-inline-warning">
+          <WarningCircle size={15} weight="fill" />
+          <span>
+            The selected credential is unavailable or no longer contains the
+            field this node needs.
+          </span>
+        </div>
+      )}
+
       {inlineValue && !selected && (
         <div className="credential-inline-warning">
+          <WarningCircle size={15} weight="fill" />
           <span>Inline secret in workflow — move to credential store.</span>
           <button
             type="button"
@@ -1226,6 +1272,7 @@ function CredentialParamField({
 
       {missingScopes.length > 0 && (
         <div className="credential-inline-warning">
+          <WarningCircle size={15} weight="fill" />
           <span>Missing OAuth scopes: {missingScopes.join(", ")}</span>
         </div>
       )}
@@ -1236,6 +1283,7 @@ function CredentialParamField({
           fields={fields}
           typeLabel={meta.label || spec.name}
           workflowId={workflowId}
+          credentialContext={credentialContext}
           onClose={() => setModalOpen(false)}
           onCreated={(id, key, created) => {
             setCredentials((items) => [
@@ -1252,85 +1300,10 @@ function CredentialParamField({
   );
 }
 
-export interface ExprContext {
-  json?: unknown;
-  inputs?: Record<string, unknown>;
-  nodes?: Record<string, unknown>;
-}
-
-const EXPR_RE = /\{\{[\s\S]+?\}\}/;
-const EXPR_RE_GLOBAL = /\{\{[\s\S]+?\}\}/g;
-
-function formatResultText(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "object") return JSON.stringify(value, null, 2);
-  return String(value);
-}
-
-type PreviewPart =
-  | { kind: "text"; value: string }
-  | { kind: "expr"; raw: string; value: unknown }
-  | { kind: "error"; raw: string; error: string };
-
-type ResultView = "text" | "html";
-
 /** Textarea that paints `{{ }}` blocks in accent green using the
  *  mirror-overlay technique: a styled <div> renders the highlighted text under
  *  a transparent <textarea> that handles caret + editing. Scroll position stays
  *  in sync. */
-// ---------------------------------------------------------------------------
-// Expression autocomplete helpers
-// ---------------------------------------------------------------------------
-
-function getTokenBeforeCursor(value: string, cursorPos: number): string {
-  const before = value.slice(0, cursorPos);
-  // Grab the last contiguous token that starts with $
-  const m = before.match(/\$[\w.\["\]]*$/);
-  return m ? m[0] : "";
-}
-
-export function computeSuggestions(
-  value: string,
-  cursorPos: number,
-  ctx?: ExprContext,
-): string[] {
-  const token = getTokenBeforeCursor(value, cursorPos);
-  if (!token) return [];
-
-  const results: string[] = [];
-
-  if (token.startsWith("$json.")) {
-    const prefix = token.slice("$json.".length);
-    const keys =
-      ctx?.json && typeof ctx.json === "object" && ctx.json !== null
-        ? Object.keys(ctx.json as Record<string, unknown>)
-        : [];
-    for (const k of keys) {
-      if (k.startsWith(prefix)) results.push(`$json.${k}`);
-    }
-  } else if (token.startsWith("$json")) {
-    results.push("$json.");
-    const keys =
-      ctx?.json && typeof ctx.json === "object" && ctx.json !== null
-        ? Object.keys(ctx.json as Record<string, unknown>)
-        : [];
-    for (const k of keys) results.push(`$json.${k}`);
-  } else if (token.startsWith("$node")) {
-    const nodeIds = Object.keys(ctx?.nodes ?? {});
-    for (const id of nodeIds) results.push(`$node["${id}"].`);
-  } else if (token.startsWith("$env")) {
-    results.push("$env.KEY");
-  } else if (token.startsWith("$run")) {
-    results.push("$run.id", "$run.status", "$run.startedAt");
-  } else if (token.startsWith("$")) {
-    results.push('$json.', '$node["', "$env.", "$run.");
-  }
-
-  return results.slice(0, 10);
-}
-
-// ---------------------------------------------------------------------------
 
 function HighlightedTextarea({
   value,
@@ -2255,167 +2228,6 @@ export function ParamField({
   return <JsonField value={value} onChange={onChange} />;
 }
 
-// ---- Webhook trigger: conditional param display ----
-
-export const WEBHOOK_AUTH_TYPE_OPTIONS = [
-  { value: "none", label: "None" },
-  { value: "basic", label: "Basic Auth" },
-  { value: "header", label: "Header Auth" },
-  { value: "query", label: "Query Auth" },
-];
-
-const WEBHOOK_CRED_BY_AUTH: Record<
-  string,
-  { type: string; fields: string[]; label: string }
-> = {
-  basic: {
-    type: "http_basic",
-    fields: ["username", "password"],
-    label: "Basic Auth",
-  },
-  header: {
-    type: "http_header",
-    fields: ["name", "value"],
-    label: "Header Auth",
-  },
-  query: {
-    type: "http_query",
-    fields: ["name", "value"],
-    label: "Query Auth",
-  },
-};
-
-function webhookAuthLabel(authType: string): string {
-  return (
-    WEBHOOK_AUTH_TYPE_OPTIONS.find((o) => o.value === authType)?.label ?? "None"
-  );
-}
-
-// Build a synthetic ParamSpec for the auth_credentials picker whose
-// credential type/fields swap based on the chosen auth_type.
-export function webhookCredentialSpec(
-  baseSpec: ParamSpec,
-  authType: string,
-): ParamSpec {
-  const cfg = WEBHOOK_CRED_BY_AUTH[authType];
-  if (!cfg) return baseSpec;
-  return {
-    ...baseSpec,
-    credential: {
-      type: cfg.type,
-      key: "*",
-      label: cfg.label,
-      fields: cfg.fields,
-      multi: true,
-    },
-  };
-}
-
-const WEBHOOK_LABEL_OVERRIDES: Record<string, string> = {
-  auth_type: "Authentication",
-  hmac_verification: "HMAC verification",
-  ip_allowlist: "IP allowlist",
-  trust_proxy: "Trust X-Forwarded-For",
-  dedup: "Deduplicate",
-  dedup_key: "Dedup key",
-  raw_body: "Capture raw body",
-  response_data: "Response data",
-};
-
-export function webhookParamLabel(
-  manifestId: string,
-  paramName: string,
-  params: Record<string, unknown>,
-): string | null {
-  if (manifestId !== "webhook_trigger") return null;
-  if (paramName === "auth_credentials") {
-    const authType = String(params.auth_type || "none").toLowerCase();
-    const label = webhookAuthLabel(authType);
-    return `Credential for ${label}`;
-  }
-  return WEBHOOK_LABEL_OVERRIDES[paramName] ?? null;
-}
-
-// Generic optional-parameter grouping. A param's manifest `group` marks it as
-// an optional "Add option" field the inspector tucks behind a chip; params with
-// no group are core and always shown. Works for every node — webhook is just
-// the first heavy adopter.
-export function paramGroup(spec: ParamSpec): string | null {
-  return spec.group ? String(spec.group) : null;
-}
-
-// A group should auto-expand (rather than show as a chip) when a saved workflow
-// already holds a non-default value for any param in it — so existing configs
-// never hide their settings.
-export function groupActiveByValue(
-  specs: ParamSpec[],
-  params: Record<string, unknown>,
-): boolean {
-  return specs.some((spec) => {
-    const value = params[spec.name];
-    if (value === undefined || value === null || value === "") return false;
-    return value !== spec.default;
-  });
-}
-
-export function webhookHiddenParam(
-  manifestId: string,
-  paramName: string,
-  params: Record<string, unknown>,
-): boolean {
-  if (manifestId !== "webhook_trigger") return false;
-  // Legacy fields that exist on old graphs but are no longer surfaced.
-  if (
-    paramName === "auth_username" ||
-    paramName === "auth_password" ||
-    paramName === "auth_header_name" ||
-    paramName === "auth_header_value" ||
-    paramName === "auth_query_name" ||
-    paramName === "auth_query_value"
-  ) {
-    return true;
-  }
-  if (paramName === "auth_credentials") {
-    const authType = String(params.auth_type || "none").toLowerCase();
-    return authType === "none";
-  }
-  // JWT header only applies to auth_type=jwt.
-  if (paramName === "auth_jwt_header") {
-    return String(params.auth_type || "none").toLowerCase() !== "jwt";
-  }
-  // HMAC signature fields appear only when verification is on.
-  if (
-    paramName === "hmac_header" ||
-    paramName === "hmac_algorithm" ||
-    paramName === "hmac_prefix"
-  ) {
-    return String(params.hmac_verification || "off").toLowerCase() !== "on";
-  }
-  // Trusting X-Forwarded-For only matters when an allowlist is configured.
-  if (paramName === "trust_proxy") {
-    return String(params.ip_allowlist || "").trim() === "";
-  }
-  // The dedup key only applies when dedup is on.
-  if (paramName === "dedup_key") {
-    return String(params.dedup || "off").toLowerCase() !== "on";
-  }
-  // Response shaping is an On Received concern; the custom body/headers
-  // reveal only when response_data=Custom.
-  if (
-    paramName === "response_data" ||
-    paramName === "response_body" ||
-    paramName === "response_headers"
-  ) {
-    const mode = String(params.response_mode || "On Received");
-    if (mode !== "On Received") return true;
-    if (paramName === "response_body" || paramName === "response_headers") {
-      return String(params.response_data || "") !== "Custom";
-    }
-    return false;
-  }
-  return false;
-}
-
 function UrlRow({ url }: { url: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -2535,6 +2347,7 @@ export function WebhookPanel({
       window.clearInterval(timerRef.current);
       timerRef.current = null;
     }
+    void api.stopListen(slug).catch(() => undefined);
     setListening(false);
   }
 
@@ -2552,6 +2365,7 @@ export function WebhookPanel({
     if (nodeId) setNodeOutput(nodeId, undefined);
     try {
       await api.clearWebhook(slug);
+      await api.startListen(slug);
     } catch (err) {
       setError(String(err));
       return;
@@ -3446,87 +3260,22 @@ export function NodeDetails({
         </div>
       )}
 
-      {missingPkgs.length > 0 && envId && (
-        <div className="ndv-missing-pkgs warn-text">
-          <p>
-            This node needs <strong>{missingPkgs.join(", ")}</strong>, not
-            installed in <strong>{envName ?? "this environment"}</strong>.
-          </p>
-          <div className="ndv-missing-actions">
-            <button
-              type="button"
-              className={`btn btn-sm${pkgDone ? " btn-success" : " btn-primary"}`}
-              disabled={pkgBusy}
-              onClick={() => void addMissingToEnv()}
-            >
-              {pkgDone ? (
-                "✅ Installed!"
-              ) : pkgBusy ? (
-                <span className="pkg-installing">
-                  <span className="pkg-spinner" />
-                  Installing… {pkgElapsed}s
-                </span>
-              ) : (
-                `Add to ${envName ?? "env"}`
-              )}
-            </button>
-            {satisfyingEnvs.length > 0 && applyEnvSwitch && (
-              <select
-                className="field-input"
-                value=""
-                onChange={(e) =>
-                  e.target.value && applyEnvSwitch(e.target.value)
-                }
-              >
-                <option value="">Switch environment…</option>
-                {satisfyingEnvs.map((env) => (
-                  <option key={env.id} value={env.id}>
-                    {env.name}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-        </div>
-      )}
+      <PackageInstallPanel
+        missingPkgs={missingPkgs}
+        envId={envId}
+        envName={envName}
+        pkgBusy={pkgBusy}
+        pkgDone={pkgDone}
+        pkgElapsed={pkgElapsed}
+        satisfyingEnvs={satisfyingEnvs}
+        applyEnvSwitch={applyEnvSwitch}
+        onInstall={() => void addMissingToEnv()}
+      />
 
-      {manifest.system_requirements && manifest.system_requirements.length > 0 && (
-        <div className="node-details-section ndv-sysreq">
-          <div className="node-details-section-title inspector-section-head">System dependencies</div>
-          {manifest.system_requirements.map((sr) => (
-            <div key={sr.name} className="sysreq-item">
-              <div className="sysreq-name">{sr.name}</div>
-              {activeEnv?.backend === "docker" ? (
-                sr.dockerfile_hint ? (
-                  <div className="sysreq-hint">
-                    <span className="sysreq-label">Add to Dockerfile:</span>
-                    <code className="sysreq-code">{sr.dockerfile_hint}</code>
-                  </div>
-                ) : (
-                  <div className="sysreq-hint">Must be included in your Docker image.</div>
-                )
-              ) : (
-                <div className="sysreq-hint">
-                  <span className="sysreq-label">Must be installed on the server.</span>
-                  {sr.apt && <div><strong>Linux:</strong> <code>apt install {sr.apt}</code></div>}
-                  {sr.brew && <div><strong>macOS:</strong> <code>brew install {sr.brew}</code></div>}
-                  {sr.windows && (
-                    <div>
-                      <strong>Windows:</strong>{" "}
-                      {sr.windows.startsWith("http") ? (
-                        <a href={sr.windows} target="_blank" rel="noreferrer">{sr.windows}</a>
-                      ) : (
-                        <span>{sr.windows}</span>
-                      )}
-                    </div>
-                  )}
-                  {sr.note && <div className="sysreq-note">{sr.note}</div>}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+      <SystemRequirementsPanel
+        requirements={manifest.system_requirements}
+        activeEnv={activeEnv}
+      />
 
       {mode === "python" ? (
         <NodeCodePanel

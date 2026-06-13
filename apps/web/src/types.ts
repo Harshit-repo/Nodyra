@@ -468,6 +468,12 @@ export interface RunEvent {
   agent_node_id?: string;
   tool_name?: string;
   tool_call_id?: string;
+  tool_calls?: Array<{
+    id?: string;
+    name?: string;
+    tool_call_id?: string;
+    tool_name?: string;
+  }>;
   step?: number;
 }
 

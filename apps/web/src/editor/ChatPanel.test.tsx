@@ -199,6 +199,7 @@ describe("ChatPanel", () => {
       status: "success",
     });
     const onRun = vi.fn();
+    const onRunEvent = vi.fn();
 
     render(
       <ChatPanel
@@ -207,6 +208,7 @@ describe("ChatPanel", () => {
         placeholder="Type…"
         initialMessage=""
         onRun={onRun}
+        onRunEvent={onRunEvent}
         onClose={() => {}}
         live
       />,
@@ -220,6 +222,15 @@ describe("ChatPanel", () => {
     // The run is started and the canvas animation is triggered.
     await waitFor(() => expect(onRun).toHaveBeenCalledWith("rL"));
     await waitFor(() => expect(handlers).not.toBeNull());
+
+    // Generic run events are mirrored to the editor canvas subscriber.
+    act(() => {
+      handlers!.onMessage({ type: "node_started", node_id: "agent" });
+    });
+    expect(onRunEvent).toHaveBeenCalledWith({
+      type: "node_started",
+      node_id: "agent",
+    });
 
     // A live tool call streams in and shows the in-progress summary.
     act(() => {
@@ -254,6 +265,10 @@ describe("ChatPanel", () => {
     // The terminal event finalizes the turn with the fetched reply.
     act(() => {
       handlers!.onMessage({ type: "run_finished", status: "success" });
+    });
+    expect(onRunEvent).toHaveBeenCalledWith({
+      type: "run_finished",
+      status: "success",
     });
     await waitFor(() => expect(screen.getByText("All done")).toBeTruthy());
     expect(closeSpy).toHaveBeenCalled();
@@ -342,7 +357,8 @@ describe("ChatPanel", () => {
     });
 
     // Approve/Reject buttons appear; the turn is NOT finalized (no reply yet).
-    const approveBtn = await screen.findByRole("button", { name: /approve/i });
+    const approveBtn = await screen.findByRole("button", { name: /^approve$/i });
+    expect(screen.getByRole("button", { name: /approve all/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /reject/i })).toBeTruthy();
     expect(screen.queryByText("All done")).toBeNull();
 

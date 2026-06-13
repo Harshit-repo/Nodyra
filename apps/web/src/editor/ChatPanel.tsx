@@ -17,12 +17,13 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   api,
+  type RunApprovalDecision,
   type RunApprovalInfo,
   type RunStreamHandle,
   type RunTimelineEvent,
   subscribeToRunEvents,
 } from "../api";
-import type { ChatTurnResponse } from "../types";
+import type { ChatTurnResponse, RunEvent } from "../types";
 
 marked.use({ gfm: true, breaks: true });
 
@@ -68,6 +69,9 @@ interface ChatPanelProps {
    *  the authenticated editor surface (which can open the run socket) sets
    *  this; the public page leaves it off and uses the synchronous path. */
   live?: boolean;
+  /** Mirrors live run events to the editor canvas without opening a second
+   *  run stream. Used by the editor chat surface for node/edge animation. */
+  onRunEvent?: (event: RunEvent) => void;
 }
 
 function newSessionId(): string {
@@ -342,7 +346,7 @@ function ApprovalPrompt({
 }: {
   approvals: RunApprovalInfo[];
   decidingId: string | null;
-  onDecide: (approvalId: string, decision: "approve" | "reject") => void;
+  onDecide: (approvalId: string, decision: RunApprovalDecision) => void;
 }) {
   const pending = approvals.filter((a) => a.status === "pending");
   if (pending.length === 0) return null;
@@ -354,7 +358,10 @@ function ApprovalPrompt({
       </div>
       {pending.map((approval) => {
         const args = approval.arguments || {};
-        const busy = decidingId === approval.id;
+        const busy = Boolean(decidingId?.startsWith(`${approval.id}:`));
+        const approveBusy = decidingId === `${approval.id}:approve`;
+        const approveAllBusy = decidingId === `${approval.id}:approve_all`;
+        const rejectBusy = decidingId === `${approval.id}:reject`;
         return (
           <div key={approval.id} className="chat-approval-item">
             <div className="chat-approval-tool">
@@ -381,7 +388,7 @@ function ApprovalPrompt({
                 disabled={busy}
                 onClick={() => onDecide(approval.id, "approve")}
               >
-                {busy ? (
+                {approveBusy ? (
                   <CircleNotch size={12} weight="bold" className="chat-agent-spin" />
                 ) : (
                   <Check size={12} weight="bold" />
@@ -390,11 +397,28 @@ function ApprovalPrompt({
               </button>
               <button
                 type="button"
+                className="chat-approval-btn is-approve-all"
+                disabled={busy}
+                onClick={() => onDecide(approval.id, "approve_all")}
+              >
+                {approveAllBusy ? (
+                  <CircleNotch size={12} weight="bold" className="chat-agent-spin" />
+                ) : (
+                  <CheckCircle size={12} weight="bold" />
+                )}
+                Approve all
+              </button>
+              <button
+                type="button"
                 className="chat-approval-btn is-reject"
                 disabled={busy}
                 onClick={() => onDecide(approval.id, "reject")}
               >
-                <X size={12} weight="bold" />
+                {rejectBusy ? (
+                  <CircleNotch size={12} weight="bold" className="chat-agent-spin" />
+                ) : (
+                  <X size={12} weight="bold" />
+                )}
                 Reject
               </button>
             </div>
@@ -481,6 +505,7 @@ export function ChatPanel({
   onViewRun,
   sendMessage,
   live = false,
+  onRunEvent,
 }: ChatPanelProps) {
   const [sessionId, setSessionId] = useState<string>(newSessionId);
   const [messages, setMessages] = useState<ChatMessage[]>(
@@ -559,9 +584,9 @@ export function ChatPanel({
   async function decideApproval(
     runId: string,
     approvalId: string,
-    decision: "approve" | "reject",
+    decision: RunApprovalDecision,
   ): Promise<void> {
-    setDecidingId(approvalId);
+    setDecidingId(`${approvalId}:${decision}`);
     try {
       const updated = await api.decideRunApproval(runId, approvalId, decision);
       setApprovalsByRun((m) => ({
@@ -620,6 +645,7 @@ export function ChatPanel({
 
     const trace = newAgentTrace();
     let finalized = false;
+    let terminalEventSeen = false;
     // Set when the run pauses for operator approval (run_waiting). A paused run
     // is NOT terminal: the same run id resumes after the operator decides, so
     // we keep the stream open and only finalize on a real terminal event.
@@ -639,6 +665,13 @@ export function ChatPanel({
       } catch {
         reply = "Could not load the workflow's reply.";
         status = "error";
+      }
+      if (!terminalEventSeen) {
+        onRunEvent?.({
+          type: "run_finished",
+          run_id: activeRunId,
+          status,
+        });
       }
       let steps = traceSteps(trace);
       if (steps.length === 0) steps = await loadAgentSteps(activeRunId);
@@ -665,6 +698,7 @@ export function ChatPanel({
         status?: unknown;
       } & Record<string, unknown>;
       const type = typeof ev.type === "string" ? ev.type : "";
+      onRunEvent?.(ev as RunEvent);
       if (AGENT_EVENT_TYPES.has(type)) {
         applyAgentEvent(trace, type, ev);
         const steps = traceSteps(trace);
@@ -694,6 +728,7 @@ export function ChatPanel({
         type === "run_error" ||
         type === "run_cancelled"
       ) {
+        terminalEventSeen = true;
         void finalize();
       }
     };

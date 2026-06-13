@@ -1,15 +1,20 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { api, errorMessage, getOrgId, getUser } from "./api";
+import { errorMessage, getOrgId, getUser } from "./api";
 import { useConfirm } from "./ConfirmProvider";
 import { HomeHeader } from "./HomeHeader";
+import {
+  useAddOrgMemberMutation,
+  useMyOrgs,
+  useOrgMembers,
+  useOrgSettings,
+  useOrgUsage,
+  useRemoveOrgMemberMutation,
+  useUpdateOrgMemberMutation,
+  useUpdateOrgSettingsMutation,
+} from "./queries";
 import { useToast } from "./ToastProvider";
-import type {
-  OrgInfo,
-  OrgMemberInfo,
-  OrgSettingsInfo,
-  OrgUsageDay,
-} from "./types";
+import type { OrgMemberInfo } from "./types";
 
 const MEMBER_ROLES = ["viewer", "editor", "admin", "owner"];
 
@@ -53,63 +58,50 @@ export function OrganizationPage() {
   const confirm = useConfirm();
   const orgId = getOrgId() ?? "default";
 
-  const [org, setOrg] = useState<OrgInfo | null>(null);
-  const [members, setMembers] = useState<OrgMemberInfo[] | null>(null);
-  const [settings, setSettings] = useState<OrgSettingsInfo | null>(null);
-  const [usage, setUsage] = useState<OrgUsageDay[] | null>(null);
   const [error, setError] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("viewer");
   const [busy, setBusy] = useState(false);
   const [draftQuotas, setDraftQuotas] = useState<Record<string, string>>({});
+  const orgsQuery = useMyOrgs();
+  const membersQuery = useOrgMembers();
+  const settingsQuery = useOrgSettings(orgId);
+  const usageQuery = useOrgUsage(orgId);
+  const addMemberMutation = useAddOrgMemberMutation();
+  const updateMemberMutation = useUpdateOrgMemberMutation();
+  const removeMemberMutation = useRemoveOrgMemberMutation();
+  const updateSettingsMutation = useUpdateOrgSettingsMutation();
+  const org = useMemo(
+    () =>
+      orgsQuery.data?.find((item) => item.id === orgId) ??
+      orgsQuery.data?.find((item) => item.id === "default") ??
+      null,
+    [orgId, orgsQuery.data],
+  );
+  const members = membersQuery.data ?? null;
+  const settings = settingsQuery.data ?? null;
+  const usage = usageQuery.data ?? null;
 
   const myRole = org?.role ?? null;
   const canManage = myRole === "admin" || myRole === "owner";
   const isOwner = myRole === "owner";
 
-  const refresh = useCallback(() => {
-    api
-      .listMyOrgs()
-      .then((mine) => {
-        const current =
-          mine.find((item) => item.id === orgId) ??
-          mine.find((item) => item.id === "default") ??
-          null;
-        setOrg(current);
-      })
-      .catch((err) => setError(errorMessage(err)));
-    api
-      .listOrgMembers()
-      .then(setMembers)
-      .catch((err) => setError(errorMessage(err)));
-    api
-      .getOrgSettings(orgId)
-      .then((info) => {
-        setSettings(info);
-        setDraftQuotas({});
-      })
-      .catch(() => {
-        /* viewer/editor: quotas are admin-only; hide the card silently */
-      });
-    api
-      .getOrgUsage(orgId)
-      .then(setUsage)
-      .catch(() => {
-        /* same admin gate as settings */
-      });
-  }, [orgId]);
+  useEffect(() => {
+    if (orgsQuery.isError) setError(errorMessage(orgsQuery.error));
+    else if (membersQuery.isError) setError(errorMessage(membersQuery.error));
+    else setError("");
+  }, [membersQuery.error, membersQuery.isError, orgsQuery.error, orgsQuery.isError]);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    if (settings) setDraftQuotas({});
+  }, [settings]);
 
   async function addMember(): Promise<void> {
     if (busy || !email.trim()) return;
     setBusy(true);
     setError("");
     try {
-      const added = await api.addOrgMember({ email: email.trim(), role });
-      setMembers((items) => [...(items ?? []), added]);
+      await addMemberMutation.mutateAsync({ email: email.trim(), role });
       setEmail("");
       setRole("viewer");
       notify("Member added.", "success");
@@ -122,12 +114,7 @@ export function OrganizationPage() {
 
   async function changeRole(member: OrgMemberInfo, next: string): Promise<void> {
     try {
-      const updated = await api.updateOrgMember(member.user_id, next);
-      setMembers((items) =>
-        (items ?? []).map((item) =>
-          item.user_id === updated.user_id ? updated : item,
-        ),
-      );
+      await updateMemberMutation.mutateAsync({ userId: member.user_id, role: next });
       notify("Role updated.", "success");
     } catch (err) {
       notify(`Could not update role. ${errorMessage(err)}`, "error");
@@ -141,10 +128,7 @@ export function OrganizationPage() {
     });
     if (!ok) return;
     try {
-      await api.removeOrgMember(member.user_id);
-      setMembers((items) =>
-        (items ?? []).filter((item) => item.user_id !== member.user_id),
-      );
+      await removeMemberMutation.mutateAsync(member.user_id);
       notify("Member removed.", "success");
     } catch (err) {
       notify(`Could not remove member. ${errorMessage(err)}`, "error");
@@ -166,8 +150,7 @@ export function OrganizationPage() {
     }
     if (Object.keys(body).length === 0) return;
     try {
-      const updated = await api.updateOrgSettings(orgId, body);
-      setSettings(updated);
+      await updateSettingsMutation.mutateAsync({ orgId, body });
       setDraftQuotas({});
       notify("Quotas updated.", "success");
     } catch (err) {

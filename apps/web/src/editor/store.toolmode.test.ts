@@ -47,8 +47,23 @@ function aiAgentManifest(): NodeManifest {
     version: "1",
     description: "",
     icon: null,
-    inputs: [port("memory", "ai_memory")],
+    inputs: [port("memory", "ai_memory"), port("tool", "ai_tool")],
     outputs: [port("main", "main")],
+    params: [],
+  };
+}
+
+function aiToolManifest(): NodeManifest {
+  return {
+    id: "ai_http_tool",
+    name: "AI HTTP Tool",
+    category: "AI",
+    version: "1",
+    description: "",
+    icon: null,
+    role: "tool",
+    inputs: [],
+    outputs: [port("tool", "ai_tool")],
     params: [],
   };
 }
@@ -154,6 +169,57 @@ describe("store tool-mode round-trip", () => {
     expect(result.ok).toBe(true);
     const memoryNode = useEditor.getState().toGraph().nodes.find((node) => node.id === "memory");
     expect(memoryNode?.disabled).toBe(false);
+  });
+
+  it("allows multiple tools to connect to an Agent tool port", () => {
+    useEditor.getState().setManifests([aiToolManifest(), aiAgentManifest()]);
+    useEditor.getState().loadGraph({
+      nodes: [
+        {
+          ...GRAPH.nodes[0],
+          id: "toolA",
+          type: "ai_http_tool",
+          disabled: false,
+          tool_mode: false,
+          params: {},
+        },
+        {
+          ...GRAPH.nodes[0],
+          id: "toolB",
+          type: "ai_http_tool",
+          disabled: false,
+          tool_mode: false,
+          params: {},
+        },
+        {
+          ...GRAPH.nodes[0],
+          id: "agent",
+          type: "ai_agent_v2",
+          disabled: false,
+          tool_mode: false,
+          params: {},
+        },
+      ],
+      edges: [],
+    });
+
+    expect(useEditor.getState().onConnect({
+      source: "toolA",
+      sourceHandle: "tool",
+      target: "agent",
+      targetHandle: "tool",
+    }).ok).toBe(true);
+    expect(useEditor.getState().onConnect({
+      source: "toolB",
+      sourceHandle: "tool",
+      target: "agent",
+      targetHandle: "tool",
+    }).ok).toBe(true);
+
+    const edges = useEditor.getState().toGraph().edges.filter(
+      (edge) => edge.target === "agent" && edge.target_input === "tool",
+    );
+    expect(edges.map((edge) => edge.source).sort()).toEqual(["toolA", "toolB"]);
   });
 
   it("self-heals existing disabled Agent AI dependencies", () => {

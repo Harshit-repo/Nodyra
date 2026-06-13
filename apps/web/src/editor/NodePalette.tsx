@@ -123,6 +123,24 @@ function nodeBadges(node: NodeManifest): string[] {
   return badges;
 }
 
+function isMemoryRelatedNode(node: NodeManifest): boolean {
+  const text = `${node.id} ${node.name}`.toLowerCase();
+  return (
+    text.includes("memory") ||
+    node.inputs.some((port) => port.data_kind === "ai_memory") ||
+    node.outputs.some((port) => port.data_kind === "ai_memory")
+  );
+}
+
+function browseSort(a: NodeManifest, b: NodeManifest): number {
+  if (a.category === "AI" && b.category === "AI") {
+    const am = isMemoryRelatedNode(a);
+    const bm = isMemoryRelatedNode(b);
+    if (am !== bm) return am ? -1 : 1;
+  }
+  return a.name.localeCompare(b.name);
+}
+
 function PaletteItem({
   node,
   favorite,
@@ -263,7 +281,7 @@ export function NodePalette() {
   );
 
   const selectedManifest =
-    nodes.find((node) => node.id === selectedId)?.data.manifest ?? null;
+    nodes.find((node) => node.id === selectedId)?.data?.manifest ?? null;
 
   useEffect(() => {
     localStorage.setItem(FAVORITES_KEY, JSON.stringify(favorites));
@@ -275,10 +293,29 @@ export function NodePalette() {
 
   useEffect(() => {
     function focusSearch(): void {
+      if (collapsed) {
+        setCollapsed(false);
+        try { localStorage.setItem(COLLAPSED_KEY, "0"); } catch { /* */ }
+        window.setTimeout(() => searchRef.current?.focus(), 0);
+        return;
+      }
       searchRef.current?.focus();
     }
     window.addEventListener("noodle:focus-node-search", focusSearch);
     return () => window.removeEventListener("noodle:focus-node-search", focusSearch);
+  }, [collapsed]);
+
+  useEffect(() => {
+    function toggleNodePalette(): void {
+      setCollapsed((v) => {
+        const next = !v;
+        try { localStorage.setItem(COLLAPSED_KEY, next ? "1" : "0"); } catch { /* */ }
+        return next;
+      });
+    }
+    window.addEventListener("noodle:toggle-node-palette", toggleNodePalette);
+    return () =>
+      window.removeEventListener("noodle:toggle-node-palette", toggleNodePalette);
   }, []);
 
   useEffect(() => {
@@ -343,7 +380,7 @@ export function NodePalette() {
     );
     return order.map((category) => ({
       category,
-      nodes: byCategory.get(category)!.sort((a, b) => a.name.localeCompare(b.name)),
+      nodes: byCategory.get(category)!.sort(browseSort),
     }));
   }, [categoryFilter, query, visibleManifests]);
   const matchedCount = groups.reduce((sum, group) => sum + group.nodes.length, 0);
@@ -411,12 +448,12 @@ export function NodePalette() {
 
   if (collapsed) {
     return (
-      <aside className="palette palette--collapsed">
+      <aside className="palette palette--collapsed" aria-label="Node picker">
         <button
           type="button"
           className="palette-collapse-btn"
-          aria-label="Expand node panel"
-          title="Expand node panel"
+          aria-label="Expand node picker"
+          title="Expand node picker (Shift+P)"
           onClick={toggleCollapsed}
         >
           <CaretRight size={14} weight="bold" />
@@ -426,7 +463,7 @@ export function NodePalette() {
   }
 
   return (
-    <aside className="palette">
+    <aside className="palette" aria-label="Node picker">
       <div className="panel-head">
         <h2>Nodes</h2>
         <div className="panel-head-right">
@@ -438,8 +475,8 @@ export function NodePalette() {
           <button
             type="button"
             className="palette-collapse-btn"
-            aria-label="Collapse node panel"
-            title="Collapse node panel"
+            aria-label="Collapse node picker"
+            title="Collapse node picker (Shift+P)"
             onClick={toggleCollapsed}
           >
             <CaretLeft size={14} weight="bold" />
