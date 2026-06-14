@@ -11,6 +11,7 @@ import type {
   CredentialTestResponse,
   CredentialTypeInfo,
   Environment,
+  LicenseInfo,
   NodeManifest,
   NodeSource,
   PackageUsage,
@@ -350,6 +351,14 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  getLicense: () => request<LicenseInfo>("/system-settings/license"),
+  applyLicense: (license_key: string) =>
+    request<LicenseInfo>("/system-settings/license", {
+      method: "PUT",
+      body: JSON.stringify({ license_key }),
+    }),
+  removeLicense: () =>
+    request<LicenseInfo>("/system-settings/license", { method: "DELETE" }),
   addPackage: (id: string, pkg: string) =>
     request<Environment>(`/environments/${id}/packages`, {
       method: "POST",

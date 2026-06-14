@@ -14,6 +14,7 @@ import {
   useUpdateEnvironmentMutation,
 } from "./queries";
 import { RunnerPoolSelect } from "./RunnerPoolSelect";
+import { useEntitlements } from "./entitlements";
 import { useToast } from "./ToastProvider";
 import { useModalA11y } from "./useModalA11y";
 import type { Environment, RunnerPoolInfo } from "./types";
@@ -778,6 +779,7 @@ function EnvCard({
 export function EnvironmentsPage() {
   const [modal, setModal] = useState(false);
   const { notify } = useToast();
+  const ent = useEntitlements();
   // Track previous statuses to fire toasts on transitions
   const prevStatuses = useRef<Record<string, string>>({});
   const buildPollStarted = useRef<Record<string, number>>({});
@@ -891,7 +893,16 @@ export function EnvironmentsPage() {
               <span className="home-count">{environments.length}</span>
             )}
           </h1>
-          <button className="btn btn-primary" onClick={() => setModal(true)}>
+          <button
+            className="btn btn-primary"
+            onClick={() => setModal(true)}
+            disabled={ent.atLimit("environments", environments?.length ?? 0)}
+            title={
+              ent.atLimit("environments", environments?.length ?? 0)
+                ? `Environment limit reached on the ${ent.edition} edition — upgrade to add more.`
+                : undefined
+            }
+          >
             New environment
           </button>
         </div>

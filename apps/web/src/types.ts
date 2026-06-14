@@ -605,7 +605,20 @@ export interface AuthState {
   signed_in: boolean;
   registration_open: boolean;
   multi_tenancy: boolean;
+  edition?: string;
+  entitlements?: string[];
+  limits?: Record<string, number>;
+  license_notice?: string | null;
   user: UserInfo | null;
+}
+
+export interface LicenseInfo {
+  edition: string;
+  customer: string | null;
+  expires_at: number | null;
+  entitlements: string[];
+  limits: Record<string, number>;
+  notice: string | null;
 }
 
 export interface OrgInfo {

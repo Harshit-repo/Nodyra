@@ -17,6 +17,7 @@ import { LoginPage } from "./LoginPage";
 import { queryClient } from "./queries";
 import { ToastProvider } from "./ToastProvider";
 import type { AuthState, UserInfo } from "./types";
+import { EntitlementsProvider } from "./entitlements";
 
 // Route pages are code-split so the initial bundle doesn't carry the editor
 // (React Flow + Plotly) and every admin page. `named` adapts our named exports
@@ -107,6 +108,7 @@ export default function App() {
 
   function onSignedIn(user: UserInfo): void {
     setAuth((current) => ({
+      ...current,
       auth_required: true,
       signed_in: true,
       registration_open: current?.registration_open ?? false,
@@ -178,6 +180,12 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
         <ConfirmProvider>
+          <EntitlementsProvider auth={auth}>
+          {auth.license_notice && (
+            <div className="license-banner" role="status">
+              {auth.license_notice}
+            </div>
+          )}
           <ErrorBoundary resetKey={location.pathname}>
             <Suspense fallback={<BackendLoading retrying={false} />}>
               <Routes>
@@ -197,6 +205,7 @@ export default function App() {
               </Routes>
             </Suspense>
           </ErrorBoundary>
+          </EntitlementsProvider>
           {/* App-wide AI assistant (floating dock). Temporarily disabled in the UI
               while it is iterated on — the component and its backend wiring remain
               in the codebase (apps/web/src/AppAssistant.tsx). To re-enable, restore:
