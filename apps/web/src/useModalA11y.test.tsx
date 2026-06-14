@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -56,6 +56,20 @@ describe("useModalA11y", () => {
     last.focus();
     fireEvent.keyDown(document, { key: "Tab" });
     expect(document.activeElement).toBe(first);
+  });
+
+  it("does not re-grab focus when onClose identity changes on re-render", () => {
+    // Callers pass an inline `() => setOpen(false)` — a fresh closure each
+    // render. The effect must not re-run and yank focus back to the first
+    // focusable on every parent re-render (e.g. every keystroke in an editor).
+    const { rerender } = render(<Dialog onClose={() => {}} />);
+    const last = screen.getByText("last");
+    act(() => last.focus());
+    expect(document.activeElement).toBe(last);
+
+    rerender(<Dialog onClose={() => {}} />);
+
+    expect(document.activeElement).toBe(last);
   });
 
   it("is inert when enabled is false (no Esc, no focus move)", () => {

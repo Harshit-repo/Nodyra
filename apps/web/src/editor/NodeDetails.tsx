@@ -1455,6 +1455,12 @@ function ExpressionEditorModal({
   const dialogRef = useRef<HTMLDivElement>(null);
   // trapFocus:false — the editor + autocomplete drive their own Tab handling.
   useModalA11y(dialogRef, onClose, { trapFocus: false });
+  // useModalA11y grabs the first focusable (the Format button) on open; for this
+  // modal the user wants to type, so move focus into the editor once on open.
+  useEffect(() => {
+    taRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Sidebar state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {

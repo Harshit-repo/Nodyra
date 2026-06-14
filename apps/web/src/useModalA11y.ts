@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 
 const FOCUSABLE_SELECTOR = [
   "a[href]",
@@ -27,6 +27,13 @@ export function useModalA11y(
   options: { trapFocus?: boolean; enabled?: boolean } = {},
 ): void {
   const { trapFocus = true, enabled = true } = options;
+  // Keep the latest onClose in a ref so the effect below does NOT depend on its
+  // identity. Callers usually pass an inline `() => setOpen(false)`, which is a
+  // new function every render; depending on it would re-run this effect (and its
+  // initial-focus grab) on every parent render — e.g. stealing focus to the
+  // first focusable on every keystroke in an embedded editor.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose; // stable across renders
   useEffect(() => {
     // `enabled` lets a modal rendered inline in an always-mounted parent call
     // this hook unconditionally and only activate while the dialog is open —
@@ -41,7 +48,7 @@ export function useModalA11y(
     function onKeyDown(e: KeyboardEvent): void {
       if (e.key === "Escape") {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (!trapFocus || e.key !== "Tab" || !node) return;
@@ -65,5 +72,5 @@ export function useModalA11y(
       document.removeEventListener("keydown", onKeyDown, true);
       previouslyFocused?.focus?.();
     };
-  }, [ref, onClose, trapFocus, enabled]);
+  }, [ref, trapFocus, enabled]);
 }
