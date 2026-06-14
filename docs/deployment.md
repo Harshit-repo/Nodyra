@@ -236,6 +236,64 @@ and every hook is a single boolean check. `/ops/runtime-mode` reports
   for multi-tenant. Create a dedicated app role and grant table privileges
   instead.
 
+## Editions & licensing
+
+Noodle ships in three editions. With **no license key the instance is
+Community** and behaves exactly as an unlicensed self-hosted install, subject to
+the Community resource caps below.
+
+| Capability | Community | Pro | Enterprise |
+|---|---|---|---|
+| Environments | 3 | 10 | unlimited |
+| Runner pools | 1 | 5 | unlimited |
+| Active deployments | 3 | unlimited | unlimited |
+| Seats (users) | 2 | 10 | unlimited |
+| All nodes, MCP server, webhooks, scheduling | ✅ | ✅ | ✅ |
+| Sandboxed execution (`EXECUTION_SANDBOX`) | — | ✅ | ✅ |
+| Observability (`OTEL_ENABLED`) | — | ✅ | ✅ |
+| Multi-tenancy / organizations | — | — | ✅ |
+| SSO / SAML / SCIM, audit logs, org-KEK/KMS | — | — | ✅ |
+
+`unlimited` is represented internally as `0` (the same convention as the
+per-org quota overrides).
+
+### Applying a license
+
+A license is a signed key verified **offline** (no phone-home). Provide it either
+way — the env var wins when both are set:
+
+- **Env var:** `NOODLE_LICENSE_KEY=<key>`.
+- **UI:** *Settings → License* (admin only), which persists the key to
+  `system_settings` (`PUT /system-settings/license`).
+
+`GET /system-settings/license` returns the active edition, customer, expiry, and
+limits; `DELETE /system-settings/license` reverts to Community.
+
+### Capability reconciliation at startup
+
+Capability flags are reconciled against the license when the app boots: a flag
+set without the matching entitlement is **forced off with a logged warning**
+rather than failing to start. For example, `MULTI_TENANCY_ENABLED=true` on a
+Community instance boots single-tenant and logs `licensing: multi_tenancy_enabled
+requires the Enterprise edition; disabled`. The same applies to
+`EXECUTION_SANDBOX` and `OTEL_ENABLED` (Pro or higher). So enabling multi-tenancy
+(next section) additionally requires an Enterprise license.
+
+### Expiry
+
+An expired key **gracefully downgrades to Community** — running workflows and
+data are never touched. Creation of resources already over the Community cap is
+blocked (HTTP `402`) until the license is renewed; existing resources keep
+working.
+
+### Minting keys (vendor)
+
+Keys are signed offline with `apps/api/tools/mint_license.py`. Generate the
+keypair once (`python -m tools.mint_license keygen`), paste the public half into
+`_BAKED_PUBLIC_KEY_PEM` in `app/services/licensing.py`, and keep the private key
+secret. Mint per-customer keys with `… sign --tier pro --customer "Acme" --days
+365`.
+
 ## Enabling multi-tenancy
 
 Multi-tenancy ships dormant: with `MULTI_TENANCY_ENABLED=false` (default)
