@@ -27,10 +27,15 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from app.config import settings as boot_settings
 from app.db import SessionLocal
 
-# Production public key. Replace the placeholder with the PEM for the keypair
-# whose PRIVATE half is kept offline (tools/mint_license.py keygen). Until
-# replaced, only ``settings.license_public_key`` (tests/staging) verifies keys.
-_BAKED_PUBLIC_KEY_PEM = ""
+# Production public key. Verifies license keys signed offline with the matching
+# PRIVATE key (kept out of the repo — see docs/licensing-internal.md and the
+# .secrets/ directory). ``settings.license_public_key`` overrides this when set
+# (tests/staging use their own throwaway keypair).
+_BAKED_PUBLIC_KEY_PEM = """\
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAGdBDiijpMRnL4/lki8urg/wGX3Iw8nZuMKLqNZt+/6U=
+-----END PUBLIC KEY-----
+"""
 
 _CACHE_TTL_SECONDS = 30.0
 

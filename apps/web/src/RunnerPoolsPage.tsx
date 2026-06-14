@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 
 import { useConfirm } from "./ConfirmProvider";
+import { useEntitlements } from "./entitlements";
 import { HomeHeader } from "./HomeHeader";
 import { useCan } from "./permissions";
 import {
@@ -1272,6 +1273,7 @@ function FleetBar({ health }: { health: RunnerFleetHealth }) {
 export function RunnerPoolsPage() {
   const [creating, setCreating] = useState(false);
   const canWrite = useCan("runner_pool:write");
+  const ent = useEntitlements();
   const poolsQuery = useRunnerPools({ refetchInterval: 5000 });
   const healthQuery = useRunnerFleetHealth({ refetchInterval: 5000 });
   const environmentsQuery = useEnvironments();
@@ -1318,6 +1320,12 @@ export function RunnerPoolsPage() {
               type="button"
               className="btn"
               onClick={() => setCreating(true)}
+              disabled={ent.atLimit("runners", pools?.length ?? 0)}
+              title={
+                ent.atLimit("runners", pools?.length ?? 0)
+                  ? `Runner limit reached on the ${ent.edition} edition — upgrade to add more.`
+                  : undefined
+              }
             >
               + New pool
             </button>

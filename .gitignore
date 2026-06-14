@@ -21,6 +21,11 @@ dist/
 .env.local
 *.local
 
+# License signing — NEVER commit the private key or the internal licensing guide.
+.secrets/
+*license*private*.pem
+docs/licensing-internal.md
+
 # Editor / OS
 .idea/
 .vscode/

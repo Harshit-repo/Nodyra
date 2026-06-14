@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { ApiError, errorMessage } from "./api";
 import { useConfirm } from "./ConfirmProvider";
+import { useEntitlements } from "./entitlements";
 import { HomeHeader } from "./HomeHeader";
 import {
   useCreateDeploymentMutation,
@@ -132,6 +133,11 @@ export function DeploymentsPage() {
   const deleteDeploymentMutation = useDeleteDeploymentMutation();
   const deployments = deploymentsQuery.data ?? null;
   const workflows = workflowsQuery.data ?? [];
+  const ent = useEntitlements();
+  const atActiveCap = ent.atLimit(
+    "deployments",
+    deployments?.filter((d) => d.active).length ?? 0,
+  );
   const error =
     deploymentsQuery.isError && !deploymentsQuery.data
       ? errorMessage(deploymentsQuery.error)
@@ -303,11 +309,18 @@ export function DeploymentsPage() {
                     </div>
                   </div>
                   <div className="deploy-actions">
-                    <label className="active-toggle">
+                    <label
+                      className="active-toggle"
+                      title={
+                        !d.active && atActiveCap
+                          ? `Active-deployment limit reached on the ${ent.edition} edition — upgrade to activate more.`
+                          : undefined
+                      }
+                    >
                       <input
                         type="checkbox"
                         checked={d.active}
-                        disabled={busyIds.has(d.id)}
+                        disabled={busyIds.has(d.id) || (!d.active && atActiveCap)}
                         onChange={(e) => void toggleActive(d, e.target.checked)}
                       />
                       <span className="active-track" />

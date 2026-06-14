@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { api, errorMessage, getUser } from "./api";
 import { useConfirm } from "./ConfirmProvider";
+import { useEntitlements } from "./entitlements";
 import { HomeHeader } from "./HomeHeader";
 import { useToast } from "./ToastProvider";
 import type { UserAdminInfo } from "./types";
@@ -24,6 +25,7 @@ export function SecurityPage() {
   const currentUser = getUser();
   const { notify } = useToast();
   const confirm = useConfirm();
+  const ent = useEntitlements();
   const [users, setUsers] = useState<UserAdminInfo[] | null>(null);
   const [error, setError] = useState("");
   const [name, setName] = useState("");
@@ -180,7 +182,13 @@ export function SecurityPage() {
               !name.trim() ||
               !company.trim() ||
               !email.trim() ||
-              password.length < 8
+              password.length < 8 ||
+              ent.atLimit("seats", users?.length ?? 0)
+            }
+            title={
+              ent.atLimit("seats", users?.length ?? 0)
+                ? `Seat limit reached on the ${ent.edition} edition — upgrade to add more users.`
+                : undefined
             }
             onClick={() => void createUser()}
           >
