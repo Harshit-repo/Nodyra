@@ -37,6 +37,12 @@ import {
 import { RunApprovalsPanel } from "./RunApprovalsPanel";
 import { useToast } from "./ToastProvider";
 import { A11yModal } from "./editor/A11yModal";
+import { deriveBarStatus } from "./editor/barStatus";
+import { useAutosave } from "./editor/useAutosave";
+import { SaveIndicator, type SaveState } from "./editor/SaveIndicator";
+import { PublishPill } from "./editor/PublishPill";
+import { OverflowMenu, type OverflowItem } from "./editor/OverflowMenu";
+import { WorkflowSettingsModal } from "./editor/WorkflowSettingsModal";
 import type {
   AiDraftMode,
   AiFixStrategy,
@@ -273,7 +279,6 @@ export function EditorPage() {
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
   const [runsOpen, setRunsOpen] = useState(false);
   const [runsList, setRunsList] = useState<RunInfo[]>([]);
   const [cancellingRun, setCancellingRun] = useState(false);
@@ -296,6 +301,10 @@ export function EditorPage() {
   const [showHistory, setShowHistory] = useState(false);
   const [restoreGraph, setRestoreGraph] = useState<WorkflowGraph | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [publishNotes, setPublishNotes] = useState("");
+  const [saveError, setSaveError] = useState(false);
+  const [unpublishing, setUnpublishing] = useState(false);
   // Run id of a run paused awaiting tool approval (UX-6). Drives a persistent
   // banner with inline approve/reject instead of relying on a transient toast.
   const [waitingRunId, setWaitingRunId] = useState<string | null>(null);
@@ -330,6 +339,29 @@ export function EditorPage() {
   const duplicateNode = useEditor((s) => s.duplicateNode);
   const canRun = useCan("workflow:run");
   const canWrite = useCan("workflow:write");
+
+  const barStatus = deriveBarStatus({
+    publishedVersion: workflow?.published_version ?? null,
+    active,
+    hasUnpublishedChanges: Boolean(workflow?.has_unpublished_changes),
+    dirty: dirty || childDirty,
+  });
+
+  const saveState: SaveState = saveError
+    ? "error"
+    : saving
+      ? "saving"
+      : dirty || childDirty
+        ? "unsaved"
+        : "saved";
+
+  useAutosave({
+    enabled: Boolean(canWrite && id),
+    dirty: dirty || childDirty,
+    delayMs: 1500,
+    onSave: () => { void save({ notifySuccess: false }); },
+  });
+
   const runId = useEditor((s) => s.runId);
   const running = useEditor((s) => s.running);
   const runError = useEditor((s) => s.runError);
@@ -672,6 +704,7 @@ export function EditorPage() {
     setSaving(true);
     setMessage("");
     try {
+      setSaveError(false);
       const updated = await api.updateWorkflow(id, {
         name: name.trim() || "Untitled workflow",
         active,
@@ -705,6 +738,7 @@ export function EditorPage() {
       if (notifySuccess) notify("Draft saved.", "success");
       return updated;
     } catch (err) {
+      setSaveError(true);
       notify(`Could not save draft. ${errorMessage(err)}`, "error");
       return null;
     } finally {
@@ -721,12 +755,13 @@ export function EditorPage() {
     setMessage("");
     try {
       const published = await api.publishWorkflow(id, {
-        notes: "Published from editor",
+        notes: publishNotes.trim() || undefined,
         update_deployments: updateDeployments,
       });
       const detail = await api.getWorkflow(id);
       setWorkflow(detail);
       setPublishReviewOpen(false);
+      setPublishNotes("");
       const deployNote = published.updated_deployments
         ? ` Updated ${published.updated_deployments} deployment(s).`
         : " Deployments stay pinned until updated.";
@@ -736,6 +771,22 @@ export function EditorPage() {
       notify(`Could not publish workflow. ${errorMessage(err)}`, "error");
     } finally {
       setPublishing(false);
+    }
+  }
+
+  async function unpublishWorkflow(): Promise<void> {
+    if (!id || unpublishing) return;
+    if (!window.confirm("Unpublish this workflow? It stops running in production until you publish again. Version history is kept.")) return;
+    setUnpublishing(true);
+    try {
+      const updated = await api.updateWorkflow(id, { active: false });
+      setWorkflow(updated);
+      setActive(false);
+      notify("Workflow unpublished.", "success");
+    } catch (err) {
+      notify(`Could not unpublish. ${errorMessage(err)}`, "error");
+    } finally {
+      setUnpublishing(false);
     }
   }
 
@@ -826,36 +877,6 @@ export function EditorPage() {
     );
     setAiPreview(null);
     setAiOpen(true);
-  }
-
-  async function toggleActive(next: boolean): Promise<void> {
-    // Save eagerly when the user flips Active so the change persists
-    // without a separate Save click. Optimistically update the UI and
-    // roll back if the request fails.
-    if (!id) return;
-    setActive(next);
-    setSaving(true);
-    setMessage("");
-    try {
-      const updated = await api.updateWorkflow(id, {
-        name: name.trim() || "Untitled workflow",
-        active: next,
-        environment_id: environmentId ?? undefined,
-        run_timeout_seconds: runTimeout === "" ? null : Math.max(0, parseFloat(runTimeout) || 0),
-        mcp_enabled: mcpEnabled,
-        mcp_tool_name: mcpToolName || null,
-        mcp_description: mcpDescription || null,
-        graph: toGraph(),
-      });
-      setWorkflow(updated);
-      markClean();
-      notify(next ? "Workflow activated." : "Workflow deactivated.", "success");
-    } catch (err) {
-      setActive(!next);
-      notify(`Could not update workflow state. ${errorMessage(err)}`, "error");
-    } finally {
-      setSaving(false);
-    }
   }
 
   type RunCache = Record<string, Record<string, unknown>>;
@@ -1298,13 +1319,14 @@ export function EditorPage() {
             spellCheck={false}
           />
           <span className="toolbar-meta">
-            published v{workflow?.published_version ?? workflow?.version}
-            {workflow?.has_unpublished_changes ? " · unpublished draft" : ""}
+            {barStatus.versionLabel}
             {" · "}
             {nodeCount} node{nodeCount === 1 ? "" : "s"}
           </span>
         </div>
         <div className="toolbar-right">
+          <SaveIndicator state={saveState} onRetry={() => { void save({ notifySuccess: false }); }} />
+
           <RunSettingsChip
             environments={environments}
             environmentId={environmentId}
@@ -1320,53 +1342,28 @@ export function EditorPage() {
             }}
             saving={chipSaving}
           />
-          <input
-            className="toolbar-timeout"
-            type="number"
-            min={0}
-            step={1}
-            value={runTimeout}
-            placeholder="No timeout"
-            title="Run timeout (seconds). Blank or 0 means the run is never capped."
-            onChange={(e) => setRunTimeout(e.target.value)}
-          />
-          <label className="active-toggle" title="Expose as MCP tool (AI agents can call this workflow via /mcp)">
-            <input
-              type="checkbox"
-              checked={mcpEnabled}
-              onChange={(e) => setMcpEnabled(e.target.checked)}
-            />
-            <span className="active-track" />
-            <span>MCP</span>
-          </label>
-          {mcpEnabled && (
-            <>
-              <input
-                className="toolbar-timeout"
-                value={mcpToolName}
-                placeholder="Tool name (auto)"
-                title="MCP tool name (leave blank to auto-generate from workflow name)"
-                onChange={(e) => setMcpToolName(e.target.value)}
-              />
-              <input
-                className="toolbar-timeout"
-                value={mcpDescription}
-                placeholder="Tool description"
-                title="MCP tool description shown to calling AI agents"
-                onChange={(e) => setMcpDescription(e.target.value)}
-              />
-            </>
-          )}
-          <label className="active-toggle">
-            <input
-              type="checkbox"
-              checked={active}
-              onChange={(e) => void toggleActive(e.target.checked)}
-              disabled={saving}
-            />
-            <span className="active-track" />
-            <span>{active ? "Active" : "Inactive"}</span>
-          </label>
+
+          {hasChatTrigger ? (
+            <button type="button" className="btn" onClick={openChat} title="Open chat panel">
+              Chat
+            </button>
+          ) : null}
+
+          <button
+            className="btn"
+            onClick={() => {
+              setAiMode("draft");
+              setAiFixStrategy("minimal");
+              setAiFailedNodeId(null);
+              setAiFailedError(null);
+              setAiPreview(null);
+              setAiOpen(true);
+            }}
+            title="Generate an editable draft from a natural-language prompt"
+          >
+            ✨ AI Draft
+          </button>
+
           <div className="runs-menu" ref={runsMenuRef}>
             <button className="btn" onClick={() => void openRuns()}>
               Runs ▾
@@ -1395,121 +1392,29 @@ export function EditorPage() {
               </div>
             )}
           </div>
-          <button
-            className="btn"
-            onClick={() => setFunctionsOpen(true)}
-            title="Upload Python files; their functions appear in the palette"
-          >
-            ƒ Functions
-          </button>
-          {hasChatTrigger ? (
-            <button
-              type="button"
-              className="btn"
-              onClick={openChat}
-              title="Open chat panel"
-            >
-              Chat
-            </button>
-          ) : null}
-          <button
-            className="btn btn-icon"
-            onClick={() => setShortcutsOpen(true)}
-            title="Keyboard shortcuts"
-            aria-label="Keyboard shortcuts"
-          >
-            ?
-          </button>
-          <button
-            className="btn"
-            onClick={() => {
-              setAiMode("draft");
-              setAiFixStrategy("minimal");
-              setAiFailedNodeId(null);
-              setAiFailedError(null);
-              setAiPreview(null);
-              setAiOpen(true);
-            }}
-            title="Generate an editable draft from a natural-language prompt"
-          >
-            AI Draft
-          </button>
-          <div className="export-menu">
-            <button className="btn" onClick={() => setExportOpen((o) => !o)}>
-              Export ▾
-            </button>
-            {exportOpen && (
-              <div
-                className="export-dropdown"
-                onMouseLeave={() => setExportOpen(false)}
-              >
-                <button
-                  onClick={() => { setExportOpen(false); void triggerExport(`/api/workflows/${id}/export.py`, `${name || "workflow"}.py`); }}
-                >
-                  Python script (.py)
-                </button>
-                <button
-                  onClick={() => { setExportOpen(false); void triggerExport(`/api/workflows/${id}/export/docker`, `${name || "workflow"}-docker.zip`); }}
-                >
-                  Docker bundle (.zip)
-                </button>
-                <button
-                  onClick={() => { setExportOpen(false); void triggerExport(`/api/workflows/${id}/export.module.py`, `${name || "workflow"}_module.py`); }}
-                >
-                  Python module (code-first .py)
-                </button>
-              </div>
-            )}
-          </div>
-          {canRun && <button
-            className="btn btn-run"
-            onClick={() => void run()}
-            disabled={running || Boolean(webhookListen) || !hasTrigger}
-            title={
-              !hasTrigger
-                ? "Add a trigger node to run this workflow"
-                : undefined
-            }
-          >
-            {webhookListen ? (
-              <>
-                <span className="node-spinner" />
-                Listening…
-              </>
-            ) : running ? (
-              "Running…"
-            ) : (
-              "▶ Run"
-            )}
-          </button>}
-          {running && (
-            <button
-              className="btn btn-danger"
-              onClick={() => void cancelCurrentRun()}
-              disabled={cancellingRun}
-            >
-              {cancellingRun ? "Stopping…" : "■ Stop"}
-            </button>
+
+          {canWrite && (
+            <PublishPill
+              status={barStatus}
+              onClick={openPublishReview}
+              disabled={saving || publishing}
+            />
           )}
-          {canWrite && <button className="btn btn-primary" onClick={() => void save()} disabled={saving}>
-            {dirty && <span className="dirty-dot" />}
-            {saving ? "Saving…" : "Save draft"}
-          </button>}
-          {canWrite && <button
-            className="btn"
-            onClick={openPublishReview}
-            disabled={saving || publishing}
-            title="Publish the saved draft as a new production version"
-          >
-            {publishing ? "Publishing…" : "Publish"}
-          </button>}
-          <button
-            className="btn"
-            onClick={() => setShowHistory(true)}
-            title="View version history"
-          >
-            History
-          </button>
+
+          <OverflowMenu
+            items={[
+              { id: "history", label: "History & versions", onSelect: () => setShowHistory(true) },
+              { id: "functions", label: "Functions", onSelect: () => setFunctionsOpen(true) },
+              { id: "export-py", label: "Export · Python script (.py)", onSelect: () => void triggerExport(`/api/workflows/${id}/export.py`, `${name || "workflow"}.py`) },
+              { id: "export-docker", label: "Export · Docker bundle (.zip)", onSelect: () => void triggerExport(`/api/workflows/${id}/export/docker`, `${name || "workflow"}-docker.zip`) },
+              { id: "export-module", label: "Export · Python module (.py)", onSelect: () => void triggerExport(`/api/workflows/${id}/export.module.py`, `${name || "workflow"}_module.py`) },
+              { id: "settings", label: "Workflow settings", dividerBefore: true, onSelect: () => setSettingsOpen(true) },
+              { id: "shortcuts", label: "Keyboard shortcuts", onSelect: () => setShortcutsOpen(true) },
+              canWrite && barStatus.kind !== "unpublished" && active
+                ? { id: "unpublish", label: "Unpublish workflow", danger: true, dividerBefore: true, onSelect: () => void unpublishWorkflow() }
+                : null,
+            ] as (OverflowItem | null | false)[]}
+          />
         </div>
       </header>
 
@@ -1756,6 +1661,15 @@ export function EditorPage() {
                 Update deployments to this version
               </span>
             </label>
+            <label className="field publish-notes-field">
+              <span>Version notes (optional)</span>
+              <textarea
+                value={publishNotes}
+                placeholder="What changed in this version?"
+                onChange={(e) => setPublishNotes(e.target.value)}
+                rows={3}
+              />
+            </label>
             <div className="modal-actions">
               <button
                 className="btn btn-ghost"
@@ -1773,6 +1687,20 @@ export function EditorPage() {
               </button>
             </div>
         </A11yModal>
+      )}
+
+      {settingsOpen && (
+        <WorkflowSettingsModal
+          runTimeout={runTimeout}
+          onRunTimeoutChange={setRunTimeout}
+          mcpEnabled={mcpEnabled}
+          onMcpEnabledChange={setMcpEnabled}
+          mcpToolName={mcpToolName}
+          onMcpToolNameChange={setMcpToolName}
+          mcpDescription={mcpDescription}
+          onMcpDescriptionChange={setMcpDescription}
+          onClose={() => { setSettingsOpen(false); void save({ notifySuccess: false }); }}
+        />
       )}
 
       {chatOpen && workflow ? (
