@@ -239,7 +239,10 @@ Reuses the existing settings-page patterns (skeletons, `useConfirm`, themed form
 6. Frontend: `useEntitlements`, gated/over-cap affordances, License settings page.
 7. Docs: deployment.md "Editions & licensing" section.
 
-## 9. Open Questions (resolve in plan, not blockers)
-- Deployments cap: count all deployment rows vs only `active=True`. Leaning all rows.
-- Over-cap status code: 402 vs 403. Leaning 402 (semantically "upgrade").
-- Confirm `cryptography` (Ed25519) is already in the API dependency set; if not, add it.
+## 9. Resolved Decisions
+- **Deployments cap** counts only `active=True` deployments (matches the "Active
+  deployments" label). Enforced both at `create_deployment` when `active=True` **and** at
+  the activate-toggle path (PATCH/activate) — drafts are free, live deployments are capped.
+- **Over-cap status code:** `402 Payment Required`, body names cap/current/edition.
+- **Ed25519:** verify `cryptography` is in the API dependency set during build; add it if
+  absent (it is almost certainly already transitive).
