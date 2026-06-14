@@ -4395,11 +4395,7 @@ kbd {
    Expression editor sidebar (Task 3)
    ═══════════════════════════════════════════════════════ */
 
-.expr-modal-body {
-  display: flex;
-  flex: 1;
-  overflow: hidden;
-}
+/* .expr-modal-body layout lives in editor.css (single source of truth). */
 
 .expr-sidebar {
   width: 170px;

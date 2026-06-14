@@ -31,12 +31,10 @@ import {
   matchesDisplayWhen,
 } from "./node-details/displayRules";
 import {
-  computeSuggestions,
   EXPR_RE,
   EXPR_RE_GLOBAL,
   type ExprContext,
   formatResultText,
-  getTokenBeforeCursor,
   type PreviewPart,
   type ResultView,
 } from "./node-details/expressions";
@@ -1453,9 +1451,6 @@ function ExpressionEditorModal({
     loading: boolean;
   }>({ loading: false });
 
-  // Autocomplete state
-  const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [selectedSuggestion, setSelectedSuggestion] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   // trapFocus:false — the editor + autocomplete drive their own Tab handling.
@@ -1542,51 +1537,11 @@ function ExpressionEditorModal({
     setPickerOpen(false);
   }
 
-  function updateSuggestions(val: string) {
-    const pos = taRef.current?.selectionStart ?? val.length;
-    const s = computeSuggestions(val, pos, ctx);
-    setSuggestions(s);
-    setSelectedSuggestion(0);
-  }
-
-  function applySuggestion(suggestion: string) {
-    const ta = taRef.current;
-    const pos = ta?.selectionStart ?? value.length;
-    const token = getTokenBeforeCursor(value, pos);
-    const before = value.slice(0, pos - token.length);
-    const after = value.slice(pos);
-    const newVal = before + suggestion + after;
-    onChange(newVal);
-    setSuggestions([]);
-    // Move cursor to end of inserted text
-    setTimeout(() => {
-      if (ta) {
-        const newPos = before.length + suggestion.length;
-        ta.setSelectionRange(newPos, newPos);
-        ta.focus();
-      }
-    }, 0);
-  }
-
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === " " && (e.ctrlKey || e.metaKey) && nodeId) {
       e.preventDefault();
       dollarPosRef.current = null;
       setPickerOpen(true);
-      return;
-    }
-    if (suggestions.length === 0) return;
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setSelectedSuggestion((s) => Math.min(s + 1, suggestions.length - 1));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setSelectedSuggestion((s) => Math.max(s - 1, 0));
-    } else if (e.key === "Enter" || e.key === "Tab") {
-      e.preventDefault();
-      applySuggestion(suggestions[selectedSuggestion]);
-    } else if (e.key === "Escape") {
-      setSuggestions([]);
     }
   }
 
@@ -1802,7 +1757,6 @@ function ExpressionEditorModal({
                 value={value}
                 onChange={(v) => {
                   onChange(v);
-                  updateSuggestions(v);
                   const pos = taRef.current?.selectionStart ?? v.length;
                   const before = v.slice(0, pos);
                   const opens = (before.match(/\{\{/g) ?? []).length;
@@ -1824,20 +1778,6 @@ function ExpressionEditorModal({
                   handleKeyDown(e);
                 }}
               />
-              {suggestions.length > 0 && (
-                <ul className="expr-autocomplete">
-                  {suggestions.map((s, i) => (
-                    <li
-                      key={s}
-                      className={i === selectedSuggestion ? "active" : ""}
-                      onMouseDown={(e) => { e.preventDefault(); applySuggestion(s); }}
-                      onMouseEnter={() => setSelectedSuggestion(i)}
-                    >
-                      {s}
-                    </li>
-                  ))}
-                </ul>
-              )}
             </div>
             {state.parts && state.parts.some((p) => p.kind === "expr") && (
               <div className="expr-parts-bar">
