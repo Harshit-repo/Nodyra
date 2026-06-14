@@ -19,6 +19,7 @@ from app.schemas import (
 from app.security import optional_current_user, require_permission
 from app.services.audit import log_audit
 from app.services.backends import build_environment
+from app.tenancy import active_org_id
 from noodle.packages import canonical_package_name
 from noodle.sdk import registry as node_registry
 
@@ -127,6 +128,13 @@ async def create_environment(
 ):
     _validate_pool(body.runner_pool_size, body.runner_pool_max)
     await _validate_pool_ref(session, body.runner_pool_id)
+    from app.services.isolation import validate_pool_assignment
+
+    await validate_pool_assignment(session, active_org_id(), body.runner_pool_id)
+
+    from app.services.licensing import enforce_resource_cap
+    await enforce_resource_cap(session, "environments")
+
     env = Environment(
         name=body.name,
         python_version=body.python_version,
@@ -210,6 +218,7 @@ async def list_backends() -> dict:
     """
     import shutil
     import sys
+
     from app.services.backends.tools import TOOLS_DIR
 
     def _tool_version(name: str) -> str | None:

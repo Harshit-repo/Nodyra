@@ -287,6 +287,9 @@ async def create_runner_pool(
     body: RunnerPoolCreate,
     session: AsyncSession = Depends(get_session),
 ) -> RunnerPoolInfo:
+    from app.services.licensing import enforce_resource_cap
+    await enforce_resource_cap(session, "runners")
+
     pool = RunnerPool(
         name=body.name,
         provider=body.provider,

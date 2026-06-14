@@ -374,6 +374,8 @@ async def create_user(
     existing = await session.scalar(select(User).where(User.email == email))
     if existing is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
+    from app.services.licensing import enforce_resource_cap
+    await enforce_resource_cap(session, "seats")
     user = User(
         email=email,
         name=_clean(body.name),

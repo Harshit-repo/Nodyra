@@ -201,6 +201,8 @@ async def create_deployment(
     if body.active:
         _validate_deployable(version)
         _enforce_unsafe_node_policy(version, approved=body.approve_unsafe_nodes)
+        from app.services.licensing import enforce_resource_cap
+        await enforce_resource_cap(session, "deployments")
 
     deployment = Deployment(
         workflow_id=body.workflow_id,
@@ -275,6 +277,9 @@ async def update_deployment(
         version_changed = deployment.workflow_version_id != version.id
         deployment.workflow_version_id = version.id
     becoming_active = bool(body.active) and not deployment.active
+    if becoming_active:
+        from app.services.licensing import enforce_resource_cap
+        await enforce_resource_cap(session, "deployments")
     if body.active is not None:
         deployment.active = body.active
 
