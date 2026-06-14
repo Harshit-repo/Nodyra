@@ -614,7 +614,24 @@ class AuthRequiredResponse(BaseModel):
     signed_in: bool
     registration_open: bool
     multi_tenancy: bool = False
+    edition: str = "community"
+    entitlements: list[str] = Field(default_factory=list)
+    limits: dict[str, int] = Field(default_factory=dict)
+    license_notice: str | None = None
     user: UserInfo | None = None
+
+
+class LicenseInfo(BaseModel):
+    edition: str
+    customer: str | None = None
+    expires_at: int | None = None
+    entitlements: list[str]
+    limits: dict[str, int]
+    notice: str | None = None
+
+
+class LicenseApply(BaseModel):
+    license_key: str = Field(min_length=1)
 
 
 class DeploymentCreate(BaseModel):

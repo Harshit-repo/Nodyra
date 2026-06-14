@@ -227,6 +227,15 @@ async def lifespan(app: FastAPI):
 
     await _ensure_global_environment()
 
+    # Licensing: reconcile config-requested capabilities against the active
+    # license BEFORE the sandbox/MT policy runs. A flag set without the
+    # entitlement (e.g. multi_tenancy_enabled on Community) is forced off here
+    # with a logged warning rather than failing to boot.
+    from app.services.licensing import reconcile_capabilities
+
+    for _warning in await reconcile_capabilities():
+        logging.getLogger("noodle").warning("licensing: %s", _warning)
+
     # Phase D: refuse unsafe MT configurations outright; probe the container
     # sandbox only where this process can dispatch runs.
     from app.services.sandbox_policy import enforce_sandbox_policy

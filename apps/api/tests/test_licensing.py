@@ -134,6 +134,30 @@ async def test_require_feature_passes_with_enterprise(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_apply_and_remove_license_endpoint(client, monkeypatch):
+    # Env key must be blank so the DB-stored key (set by the endpoint) is read.
+    monkeypatch.setattr(settings, "license_key", "")
+    r = await client.put("/system-settings/license", json={"license_key": pro_key()})
+    assert r.status_code == 200, r.text
+    assert r.json()["edition"] == "pro"
+
+    g = await client.get("/system-settings/license")
+    assert g.json()["edition"] == "pro"
+
+    d = await client.delete("/system-settings/license")
+    assert d.json()["edition"] == "community"
+
+
+@pytest.mark.asyncio
+async def test_auth_required_exposes_edition(client):
+    r = await client.get("/auth/required")
+    body = r.json()
+    assert body["edition"] == "community"
+    assert body["limits"]["environments"] == 3
+    assert "sandbox" not in body["entitlements"]
+
+
+@pytest.mark.asyncio
 async def test_reconcile_disables_unlicensed_capabilities(monkeypatch):
     monkeypatch.setattr(settings, "license_key", "")
     monkeypatch.setattr(settings, "multi_tenancy_enabled", True)

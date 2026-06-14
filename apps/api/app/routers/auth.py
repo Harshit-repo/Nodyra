@@ -330,11 +330,23 @@ async def auth_required(
         if user_id is not None:
             user = await session.get(User, user_id)
     count = await _user_count(session)
+    from app.services.licensing import current_license
+
+    lic = await current_license()
     return AuthRequiredResponse(
         auth_required=settings.auth_required,
         signed_in=user is not None,
         registration_open=count == 0 or settings.auth_allow_registration,
         multi_tenancy=settings.multi_tenancy_enabled,
+        edition=lic.edition.value,
+        entitlements=[f.value for f in lic.features],
+        limits={
+            "environments": lic.limits.environments,
+            "runners": lic.limits.runners,
+            "deployments": lic.limits.deployments,
+            "seats": lic.limits.seats,
+        },
+        license_notice=lic.notice,
         user=UserInfo.model_validate(user) if user is not None else None,
     )
 
