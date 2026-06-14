@@ -13,6 +13,7 @@ import app.mcp.tools as mcp_tools_module
 import app.routers.runner_pools as runner_pools_module
 import app.services.artifacts as artifacts_module
 import app.services.chat_service as chat_service_module
+import app.services.licensing as licensing_module
 import app.services.live_settings as live_settings_module
 import app.services.provider_triggers as provider_triggers_module
 import app.services.redaction as redaction_module
@@ -161,6 +162,32 @@ def _reset_auth_rate_limit_state():
 
 
 @pytest.fixture(autouse=True)
+def _license_enterprise_by_default():
+    """Default the whole suite to an (unlimited) Enterprise license.
+
+    The Community edition imposes resource caps (3 environments, 1 runner, 3
+    active deployments, 2 seats). Unrelated tests freely create more than that
+    within a single fresh-DB test, so without a default license they would trip
+    the 402 caps. We mint a valid Enterprise key against the test public key so
+    every test runs ``unlimited`` unless it explicitly opts into a lower edition
+    (test_licensing.py / test_license_caps.py monkeypatch ``license_key`` /
+    ``license_public_key`` back down).
+    """
+    from app.config import settings as _settings
+    from tests._license_keys import TEST_PUBLIC_KEY_PEM, enterprise_key
+
+    prev_pub = _settings.license_public_key
+    prev_key = _settings.license_key
+    _settings.license_public_key = TEST_PUBLIC_KEY_PEM
+    _settings.license_key = enterprise_key()
+    licensing_module.invalidate_license_cache()
+    yield
+    _settings.license_public_key = prev_pub
+    _settings.license_key = prev_key
+    licensing_module.invalidate_license_cache()
+
+
+@pytest.fixture(autouse=True)
 def _reset_webhook_listen_state():
     """Clear in-memory webhook listen sessions and capture buffer between tests.
 
@@ -225,6 +252,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     # ``live_settings._load_from_db`` reading those at call time.
     redaction_module.invalidate_secret_cache()
     live_settings_module.invalidate_live_settings_cache()
+    licensing_module.invalidate_license_cache()
     originals = {
         backends_module: backends_module.SessionLocal,
         artifacts_module: artifacts_module.SessionLocal,
@@ -234,6 +262,7 @@ async def client() -> AsyncIterator[AsyncClient]:
         queue_module: queue_module.SessionLocal,
         retention_module: retention_module.SessionLocal,
         live_settings_module: live_settings_module.SessionLocal,
+        licensing_module: licensing_module.SessionLocal,
         provider_triggers_module: provider_triggers_module.SessionLocal,
         runtime_pool_module: runtime_pool_module.SessionLocal,
         remote_dispatch_module: remote_dispatch_module.SessionLocal,
@@ -249,6 +278,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     queue_module.SessionLocal = test_session
     retention_module.SessionLocal = test_session
     live_settings_module.SessionLocal = test_session
+    licensing_module.SessionLocal = test_session
     provider_triggers_module.SessionLocal = test_session
     runtime_pool_module.SessionLocal = test_session
     remote_dispatch_module.SessionLocal = test_session

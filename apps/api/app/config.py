@@ -225,6 +225,13 @@ class Settings(BaseSettings):
     otel_exporter_otlp_endpoint: str = ""
     # MCP server: exposes POST /mcp (workflow run + builder tools) when on.
     mcp_server_enabled: bool = True
+    # Licensing (see app/services/licensing.py). A signed Ed25519 license key
+    # set here (env NOODLE_LICENSE_KEY) takes precedence over the DB-stored key.
+    # Blank → resolve from system_settings.license_key, else Community edition.
+    license_key: str = ""
+    # PEM-encoded Ed25519 public key used to verify license keys. Blank → use
+    # the key baked into app/services/licensing.py. Tests override this.
+    license_public_key: str = ""
     auth_required: bool = False
     auth_allow_registration: bool = False
     auth_registration_role: str = "viewer"

@@ -894,6 +894,9 @@ class SystemSetting(Base):
     worker_rss_soft_budget_bytes: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0
     )
+    # Signed Ed25519 license key (see app/services/licensing.py). NULL → resolve
+    # from settings.license_key / env, else Community edition.
+    license_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
