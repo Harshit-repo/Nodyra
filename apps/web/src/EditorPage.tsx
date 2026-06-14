@@ -1,5 +1,5 @@
 import { ReactFlowProvider } from "@xyflow/react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useBlocker, useParams } from "react-router-dom";
 
 import { api, errorMessage, getOrgId, getToken, type RunStreamHandle, subscribeToRunEvents } from "./api";
@@ -36,7 +36,7 @@ import {
 } from "./queries";
 import { RunApprovalsPanel } from "./RunApprovalsPanel";
 import { useToast } from "./ToastProvider";
-import { useModalA11y } from "./useModalA11y";
+import { A11yModal } from "./editor/A11yModal";
 import type {
   AiDraftMode,
   AiFixStrategy,
@@ -249,55 +249,6 @@ const selectChatTriggerParams = (s: EditorStore) => {
   return node.data.params as Record<string, string>;
 };
 
-/**
- * Modal shell with baseline a11y (Esc, focus trap + return, dialog ARIA) for
- * EditorPage's inline dialogs. Mounts only while open, so `useModalA11y`'s
- * global Esc handler never lingers when the dialog is closed.
- */
-function A11yModal({
-  className,
-  titleId,
-  title,
-  onClose,
-  closeDisabled = false,
-  children,
-}: {
-  className: string;
-  titleId: string;
-  title: string;
-  onClose: () => void;
-  closeDisabled?: boolean;
-  children: ReactNode;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  useModalA11y(ref, onClose);
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div
-        className={`modal ${className}`}
-        ref={ref}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        tabIndex={-1}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <header className="modal-head">
-          <h2 id={titleId}>{title}</h2>
-          <button
-            className="btn btn-sm btn-ghost"
-            onClick={onClose}
-            disabled={closeDisabled}
-            aria-label="Close"
-          >
-            ✕
-          </button>
-        </header>
-        {children}
-      </div>
-    </div>
-  );
-}
 
 export function EditorPage() {
   const { id } = useParams<{ id: string }>();
