@@ -304,7 +304,7 @@ export function EditorPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [publishNotes, setPublishNotes] = useState("");
   const [saveError, setSaveError] = useState(false);
-  const [unpublishing, setUnpublishing] = useState(false);
+  const [togglingActive, setTogglingActive] = useState(false);
   // Run id of a run paused awaiting tool approval (UX-6). Drives a persistent
   // banner with inline approve/reject instead of relying on a transient toast.
   const [waitingRunId, setWaitingRunId] = useState<string | null>(null);
@@ -760,6 +760,9 @@ export function EditorPage() {
       });
       const detail = await api.getWorkflow(id);
       setWorkflow(detail);
+      // Publishing takes the workflow live (backend sets active=true), so the
+      // pill flips to the green "Published" state and the Active toggle reads on.
+      setActive(detail.active);
       setPublishReviewOpen(false);
       setPublishNotes("");
       const deployNote = published.updated_deployments
@@ -774,19 +777,23 @@ export function EditorPage() {
     }
   }
 
-  async function unpublishWorkflow(): Promise<void> {
-    if (!id || unpublishing) return;
-    if (!window.confirm("Unpublish this workflow? It stops running in production until you publish again. Version history is kept.")) return;
-    setUnpublishing(true);
+  async function toggleActive(next: boolean): Promise<void> {
+    // Flip whether the published version runs live in production. Persist
+    // eagerly (optimistic) so there's no separate save step; roll back the
+    // switch if the request fails. Pausing keeps version history intact.
+    if (!id || togglingActive) return;
+    if (!next && !window.confirm("Pause this workflow? It stops running in production until you switch it back on. Version history is kept.")) return;
+    setActive(next);
+    setTogglingActive(true);
     try {
-      const updated = await api.updateWorkflow(id, { active: false });
+      const updated = await api.updateWorkflow(id, { active: next });
       setWorkflow(updated);
-      setActive(false);
-      notify("Workflow unpublished.", "success");
+      notify(next ? "Workflow is live." : "Workflow paused.", "success");
     } catch (err) {
-      notify(`Could not unpublish. ${errorMessage(err)}`, "error");
+      setActive(!next);
+      notify(`Could not update workflow state. ${errorMessage(err)}`, "error");
     } finally {
-      setUnpublishing(false);
+      setTogglingActive(false);
     }
   }
 
@@ -1401,6 +1408,25 @@ export function EditorPage() {
             />
           )}
 
+          {canWrite && barStatus.kind !== "unpublished" && (
+            <label
+              className="active-toggle"
+              title={active
+                ? "Live — triggers run in production. Switch off to pause."
+                : "Paused — switch on to run the published version live."}
+            >
+              <input
+                type="checkbox"
+                checked={active}
+                disabled={togglingActive}
+                aria-label={active ? "Pause workflow" : "Activate workflow"}
+                onChange={(e) => void toggleActive(e.target.checked)}
+              />
+              <span className="active-track" />
+              <span>{active ? "Live" : "Paused"}</span>
+            </label>
+          )}
+
           <OverflowMenu
             items={[
               { id: "history", label: "History & versions", onSelect: () => setShowHistory(true) },
@@ -1410,9 +1436,6 @@ export function EditorPage() {
               { id: "export-module", label: "Export · Python module (.py)", onSelect: () => void triggerExport(`/api/workflows/${id}/export.module.py`, `${name || "workflow"}_module.py`) },
               { id: "settings", label: "Workflow settings", dividerBefore: true, onSelect: () => setSettingsOpen(true) },
               { id: "shortcuts", label: "Keyboard shortcuts", onSelect: () => setShortcutsOpen(true) },
-              canWrite && barStatus.kind !== "unpublished" && active
-                ? { id: "unpublish", label: "Unpublish workflow", danger: true, dividerBefore: true, onSelect: () => void unpublishWorkflow() }
-                : null,
             ] as (OverflowItem | null | false)[]}
           />
         </div>

@@ -475,6 +475,10 @@ async def publish_workflow(
     )
     workflow.versions.append(version)
     workflow.published_version = next_version
+    # Publishing a release takes it live: triggers run in production until the
+    # author explicitly pauses it (Active toggle / Unpublish). Without this a
+    # freshly published workflow stays active=false with no way to go live.
+    workflow.active = True
     await session.flush()
 
     updated_deployments = 0

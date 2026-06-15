@@ -29,51 +29,71 @@ export function WorkflowSettingsModal(props: WorkflowSettingsModalProps) {
       onClose={onClose}
     >
       <div className="workflow-settings-body">
-        <label className="field">
-          <span>Run timeout (seconds)</span>
-          <input
-            type="number"
-            min={0}
-            step={1}
-            value={runTimeout}
-            placeholder="No timeout"
-            aria-label="Run timeout (seconds)"
-            onChange={(e) => onRunTimeoutChange(e.target.value)}
-          />
-        </label>
+        <section className="ws-section">
+          <div className="ws-section-head">
+            <h4>Execution</h4>
+            <p>How runs of this workflow behave.</p>
+          </div>
+          <label className="field ws-field">
+            <span className="ws-field-label">
+              Run timeout
+              <span className="ws-field-unit">seconds</span>
+            </span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={runTimeout}
+              placeholder="No timeout"
+              aria-label="Run timeout (seconds)"
+              onChange={(e) => onRunTimeoutChange(e.target.value)}
+            />
+            <span className="ws-field-hint">
+              Leave empty for no limit. Runs that exceed this are cancelled.
+            </span>
+          </label>
+        </section>
 
-        <label className="field-toggle">
-          <input
-            type="checkbox"
-            checked={mcpEnabled}
-            aria-label="Expose as MCP tool"
-            onChange={(e) => onMcpEnabledChange(e.target.checked)}
-          />
-          <span>Expose as MCP tool (AI agents can call this workflow)</span>
-        </label>
+        <section className="ws-section">
+          <div className="ws-section-head">
+            <h4>AI agent access</h4>
+            <p>Let AI agents discover and call this workflow over MCP.</p>
+          </div>
+          <label className="field-toggle ws-toggle">
+            <input
+              type="checkbox"
+              checked={mcpEnabled}
+              aria-label="Expose as MCP tool"
+              onChange={(e) => onMcpEnabledChange(e.target.checked)}
+            />
+            <span className="field-toggle-track" />
+            <span className="ws-toggle-label">Expose as MCP tool</span>
+          </label>
 
-        {mcpEnabled && (
-          <>
-            <label className="field">
-              <span>Tool name</span>
-              <input
-                value={mcpToolName}
-                placeholder="Auto-generated from workflow name"
-                aria-label="MCP tool name"
-                onChange={(e) => onMcpToolNameChange(e.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>Tool description</span>
-              <input
-                value={mcpDescription}
-                placeholder="Shown to calling AI agents"
-                aria-label="MCP tool description"
-                onChange={(e) => onMcpDescriptionChange(e.target.value)}
-              />
-            </label>
-          </>
-        )}
+          {mcpEnabled && (
+            <div className="ws-subfields">
+              <label className="field ws-field">
+                <span className="ws-field-label">Tool name</span>
+                <input
+                  value={mcpToolName}
+                  placeholder="Auto-generated from workflow name"
+                  aria-label="MCP tool name"
+                  onChange={(e) => onMcpToolNameChange(e.target.value)}
+                />
+              </label>
+              <label className="field ws-field">
+                <span className="ws-field-label">Tool description</span>
+                <textarea
+                  value={mcpDescription}
+                  rows={2}
+                  placeholder="Shown to calling AI agents so they know when to use it"
+                  aria-label="MCP tool description"
+                  onChange={(e) => onMcpDescriptionChange(e.target.value)}
+                />
+              </label>
+            </div>
+          )}
+        </section>
 
         <div className="modal-actions">
           <button type="button" className="btn btn-primary" onClick={onClose}>Done</button>

@@ -6971,6 +6971,84 @@ th.sortable:hover { background:var(--bg-3); }
 .overflow-sep { height: 1px; background: #222b36; margin: 5px 8px; }
 
 /* ---- workflow settings modal ---- */
-.workflow-settings-body { padding: 4px 2px; }
-.workflow-settings-body .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
-.workflow-settings-body .field-toggle { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.workflow-settings-body { padding: 2px 2px 4px; }
+
+.ws-section {
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+.ws-section:first-child { padding-top: 4px; border-top: none; }
+
+.ws-section-head { margin-bottom: 12px; }
+.ws-section-head h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+}
+.ws-section-head p {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: 1.45;
+}
+
+.ws-field { display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.ws-field-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.ws-field-unit {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--ink-3);
+  text-transform: lowercase;
+}
+.ws-field input,
+.ws-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 13px;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.ws-field textarea { resize: vertical; min-height: 38px; line-height: 1.5; }
+.ws-field input:focus,
+.ws-field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ghost, rgba(88, 166, 255, 0.18));
+}
+.ws-field-hint {
+  font-size: 11px;
+  color: var(--ink-3);
+  line-height: 1.4;
+}
+
+.ws-toggle { margin: 0; cursor: pointer; }
+.ws-toggle-label { font-size: 13px; font-weight: 500; color: var(--ink); }
+
+.ws-subfields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 14px;
+  padding-left: 14px;
+  border-left: 2px solid var(--line);
+}
+
+.workflow-settings-body .modal-actions {
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
