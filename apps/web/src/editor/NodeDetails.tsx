@@ -1560,6 +1560,31 @@ function ExpressionEditorModal({
   );
   const selectedUpstreamNode = upstreamNodes.find((n) => n.id === selectedUpstreamId) ?? upstreamNodes[0];
 
+  // Build the eval context straight from the live store. The modal already
+  // subscribes to runOutputs + edges (that's what powers the sidebar), so it
+  // can resolve {{ }} on its own — no dependency on the caller threading `ctx`
+  // all the way down (which is brittle and was silently arriving undefined).
+  // `$json`/`$input` come from the wired inputs, `$node[...]` from every run
+  // output. The `ctx` prop is kept as a fallback for callers without a nodeId.
+  const effectiveCtx = useMemo<ExprContext>(() => {
+    if (!nodeId) return ctx ?? {};
+    const incoming: Record<string, unknown> = {};
+    for (const edge of allEdges) {
+      if (edge.target !== nodeId) continue;
+      const upstream = runOutputs[edge.source];
+      if (!upstream || typeof upstream !== "object") continue;
+      const handle = edge.sourceHandle ?? "main";
+      const v = (upstream as Record<string, unknown>)[handle];
+      if (v !== undefined) incoming[edge.targetHandle ?? "input"] = v;
+    }
+    if (Object.keys(runOutputs).length === 0) return ctx ?? {};
+    return {
+      json: Object.values(incoming)[0] ?? ctx?.json,
+      inputs: Object.keys(incoming).length ? incoming : ctx?.inputs,
+      nodes: runOutputs,
+    };
+  }, [nodeId, allEdges, runOutputs, ctx]);
+
   useEffect(() => {
     if (upstreamNodes.length > 0 && !upstreamNodes.find((n) => n.id === selectedUpstreamId)) {
       setSelectedUpstreamId(upstreamNodes[0]?.id ?? null);
@@ -1634,10 +1659,9 @@ function ExpressionEditorModal({
   }
 
   const hasData =
-    ctx !== undefined &&
-    (ctx.json !== undefined ||
-      Object.keys(ctx.nodes ?? {}).length > 0 ||
-      Object.keys(ctx.inputs ?? {}).length > 0);
+    effectiveCtx.json !== undefined ||
+    Object.keys(effectiveCtx.nodes ?? {}).length > 0 ||
+    Object.keys(effectiveCtx.inputs ?? {}).length > 0;
   const hasExpr = EXPR_RE.test(value);
 
   useEffect(() => {
@@ -1661,9 +1685,9 @@ function ExpressionEditorModal({
       api
         .previewExpression({
           value,
-          json: ctx?.json,
-          inputs: ctx?.inputs,
-          nodes: ctx?.nodes,
+          json: effectiveCtx.json,
+          inputs: effectiveCtx.inputs,
+          nodes: effectiveCtx.nodes,
         })
         .then((res) => {
           if (!cancelled)
@@ -1683,7 +1707,7 @@ function ExpressionEditorModal({
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [value, ctx, hasExpr, hasData]);
+  }, [value, effectiveCtx, hasExpr, hasData]);
 
   const resultText = formatResultText(state.result);
   const parts = state.parts ?? [];
