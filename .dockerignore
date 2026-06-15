@@ -10,4 +10,6 @@ node_modules
 .env
 .env.local
 envs/
+**/envs/
+apps/api/envs/
 data/

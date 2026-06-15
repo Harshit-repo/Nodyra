@@ -8,8 +8,8 @@ venv/
 .ruff_cache/
 .mypy_cache/
 
-# uv
-uv.lock
+# uv: the lockfile IS committed for reproducible builds (Docker runs
+# `uv sync --locked`). Do not ignore it.
 
 # Node
 node_modules/

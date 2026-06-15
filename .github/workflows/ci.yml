@@ -13,7 +13,11 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-      - run: uv sync --all-packages
+      # Guard the committed lockfile: fail if uv.lock has drifted from the
+      # pyproject files. Without this the Docker build (uv sync --locked) can
+      # break on a clean clone while CI's plain `uv sync` silently passes.
+      - run: uv lock --check
+      - run: uv sync --locked --all-packages
       - run: uv run ruff check .
       # --timeout guards against a hung test wedging the whole run (see the
       # event-broker fix); 300s is generous for the subprocess-spawning tests.
