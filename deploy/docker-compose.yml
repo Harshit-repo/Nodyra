@@ -47,6 +47,9 @@ services:
       sh -c "cd apps/api && alembic upgrade head && cd /app
       && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     environment:
+      # Production posture so runtime_warnings() actually surface via
+      # /ops/runtime-mode (default SECRET_KEY, local artifacts, etc.).
+      RUNTIME_MODE: production
       DATABASE_URL: postgresql+asyncpg://noodle:noodle@postgres:5432/noodle
       REDIS_URL: redis://redis:6379/0
       QUEUE_BACKEND: redis
@@ -95,6 +98,7 @@ services:
       dockerfile: deploy/Dockerfile.python
     command: python -m app.worker_main
     environment:
+      RUNTIME_MODE: production
       DATABASE_URL: postgresql+asyncpg://noodle:noodle@postgres:5432/noodle
       REDIS_URL: redis://redis:6379/0
       QUEUE_BACKEND: redis

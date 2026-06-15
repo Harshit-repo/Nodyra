@@ -38,7 +38,8 @@ logger = logging.getLogger("noodle.worker")
 
 
 def _validate() -> None:
-    errors = settings.dispatch_topology_errors()
+    errors = settings.security_startup_errors()
+    errors += settings.dispatch_topology_errors()
     if settings.dispatch_role != "worker":
         errors.append(
             "the worker entrypoint requires DISPATCH_ROLE=worker "

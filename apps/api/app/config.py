@@ -2,6 +2,10 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# The shipped placeholder secret. Centralised so the field default, the
+# advisory warning, and the hard startup guard all reference one value.
+DEFAULT_SECRET_KEY = "noodle-dev-secret-change-me-in-production"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -241,7 +245,7 @@ class Settings(BaseSettings):
     # disable entirely (e.g. when fronted by a WAF that already throttles).
     auth_rate_limit_enabled: bool = True
     auth_rate_limit_per_minute: int = 10
-    secret_key: str = "noodle-dev-secret-change-me-in-production"
+    secret_key: str = DEFAULT_SECRET_KEY
     # Shared secret the worker presents to call /internal/* endpoints.
     # Blank = no check (fine for local dev where only your machine reaches
     # the API). Set this when exposing the API to anything else.
@@ -306,6 +310,45 @@ class Settings(BaseSettings):
             )
         return errors
 
+    def security_startup_errors(self) -> list[str]:
+        """Hard, fail-closed security misconfigurations that abort startup.
+
+        Unlike ``runtime_warnings()`` (advisory, production-mode only, surfaced
+        via /ops/runtime-mode), these always run and raise — the same treatment
+        ``dispatch_topology_errors()`` gets — because shipping them is
+        catastrophic, not merely degraded (AUTH-1/AUTH-3):
+
+        * default ``secret_key`` → token-signing HMAC and the credential master
+          KEK are public: anyone can forge a session token for any user and
+          decrypt every stored credential.
+        * blank ``internal_api_token`` in a split topology → unauthenticated
+          worker-level access to ``/internal/*``.
+
+        ``runtime_allow_insecure=True`` is the explicit, logged escape hatch for
+        operators who knowingly accept this (e.g. a throwaway local instance).
+        Auth-disabled single-user dev is unaffected: the guard only trips when
+        an auth/tenancy boundary is actually being relied upon.
+        """
+        if self.runtime_allow_insecure:
+            return []
+        errors: list[str] = []
+        boundary_enforced = self.auth_required or self.multi_tenancy_enabled
+        if self.secret_key == DEFAULT_SECRET_KEY and boundary_enforced:
+            errors.append(
+                "SECRET_KEY is the built-in default while auth/multi-tenancy is "
+                "enabled: session tokens are forgeable and stored credentials are "
+                "decryptable by anyone. Set a strong random SECRET_KEY (or "
+                "RUNTIME_ALLOW_INSECURE=true to override for a trusted local run)."
+            )
+        if not self.internal_api_token and self.dispatch_role != "inline":
+            errors.append(
+                "INTERNAL_API_TOKEN is empty in a split dispatch topology "
+                f"(dispatch_role={self.dispatch_role}): /internal/* would accept "
+                "unauthenticated worker-level calls. Set a strong shared secret "
+                "(or RUNTIME_ALLOW_INSECURE=true to override)."
+            )
+        return errors
+
     def runtime_warnings(self) -> list[str]:
         """Configuration issues that make ``production`` mode behave like
         local mode. Always returned for observability (surfaced via
@@ -350,7 +393,7 @@ class Settings(BaseSettings):
                 "origin can make credentialed requests. Set cors_origins to the "
                 "explicit list of allowed frontend URLs."
             )
-        if self.secret_key == "noodle-dev-secret-change-me-in-production":
+        if self.secret_key == DEFAULT_SECRET_KEY:
             warnings.append(
                 "SECRET_KEY is the default development value; set a strong "
                 "random secret in production to prevent token forgery."

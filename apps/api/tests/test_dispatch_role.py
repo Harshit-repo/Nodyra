@@ -216,4 +216,26 @@ def test_worker_main_validation_accepts_worker_config(monkeypatch):
     monkeypatch.setattr(
         settings, "database_url", "postgresql+asyncpg://u:p@h:5432/db"
     )
+    # A split topology must carry the shared internal token (AUTH-3); the suite
+    # secret is already non-default via conftest, so this is the last gate.
+    monkeypatch.setattr(settings, "internal_api_token", "shared-worker-secret")
     worker_main._validate()  # must not raise
+
+
+def test_worker_main_validation_rejects_blank_internal_token(monkeypatch):
+    """AUTH-3: a worker in a split topology refuses to boot without the shared
+    internal token — otherwise /internal/* would accept unauthenticated calls."""
+    import pytest
+
+    from app import worker_main
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "dispatch_role", "worker")
+    monkeypatch.setattr(settings, "queue_backend", "redis")
+    monkeypatch.setattr(
+        settings, "database_url", "postgresql+asyncpg://u:p@h:5432/db"
+    )
+    monkeypatch.setattr(settings, "internal_api_token", "")
+    with pytest.raises(SystemExit) as exc:
+        worker_main._validate()
+    assert "INTERNAL_API_TOKEN" in str(exc.value)

@@ -38,6 +38,12 @@ from app.main import app
 settings.enable_venv_builds = False
 settings.run_synchronously = True
 settings.use_subprocess_runner = False
+# The fail-closed security guard (config.security_startup_errors / AUTH-1) aborts
+# lifespan startup when auth/multi-tenancy is on while SECRET_KEY is the public
+# default. Lifespan-running tests (TestClient in test_cookie_auth/test_health)
+# flip auth_required on, so pin a non-default secret for the whole suite — tests
+# should never exercise the placeholder key anyway.
+settings.secret_key = "noodle-test-secret-deterministic-not-the-default"
 
 
 @pytest.fixture(autouse=True)

@@ -202,6 +202,11 @@ async def lifespan(app: FastAPI):
     # Split-topology misconfigurations abort startup (program A1) — a control
     # plane that silently executed runs, or used in-process events, would
     # corrupt the worker topology rather than degrade it.
+    # Fail-closed security guard (AUTH-1/AUTH-3): default secret / missing
+    # internal token under an enforced boundary aborts startup outright.
+    security_errors = settings.security_startup_errors()
+    if security_errors:
+        raise RuntimeError("startup aborted:\n  - " + "\n  - ".join(security_errors))
     topology_errors = settings.dispatch_topology_errors()
     if settings.dispatch_role == "worker":
         topology_errors.append(
