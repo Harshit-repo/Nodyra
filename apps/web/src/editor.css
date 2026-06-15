@@ -5236,6 +5236,65 @@ body.is-resizing {
   border-radius: 3px;
   padding: 0 1px;
 }
+
+/* ---- Python syntax colours (highlight mirror, language="python") ---- */
+.hl-py-kw {
+  color: #c678dd;
+}
+.hl-py-bi {
+  color: #61afef;
+}
+.hl-py-str {
+  color: #98c379;
+}
+.hl-py-num {
+  color: #d19a66;
+}
+.hl-py-com {
+  color: #7f848e;
+  font-style: italic;
+}
+
+/* Code mode: don't wrap, so line numbers map 1:1 to logical lines; scroll
+   horizontally instead. Mirror + textarea must agree on wrapping or the
+   overlay drifts off the caret. */
+.hl-ta-wrap--code .hl-ta-mirror,
+.hl-ta-wrap--code .hl-ta-input {
+  white-space: pre;
+  word-break: normal;
+  overflow: auto;
+}
+
+/* Line-number gutter: vertically scroll-synced (JS), pinned at the left. The
+   editor's left padding is widened to clear it. */
+.hl-ta-gutter {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 42px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-3);
+  background: var(--surface);
+  border-right: 1px solid var(--line-2);
+  text-align: right;
+  user-select: none;
+  pointer-events: none;
+  z-index: 3;
+}
+.hl-ta-gutter span {
+  display: block;
+  padding: 0 8px 0 0;
+  opacity: 0.65;
+}
+.hl-ta-wrap--gutter .hl-ta-mirror,
+.hl-ta-wrap--gutter .hl-ta-input {
+  padding-left: 54px;
+}
 .textarea-expand {
   position: absolute;
   top: 6px;
@@ -5351,6 +5410,16 @@ body.is-resizing {
 }
 .expr-modal-editor .hl-ta-mirror {
   z-index: 1;
+}
+/* Clear the line-number gutter (overrides the padding shorthand above). */
+.expr-modal-editor.hl-ta-wrap--gutter .hl-ta-input,
+.expr-modal-editor.hl-ta-wrap--gutter .hl-ta-mirror {
+  padding-left: 54px;
+}
+/* Match the editor's 12px top padding so line numbers line up with text. */
+.expr-modal-editor .hl-ta-gutter {
+  padding-top: 12px;
+  background: var(--canvas);
 }
 .expr-modal-editor .hl-ta-input:focus {
   box-shadow: none;

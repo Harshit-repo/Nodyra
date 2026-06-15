@@ -26,6 +26,7 @@ import { useEditor } from "./store";
 import { useServerPlatform } from "../hooks/useServerPlatform";
 import { credentialMatchesParam } from "./node-details/credentials";
 import { getUpstreamNodes } from "./node-details/upstreamFields";
+import { tokenizePython } from "./node-details/pythonHighlight";
 import {
   buildLoadOptionsParams,
   matchesDisplayWhen,
@@ -1317,6 +1318,8 @@ function HighlightedTextarea({
   onDragOver,
   onKeyDown,
   taRef: taRefProp,
+  language,
+  lineNumbers = false,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -1329,10 +1332,15 @@ function HighlightedTextarea({
   onDragOver?: React.DragEventHandler<HTMLTextAreaElement>;
   onKeyDown?: React.KeyboardEventHandler<HTMLTextAreaElement>;
   taRef?: React.RefObject<HTMLTextAreaElement>;
+  /** Enable Python token colouring + Tab-to-indent in the highlight mirror. */
+  language?: "python";
+  /** Render a scroll-synced line-number gutter (code mode). */
+  lineNumbers?: boolean;
 }) {
   const taRefInternal = useRef<HTMLTextAreaElement>(null);
   const taRef = taRefProp ?? taRefInternal;
   const mirrorRef = useRef<HTMLDivElement>(null);
+  const gutterRef = useRef<HTMLDivElement>(null);
 
   const segments = (() => {
     const out: Array<{ text: string; expr: boolean }> = [];
@@ -1352,26 +1360,97 @@ function HighlightedTextarea({
     return out;
   })();
 
-  const syncScroll = () => {
-    const ta = taRef.current;
-    const m = mirrorRef.current;
-    if (!ta || !m) return;
-    m.scrollTop = ta.scrollTop;
-    m.scrollLeft = ta.scrollLeft;
+  // Render one segment: {{ }} expressions win; otherwise Python-colour the run
+  // when a language is set, else emit it plain. Every character is preserved so
+  // the mirror stays aligned with the caret.
+  const renderSegment = (s: { text: string; expr: boolean }, key: number) => {
+    if (s.expr) {
+      return (
+        <span key={key} className="hl-ta-expr">
+          {s.text}
+        </span>
+      );
+    }
+    if (language === "python") {
+      return (
+        <span key={key}>
+          {tokenizePython(s.text).map((t, j) =>
+            t.cls ? (
+              <span key={j} className={`hl-py-${t.cls}`}>
+                {t.text}
+              </span>
+            ) : (
+              <span key={j}>{t.text}</span>
+            ),
+          )}
+        </span>
+      );
+    }
+    return <span key={key}>{s.text}</span>;
   };
 
+  const lineCount = lineNumbers ? value.split("\n").length : 0;
+
+  const syncScroll = () => {
+    const ta = taRef.current;
+    if (mirrorRef.current && ta) {
+      mirrorRef.current.scrollTop = ta.scrollTop;
+      mirrorRef.current.scrollLeft = ta.scrollLeft;
+    }
+    if (gutterRef.current && ta) {
+      gutterRef.current.scrollTop = ta.scrollTop;
+    }
+  };
+
+  // Tab indents instead of leaving the field; Shift+Tab dedents two spaces.
+  const handleTabIndent = (
+    e: React.KeyboardEvent<HTMLTextAreaElement>,
+  ): boolean => {
+    if (e.key !== "Tab" || !language) return false;
+    const ta = taRef.current;
+    if (!ta) return false;
+    e.preventDefault();
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    if (e.shiftKey) {
+      const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+      const lead = value.slice(lineStart).match(/^ {1,2}/)?.[0].length ?? 0;
+      if (lead === 0) return true;
+      const next = value.slice(0, lineStart) + value.slice(lineStart + lead);
+      onChange(next);
+      requestAnimationFrame(() => {
+        ta.selectionStart = ta.selectionEnd = Math.max(lineStart, start - lead);
+      });
+      return true;
+    }
+    const next = value.slice(0, start) + "  " + value.slice(end);
+    onChange(next);
+    requestAnimationFrame(() => {
+      ta.selectionStart = ta.selectionEnd = start + 2;
+    });
+    return true;
+  };
+
+  const wrapClass = [
+    "hl-ta-wrap",
+    className,
+    language ? "hl-ta-wrap--code" : "",
+    lineNumbers ? "hl-ta-wrap--gutter" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className={`hl-ta-wrap ${className}`}>
+    <div className={wrapClass}>
+      {lineNumbers && (
+        <div ref={gutterRef} className="hl-ta-gutter" aria-hidden>
+          {Array.from({ length: lineCount }, (_, i) => (
+            <span key={i}>{i + 1}</span>
+          ))}
+        </div>
+      )}
       <div ref={mirrorRef} className="hl-ta-mirror" aria-hidden>
-        {segments.map((s, i) =>
-          s.expr ? (
-            <span key={i} className="hl-ta-expr">
-              {s.text}
-            </span>
-          ) : (
-            <span key={i}>{s.text}</span>
-          ),
-        )}
+        {segments.map(renderSegment)}
         {/* Trailing newline ensures the mirror grows when the textarea does. */}
         {value.endsWith("\n") && "\n"}
         {/* Non-breaking space keeps empty lines/empty content rendering. */}
@@ -1387,7 +1466,10 @@ function HighlightedTextarea({
         autoFocus={autoFocus}
         onChange={(e) => onChange(e.target.value)}
         onScroll={syncScroll}
-        onKeyDown={onKeyDown}
+        onKeyDown={(e) => {
+          if (handleTabIndent(e)) return;
+          onKeyDown?.(e);
+        }}
         onDrop={onDrop}
         onDragOver={onDragOver}
       />
@@ -1760,6 +1842,8 @@ function ExpressionEditorModal({
             <div className="expr-modal-editor-wrap">
               <HighlightedTextarea
                 className="expr-modal-editor"
+                language="python"
+                lineNumbers
                 value={value}
                 onChange={(v) => {
                   onChange(v);
@@ -1845,8 +1929,8 @@ function ExpressionEditorModal({
               {state.loading && <p className="muted">Evaluating…</p>}
               {!state.loading && hasExpr && !hasData && (
                 <p className="muted">
-                  Run the workflow once to feed this preview with real input
-                  data — until then, only the literal text is shown.
+                  No upstream data yet — run the workflow once and this preview
+                  will resolve each <code>{"{{ }}"}</code> against live values.
                 </p>
               )}
               {!state.loading && state.error && (
@@ -3459,6 +3543,17 @@ export function NodeDetails({
   }
   const hasIncomingInputs = Object.keys(incomingInputs).length > 0;
 
+  // Live evaluation context for the expression preview. The store already holds
+  // each upstream node's most recent run output (that's what powers the Pick-
+  // variable sidebar), so the preview can resolve {{ }} against real data with
+  // no extra run — `$json`/`$input` from the wired inputs, `$node[...]` from
+  // every node's output. Mirrors noodle.expr.build_context on the backend.
+  const exprContext: ExprContext = {
+    json: Object.values(incomingInputs)[0],
+    inputs: incomingInputs,
+    nodes: runOutputs,
+  };
+
   return (
     <>
       {showHeader && (
@@ -3642,6 +3737,7 @@ export function NodeDetails({
                     value={value}
                     onChange={(v) => setParam(spec.name, v)}
                     credentialContext={params}
+                    exprContext={exprContext}
                     nodeId={node.id}
                   />
                 )}
