@@ -264,6 +264,11 @@ def test_classify_flags_code_http_private_and_sql_expressions() -> None:
         ("c1", "code"),
         ("h1", "http_private_ip"),
         ("q1", "sql_with_expressions"),
+        # postgres_query opens a credentialed DB connection to an arbitrary
+        # host, so it is also flagged as network_egress (SSRF surface) — both
+        # postgres nodes get this, plus q1's expression-injection finding.
+        ("q1", "network_egress"),
+        ("q2", "network_egress"),
         ("x1", "execute_command"),
         ("s1", "ssh"),
     }

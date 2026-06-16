@@ -130,9 +130,12 @@ async def test_inactive_workflow_is_not_triggered(client: AsyncClient) -> None:
     ).json()["id"]
     await client.put(
         f"/workflows/{workflow_id}",
-        json={"graph": _webhook_graph("idle"), "active": False},
+        json={"graph": _webhook_graph("idle")},
     )
+    # publish auto-activates (workflows.publish_workflow sets active=True), so
+    # deactivate *after* publishing to exercise the inactive-not-triggered path.
     await client.post(f"/workflows/{workflow_id}/publish", json={})
+    await client.put(f"/workflows/{workflow_id}", json={"active": False})
 
     resp = await client.post("/webhook/idle", json={})
     assert resp.status_code == 404

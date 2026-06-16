@@ -103,6 +103,7 @@ def _reset_run_dispatch_state():
     """
     import asyncio
 
+    from app.services import queue as queue_mod
     from app.services import runner as runner_module
     from app.services import runtime_pool as runtime_pool_mod
 
@@ -112,6 +113,11 @@ def _reset_run_dispatch_state():
             if not task.done():
                 task.cancel()
         runner_module._active_runs.clear()
+        # The durable-queue wakeup Event is a lazy module global bound to the
+        # loop that first used it. A lifespan-running test (TestClient in
+        # test_health) binds it to that test's loop; the next test's loop then
+        # raises "bound to a different event loop". Null it so it rebinds (TEST-1).
+        queue_mod._wakeup = None
         # Rebuild the runtime pool's loop-bound primitives so no permit slot
         # leaked by a prior test's interrupted run survives into this one.
         pool = runtime_pool_mod.pool
@@ -149,6 +155,23 @@ def _relax_sandbox_policy():
     _settings.sandbox_policy_strict = False
     yield
     _settings.sandbox_policy_strict = prev
+
+
+@pytest.fixture(autouse=True)
+def _reset_queue_drain_flag():
+    """Reset the process-global ``settings.queue_drain`` between tests.
+
+    ``/ops/drain`` and the dispatch-drain tests flip this module-level flag; a
+    test that sets it True (or leaves it set after a crash) makes
+    test_ops::test_drain_status_default_false observe ``draining: True``. Reset
+    around every test so drain state never leaks across the suite (TEST-2).
+    """
+    from app.config import settings as _settings
+
+    prev = _settings.queue_drain
+    _settings.queue_drain = False
+    yield
+    _settings.queue_drain = prev
 
 
 @pytest.fixture(autouse=True)
