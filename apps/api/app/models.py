@@ -734,8 +734,11 @@ class Deployment(Base):
         JSON, default=dict, nullable=False
     )
     active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # DB-1: SET NULL so deleting an environment doesn't error on a referencing
+    # deployment (the runner treats a NULL env_id as the global/default env),
+    # matching workflows.environment_id and the rest of the FK policy.
     environment_id: Mapped[str | None] = mapped_column(
-        ForeignKey("environments.id"), nullable=True
+        ForeignKey("environments.id", ondelete="SET NULL"), nullable=True
     )
     workflow_version_id: Mapped[str | None] = mapped_column(
         ForeignKey("workflow_versions.id", ondelete="SET NULL"),
