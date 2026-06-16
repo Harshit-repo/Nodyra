@@ -56,6 +56,13 @@ def test_chart_multi_series_auto_numeric(store_ctx) -> None:
     assert names == {"revenue", "cost"}
 
 
+def test_chart_caps_inline_list_inputs(store_ctx) -> None:
+    rows = [{"x": i, "y": i * 2} for i in range(2500)]
+    spec = chart(input=rows, chart_type="line", x="x", y="y")
+    assert len(spec["categories"]) == 2000
+    assert len(spec["series"][0]["points"]) == 2000
+
+
 def test_chart_pie_single_series(store_ctx) -> None:
     spec = chart(input=_sales(), chart_type="pie", x="month", y="revenue")
     assert spec["chart_type"] == "pie"

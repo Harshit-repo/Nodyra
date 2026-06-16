@@ -10,8 +10,9 @@ from noodle.context import artifact_store, current_node_id
 from noodle.datasets import is_dataset_ref
 from noodle.sdk import registry
 from noodle_nodes.browser_automation import sitemap_crawl
-from noodle_nodes.data_quality import schema_validate, string_normalize
+from noodle_nodes.data_quality import currency_normalize, schema_validate, string_normalize
 from noodle_nodes.datasets import dataset_to_records
+from noodle_nodes.geospatial import geospatial_distance
 from noodle_nodes.security_automation import password_strength_check
 
 
@@ -104,6 +105,20 @@ def test_string_normalize_outputs_dataset(store_ctx) -> None:
     assert rows == [{"name": "  Café    AU  ", "name_normalized": "cafe au"}]
 
 
+def test_currency_normalize_keeps_us_thousands_separator(store_ctx) -> None:
+    result = currency_normalize(
+        input=[
+            {"amount": "$1,000"},
+            {"amount": "EUR 1.234,56"},
+            {"amount": "1,25 GBP"},
+        ],
+    )
+
+    rows = dataset_to_records(input=result, max_rows=10)
+    assert [row["amount_normalized"] for row in rows] == ["1000", "1234.56", "1.25"]
+    assert [row["currency"] for row in rows] == ["USD", "EUR", "GBP"]
+
+
 def test_sitemap_crawl_parses_inline_xml(store_ctx) -> None:
     xml = """<?xml version="1.0" encoding="UTF-8"?>
     <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -126,6 +141,25 @@ def test_sitemap_crawl_parses_inline_xml(store_ctx) -> None:
         "https://example.com/",
         "https://example.com/docs",
     ]
+
+
+def test_geospatial_distance_rejects_excessive_cross_product() -> None:
+    with pytest.raises(ValueError, match="pair count"):
+        geospatial_distance(
+            input=[
+                {"lat": 0, "lon": 0},
+                {"lat": 1, "lon": 1},
+                {"lat": 2, "lon": 2},
+            ],
+            right_records_json=json.dumps(
+                [
+                    {"lat": 3, "lon": 3},
+                    {"lat": 4, "lon": 4},
+                    {"lat": 5, "lon": 5},
+                ]
+            ),
+            max_pairs=8,
+        )
 
 
 def test_password_strength_check_scores_strong_password() -> None:

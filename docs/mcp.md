@@ -1,5 +1,10 @@
 # MCP support
 
+> Looking to connect Claude Desktop, Codex, Cursor or another LLM and build
+> workflows through MCP? See the step-by-step guide in
+> [`connect-mcp.md`](./connect-mcp.md) (clients, tool catalogue, and hosting
+> behind SSL for OAuth). This page is the concise reference.
+
 ## Noodle as an MCP server
 
 Noodle exposes an MCP server at `POST /mcp` (streamable HTTP, stateless).

@@ -101,7 +101,7 @@ def read_csv_file(
     if has_header:
         headers = all_rows[0]
         data_rows = all_rows[1:]
-        dicts = [dict(zip(headers, row)) for row in data_rows]
+        dicts = [dict(zip(headers, row, strict=False)) for row in data_rows]
     else:
         data_rows = all_rows
         dicts = [dict(enumerate(row)) for row in data_rows]
@@ -185,7 +185,8 @@ def read_xml_file(
     row_xpath: str = "",
     output_as_dataset: bool = False,
 ) -> Any:
-    import xml.etree.ElementTree as ET
+    from defusedxml import DefusedXmlException
+    from defusedxml import ElementTree as ET
 
     if file:
         content_bytes, filename = _read_upload_bytes(file)
@@ -204,7 +205,10 @@ def read_xml_file(
             raise ValueError(
                 "read_xml_file: row_xpath is required when output_as_dataset is true"
             )
-        root = ET.fromstring(text)
+        try:
+            root = ET.fromstring(text)
+        except (ET.ParseError, DefusedXmlException) as exc:
+            raise ValueError(f"read_xml_file: invalid or unsafe XML: {exc}") from exc
         rows_els = root.findall(f".//{row_xpath}")
         rows: list[dict] = []
         for el in rows_els:
@@ -230,5 +234,5 @@ def read_xml_file(
 
     import xmltodict
 
-    data = xmltodict.parse(text)
+    data = xmltodict.parse(text, disable_entities=True)
     return {"data": dict(data), "filename": filename}

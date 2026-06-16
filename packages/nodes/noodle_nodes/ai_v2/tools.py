@@ -8,7 +8,9 @@ runs so every tool invocation is observable.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
@@ -20,6 +22,9 @@ from noodle_nodes.http_security import assert_public_http_url
 AI_CATEGORY = "AI"
 
 _HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
+_URL_TEMPLATE_RE = re.compile(
+    r"\{\{\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*\}\}|\{([A-Za-z_][A-Za-z0-9_.-]*)\}"
+)
 
 
 def _parse_schema(raw: Any) -> ToolParameterSchema:
@@ -59,6 +64,25 @@ def collect_tool_adapters(value: Any) -> list[ToolAdapter]:
     return []
 
 
+def _argument_value(arguments: dict[str, Any], key: str) -> Any:
+    value: Any = arguments
+    for part in key.split("."):
+        if isinstance(value, dict) and part in value:
+            value = value[part]
+            continue
+        raise ValueError(f"missing URL template argument: {key}")
+    return value
+
+
+def _render_url_template(url: str, arguments: dict[str, Any]) -> str:
+    def replace(match: re.Match[str]) -> str:
+        key = match.group(1) or match.group(2) or ""
+        value = _argument_value(arguments, key)
+        return quote(str(value), safe="")
+
+    return _URL_TEMPLATE_RE.sub(replace, url)
+
+
 class HttpToolAdapter(ToolAdapter):
     """Calls an HTTP endpoint, substituting tool arguments into the request."""
 
@@ -96,7 +120,8 @@ class HttpToolAdapter(ToolAdapter):
     def invoke(self, arguments: dict[str, Any]) -> str:
         if not self._url:
             raise ValueError(f"{self._name}: url is required")
-        assert_public_http_url(self._url, context=f"{self._name} AI HTTP tool")
+        rendered_url = _render_url_template(self._url, arguments)
+        assert_public_http_url(rendered_url, context=f"{self._name} AI HTTP tool")
         kwargs: dict[str, Any] = {
             "headers": self._headers,
             "timeout": max(1, min(300, self._timeout)),
@@ -105,7 +130,7 @@ class HttpToolAdapter(ToolAdapter):
             kwargs["params"] = arguments
         else:
             kwargs["json"] = arguments
-        resp = requests.request(self._method, self._url, **kwargs)
+        resp = requests.request(self._method, rendered_url, **kwargs)
         if resp.status_code >= 400:
             return f"HTTP {resp.status_code}: {resp.text[:1000]}"
         return resp.text[:8000]

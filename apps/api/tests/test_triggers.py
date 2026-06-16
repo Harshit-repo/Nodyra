@@ -141,6 +141,32 @@ async def test_inactive_workflow_is_not_triggered(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
+async def test_latest_versions_by_id_returns_highest_version(client: AsyncClient) -> None:
+    from app import models
+
+    async with triggers.SessionLocal() as session:
+        wf = models.Workflow(name="Versioned")
+        wf.versions.append(models.WorkflowVersion(version=1, graph={"tag": "a"}))
+        wf.versions.append(models.WorkflowVersion(version=2, graph={"tag": "b"}))
+        wf.versions.append(models.WorkflowVersion(version=3, graph={"tag": "c"}))
+        session.add(wf)
+        await session.commit()
+        wid = wf.id
+
+    async with triggers.SessionLocal() as session:
+        latest = await triggers._latest_versions_by_id(session, [wid])
+
+    assert wid in latest
+    assert latest[wid].version == 3
+    assert latest[wid].graph == {"tag": "c"}
+
+
+async def test_latest_versions_by_id_handles_empty_and_missing(client: AsyncClient) -> None:
+    async with triggers.SessionLocal() as session:
+        assert await triggers._latest_versions_by_id(session, []) == {}
+        assert await triggers._latest_versions_by_id(session, ["does-not-exist"]) == {}
+
+
 def test_match_webhook_path_exact_no_params() -> None:
     # A flat template with no placeholders matches by exact equality and
     # captures no params — existing webhooks are unchanged.
@@ -1321,10 +1347,9 @@ async def test_webhook_role_disabled_blocks_production_but_keeps_test_paths(
     works on a control-plane-only replica."""
     import importlib
 
+    import app.main as _main
     from app import config as _config
     from app.config import Settings
-
-    import app.main as _main
 
     # Reloading app.main replaces ``app.main.app`` with a NEW FastAPI
     # instance. The conftest ``client`` fixture (and every other test) holds

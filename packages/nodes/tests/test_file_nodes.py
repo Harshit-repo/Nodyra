@@ -9,7 +9,6 @@ from unittest.mock import patch
 import pytest
 
 import noodle_nodes  # noqa: F401 — registers nodes
-from noodle.sdk import registry
 from noodle_nodes.file_nodes import (
     read_csv_file,
     read_json_file,
@@ -165,6 +164,14 @@ XML_TEXT = textwrap.dedent("""\
     </people>
 """)
 
+UNSAFE_XML = """\
+<?xml version="1.0"?>
+<!DOCTYPE people [
+  <!ENTITY secret SYSTEM "file:///etc/passwd">
+]>
+<people><person><name>&secret;</name></person></people>
+"""
+
 
 def test_read_xml_raw(tmp_path: Path) -> None:
     f = tmp_path / "data.xml"
@@ -194,6 +201,18 @@ def test_read_xml_dataset_requires_row_xpath(tmp_path: Path) -> None:
     f.write_text(XML_TEXT, encoding="utf-8")
     with pytest.raises(ValueError, match="row_xpath is required"):
         read_xml_file(input=None, path=str(f), output_as_dataset=True)
+
+
+def test_read_xml_dataset_rejects_unsafe_entities(tmp_path: Path) -> None:
+    f = tmp_path / "unsafe.xml"
+    f.write_text(UNSAFE_XML, encoding="utf-8")
+    with pytest.raises(ValueError, match="unsafe XML"):
+        read_xml_file(
+            input=None,
+            path=str(f),
+            row_xpath="person",
+            output_as_dataset=True,
+        )
 
 
 def test_read_xml_no_source() -> None:

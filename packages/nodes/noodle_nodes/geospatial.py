@@ -17,6 +17,7 @@ from noodle.sdk import node
 from noodle_nodes.datasets import materialize_dataset, records_to_dataset
 
 GEO_CATEGORY = "Geospatial"
+MAX_DISTANCE_PAIRS = 250_000
 
 
 def _to_records(value: Any, *, cap: int = 100_000) -> list[dict[str, Any]]:
@@ -420,6 +421,10 @@ def geospatial_buffer(
         "right_lon_column": {"description": "Right longitude column."},
         "right_records_json": {"description": "Right records JSON array.", "multiline": True},
         "nearest_only": {"description": "Return only nearest right row for each left row."},
+        "max_pairs": {
+            "description": "Maximum left×right distance pairs to compute.",
+            "group": "Options",
+        },
     },
 )
 def geospatial_distance(
@@ -431,6 +436,7 @@ def geospatial_distance(
     right_lon_column: str = "lon",
     right_records_json: str = "[]",
     nearest_only: bool = True,
+    max_pairs: int = MAX_DISTANCE_PAIRS,
 ) -> dict[str, Any]:
     """Compute point-to-point distances in meters."""
     left_rows = _to_records(input)
@@ -438,6 +444,13 @@ def geospatial_distance(
     if not right_rows:
         parsed = json.loads(right_records_json or "[]")
         right_rows = [row for row in parsed if isinstance(row, dict)]
+    pair_count = len(left_rows) * len(right_rows)
+    pair_limit = max(1, min(1_000_000, int(max_pairs or MAX_DISTANCE_PAIRS)))
+    if pair_count > pair_limit:
+        raise ValueError(
+            "geospatial_distance: left×right pair count "
+            f"{pair_count} exceeds max_pairs={pair_limit}"
+        )
     left_gdf = _points_gdf(left_rows, left_lat_column, left_lon_column, "EPSG:4326")
     right_gdf = _points_gdf(right_rows, right_lat_column, right_lon_column, "EPSG:4326")
     left_m = left_gdf.to_crs("EPSG:3857")

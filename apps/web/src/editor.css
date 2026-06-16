@@ -2502,6 +2502,23 @@ body.is-resizing-vertical {
   white-space: nowrap;
 }
 
+.node-iteration-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--accent, #5b8def);
+  color: #fff;
+  border-radius: 4px;
+  padding: 2px 5px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
 .port-tag {
   position: absolute;
   left: calc(100% + 9px);

@@ -718,10 +718,29 @@ def currency_normalize(
         cleaned = re.sub(r"[^0-9,.\-()]", "", text)
         negative = "(" in cleaned and ")" in cleaned
         cleaned = cleaned.replace("(", "").replace(")", "")
-        if cleaned.count(",") > 0 and cleaned.count(".") == 0:
-            cleaned = cleaned.replace(",", ".")
-        else:
-            cleaned = cleaned.replace(",", "")
+        comma_count = cleaned.count(",")
+        dot_count = cleaned.count(".")
+        if comma_count and dot_count:
+            decimal_sep = "," if cleaned.rfind(",") > cleaned.rfind(".") else "."
+            thousands_sep = "." if decimal_sep == "," else ","
+            cleaned = cleaned.replace(thousands_sep, "").replace(decimal_sep, ".")
+        elif comma_count:
+            parts = cleaned.split(",")
+            comma_is_thousands = (
+                len(parts) > 1
+                and all(len(part) == 3 and part.isdigit() for part in parts[1:])
+                and parts[0].lstrip("-").isdigit()
+            )
+            cleaned = cleaned.replace(",", "" if comma_is_thousands else ".")
+        elif dot_count > 1:
+            parts = cleaned.split(".")
+            dot_is_thousands = (
+                len(parts) > 1
+                and all(len(part) == 3 and part.isdigit() for part in parts[1:])
+                and parts[0].lstrip("-").isdigit()
+            )
+            if dot_is_thousands:
+                cleaned = cleaned.replace(".", "")
         try:
             amount = Decimal(cleaned)
             if negative:

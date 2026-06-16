@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from typing import Any
 
-from noodle.artifacts import is_artifact_ref, write_bytes, write_text
+from noodle.artifacts import write_text
 from noodle.datasets import is_dataset_ref
 from noodle.sdk import node
 from noodle_nodes._creds import cred_single
@@ -35,6 +35,8 @@ _OPENAI_ERROR = (
     "openai>=1.0 is required for model comparison and judge nodes. Add it to "
     "the workflow environment and rebuild."
 )
+MAX_LLM_EVAL_ROWS = 1_000
+MAX_LLM_CONCURRENCY = 20
 
 
 def _is_eval_result(value: Any) -> bool:
@@ -101,6 +103,27 @@ def _to_records(input_value: Any) -> list[dict[str, Any]]:
     )
 
 
+def _bounded_concurrency(value: int, *, label: str = "concurrency") -> int:
+    workers = max(1, int(value or 1))
+    if workers > MAX_LLM_CONCURRENCY:
+        raise ValueError(f"{label} exceeds max allowed value {MAX_LLM_CONCURRENCY}")
+    return workers
+
+
+def _limit_dataframe(df: Any, *, max_rows: int, label: str) -> Any:
+    requested = int(max_rows or 0)
+    if requested > MAX_LLM_EVAL_ROWS:
+        raise ValueError(f"{label}: max_rows exceeds cap {MAX_LLM_EVAL_ROWS}")
+    if requested > 0:
+        return df.head(requested) if len(df) > requested else df
+    if len(df) > MAX_LLM_EVAL_ROWS:
+        raise ValueError(
+            f"{label}: row count {len(df)} exceeds cap {MAX_LLM_EVAL_ROWS}; "
+            "set max_rows to a lower value"
+        )
+    return df
+
+
 def _ts() -> str:
     return datetime.now(tz=UTC).isoformat()
 
@@ -157,7 +180,6 @@ def llm_eval_dataset(
     dedupe: bool = True,
 ) -> dict[str, Any]:
     """Validate and prepare an eval holdout dataset."""
-    pd = _pandas()
     df = _to_dataframe(input)
 
     missing = [c for c in [prompt_column, expected_column] if c not in df.columns]
@@ -287,8 +309,7 @@ def llm_compare_models(
     if not candidate_model or not candidate_model.strip():
         raise ValueError("candidate_model is required.")
 
-    if max_rows and max_rows > 0 and len(df) > max_rows:
-        df = df.head(max_rows)
+    df = _limit_dataframe(df, max_rows=max_rows, label="llm_compare_models")
 
     api_key, base_url, org = _extract_api_key(openai_api_key)
     if not api_key:
@@ -313,11 +334,15 @@ def llm_compare_models(
     result_rows: list[dict[str, Any]] = []
     errors: list[str] = []
 
-    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+    worker_count = _bounded_concurrency(concurrency)
+    with ThreadPoolExecutor(max_workers=worker_count) as pool:
         futures = {}
         for i, row in enumerate(rows):
             prompt = str(row.get(prompt_col, ""))
-            for model_key, model_id in [("baseline", baseline_model), ("candidate", candidate_model)]:
+            for model_key, model_id in [
+                ("baseline", baseline_model),
+                ("candidate", candidate_model),
+            ]:
                 futures[(i, model_key)] = pool.submit(_call, model_id, prompt)
 
         outputs: dict[tuple[int, str], str] = {}
@@ -401,7 +426,10 @@ _JUDGE_RUBRICS = [
             "description": "Evaluation rubric. Use 'custom' to provide your own judge prompt.",
         },
         "custom_rubric": {
-            "description": "Custom judge prompt. Available variables: {prompt}, {expected}, {output}.",
+            "description": (
+                "Custom judge prompt. Available variables: "
+                "{prompt}, {expected}, {output}."
+            ),
         },
         "output_column": {
             "description": "Column containing the model output to judge.",
@@ -462,8 +490,7 @@ def llm_judge(
             f"Available: {list(df.columns)}"
         )
 
-    if max_rows and max_rows > 0 and len(df) > max_rows:
-        df = df.head(max_rows)
+    df = _limit_dataframe(df, max_rows=max_rows, label="llm_judge")
 
     api_key, base_url, org = _extract_api_key(openai_api_key)
     if not api_key:
@@ -538,7 +565,8 @@ def llm_judge(
     result_rows: list[dict[str, Any]] = []
     errors: list[str] = []
 
-    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+    worker_count = _bounded_concurrency(concurrency)
+    with ThreadPoolExecutor(max_workers=worker_count) as pool:
         futures = {pool.submit(_call_judge, row): i for i, row in enumerate(rows)}
         judge_results: dict[int, dict[str, Any]] = {}
         for fut in as_completed(futures):
@@ -895,7 +923,9 @@ def eval_gate(
         val = float(metric_value)
         thresh = float(threshold)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"Cannot compare metric {metric!r}={metric_value!r} to threshold.") from exc
+        raise ValueError(
+            f"Cannot compare metric {metric!r}={metric_value!r} to threshold."
+        ) from exc
 
     ops = {
         ">=": val >= thresh,
@@ -964,7 +994,11 @@ def eval_report(
 ) -> dict[str, Any]:
     """Generate a Markdown eval report artifact from an EvalResultRef."""
     # Unwrap eval_gate output: gate emits {"metric":..., "input": <EvalResultRef>}
-    if isinstance(input, dict) and not _is_eval_result(input) and _is_eval_result(input.get("input")):
+    if (
+        isinstance(input, dict)
+        and not _is_eval_result(input)
+        and _is_eval_result(input.get("input"))
+    ):
         input = input["input"]
     if not _is_eval_result(input):
         raise ValueError(

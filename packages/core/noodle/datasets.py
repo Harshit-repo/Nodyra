@@ -114,7 +114,7 @@ def reserve_artifact_path(
     artifact_id = uuid.uuid4().hex
     node_id = sanitize_name(current_node_id.get() or "unknown")
     safe_name = sanitize_name(name)
-    storage_key = f"runs/{store.run_id}/{node_id}/{artifact_id}-{safe_name}"
+    storage_key = store._storage_key(artifact_id, node_id, safe_name)  # noqa: SLF001
     path = store._path_for_key(storage_key)  # noqa: SLF001 - internal helper
     path.parent.mkdir(parents=True, exist_ok=True)
     partial: dict[str, Any] = {

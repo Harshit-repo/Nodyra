@@ -81,6 +81,64 @@ describe("loop node authoring", () => {
     expect(end!.data.params.loop_start_id).toBe("");
   });
 
+  it("tracks iteration count for a loop body node from iteration_path", () => {
+    reset();
+    const s = useEditor.getState();
+    s.clearRun();
+    s.applyRunEvent({ type: "node_started", node_id: "body", iteration_path: [0] });
+    s.applyRunEvent({
+      type: "node_finished", node_id: "body", status: "success",
+      outputs: { main: 0 }, iteration_path: [0],
+    });
+    s.applyRunEvent({ type: "node_started", node_id: "body", iteration_path: [1] });
+    s.applyRunEvent({
+      type: "node_finished", node_id: "body", status: "success",
+      outputs: { main: 1 }, iteration_path: [1],
+    });
+    s.applyRunEvent({ type: "node_started", node_id: "body", iteration_path: [2] });
+
+    const iter = useEditor.getState().runIterations["body"];
+    expect(iter).toEqual({ index: 2, count: 3 });
+  });
+
+  it("keeps the prior loop-body output visible between iterations (no flicker)", () => {
+    reset();
+    const s = useEditor.getState();
+    s.clearRun();
+    s.applyRunEvent({ type: "node_started", node_id: "body", iteration_path: [0] });
+    s.applyRunEvent({
+      type: "node_finished", node_id: "body", status: "success",
+      outputs: { main: "iter0" }, iteration_path: [0],
+    });
+    // The next iteration starting must NOT wipe the last visible output.
+    s.applyRunEvent({ type: "node_started", node_id: "body", iteration_path: [1] });
+
+    expect(useEditor.getState().runOutputs["body"]).toEqual({ main: "iter0" });
+    expect(useEditor.getState().runStatus["body"]).toBe("running");
+  });
+
+  it("a top-level (non-loop) node_started still clears its prior output", () => {
+    reset();
+    const s = useEditor.getState();
+    s.clearRun();
+    s.applyRunEvent({
+      type: "node_finished", node_id: "n", status: "success", outputs: { main: 1 },
+    });
+    s.applyRunEvent({ type: "node_started", node_id: "n" });
+
+    expect(useEditor.getState().runOutputs["n"]).toBeUndefined();
+    expect(useEditor.getState().runIterations["n"]).toBeUndefined();
+  });
+
+  it("clearRun resets iteration tracking", () => {
+    reset();
+    const s = useEditor.getState();
+    s.applyRunEvent({ type: "node_started", node_id: "body", iteration_path: [0] });
+    expect(useEditor.getState().runIterations["body"]).toBeTruthy();
+    useEditor.getState().clearRun();
+    expect(useEditor.getState().runIterations).toEqual({});
+  });
+
   it("a while Loop Start round-trips its mode/condition params via toGraph()", () => {
     reset();
     const graph: WorkflowGraph = {

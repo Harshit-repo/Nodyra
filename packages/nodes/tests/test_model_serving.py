@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import json
-import sys
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -277,6 +275,23 @@ def test_endpoint_benchmark_stats_structure(store_ctx) -> None:
         assert key in stats, f"Missing stat: {key}"
 
 
+def test_endpoint_benchmark_rejects_unbounded_requests(store_ctx) -> None:
+    from noodle_nodes.model_serving import MAX_ENDPOINT_REQUESTS, model_endpoint_benchmark
+
+    with pytest.raises(ValueError, match="n_requests"):
+        model_endpoint_benchmark(n_requests=MAX_ENDPOINT_REQUESTS + 1)
+
+
+def test_endpoint_benchmark_rejects_unbounded_concurrency(store_ctx) -> None:
+    from noodle_nodes.model_serving import (
+        MAX_ENDPOINT_CONCURRENCY,
+        model_endpoint_benchmark,
+    )
+
+    with pytest.raises(ValueError, match="concurrency"):
+        model_endpoint_benchmark(concurrency=MAX_ENDPOINT_CONCURRENCY + 1)
+
+
 # ---------------------------------------------------------------------------
 # shadow_compare_endpoint — mocked _require_requests
 # ---------------------------------------------------------------------------
@@ -328,3 +343,11 @@ def test_shadow_compare_summary_fields(store_ctx) -> None:
     summary = result["main"]
     for key in ("primary_success_rate", "shadow_success_rate", "primary_p50_ms", "shadow_p50_ms"):
         assert key in summary, f"Missing summary key: {key}"
+
+
+def test_shadow_compare_rejects_unbounded_prompt_list(store_ctx) -> None:
+    from noodle_nodes.model_serving import MAX_SHADOW_PROMPTS, shadow_compare_endpoint
+
+    prompts = json.dumps(["hello"] * (MAX_SHADOW_PROMPTS + 1))
+    with pytest.raises(ValueError, match="prompts"):
+        shadow_compare_endpoint(prompts=prompts)

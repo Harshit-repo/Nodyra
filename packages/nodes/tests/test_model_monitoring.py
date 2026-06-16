@@ -1,9 +1,7 @@
 """Tests for model_monitoring.py nodes."""
 from __future__ import annotations
 
-import json
 import sys
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -295,6 +293,18 @@ def test_response_quality_monitor_llm_judge(store_ctx) -> None:
     assert result["main"]["n_sampled"] == 3
 
 
+def test_response_quality_monitor_llm_judge_rejects_large_sample(store_ctx) -> None:
+    from noodle_nodes.model_monitoring import response_quality_monitor
+
+    with pytest.raises(ValueError, match="sampled row count"):
+        response_quality_monitor(
+            input=[{"response": f"Response {i}."} for i in range(1_001)],
+            mode="llm_judge",
+            response_column="response",
+            openai_api_key="sk-test",
+        )
+
+
 def test_response_quality_monitor_missing_column(store_ctx) -> None:
     from noodle_nodes.model_monitoring import response_quality_monitor
     with pytest.raises(ValueError, match="not found"):
@@ -343,7 +353,10 @@ def test_prompt_drift_monitor_similar_baseline_no_drift(store_ctx) -> None:
 )
 def test_prompt_drift_monitor_different_baseline_drift(store_ctx) -> None:
     from noodle_nodes.model_monitoring import prompt_drift_monitor
-    baseline = [{"prompt": "machine learning neural network deep learning transformer"} for _ in range(20)]
+    baseline = [
+        {"prompt": "machine learning neural network deep learning transformer"}
+        for _ in range(20)
+    ]
     current = [{"prompt": "cooking recipe ingredient bake oven temperature"} for _ in range(15)]
     result = prompt_drift_monitor(
         input=current, baseline=baseline, text_column="prompt",
@@ -385,10 +398,30 @@ def test_prompt_drift_monitor_not_enough_baseline(store_ctx) -> None:
 
 def _registry_entries():
     return [
-        {"model_id": "ft-openai-v1", "provider": "openai", "base_model": "gpt-4o-mini", "status": "production"},
-        {"model_id": "ft-openai-v2", "provider": "openai", "base_model": "gpt-4o-mini", "status": "candidate"},
-        {"model_id": "lora-llama-v1", "provider": "huggingface", "base_model": "llama3", "status": "staging"},
-        {"model_id": "ft-openai-v0", "provider": "openai", "base_model": "gpt-4o-mini", "status": "archived"},
+        {
+            "model_id": "ft-openai-v1",
+            "provider": "openai",
+            "base_model": "gpt-4o-mini",
+            "status": "production",
+        },
+        {
+            "model_id": "ft-openai-v2",
+            "provider": "openai",
+            "base_model": "gpt-4o-mini",
+            "status": "candidate",
+        },
+        {
+            "model_id": "lora-llama-v1",
+            "provider": "huggingface",
+            "base_model": "llama3",
+            "status": "staging",
+        },
+        {
+            "model_id": "ft-openai-v0",
+            "provider": "openai",
+            "base_model": "gpt-4o-mini",
+            "status": "archived",
+        },
     ]
 
 
@@ -472,7 +505,10 @@ def test_model_promote_with_model_id_param(store_ctx) -> None:
 def test_model_promote_invalid_status_raises(store_ctx) -> None:
     from noodle_nodes.model_monitoring import model_promote
     with pytest.raises(ValueError):
-        model_promote(input={"model_id": "x", "status": "candidate"}, target_status="invalid_status")
+        model_promote(
+            input={"model_id": "x", "status": "candidate"},
+            target_status="invalid_status",
+        )
 
 
 def test_model_promote_require_eval_no_metrics_raises(store_ctx) -> None:

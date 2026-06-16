@@ -2,7 +2,8 @@
 import pytest
 
 from noodle import datasets
-from noodle.artifacts import ARTIFACT_MARKER, ARTIFACT_VERSION
+from noodle.artifacts import ARTIFACT_MARKER, ARTIFACT_VERSION, LocalArtifactStore
+from noodle.context import artifact_store, current_node_id
 from noodle.datasets import (
     DATASET_MARKER,
     DATASET_VERSION,
@@ -12,6 +13,7 @@ from noodle.datasets import (
     materialize_dataset_rows,
     register_dataset_writer,
     register_materializer,
+    reserve_artifact_path,
 )
 
 
@@ -140,6 +142,33 @@ def test_make_dataset_ref_with_preview() -> None:
     ref = make_dataset_ref(art, preview=preview, preview_truncated=True)
     assert ref["preview"] == preview
     assert ref["preview_truncated"] is True
+
+
+def test_reserve_artifact_path_uses_store_key_prefix(tmp_path) -> None:
+    store = LocalArtifactStore(tmp_path, "run1", key_prefix="org-a")
+    store_token = artifact_store.set(store)
+    node_token = current_node_id.set("node1")
+    try:
+        path, partial = reserve_artifact_path("data.parquet")
+    finally:
+        current_node_id.reset(node_token)
+        artifact_store.reset(store_token)
+
+    assert partial["storage_key"].startswith("org-a/runs/run1/node1/")
+    assert path == (tmp_path / partial["storage_key"]).resolve()
+
+
+def test_reserve_artifact_path_keeps_legacy_layout_without_prefix(tmp_path) -> None:
+    store = LocalArtifactStore(tmp_path, "run1")
+    store_token = artifact_store.set(store)
+    node_token = current_node_id.set("node1")
+    try:
+        _, partial = reserve_artifact_path("data.parquet")
+    finally:
+        current_node_id.reset(node_token)
+        artifact_store.reset(store_token)
+
+    assert partial["storage_key"].startswith("runs/run1/node1/")
 
 
 # ---------------------------------------------------------------------------

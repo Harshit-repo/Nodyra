@@ -1,9 +1,7 @@
 """Tests for rag_lifecycle.py nodes."""
 from __future__ import annotations
 
-import json
 import sys
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -47,7 +45,12 @@ def test_registry_loads_without_heavy_packages() -> None:
 
 def test_all_rag_nodes_in_ml_category() -> None:
     manifests = {m.id: m for m in registry.manifests()}
-    for nid in ("document_chunk", "rag_answer_eval", "rag_chunking_experiment", "rag_context_relevance"):
+    for nid in (
+        "document_chunk",
+        "rag_answer_eval",
+        "rag_chunking_experiment",
+        "rag_context_relevance",
+    ):
         assert manifests[nid].category == "Machine Learning", f"{nid} wrong category"
 
 
@@ -129,7 +132,14 @@ def test_document_chunk_recursive(store_ctx) -> None:
 
 def test_document_chunk_semantic_boundary(store_ctx) -> None:
     from noodle_nodes.rag_lifecycle import document_chunk
-    rows = [{"text": "# Section 1\nContent one.\n## Section 1.1\nMore content.\n# Section 2\nContent two."}]
+    rows = [
+        {
+            "text": (
+                "# Section 1\nContent one.\n## Section 1.1\n"
+                "More content.\n# Section 2\nContent two."
+            )
+        }
+    ]
     result = document_chunk(
         input=rows,
         text_column="text",
@@ -143,7 +153,13 @@ def test_document_chunk_semantic_boundary(store_ctx) -> None:
 
 def test_document_chunk_preserves_metadata(store_ctx) -> None:
     from noodle_nodes.rag_lifecycle import document_chunk
-    rows = [{"text": "Some text here that is long enough for a chunk.", "source": "doc1", "page": 1}]
+    rows = [
+        {
+            "text": "Some text here that is long enough for a chunk.",
+            "source": "doc1",
+            "page": 1,
+        }
+    ]
     result = document_chunk(
         input=rows,
         text_column="text",
@@ -308,6 +324,20 @@ def test_rag_answer_eval_llm_judge_missing_key(store_ctx) -> None:
             )
 
 
+def test_rag_answer_eval_llm_judge_rejects_large_dataset(store_ctx) -> None:
+    from noodle_nodes.rag_lifecycle import rag_answer_eval
+
+    with pytest.raises(ValueError, match="row count"):
+        rag_answer_eval(
+            input=[
+                {"answer": f"A{i}", "expected": f"E{i}"}
+                for i in range(1_001)
+            ],
+            mode="llm_judge",
+            openai_api_key="sk-test",
+        )
+
+
 # ---------------------------------------------------------------------------
 # rag_chunking_experiment
 # ---------------------------------------------------------------------------
@@ -411,6 +441,20 @@ def test_rag_context_relevance_llm_mode(store_ctx) -> None:
             openai_api_key="sk-test",
         )
     assert result["summary"]["n_relevant"] == 1
+
+
+def test_rag_context_relevance_llm_rejects_large_dataset(store_ctx) -> None:
+    from noodle_nodes.rag_lifecycle import rag_context_relevance
+
+    with pytest.raises(ValueError, match="row count"):
+        rag_context_relevance(
+            input=[
+                {"question": f"Q{i}", "context": f"C{i}"}
+                for i in range(1_001)
+            ],
+            mode="llm_judge",
+            openai_api_key="sk-test",
+        )
 
 
 def test_rag_context_relevance_missing_column(store_ctx) -> None:

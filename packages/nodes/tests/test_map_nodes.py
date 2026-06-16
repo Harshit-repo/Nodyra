@@ -163,3 +163,81 @@ async def test_map_items_artifact_ref_passes_through(store_ctx) -> None:
 
     assert received[0]["item"]["pdf"] == artifact_ref
     assert result["main"][0]["got_pdf"] == artifact_ref
+
+
+async def test_map_items_rejects_excessive_item_count(store_ctx) -> None:
+    from noodle_nodes.builtin import MAX_MAP_ITEMS, map_items
+
+    calls: list[dict] = []
+
+    async def caller(wf_id: str, payload: dict) -> dict:
+        calls.append(payload)
+        return {"ok": True}
+
+    token = workflow_caller.set(caller)
+    try:
+        with pytest.raises(ValueError, match="hard fan-out cap"):
+            await map_items(input=list(range(MAX_MAP_ITEMS + 1)), workflow_id="wf-1")
+    finally:
+        workflow_caller.reset(token)
+
+    assert calls == []
+
+
+async def test_map_items_rejects_excessive_concurrency(store_ctx) -> None:
+    from noodle_nodes.builtin import MAX_MAP_CONCURRENCY, map_items
+
+    async def caller(wf_id: str, payload: dict) -> dict:
+        return {"ok": True}
+
+    token = workflow_caller.set(caller)
+    try:
+        with pytest.raises(ValueError, match="concurrency"):
+            await map_items(
+                input=[{"v": 1}],
+                workflow_id="wf-1",
+                concurrency=MAX_MAP_CONCURRENCY + 1,
+            )
+    finally:
+        workflow_caller.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# map_group
+# ---------------------------------------------------------------------------
+
+
+async def test_map_group_rejects_excessive_max_items(store_ctx) -> None:
+    from noodle_nodes.builtin import MAX_MAP_ITEMS, map_group_node
+
+    async def caller(wf_id: str, payload: dict) -> dict:
+        return {"ok": True}
+
+    token = workflow_caller.set(caller)
+    try:
+        with pytest.raises(ValueError, match="max_items"):
+            await map_group_node(
+                input=[{"v": 1}],
+                child_workflow_id="wf-child",
+                max_items=MAX_MAP_ITEMS + 1,
+            )
+    finally:
+        workflow_caller.reset(token)
+
+
+async def test_map_group_rejects_excessive_concurrency(store_ctx) -> None:
+    from noodle_nodes.builtin import MAX_MAP_CONCURRENCY, map_group_node
+
+    async def caller(wf_id: str, payload: dict) -> dict:
+        return {"ok": True}
+
+    token = workflow_caller.set(caller)
+    try:
+        with pytest.raises(ValueError, match="concurrency"):
+            await map_group_node(
+                input=[{"v": 1}],
+                child_workflow_id="wf-child",
+                concurrency=MAX_MAP_CONCURRENCY + 1,
+            )
+    finally:
+        workflow_caller.reset(token)

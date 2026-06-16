@@ -31,7 +31,7 @@ async def validate_pool_assignment(
         pool = await session.get(RunnerPool, pool_id)
     if pool is None or pool.org_id != org_id or pool.provider not in QUALIFYING_PROVIDERS:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "This organization requires isolated execution: only its own "
             "docker/kubernetes runner pools can be assigned.",
         )

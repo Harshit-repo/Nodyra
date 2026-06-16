@@ -7,6 +7,7 @@ import pytest
 from noodle.ai_runtime import ToolAdapter, ToolSchema
 from noodle_nodes.ai_v2 import mcp as mcp_module
 from noodle_nodes.ai_v2.mcp import (
+    McpServerConfig,
     McpToolAdapter,
     _config_from_credentials,
     mcp_call_tool,
@@ -81,6 +82,20 @@ def test_config_from_credentials_builds_headers() -> None:
 def test_config_requires_url() -> None:
     with pytest.raises(ValueError):
         _config_from_credentials({"auth_token": "abc"})
+
+
+async def test_mcp_session_blocks_private_target(monkeypatch) -> None:
+    @asynccontextmanager
+    async def _blocked_transport(*args, **kwargs):
+        raise AssertionError("private target should be blocked before transport")
+        yield
+
+    monkeypatch.setattr(mcp_module, "streamablehttp_client", _blocked_transport)
+    with pytest.raises(ValueError, match="private"):
+        async with mcp_module._mcp_session(
+            McpServerConfig(url="http://127.0.0.1:8000/mcp")
+        ):
+            pass
 
 
 async def test_mcp_tools_returns_adapters(fake_transport) -> None:

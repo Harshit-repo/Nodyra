@@ -11,13 +11,13 @@ it and drives ``/internal/scheduler/tick`` externally).
 
 import asyncio
 import logging
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from croniter import croniter
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy import func, select
 
 from app.config import settings
 from app.db import SessionLocal
@@ -93,12 +93,43 @@ def _is_due(params: dict, last: datetime, now: datetime) -> bool:
     return (now - last).total_seconds() >= period
 
 
+async def _latest_versions_by_id(
+    session, workflow_ids: Collection[str]
+) -> dict[str, WorkflowVersion]:
+    """Return the highest-numbered ``WorkflowVersion`` for each id, in one query.
+
+    Hot paths (the 30s scheduler tick, every inbound webhook) only ever need a
+    workflow's *latest* version, but ``selectinload(Workflow.versions)`` pulls
+    the entire history — every row's ``graph`` JSON — which grows unbounded over
+    a workflow's life. This loads just the newest row per workflow via a single
+    grouped ``max(version)`` join instead.
+    """
+    ids = list(workflow_ids)
+    if not ids:
+        return {}
+    newest = (
+        select(
+            WorkflowVersion.workflow_id,
+            func.max(WorkflowVersion.version).label("v"),
+        )
+        .where(WorkflowVersion.workflow_id.in_(ids))
+        .group_by(WorkflowVersion.workflow_id)
+        .subquery()
+    )
+    rows = await session.scalars(
+        select(WorkflowVersion).join(
+            newest,
+            (WorkflowVersion.workflow_id == newest.c.workflow_id)
+            & (WorkflowVersion.version == newest.c.v),
+        )
+    )
+    return {v.workflow_id: v for v in rows.all()}
+
+
 async def _active_workflows() -> list[Workflow]:
     async with SessionLocal() as session:
         result = await session.scalars(
-            select(Workflow)
-            .where(Workflow.active.is_(True))
-            .options(selectinload(Workflow.versions))
+            select(Workflow).where(Workflow.active.is_(True))
         )
         return list(result.all())
 
@@ -705,21 +736,24 @@ async def dispatch_webhook(
     query = request_payload.get("query") or {}
     workflows = await _all_workflows() if prefer_draft else await _active_workflows()
     async with SessionLocal() as dispatch_session:
+        latest_by_id = await _latest_versions_by_id(
+            dispatch_session, [w.id for w in workflows]
+        )
         for workflow in workflows:
             graph: dict | None = None
             version_number: int = 1
             version_id: str | None = None
+            latest = latest_by_id.get(workflow.id)
             if prefer_draft and getattr(workflow, "draft_graph", None):
                 graph = workflow.draft_graph
                 # Anchor the run to the latest known version for history sanity,
                 # but we never bump the version — drafts are not snapshots.
-                if workflow.versions:
-                    version_number = workflow.versions[-1].version
-                    version_id = workflow.versions[-1].id
+                if latest is not None:
+                    version_number = latest.version
+                    version_id = latest.id
             else:
-                if not workflow.versions:
+                if latest is None:
                     continue
-                latest = workflow.versions[-1]
                 graph = latest.graph or {}
                 version_number = latest.version
                 version_id = latest.id
@@ -867,7 +901,7 @@ async def dispatch_webhook(
 async def _all_workflows() -> list[Workflow]:
     """Used by the editor test URL — draft-mode dispatch ignores `active`."""
     async with SessionLocal() as session:
-        result = await session.scalars(select(Workflow).options(selectinload(Workflow.versions)))
+        result = await session.scalars(select(Workflow))
         return list(result.all())
 
 
@@ -902,12 +936,14 @@ async def _execute_poll(
     spec = registered.spec
 
     async with SessionLocal() as session:
-        workflow = await session.get(
-            Workflow, sub.workflow_id, options=[selectinload(Workflow.versions)]
-        )
-        if workflow is None or not workflow.active or not workflow.versions:
+        workflow = await session.get(Workflow, sub.workflow_id)
+        if workflow is None or not workflow.active:
             return
-        version = workflow.versions[-1]
+        version = (
+            await _latest_versions_by_id(session, [sub.workflow_id])
+        ).get(sub.workflow_id)
+        if version is None:
+            return
         graph = version.graph or {}
         node_params: dict = {}
         for node in graph.get("nodes", []):
@@ -946,12 +982,14 @@ async def _execute_poll(
         return
 
     async with SessionLocal() as session:
-        workflow = await session.get(
-            Workflow, sub.workflow_id, options=[selectinload(Workflow.versions)]
-        )
-        if workflow is None or not workflow.versions:
+        workflow = await session.get(Workflow, sub.workflow_id)
+        if workflow is None:
             return
-        version = workflow.versions[-1]
+        version = (
+            await _latest_versions_by_id(session, [sub.workflow_id])
+        ).get(sub.workflow_id)
+        if version is None:
+            return
         graph = version.graph or {}
 
     for event_payload in result.events:
@@ -1022,9 +1060,7 @@ async def _tick() -> None:
     async with SessionLocal() as session:
         workflows = (
             await session.scalars(
-                select(Workflow)
-                .where(Workflow.active.is_(True))
-                .options(selectinload(Workflow.versions))
+                select(Workflow).where(Workflow.active.is_(True))
             )
         ).all()
         deployments = (
@@ -1033,6 +1069,11 @@ async def _tick() -> None:
         states = {s.workflow_id: s for s in (await session.scalars(select(ScheduleState))).all()}
 
         wf_by_id = {wf.id: wf for wf in workflows}
+        # Latest version per active workflow in one grouped query — never the
+        # whole history (see _latest_versions_by_id).
+        latest_by_workflow = await _latest_versions_by_id(
+            session, [wf.id for wf in workflows]
+        )
         deployments_by_workflow: dict[str, list[Deployment]] = {}
         for d in deployments:
             deployments_by_workflow.setdefault(d.workflow_id, []).append(d)
@@ -1061,7 +1102,9 @@ async def _tick() -> None:
             if deployment.workflow_version_id:
                 version = versions_by_id.get(deployment.workflow_version_id)
             if version is None:
-                version = workflow.versions[-1]
+                version = latest_by_workflow.get(workflow.id)
+            if version is None:
+                continue  # no version yet — skip rather than IndexError
             graph = version.graph or {}
             params = _deployment_params(deployment)
             if deployment.last_fired is None:
@@ -1094,9 +1137,9 @@ async def _tick() -> None:
                 continue
             if deployments_by_workflow.get(workflow.id):
                 continue  # deployment(s) own this workflow's schedule
-            if not workflow.versions:
+            latest = latest_by_workflow.get(workflow.id)
+            if latest is None:
                 continue  # no version yet — skip rather than IndexError
-            latest = workflow.versions[-1]
             graph = latest.graph or {}
             schedule = next(
                 (n for n in graph.get("nodes", []) if n.get("type") == "schedule_trigger"),

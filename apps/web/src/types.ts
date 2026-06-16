@@ -476,6 +476,10 @@ export interface RunEvent {
     tool_name?: string;
   }>;
   step?: number;
+  // Present on node_started / node_finished events emitted from inside a loop
+  // body: the nested iteration index path (outer-to-inner). Lets the canvas
+  // show per-node iteration progress instead of flickering once per iteration.
+  iteration_path?: number[] | null;
 }
 
 export interface Credential {

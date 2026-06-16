@@ -12,6 +12,7 @@ from noodle.sdk import node
 from noodle_nodes.datasets import materialize_dataset, records_to_dataset
 
 ML_CATEGORY = "Machine Learning"
+MAX_LLM_MONITOR_SAMPLES = 1_000
 
 
 def _to_records(val: Any) -> list[dict]:
@@ -94,7 +95,10 @@ def _pct(values: list[float], p: float) -> float:
             "description": "Comparison operator for passing condition.",
         },
         "price_per_1k_tokens": {
-            "description": "Auto-compute cost from total_tokens at this price per 1K tokens (0 = disabled).",
+            "description": (
+                "Auto-compute cost from total_tokens at this price per 1K "
+                "tokens (0 = disabled)."
+            ),
         },
     },
 )
@@ -363,6 +367,11 @@ def response_quality_monitor(
             })
 
     elif mode == "llm_judge":
+        if len(sample) > MAX_LLM_MONITOR_SAMPLES:
+            raise ValueError(
+                "response_quality_monitor: sampled row count "
+                f"{len(sample)} exceeds cap {MAX_LLM_MONITOR_SAMPLES}"
+            )
         from concurrent.futures import ThreadPoolExecutor, as_completed
         client = _openai_client(openai_api_key)
 
@@ -531,9 +540,17 @@ def prompt_drift_monitor(
         vocab_jaccard = intersection / max(union, 1)
         vocab_drift = 1.0 - vocab_jaccard
 
-        all_bigrams = set(list(current_stats["bigram_dist"]) + list(baseline_stats["bigram_dist"]))
-        curr_vec = np.array([current_stats["bigram_dist"].get(b, 0) for b in all_bigrams], dtype=float)
-        base_vec = np.array([baseline_stats["bigram_dist"].get(b, 0) for b in all_bigrams], dtype=float)
+        all_bigrams = set(
+            list(current_stats["bigram_dist"]) + list(baseline_stats["bigram_dist"])
+        )
+        curr_vec = np.array(
+            [current_stats["bigram_dist"].get(b, 0) for b in all_bigrams],
+            dtype=float,
+        )
+        base_vec = np.array(
+            [baseline_stats["bigram_dist"].get(b, 0) for b in all_bigrams],
+            dtype=float,
+        )
         curr_norm = float(np.linalg.norm(curr_vec))
         base_norm = float(np.linalg.norm(base_vec))
         if curr_norm > 0 and base_norm > 0:
@@ -642,7 +659,11 @@ def model_registry_query(
     if filter_provider:
         results = [r for r in results if filter_provider.lower() in r.get("provider", "").lower()]
     if filter_base_model:
-        results = [r for r in results if filter_base_model.lower() in r.get("base_model", "").lower()]
+        results = [
+            r
+            for r in results
+            if filter_base_model.lower() in r.get("base_model", "").lower()
+        ]
 
     results = sorted(results, key=lambda r: str(r.get(sort_by, "")))
     results = results[:int(limit)]

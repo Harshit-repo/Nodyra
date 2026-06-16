@@ -9,11 +9,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from noodle.artifacts import LocalArtifactStore, is_artifact_ref
+from noodle.artifacts import LocalArtifactStore
 from noodle.context import artifact_store, current_node_id
 from noodle.datasets import is_dataset_ref
 from noodle.sdk import registry
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -349,6 +348,22 @@ def test_weak_label_llm_missing_key(store_ctx) -> None:
             )
 
 
+def test_weak_label_llm_rejects_large_dataset(store_ctx) -> None:
+    from noodle_nodes.synthetic_data import weak_label
+
+    rows = [{"text": f"row {i}"} for i in range(1_001)]
+    fake = _make_fake_openai('{"label": "a"}')
+    with _patched_openai(fake):
+        with pytest.raises(ValueError, match="row count"):
+            weak_label(
+                input=rows,
+                mode="llm_classify",
+                text_column="text",
+                labels="a,b",
+                openai_api_key="sk-test",
+            )
+
+
 # ---------------------------------------------------------------------------
 # Synthetic Examples Generate (mocked openai)
 # ---------------------------------------------------------------------------
@@ -445,6 +460,20 @@ def test_synthetic_examples_missing_key(store_ctx) -> None:
             )
 
 
+def test_synthetic_examples_rejects_excessive_count(store_ctx) -> None:
+    from noodle_nodes.synthetic_data import synthetic_examples_generate
+
+    fake = _make_fake_openai()
+    with _patched_openai(fake):
+        with pytest.raises(ValueError, match="n_examples"):
+            synthetic_examples_generate(
+                input=None,
+                openai_api_key="sk-test",
+                instruction="Generate many things.",
+                n_examples=1_001,
+            )
+
+
 # ---------------------------------------------------------------------------
 # Preference Pair Generate (mocked openai)
 # ---------------------------------------------------------------------------
@@ -518,3 +547,17 @@ def test_preference_pair_generate_max_rows(store_ctx) -> None:
         )
     assert result["n_input"] == 3  # capped at max_rows
     assert result["n_pairs"] <= 3
+
+
+def test_preference_pair_generate_rejects_excessive_concurrency(store_ctx) -> None:
+    from noodle_nodes.synthetic_data import preference_pair_generate
+
+    fake = _make_fake_openai()
+    with _patched_openai(fake):
+        with pytest.raises(ValueError, match="concurrency"):
+            preference_pair_generate(
+                input=[{"prompt": "Question?"}],
+                openai_api_key="sk-test",
+                prompt_column="prompt",
+                concurrency=21,
+            )

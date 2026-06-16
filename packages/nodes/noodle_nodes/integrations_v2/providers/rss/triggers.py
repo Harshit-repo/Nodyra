@@ -1,10 +1,13 @@
 """RSS and Atom feed polling trigger — detects new feed items."""
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
 from typing import Any
+from xml.etree.ElementTree import Element
 
 import requests as requests  # named import so tests can monkeypatch
+from defusedxml import DefusedXmlException
+from defusedxml.ElementTree import ParseError as XmlParseError
+from defusedxml.ElementTree import fromstring as safe_xml_fromstring
 
 from noodle_nodes.integrations_v2.registry import register_provider_trigger
 from noodle_nodes.integrations_v2.specs import (
@@ -18,7 +21,7 @@ _MAX_SEEN_GUIDS = 500
 _ATOM_NS = "http://www.w3.org/2005/Atom"
 
 
-def _parse_rss(root: ET.Element) -> list[dict[str, Any]]:
+def _parse_rss(root: Element) -> list[dict[str, Any]]:
     items = []
     for item in root.findall(".//item"):
         guid = (item.findtext("guid") or item.findtext("link") or "").strip()
@@ -34,7 +37,7 @@ def _parse_rss(root: ET.Element) -> list[dict[str, Any]]:
     return items
 
 
-def _parse_atom(root: ET.Element) -> list[dict[str, Any]]:
+def _parse_atom(root: Element) -> list[dict[str, Any]]:
     items = []
     for entry in root.findall(f"{{{_ATOM_NS}}}entry"):
         guid = (entry.findtext(f"{{{_ATOM_NS}}}id") or "").strip()
@@ -63,7 +66,10 @@ def _fetch_items(feed_url: str) -> list[dict[str, Any]]:
         headers={"User-Agent": "Noodle/1.0 feed-reader"},
     )
     resp.raise_for_status()
-    root = ET.fromstring(resp.text)
+    try:
+        root = safe_xml_fromstring(resp.text)
+    except (DefusedXmlException, XmlParseError) as exc:
+        raise ValueError("rss_feed_trigger: invalid or unsafe feed XML") from exc
     tag = root.tag.lower()
     if "rss" in tag or root.find("channel") is not None:
         return _parse_rss(root)

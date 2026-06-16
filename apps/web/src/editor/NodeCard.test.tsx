@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { NodeCard } from "./NodeCard";
+import { useEditor } from "./store";
 
 vi.mock("@xyflow/react", async () => {
   const React = await import("react");
@@ -55,7 +56,44 @@ function toolModeNodeData() {
   };
 }
 
+function standardNodeData() {
+  return {
+    disabled: false,
+    label: "Set",
+    outputsOverride: undefined,
+    params: {},
+    toolMode: false,
+    manifest: {
+      id: "set",
+      name: "Set",
+      category: "Data",
+      icon: "pencil",
+      inputs: [{ name: "input", data_kind: "main" }],
+      outputs: [{ name: "main", data_kind: "main" }],
+      params: [],
+      requirements: [],
+      param_output_kinds: {},
+    },
+  };
+}
+
 describe("NodeCard", () => {
+  it("shows a loop iteration badge when a node ran multiple iterations", () => {
+    useEditor.setState({
+      runStatus: { loopbody: "running" },
+      runIterations: { loopbody: { index: 11, count: 12 } },
+    });
+    const props = {
+      id: "loopbody",
+      data: standardNodeData(),
+      selected: false,
+    } as unknown as Parameters<typeof NodeCard>[0];
+    render(<NodeCard {...props} />);
+
+    expect(screen.getByText("×12")).toBeTruthy();
+    useEditor.getState().clearRun();
+  });
+
   it("renders tool-mode output on the top without a visible port tag", () => {
     const props = {
       id: "cmd",

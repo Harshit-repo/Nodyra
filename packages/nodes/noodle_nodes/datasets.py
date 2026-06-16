@@ -34,6 +34,8 @@ _DUCKDB_ERROR = (
 _POLARS_ERROR = (
     "Polars is required for this node. Install with `uv pip install polars`."
 )
+MAX_MAP_DATASET_ROWS = 10_000
+MAX_MAP_DATASET_CONCURRENCY = 50
 
 
 def _duckdb():
@@ -778,11 +780,17 @@ def polars_transform(input: Any = None, code: str = "output = input") -> dict[st
             "description": "Maximum concurrent child workflow calls (default 5).",
         },
         "on_error": {
-            "description": "fail = stop on first row error; continue = collect errors on the errors output.",
+            "description": (
+                "fail = stop on first row error; continue = collect errors on "
+                "the errors output."
+            ),
             "choices": ["fail", "continue"],
         },
         "output_mode": {
-            "description": "dataset = write results to a new DatasetRef; records = return a list of dicts.",
+            "description": (
+                "dataset = write results to a new DatasetRef; records = return "
+                "a list of dicts."
+            ),
             "choices": ["dataset", "records"],
             "display_name": "Output",
         },
@@ -809,6 +817,13 @@ async def map_dataset(
         raise RuntimeError("map_dataset: no host caller is configured for this run")
 
     cap = max(1, int(max_rows or 10000))
+    if cap > MAX_MAP_DATASET_ROWS:
+        raise ValueError(f"map_dataset: max_rows must be <= {MAX_MAP_DATASET_ROWS}")
+    worker_count = max(1, int(concurrency or 5))
+    if worker_count > MAX_MAP_DATASET_CONCURRENCY:
+        raise ValueError(
+            f"map_dataset: concurrency must be <= {MAX_MAP_DATASET_CONCURRENCY}"
+        )
     ref = _ensure_dataset(input, label="input")
     duckdb = _duckdb()
     path = str(dataset_path_for_ref(ref)).replace("'", "''")
@@ -840,7 +855,7 @@ async def map_dataset(
         )
 
     rows = materialize_dataset(ref, cap=cap, allow_truncate=False)
-    sem = asyncio.Semaphore(max(1, int(concurrency or 5)))
+    sem = asyncio.Semaphore(worker_count)
 
     tasks = [
         _map_call_child(

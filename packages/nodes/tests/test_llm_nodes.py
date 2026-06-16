@@ -6,6 +6,7 @@ import json
 import requests
 
 import noodle_nodes  # noqa: F401 - registers nodes
+import noodle_nodes.llm as llm_module
 from noodle.artifacts import LocalArtifactStore
 from noodle.context import artifact_store, current_node_id
 from noodle.datasets import is_dataset_ref
@@ -326,6 +327,53 @@ def test_tool_box_merges_unique_tools() -> None:
 
     assert out["count"] == 2
     assert [tool["name"] for tool in out["tools"]] == ["search", "summarize"]
+
+
+def test_legacy_ai_tool_blocks_private_targets(monkeypatch) -> None:
+    def fake_request(*args, **kwargs):
+        raise AssertionError("private target should be blocked before requests")
+
+    monkeypatch.setattr(requests, "request", fake_request)
+    try:
+        asyncio.run(
+            llm_module._execute_tool(
+                {
+                    "name": "metadata",
+                    "type": "http",
+                    "url": "http://127.0.0.1:8080/latest",
+                    "method": "GET",
+                },
+                {},
+            )
+        )
+    except ValueError as exc:
+        assert "private" in str(exc)
+    else:
+        raise AssertionError("private legacy AI HTTP tool target should be blocked")
+
+
+def test_ai_vector_retriever_blocks_private_pinecone_host(monkeypatch) -> None:
+    def fake_embeddings(**kwargs):
+        return [[0.1, 0.2]], {}
+
+    def fake_post(*args, **kwargs):
+        raise AssertionError("private target should be blocked before requests")
+
+    monkeypatch.setattr(llm_module, "_call_embeddings", fake_embeddings)
+    monkeypatch.setattr(requests, "post", fake_post)
+    try:
+        llm_module.ai_vector_retriever(
+            embedding_credentials={"provider": "openai", "api_key": "sk-test"},
+            pinecone_credentials={
+                "api_key": "pc-test",
+                "index_host": "127.0.0.1:8080",
+            },
+            query="hello",
+        )
+    except ValueError as exc:
+        assert "private" in str(exc)
+    else:
+        raise AssertionError("private Pinecone host should be blocked")
 
 
 def test_ai_chat_model_param_uses_dynamic_loader() -> None:

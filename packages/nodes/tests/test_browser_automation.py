@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import io
 import json
 import sys
+from contextlib import contextmanager
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -287,6 +287,44 @@ def test_sitemap_crawl_valid_xml_still_works(store_ctx) -> None:
 
     result = sitemap_crawl(input=_VALID_SITEMAP)
     assert result["url_count"] == 2
+
+
+def test_sitemap_crawl_does_not_fetch_duplicate_nested_sitemaps(
+    store_ctx, monkeypatch
+) -> None:
+    from noodle_nodes.browser_automation import sitemap_crawl
+
+    index = """\
+<?xml version="1.0"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>https://example.com/child.xml</loc></sitemap>
+  <sitemap><loc>https://example.com/child.xml</loc></sitemap>
+</sitemapindex>
+"""
+    child = """\
+<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://example.com/page</loc></url>
+</urlset>
+"""
+    calls: list[str] = []
+
+    class Response:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, **kwargs: Any) -> Response:
+        calls.append(url)
+        return Response(child if url.endswith("child.xml") else index)
+
+    monkeypatch.setattr("requests.get", fake_get)
+    result = sitemap_crawl(url="https://example.com/index.xml")
+
+    assert result["url_count"] == 1
+    assert calls.count("https://example.com/child.xml") == 1
 
 
 # ---------------------------------------------------------------------------
@@ -663,9 +701,6 @@ def test_import_does_not_import_optional_packages() -> None:
 # ---------------------------------------------------------------------------
 # Shared helper — placed after tests so it can reference FAKE_PNG etc.
 # ---------------------------------------------------------------------------
-
-from contextlib import contextmanager
-from unittest.mock import patch
 
 
 @contextmanager

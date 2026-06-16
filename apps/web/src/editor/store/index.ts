@@ -669,6 +669,11 @@ export interface EditorStore {
   runStatus: Record<string, string>;
   runOutputs: Record<string, unknown>;
   runMeta: Record<string, NodeRunMeta>;
+  // Per loop-body node: how many iterations have been observed this run and the
+  // latest iteration index seen. Driven by the iteration_path on node events so
+  // the canvas can show a "×N" progress badge instead of the tile blinking once
+  // per loop iteration.
+  runIterations: Record<string, { index: number; count: number }>;
   runError: string | null;
 
   // Live agent sub-node activity: nodeId -> status. Driven by agent_tool_*
@@ -947,6 +952,14 @@ function layoutPositions(
     });
   }
   return result;
+}
+
+/** The innermost loop iteration index from a node event's iteration_path, or
+ * null when the event didn't come from inside a loop body. */
+function loopIterationIndex(path: number[] | null | undefined): number | null {
+  if (!Array.isArray(path) || path.length === 0) return null;
+  const last = path[path.length - 1];
+  return typeof last === "number" ? last : null;
 }
 
 export const useEditor = create<EditorStore>((set, get) => ({
@@ -2017,6 +2030,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
       runId,
       running: true,
       runStatus: nextStatus,
+      runIterations: {},
       runError: null,
       agentActive: {},
       agentToolCalls: {},
@@ -2027,10 +2041,31 @@ export const useEditor = create<EditorStore>((set, get) => ({
     if (event.type === "node_started" && event.node_id) {
       const nid = event.node_id;
       set((state) => {
+        // Loop bodies re-emit node_started for the same node id every iteration.
+        // Keep the last iteration's output/meta visible while the next iteration
+        // is mid-flight (only the very first iteration, or a normal one-shot
+        // node, clears the prior output) so the tile doesn't blink empty N times.
+        const iterIndex = loopIterationIndex(event.iteration_path);
+        const isLoopReiteration = iterIndex !== null && iterIndex > 0;
         const nextOutputs = { ...state.runOutputs };
-        delete nextOutputs[nid];
         const nextMeta = { ...state.runMeta };
-        delete nextMeta[nid];
+        if (!isLoopReiteration) {
+          delete nextOutputs[nid];
+          delete nextMeta[nid];
+        }
+        const runIterations =
+          iterIndex === null
+            ? state.runIterations
+            : {
+                ...state.runIterations,
+                [nid]: {
+                  index: iterIndex,
+                  count: Math.max(
+                    state.runIterations[nid]?.count ?? 0,
+                    iterIndex + 1,
+                  ),
+                },
+              };
         // When an agent node starts, light up its model + memory sub-nodes —
         // the agent consults them throughout the turn.
         let agentActive = state.agentActive;
@@ -2049,6 +2084,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
           runStatus: { ...state.runStatus, [nid]: "running" },
           runOutputs: nextOutputs,
           runMeta: nextMeta,
+          runIterations,
           agentActive,
         };
       });
@@ -2220,6 +2256,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
       runStatus: {},
       runOutputs: {},
       runMeta: {},
+      runIterations: {},
       runError: null,
       agentActive: {},
       agentToolCalls: {},
@@ -2260,6 +2297,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
       runStatus: status,
       runOutputs: outputs,
       runMeta: meta,
+      runIterations: {},
       running: false,
       runError: null,
     });

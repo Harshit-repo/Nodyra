@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
+
 import noodle_nodes  # noqa: F401 - registers nodes
 from noodle.ai_runtime import (
     AgentActionRequest,
@@ -333,6 +335,49 @@ def test_document_loader_and_splitter_return_chunks() -> None:
     assert chunks["documents"][0]["metadata"]["source_document_id"] == "history"
 
 
+def test_text_document_loader_rejects_oversized_text() -> None:
+    from noodle_nodes.ai_v2.document_loaders import MAX_AI_DOCUMENT_CHARS
+
+    loader = registry.get("ai_text_document_loader").func(
+        text="x" * (MAX_AI_DOCUMENT_CHARS + 1),
+        document_id="huge",
+    )
+    try:
+        loader.load()
+    except ValueError as exc:
+        assert "limit" in str(exc)
+    else:
+        raise AssertionError("oversized AI text document should be rejected")
+
+
+def test_file_document_loader_rejects_oversized_file(tmp_path) -> None:
+    from noodle_nodes.ai_v2.document_loaders import MAX_AI_DOCUMENT_BYTES
+
+    path = tmp_path / "huge.txt"
+    path.write_bytes(b"x" * (MAX_AI_DOCUMENT_BYTES + 1))
+    loader = registry.get("ai_file_document_loader").func(path=str(path))
+    try:
+        loader.load()
+    except ValueError as exc:
+        assert "limit" in str(exc)
+    else:
+        raise AssertionError("oversized AI file document should be rejected")
+
+
+def test_recursive_text_splitter_rejects_excessive_chunks() -> None:
+    loader = registry.get("ai_text_document_loader").func(
+        text=" ".join(f"word{i}" for i in range(500)),
+        document_id="many",
+    )
+    splitter = registry.get("ai_recursive_text_splitter").func
+    try:
+        splitter(loader=loader, chunk_size=100, chunk_overlap=0, max_chunks=1)
+    except ValueError as exc:
+        assert "max_chunks" in str(exc)
+    else:
+        raise AssertionError("excessive AI text splitter chunks should be rejected")
+
+
 def test_url_document_loader_blocks_private_targets(monkeypatch) -> None:
     def fake_get(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError("private target should be blocked before requests")
@@ -347,6 +392,34 @@ def test_url_document_loader_blocks_private_targets(monkeypatch) -> None:
         assert "private" in str(exc)
     else:
         raise AssertionError("private URL document target should be blocked")
+
+
+def test_vector_store_upsert_rejects_excessive_document_count() -> None:
+    embedding_model = ScriptedEmbeddingModel()
+    store = registry.get("ai_in_memory_vector_store").func(namespace="test")
+    upsert = registry.get("ai_vector_store_upsert").func
+    with pytest.raises(ValueError, match="max_documents"):
+        upsert(
+            documents={"documents": [{"id": "1", "text": "ada"}, {"id": "2", "text": "grace"}]},
+            model=embedding_model,
+            store=store,
+            max_documents=1,
+        )
+
+
+def test_retrieve_documents_caps_top_k() -> None:
+    class RecordingRetriever(RetrieverAdapter):
+        def __init__(self) -> None:
+            self.top_k = 0
+
+        def retrieve(self, query: str, *, top_k: int = 5) -> list[Any]:
+            self.top_k = top_k
+            return []
+
+    retriever = RecordingRetriever()
+    retrieve = registry.get("ai_retrieve_documents").func
+    retrieve(input={"query": "ada"}, retriever=retriever, top_k=500)
+    assert retriever.top_k == 100
 
 
 def test_vector_store_upsert_and_retriever_returns_nearest_document() -> None:
@@ -447,6 +520,23 @@ def test_qdrant_vector_store_uses_rest_api(monkeypatch) -> None:
     assert docs[0].id == "ada"
     assert docs[0].score == 0.98
     assert docs[0].metadata["topic"] == "computing"
+
+
+def test_qdrant_vector_store_blocks_private_targets(monkeypatch) -> None:
+    def fake_request(*args: Any, **kwargs: Any) -> FakeResponse:
+        raise AssertionError("private target should be blocked before requests")
+
+    monkeypatch.setattr("requests.request", fake_request)
+    store = registry.get("ai_qdrant_vector_store").func(
+        credentials={"url": "http://127.0.0.1:6333", "api_key": "qd-key"},
+        collection="docs",
+    )
+    try:
+        store.query(vector=[1.0, 0.0], top_k=1)
+    except ValueError as exc:
+        assert "private" in str(exc)
+    else:
+        raise AssertionError("private Qdrant target should be blocked")
 
 
 def test_rag_chain_uses_retrieved_context() -> None:
@@ -692,6 +782,52 @@ def test_http_tool_blocks_private_targets(monkeypatch) -> None:
         assert "private" in str(exc)
     else:
         raise AssertionError("private AI HTTP target should be blocked")
+
+
+def test_http_tool_renders_url_template_arguments(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, **kwargs: Any) -> Any:
+        captured["method"] = method
+        captured["url"] = url
+        captured["kwargs"] = kwargs
+        return FakeResponse({"ok": True})
+
+    monkeypatch.setattr("requests.request", fake_request)
+    adapter = registry.get("ai_http_tool").func(
+        name="search",
+        description="Search",
+        url="https://example.test/search/{account.id}?q={{ query }}",
+        method="GET",
+    )
+
+    result = adapter.invoke(
+        {"query": "Ada Lovelace", "account": {"id": "team/A"}}
+    )
+
+    assert captured["method"] == "GET"
+    assert captured["url"] == "https://example.test/search/team%2FA?q=Ada%20Lovelace"
+    assert captured["kwargs"]["params"] == {
+        "query": "Ada Lovelace",
+        "account": {"id": "team/A"},
+    }
+    assert result == '{"ok": true}'
+
+
+def test_http_tool_rejects_missing_url_template_argument(monkeypatch) -> None:
+    def fake_request(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("missing template arguments should block requests")
+
+    monkeypatch.setattr("requests.request", fake_request)
+    adapter = registry.get("ai_http_tool").func(
+        name="search",
+        description="Search",
+        url="https://example.test/search/{query}",
+        method="GET",
+    )
+
+    with pytest.raises(ValueError, match="missing URL template argument"):
+        adapter.invoke({})
 
 
 def test_workflow_tool_returns_adapter() -> None:

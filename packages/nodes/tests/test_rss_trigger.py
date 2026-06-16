@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import noodle_nodes  # noqa: F401
 from noodle.sdk import registry
 from noodle_nodes.integrations_v2.providers.rss import triggers as rss_triggers
@@ -40,6 +42,19 @@ ATOM_FEED = """\
     <updated>2024-01-01T12:00:00Z</updated>
   </entry>
 </feed>
+"""
+
+UNSAFE_FEED = """\
+<?xml version="1.0"?>
+<!DOCTYPE feed [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<rss version="2.0">
+  <channel>
+    <item>
+      <title>&xxe;</title>
+      <guid>guid-1</guid>
+    </item>
+  </channel>
+</rss>
 """
 
 
@@ -106,3 +121,17 @@ def test_atom_feed_parses_entries() -> None:
         )
     assert len(result.events) == 1
     assert result.events[0]["guid"] == "atom-1"
+
+
+def test_rss_rejects_unsafe_xml_entities() -> None:
+    with patch(
+        "noodle_nodes.integrations_v2.providers.rss.triggers.requests"
+    ) as mock_req:
+        mock_req.get.return_value = _mock_response(UNSAFE_FEED)
+        with pytest.raises(ValueError, match="unsafe feed XML"):
+            rss_triggers.poll_rss_feed(
+                ProviderTriggerPollContext(
+                    params={"feed_url": "https://example.com/feed.xml", "max_items": 10},
+                    cursor={"seen_guids": []},
+                )
+            )

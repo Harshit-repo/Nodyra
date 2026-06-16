@@ -18,6 +18,8 @@ from noodle_nodes._creds import cred_single
 from noodle_nodes.datasets import materialize_dataset, records_to_dataset
 
 ML_CATEGORY = "Machine Learning"
+MAX_RAG_LLM_ROWS = 1_000
+MAX_RAG_LLM_CONCURRENCY = 20
 
 _OPENAI_ERROR = (
     "openai>=1.0 is required for this node. Add it to the workflow environment "
@@ -75,6 +77,20 @@ def _to_records(input_value: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _bounded_concurrency(value: int, *, label: str = "concurrency") -> int:
+    workers = max(1, int(value or 1))
+    if workers > MAX_RAG_LLM_CONCURRENCY:
+        raise ValueError(f"{label} exceeds max allowed value {MAX_RAG_LLM_CONCURRENCY}")
+    return workers
+
+
+def _ensure_llm_row_cap(rows: list[dict[str, Any]], *, label: str) -> None:
+    if len(rows) > MAX_RAG_LLM_ROWS:
+        raise ValueError(
+            f"{label}: row count {len(rows)} exceeds cap {MAX_RAG_LLM_ROWS}"
+        )
+
+
 def _count_tokens(text: str, enc: Any) -> int:
     try:
         return len(enc.encode(text, disallowed_special=()))
@@ -115,13 +131,19 @@ _CHUNK_STRATEGIES = [
             "description": "Chunking strategy.",
         },
         "chunk_size": {
-            "description": "Target chunk size in characters (fixed_size, recursive) or tokens (if use_tokens=true).",
+            "description": (
+                "Target chunk size in characters (fixed_size, recursive) "
+                "or tokens (if use_tokens=true)."
+            ),
         },
         "chunk_overlap": {
             "description": "Number of characters (or tokens) to overlap between chunks.",
         },
         "use_tokens": {
-            "description": "Measure chunk size in tokens instead of characters (requires tiktoken).",
+            "description": (
+                "Measure chunk size in tokens instead of characters "
+                "(requires tiktoken)."
+            ),
         },
         "token_encoding": {
             "group": "Tokens",
@@ -137,7 +159,10 @@ _CHUNK_STRATEGIES = [
         },
         "chunk_index_column": {
             "group": "Options",
-            "description": "Name of the column to store the chunk index within its source document.",
+            "description": (
+                "Name of the column to store the chunk index within its "
+                "source document."
+            ),
         },
     },
     param_groups={"Tokens": [], "Options": []},
@@ -263,12 +288,20 @@ def document_chunk(
                             chunks.append(current)
                         if _measure(part) > size:
                             # Recurse with next separator
-                            next_seps = separators[separators.index(sep) + 1:] if sep != separators[-1] else [""]
+                            next_seps = (
+                                separators[separators.index(sep) + 1:]
+                                if sep != separators[-1]
+                                else [""]
+                            )
                             chunks.extend(_split_recursive(part, next_seps))
                             current = ""
                         else:
                             overlap_text = current[-overlap:] if current and overlap else ""
-                            current = (overlap_text + " " + part).strip() if overlap_text else part.strip()
+                            current = (
+                                (overlap_text + " " + part).strip()
+                                if overlap_text
+                                else part.strip()
+                            )
                 if current:
                     chunks.append(current)
                 if chunks:
@@ -303,7 +336,6 @@ def document_chunk(
     chunk_rows: list[dict[str, Any]] = []
     min_size = max(0, int(min_chunk_size or 0))
     idx_col = (chunk_index_column or "chunk_index").strip()
-    ci_col = "chunk_index_column"
 
     total_chunks = 0
     total_docs = 0
@@ -483,6 +515,7 @@ def rag_answer_eval(
     errors: list[str] = []
 
     if mode == "llm_judge":
+        _ensure_llm_row_cap(rows, label="rag_answer_eval")
         api_key, base_url, org = _extract_api_key(openai_api_key)
         if not api_key:
             raise ValueError("openai_api_key is required for llm_judge mode.")
@@ -533,7 +566,8 @@ def rag_answer_eval(
             }
 
         labeled: dict[int, dict[str, Any]] = {}
-        with ThreadPoolExecutor(max_workers=max(1, int(concurrency or 5))) as pool:
+        worker_count = _bounded_concurrency(concurrency)
+        with ThreadPoolExecutor(max_workers=worker_count) as pool:
             futures = {pool.submit(_judge_row, row): i for i, row in enumerate(rows)}
             for fut in as_completed(futures):
                 idx = futures[fut]
@@ -541,7 +575,11 @@ def rag_answer_eval(
                     labeled[idx] = fut.result()
                 except Exception as exc:  # noqa: BLE001
                     errors.append(f"row {idx}: {exc}")
-                    labeled[idx] = {"eval_passed": False, "judge_score": None, "judge_reason": str(exc)}
+                    labeled[idx] = {
+                        "eval_passed": False,
+                        "judge_score": None,
+                        "judge_reason": str(exc),
+                    }
 
         scores: list[float] = []
         for i, row in enumerate(rows):
@@ -709,7 +747,11 @@ def rag_chunking_experiment(
                     else:
                         if current:
                             result.append(current)
-                        current = part.strip()[-overlap:] + " " + part.strip() if overlap else part.strip()
+                        current = (
+                            part.strip()[-overlap:] + " " + part.strip()
+                            if overlap
+                            else part.strip()
+                        )
                 if current:
                     result.append(current)
                 if result:
@@ -911,6 +953,7 @@ def rag_context_relevance(
         }
 
     else:  # llm_judge
+        _ensure_llm_row_cap(rows, label="rag_context_relevance")
         api_key, base_url, org = _extract_api_key(openai_api_key)
         if not api_key:
             raise ValueError("openai_api_key is required for llm_judge mode.")
@@ -943,7 +986,8 @@ def rag_context_relevance(
             }
 
         labeled: dict[int, dict[str, Any]] = {}
-        with ThreadPoolExecutor(max_workers=max(1, int(concurrency or 5))) as pool:
+        worker_count = _bounded_concurrency(concurrency)
+        with ThreadPoolExecutor(max_workers=worker_count) as pool:
             futures = {pool.submit(_judge, row): i for i, row in enumerate(rows)}
             for fut in as_completed(futures):
                 idx = futures[fut]

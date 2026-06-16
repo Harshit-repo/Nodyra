@@ -42,11 +42,26 @@ UNCONDITIONAL_UNSAFE: dict[str, str] = {
 
 # Node type ids whose params get conditionally inspected.
 SQL_NODE_TYPES: frozenset[str] = frozenset({"postgres_query", "mysql_query"})
-HTTP_NODE_TYPES: frozenset[str] = frozenset({"http_request"})
+# HTTP-capable nodes with a visible URL param. These are only flagged when the
+# configured URL points at a literal private/loopback target.
+HTTP_NODE_TYPES: frozenset[str] = frozenset(
+    {"http_request", "graphql_request", "ai_url_document_loader"}
+)
 # Nodes that read/write the runner host filesystem outside the artifact store.
 # ``shapefile_read`` opens an arbitrary local ``path`` param (LFI) — same class
 # as a Code node reading server files, so it goes under the deploy-time gate (R-3).
 FILESYSTEM_NODE_TYPES: frozenset[str] = frozenset({"shapefile_read"})
+# File reader nodes are only filesystem-risky when they use a server-side path.
+# Browser-upload artifact reads stay inside the artifact store and are not flagged.
+LOCAL_PATH_FILE_NODE_TYPES: frozenset[str] = frozenset(
+    {
+        "read_text_file",
+        "read_csv_file",
+        "read_json_file",
+        "read_xml_file",
+        "ai_file_document_loader",
+    }
+)
 # Nodes that open raw network connections to a caller-supplied host (SSRF /
 # internal recon / credentialed egress). Unconditionally flagged because the
 # target is arbitrary and not subject to the http_request private-IP check (R-3).
@@ -57,8 +72,43 @@ NETWORK_EGRESS_NODE_TYPES: frozenset[str] = frozenset(
         "ldap_query",           # credentialed directory query to any host
         "certificate_inspect",  # connects to any host:port when ``host`` set
         "sitemap_crawl",        # fetches an arbitrary URL
+        "rss_feed_trigger",     # polls an arbitrary feed URL
+        "model_endpoint_probe",      # probes caller-supplied model endpoint URL
+        "model_endpoint_benchmark",  # load-tests caller-supplied model endpoint URL
+        "shadow_compare_endpoint",   # probes two caller-supplied model endpoint URLs
+        "ai_tool",                   # legacy model-invoked HTTP tool URL
+        "ai_http_tool",              # model-invoked HTTP tool URL
+        "ai_vector_retriever",       # credential carries caller-supplied Pinecone host
+        "ai_qdrant_vector_store",    # credential carries caller-supplied Qdrant URL
+        "mcp_tools",                 # connects to caller-supplied MCP server URL
+        "mcp_call_tool",             # calls caller-supplied MCP server URL
+        "mcp_list_tools",            # lists caller-supplied MCP server URL
+        "mongodb_query",             # credentialed DB connection to arbitrary URI
+        "redis_command",             # credentialed Redis connection to arbitrary URL
+        "elasticsearch_search",      # HTTP search against arbitrary base URL
+        "pinecone_upsert",           # credential carries caller-supplied index host
+        "pinecone_query",            # credential carries caller-supplied index host
+        "teams_send_webhook",        # credential is a caller-supplied webhook URL
+        "calendly_get_event",        # fetches caller-supplied event URI
+        "jira_create_issue",         # Jira site host is caller-supplied
+        "shopify_list_orders",       # Shopify store domain is caller-supplied
+        "git_clone",                 # clones arbitrary remote into runner filesystem
+        "git_pull",                  # pulls arbitrary configured remote content
+        "discord_send_message",      # legacy webhook URL is caller-supplied
+        "smtp_send_email",           # legacy SMTP host is caller-supplied
+        "postgres_query",            # legacy DB connection to arbitrary host/URI
+        "mysql_query",               # legacy DB connection to arbitrary host
     }
 )
+# Legacy S3 nodes use AWS's fixed endpoint by default, but become arbitrary
+# egress when endpoint_url is supplied for S3-compatible storage.
+OPTIONAL_ENDPOINT_EGRESS_NODE_TYPES: frozenset[str] = frozenset(
+    {"s3_put_object", "s3_get_object"}
+)
+AI_SUPPLIER_NODE_TYPES: frozenset[str] = frozenset(
+    {"ai_chat_model_openai", "ai_chat_model_azure", "ai_embedding_model"}
+)
+CUSTOM_AI_PROVIDERS: frozenset[str] = frozenset({"openai_compatible", "ollama"})
 
 _EXPR_PATTERN = re.compile(r"\{\{.*?\}\}", re.DOTALL)
 _HOST_HEADER_KEYS: frozenset[str] = frozenset({"host"})
@@ -89,6 +139,45 @@ def _has_expression(value: Any) -> bool:
     can't be expressions in the engine.
     """
     return isinstance(value, str) and bool(_EXPR_PATTERN.search(value))
+
+
+def _file_change_uses_local_source(params: dict[str, Any]) -> bool:
+    source_type = str(params.get("source_type") or "local").strip().lower()
+    return source_type == "local" or _has_expression(source_type)
+
+
+def _uses_local_path_param(params: dict[str, Any]) -> bool:
+    path = params.get("path")
+    return _has_expression(path) or (isinstance(path, str) and bool(path.strip()))
+
+
+def _uses_endpoint_url(params: dict[str, Any]) -> bool:
+    endpoint_url = params.get("endpoint_url")
+    return _has_expression(endpoint_url) or (
+        isinstance(endpoint_url, str) and bool(endpoint_url.strip())
+    )
+
+
+def _credential_params(params: dict[str, Any]) -> dict[str, Any]:
+    credentials = params.get("credentials")
+    return credentials if isinstance(credentials, dict) else {}
+
+
+def _param_or_credential(params: dict[str, Any], key: str) -> Any:
+    return params.get(key) or _credential_params(params).get(key)
+
+
+def _uses_custom_ai_endpoint(nt: str, params: dict[str, Any]) -> bool:
+    if nt == "ai_chat_model_azure":
+        return True
+    provider = str(_param_or_credential(params, "provider") or "").strip().lower()
+    if provider in CUSTOM_AI_PROVIDERS:
+        return True
+    for key in ("base_url", "azure_endpoint"):
+        value = _param_or_credential(params, key)
+        if _has_expression(value) or (isinstance(value, str) and bool(value.strip())):
+            return True
+    return False
 
 
 def _is_private_host(host: str) -> bool:
@@ -188,7 +277,11 @@ def classify(graph: dict | WorkflowGraph) -> list[dict[str, str]]:
                     }
                 )
 
-        if nt in FILESYSTEM_NODE_TYPES:
+        if (
+            nt in FILESYSTEM_NODE_TYPES
+            or (nt == "file_change_trigger" and _file_change_uses_local_source(params))
+            or (nt in LOCAL_PATH_FILE_NODE_TYPES and _uses_local_path_param(params))
+        ):
             findings.append(
                 {
                     "node_id": nid,
@@ -198,7 +291,11 @@ def classify(graph: dict | WorkflowGraph) -> list[dict[str, str]]:
                 }
             )
 
-        if nt in NETWORK_EGRESS_NODE_TYPES:
+        if (
+            nt in NETWORK_EGRESS_NODE_TYPES
+            or (nt in OPTIONAL_ENDPOINT_EGRESS_NODE_TYPES and _uses_endpoint_url(params))
+            or (nt in AI_SUPPLIER_NODE_TYPES and _uses_custom_ai_endpoint(nt, params))
+        ):
             findings.append(
                 {
                     "node_id": nid,

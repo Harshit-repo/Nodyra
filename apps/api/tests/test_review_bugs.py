@@ -11,7 +11,6 @@ the fix cycle:
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -20,7 +19,7 @@ from sqlalchemy import select
 from app import models
 from app.config import settings
 from app.services import retention
-from app.services.runner import cancel_run, start_run
+from app.services.runner import cancel_run
 from app.tenancy import DEFAULT_ORG_ID, current_org_id, run_as_system
 
 # ---------------------------------------------------------------------------
@@ -446,6 +445,30 @@ def test_unsafe_classifier_flags_new_fs_and_network_nodes():
     the deploy-time unsafe-node policy gate applies to them (R-3)."""
     from app.services.unsafe_nodes import classify
 
+    extra_network_nodes = [
+        "ai_tool",
+        "ai_http_tool",
+        "ai_vector_retriever",
+        "ai_qdrant_vector_store",
+        "mcp_tools",
+        "mcp_call_tool",
+        "mcp_list_tools",
+        "mongodb_query",
+        "redis_command",
+        "elasticsearch_search",
+        "pinecone_upsert",
+        "pinecone_query",
+        "teams_send_webhook",
+        "calendly_get_event",
+        "jira_create_issue",
+        "shopify_list_orders",
+        "git_clone",
+        "git_pull",
+        "discord_send_message",
+        "smtp_send_email",
+        "postgres_query",
+        "mysql_query",
+    ]
     graph = {
         "nodes": [
             {"id": "a", "type": "shapefile_read", "params": {"path": "/etc/passwd"}},
@@ -454,19 +477,144 @@ def test_unsafe_classifier_flags_new_fs_and_network_nodes():
             {"id": "d", "type": "ldap_query", "params": {}},
             {"id": "e", "type": "sitemap_crawl", "params": {}},
             {"id": "f", "type": "certificate_inspect", "params": {"host": "x"}},
+            {"id": "g", "type": "rss_feed_trigger", "params": {"feed_url": "https://x.test/rss.xml"}},
+            {
+                "id": "graphql-private",
+                "type": "graphql_request",
+                "params": {"url": "http://127.0.0.1/graphql"},
+            },
+            {
+                "id": "url-loader-private",
+                "type": "ai_url_document_loader",
+                "params": {"url": "http://169.254.169.254/latest"},
+            },
+            {
+                "id": "h",
+                "type": "file_change_trigger",
+                "params": {"source_type": "local", "watch_path": "/tmp"},
+            },
+            {
+                "id": "file-path",
+                "type": "read_text_file",
+                "params": {"path": "/etc/passwd"},
+            },
+            {
+                "id": "file-upload",
+                "type": "read_text_file",
+                "params": {"file": "uploaded-artifact"},
+            },
+            {
+                "id": "ai-file-loader",
+                "type": "ai_file_document_loader",
+                "params": {"path": "/etc/passwd"},
+            },
+            {
+                "id": "cloud",
+                "type": "file_change_trigger",
+                "params": {"source_type": "s3", "bucket": "b"},
+            },
+            {"id": "i", "type": "model_endpoint_probe", "params": {"base_url": "http://10.0.0.5"}},
+            {"id": "j", "type": "model_endpoint_benchmark", "params": {}},
+            {"id": "k", "type": "shadow_compare_endpoint", "params": {}},
+            {
+                "id": "s3-custom",
+                "type": "s3_get_object",
+                "params": {"endpoint_url": "http://minio.internal:9000"},
+            },
+            {
+                "id": "s3-default",
+                "type": "s3_get_object",
+                "params": {"endpoint_url": ""},
+            },
+            {
+                "id": "ai-chat-custom",
+                "type": "ai_chat_model_openai",
+                "params": {"provider": "openai_compatible"},
+            },
+            {
+                "id": "ai-chat-base-url",
+                "type": "ai_chat_model_openai",
+                "params": {"credentials": {"provider": "openai", "base_url": "https://llm.example/v1"}},
+            },
+            {
+                "id": "ai-chat-fixed",
+                "type": "ai_chat_model_openai",
+                "params": {"provider": "openai"},
+            },
+            {
+                "id": "ai-chat-azure",
+                "type": "ai_chat_model_azure",
+                "params": {"credentials": {"azure_endpoint": "https://example.openai.azure.com"}},
+            },
+            {
+                "id": "ai-embedding-ollama",
+                "type": "ai_embedding_model",
+                "params": {"provider": "ollama"},
+            },
+            {
+                "id": "ai-embedding-fixed",
+                "type": "ai_embedding_model",
+                "params": {"provider": "openai"},
+            },
+            *[
+                {"id": f"extra-{index}", "type": node_type, "params": {}}
+                for index, node_type in enumerate(extra_network_nodes)
+            ],
             {"id": "safe", "type": "manual_trigger", "params": {}},
         ],
         "edges": [],
     }
     findings = classify(graph)
     flagged = {f["node_id"] for f in findings}
-    assert {"a", "b", "c", "d", "e", "f"} <= flagged, (
+    expected = {
+        "a",
+        "b",
+        "c",
+        "d",
+        "e",
+        "f",
+        "g",
+        "graphql-private",
+        "h",
+        "file-path",
+        "ai-file-loader",
+        "i",
+        "j",
+        "k",
+        "s3-custom",
+        "ai-chat-custom",
+        "ai-chat-base-url",
+        "ai-chat-azure",
+        "ai-embedding-ollama",
+        "url-loader-private",
+        *{f"extra-{index}" for index in range(len(extra_network_nodes))},
+    }
+    assert expected <= flagged, (
         f"Expected fs/network nodes to be flagged, got {flagged}."
     )
     assert "safe" not in flagged
+    assert "cloud" not in flagged
+    assert "file-upload" not in flagged
+    assert "s3-default" not in flagged
+    assert "ai-chat-fixed" not in flagged
+    assert "ai-embedding-fixed" not in flagged
     kinds = {f["node_id"]: f["kind"] for f in findings}
     assert kinds["a"] == "filesystem"
     assert kinds["b"] == "network_egress"
+    assert kinds["g"] == "network_egress"
+    assert kinds["graphql-private"] == "http_private_ip"
+    assert kinds["h"] == "filesystem"
+    assert kinds["file-path"] == "filesystem"
+    assert kinds["ai-file-loader"] == "filesystem"
+    assert kinds["i"] == "network_egress"
+    assert kinds["s3-custom"] == "network_egress"
+    assert kinds["ai-chat-custom"] == "network_egress"
+    assert kinds["ai-chat-base-url"] == "network_egress"
+    assert kinds["ai-chat-azure"] == "network_egress"
+    assert kinds["ai-embedding-ollama"] == "network_egress"
+    assert kinds["url-loader-private"] == "http_private_ip"
+    for index in range(len(extra_network_nodes)):
+        assert kinds[f"extra-{index}"] == "network_egress"
 
 
 # ---------------------------------------------------------------------------

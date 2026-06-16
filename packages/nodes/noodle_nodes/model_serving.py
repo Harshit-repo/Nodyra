@@ -13,6 +13,9 @@ from noodle.sdk import node
 from noodle_nodes.datasets import materialize_dataset, records_to_dataset
 
 ML_CATEGORY = "Machine Learning"
+MAX_ENDPOINT_REQUESTS = 1_000
+MAX_ENDPOINT_CONCURRENCY = 50
+MAX_SHADOW_PROMPTS = 1_000
 
 
 def _require_requests():
@@ -49,6 +52,18 @@ def _auth_headers(api_key: str) -> dict:
     if api_key:
         h["Authorization"] = f"Bearer {api_key}"
     return h
+
+
+def _bounded_int(name: str, value: Any, default: int, max_value: int) -> int:
+    try:
+        result = int(value if value is not None else default)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if result < 1:
+        raise ValueError(f"{name} must be >= 1")
+    if result > max_value:
+        raise ValueError(f"{name} must be <= {max_value}")
+    return result
 
 
 def _check_models_list(req, base_url: str, api_key: str, timeout: float) -> dict:
@@ -433,19 +448,29 @@ def model_endpoint_benchmark(
     base_url: str = "http://localhost:11434",
     model: str = "llama3.2",
     api_key: str = "",
-    prompts: str = '["Summarize AI in one sentence.", "What is machine learning?", "Explain transformers."]',
+    prompts: str = (
+        '["Summarize AI in one sentence.", "What is machine learning?", '
+        '"Explain transformers."]'
+    ),
     n_requests: int = 10,
     concurrency: int = 2,
     max_tokens: int = 64,
     timeout_seconds: float = 60,
 ) -> dict[str, Any]:
     """Run a concurrent load benchmark against an OpenAI-compatible endpoint."""
-    req = _require_requests()
     prompt_list = _parse_json(prompts, ["Hello"])
     if not prompt_list:
         prompt_list = ["Hello"]
+    request_count = _bounded_int(
+        "n_requests", n_requests, 10, MAX_ENDPOINT_REQUESTS
+    )
+    worker_count = min(
+        _bounded_int("concurrency", concurrency, 2, MAX_ENDPOINT_CONCURRENCY),
+        request_count,
+    )
+    req = _require_requests()
 
-    tasks = [prompt_list[i % len(prompt_list)] for i in range(int(n_requests))]
+    tasks = [prompt_list[i % len(prompt_list)] for i in range(request_count)]
     rows: list[dict] = []
 
     def _run(idx: int, prompt: str) -> dict:
@@ -455,7 +480,7 @@ def model_endpoint_benchmark(
         )
         return {"request_idx": idx, "prompt": prompt[:120], **result}
 
-    with ThreadPoolExecutor(max_workers=int(concurrency)) as pool:
+    with ThreadPoolExecutor(max_workers=worker_count) as pool:
         futures = {pool.submit(_run, i, p): i for i, p in enumerate(tasks)}
         for f in as_completed(futures):
             rows.append(f.result())
@@ -482,7 +507,7 @@ def model_endpoint_benchmark(
         "max_latency_ms": max(latencies) if latencies else None,
         "model": model,
         "base_url": base_url,
-        "concurrency": int(concurrency),
+        "concurrency": worker_count,
     }
 
     dataset_ref = records_to_dataset(rows, name="benchmark-results.parquet")
@@ -562,8 +587,6 @@ def shadow_compare_endpoint(
     concurrency: int = 2,
 ) -> dict[str, Any]:
     """Send the same prompts to two endpoints and compare latency and responses."""
-    req = _require_requests()
-
     if input is not None:
         try:
             records = _to_records(input)
@@ -575,6 +598,13 @@ def shadow_compare_endpoint(
 
     if not prompt_list:
         raise ValueError("No prompts found. Provide via 'prompts' param or input DatasetRef.")
+    if len(prompt_list) > MAX_SHADOW_PROMPTS:
+        raise ValueError(f"prompts must contain <= {MAX_SHADOW_PROMPTS} items")
+    worker_count = min(
+        _bounded_int("concurrency", concurrency, 2, MAX_ENDPOINT_CONCURRENCY),
+        len(prompt_list),
+    )
+    req = _require_requests()
 
     comparison_rows: list[dict] = []
 
@@ -601,7 +631,7 @@ def shadow_compare_endpoint(
             "latency_diff_ms": latency_diff,
         }
 
-    with ThreadPoolExecutor(max_workers=int(concurrency)) as pool:
+    with ThreadPoolExecutor(max_workers=worker_count) as pool:
         futures = {pool.submit(_compare_one, i, p): i for i, p in enumerate(prompt_list)}
         for f in as_completed(futures):
             comparison_rows.append(f.result())
@@ -615,11 +645,15 @@ def shadow_compare_endpoint(
     summary = {
         "n_prompts": len(comparison_rows),
         "primary_model": primary_model,
-        "primary_success_rate": sum(1 for r in comparison_rows if r["primary_success"]) / max(len(comparison_rows), 1),
+        "primary_success_rate": sum(
+            1 for r in comparison_rows if r["primary_success"]
+        ) / max(len(comparison_rows), 1),
         "primary_p50_ms": _pct(p_lat, 50) if p_lat else None,
         "primary_p95_ms": _pct(p_lat, 95) if p_lat else None,
         "shadow_model": shadow_model,
-        "shadow_success_rate": sum(1 for r in comparison_rows if r["shadow_success"]) / max(len(comparison_rows), 1),
+        "shadow_success_rate": sum(
+            1 for r in comparison_rows if r["shadow_success"]
+        ) / max(len(comparison_rows), 1),
         "shadow_p50_ms": _pct(s_lat, 50) if s_lat else None,
         "shadow_p95_ms": _pct(s_lat, 95) if s_lat else None,
         "mean_latency_diff_ms": statistics.mean(diffs) if diffs else None,

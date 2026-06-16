@@ -17,7 +17,6 @@ from noodle.sdk import registry
 from noodle_nodes.datasets import dataset_to_records, records_to_dataset
 from noodle_nodes.llm_evals import (
     _EVAL_RESULT_MARKER,
-    _is_eval_result,
     eval_gate,
     eval_report,
     llm_compare_models,
@@ -25,7 +24,6 @@ from noodle_nodes.llm_evals import (
     llm_judge,
     llm_rule_eval,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -367,7 +365,13 @@ def test_eval_gate_rejects_missing_metric(store_ctx) -> None:
 ])
 def test_eval_gate_all_operators(store_ctx, op, val, thresh, should_pass) -> None:
     metrics = {"score": val}
-    result = eval_gate(input=metrics, metric="score", operator=op, threshold=thresh, on_fail="branch")
+    result = eval_gate(
+        input=metrics,
+        metric="score",
+        operator=op,
+        threshold=thresh,
+        on_fail="branch",
+    )
     if should_pass:
         assert "pass" in result
     else:
@@ -424,7 +428,10 @@ def test_eval_report_rejects_non_eval_input(store_ctx) -> None:
 # llm_compare_models (mocked)
 # ---------------------------------------------------------------------------
 
-def _fake_openai_for_compare(baseline_answer: str = "Baseline", candidate_answer: str = "Candidate"):
+def _fake_openai_for_compare(
+    baseline_answer: str = "Baseline",
+    candidate_answer: str = "Candidate",
+):
     client = MagicMock()
 
     def _create(**kwargs):
@@ -515,6 +522,20 @@ def test_compare_models_accepts_eval_dataset_output(store_ctx) -> None:
     assert result[_EVAL_RESULT_MARKER] is True
 
 
+def test_compare_models_rejects_excessive_concurrency(store_ctx) -> None:
+    fake_openai = _fake_openai_for_compare()
+
+    with patch.dict(sys.modules, {"openai": fake_openai}):
+        with pytest.raises(ValueError, match="concurrency"):
+            llm_compare_models(
+                input=_eval_records(2),
+                openai_api_key="sk-test",
+                baseline_model="gpt-4.1-mini",
+                candidate_model="ft:gpt-4.1-mini:x::001",
+                concurrency=21,
+            )
+
+
 # ---------------------------------------------------------------------------
 # llm_judge (mocked)
 # ---------------------------------------------------------------------------
@@ -601,4 +622,16 @@ def test_judge_accepts_compare_result(store_ctx) -> None:
         )
 
     assert result[_EVAL_RESULT_MARKER] is True
-    assert result["summary"]["n_rows"] == 3
+
+
+def test_judge_rejects_uncapped_large_dataset(store_ctx) -> None:
+    with pytest.raises(ValueError, match="row count"):
+        llm_judge(
+            input=[
+                {"prompt": f"Q{i}", "candidate_output": f"A{i}"}
+                for i in range(1_001)
+            ],
+            openai_api_key="sk-test",
+            output_column="candidate_output",
+            max_rows=0,
+        )

@@ -51,6 +51,46 @@ _AWS_CREDENTIALS_PARAM = {
 }
 
 
+async def _run_git_command(
+    argv: list[str],
+    *,
+    operation: str,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    started = time.monotonic()
+    proc = await asyncio.create_subprocess_exec(
+        *argv,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    timeout = max(1, int(timeout_seconds or 300))
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(), timeout=timeout
+        )
+    except TimeoutError as exc:
+        proc.kill()
+        stdout_bytes, stderr_bytes = await proc.communicate()
+        stderr = stderr_bytes.decode("utf-8", "replace")
+        if stderr:
+            stderr = f": {stderr[:500]}"
+        raise RuntimeError(
+            f"{operation}: timed out after {timeout}s{stderr}"
+        ) from exc
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+    returncode = proc.returncode or 0
+    stdout = stdout_bytes.decode("utf-8", "replace")
+    stderr = stderr_bytes.decode("utf-8", "replace")
+    if returncode != 0:
+        raise RuntimeError(f"{operation}: exit {returncode}: {stderr[:500]}")
+    return {
+        "stdout": stdout,
+        "stderr": stderr,
+        "duration_ms": duration_ms,
+    }
+
+
 # ============================================================================
 # AWS Lambda
 # ============================================================================
@@ -461,6 +501,10 @@ def ssh_execute(
             "group": "Options",
             "description": "Shallow clone depth (0 = full history).",
         },
+        "timeout_seconds": {
+            "group": "Options",
+            "description": "Maximum time to wait for git before killing it.",
+        },
     },
 )
 async def git_clone(
@@ -469,6 +513,7 @@ async def git_clone(
     directory: str = "",
     branch: str = "",
     depth: int = 0,
+    timeout_seconds: int = 300,
 ) -> dict:
     """Clone a git repository using the system git binary."""
     _ = input
@@ -484,25 +529,12 @@ async def git_clone(
     if depth and depth > 0:
         argv.extend(["--depth", str(int(depth))])
     argv.extend([url, directory])
-    started = time.monotonic()
-    proc = await asyncio.create_subprocess_exec(
-        *argv,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+    result = await _run_git_command(
+        argv, operation="git_clone", timeout_seconds=timeout_seconds
     )
-    stdout_bytes, stderr_bytes = await proc.communicate()
-    duration_ms = int((time.monotonic() - started) * 1000)
-    returncode = proc.returncode or 0
-    if returncode != 0:
-        raise RuntimeError(
-            f"git_clone: exit {returncode}: "
-            f"{stderr_bytes.decode('utf-8', 'replace')[:500]}"
-        )
     return {
         "directory": directory,
-        "stdout": stdout_bytes.decode("utf-8", "replace"),
-        "stderr": stderr_bytes.decode("utf-8", "replace"),
-        "duration_ms": duration_ms,
+        **result,
     }
 
 
@@ -525,6 +557,10 @@ async def git_clone(
             "group": "Options",
             "description": "Optional branch to pull.",
         },
+        "timeout_seconds": {
+            "group": "Options",
+            "description": "Maximum time to wait for git before killing it.",
+        },
     },
 )
 async def git_pull(
@@ -532,6 +568,7 @@ async def git_pull(
     directory: str = "",
     remote: str = "",
     branch: str = "",
+    timeout_seconds: int = 300,
 ) -> dict:
     """Run ``git pull`` in an existing repo directory."""
     _ = input
@@ -546,22 +583,6 @@ async def git_pull(
         argv.append(remote)
     if branch:
         argv.append(branch)
-    started = time.monotonic()
-    proc = await asyncio.create_subprocess_exec(
-        *argv,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+    return await _run_git_command(
+        argv, operation="git_pull", timeout_seconds=timeout_seconds
     )
-    stdout_bytes, stderr_bytes = await proc.communicate()
-    duration_ms = int((time.monotonic() - started) * 1000)
-    returncode = proc.returncode or 0
-    if returncode != 0:
-        raise RuntimeError(
-            f"git_pull: exit {returncode}: "
-            f"{stderr_bytes.decode('utf-8', 'replace')[:500]}"
-        )
-    return {
-        "stdout": stdout_bytes.decode("utf-8", "replace"),
-        "stderr": stderr_bytes.decode("utf-8", "replace"),
-        "duration_ms": duration_ms,
-    }

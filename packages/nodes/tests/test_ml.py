@@ -157,6 +157,34 @@ def test_register_then_load_roundtrip_predicts(store_ctx) -> None:
     assert rows and "prediction" in rows[0]
 
 
+def test_model_registry_uses_artifact_key_prefix(tmp_path) -> None:
+    store_a = LocalArtifactStore(tmp_path, run_id="ml-run-a", key_prefix="org-a")
+    store_b = LocalArtifactStore(tmp_path, run_id="ml-run-b", key_prefix="org-b")
+    node_token = current_node_id.set("ml-test-node")
+    try:
+        artifact_token = artifact_store.set(store_a)
+        try:
+            ds = _classification_dataset(60)
+            trained = train_classifier(input=ds, target_column="label")
+            register_model(model=trained["model"], name="shared-name")
+        finally:
+            artifact_store.reset(artifact_token)
+
+        assert (
+            tmp_path / "org-a" / "model-registry" / "shared-name" / "model.joblib"
+        ).exists()
+        assert not (tmp_path / "model-registry" / "shared-name").exists()
+
+        artifact_token = artifact_store.set(store_b)
+        try:
+            with pytest.raises(ValueError, match="no model named"):
+                load_model(name="shared-name")
+        finally:
+            artifact_store.reset(artifact_token)
+    finally:
+        current_node_id.reset(node_token)
+
+
 def test_register_model_requires_name(store_ctx) -> None:
     ds = _classification_dataset(20)
     trained = train_classifier(input=ds, target_column="label")

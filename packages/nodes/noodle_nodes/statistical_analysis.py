@@ -15,6 +15,9 @@ from noodle.datasets import is_dataset_ref
 from noodle.sdk import node
 from noodle_nodes.datasets import materialize_dataset, records_to_dataset
 
+MAX_MONTE_CARLO_ITERATIONS = 100_000
+MAX_BOOTSTRAP_RESAMPLES = 100_000
+
 
 def _rows_from_input(value: Any) -> list[dict[str, Any]]:
     if is_dataset_ref(value):
@@ -26,6 +29,18 @@ def _rows_from_input(value: Any) -> list[dict[str, Any]]:
             return [row for row in value["records"] if isinstance(row, dict)]
         return [value]
     return []
+
+
+def _bounded_positive_int(name: str, value: Any, max_value: int) -> int:
+    try:
+        result = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if result < 1:
+        raise ValueError(f"{name} must be >= 1")
+    if result > max_value:
+        raise ValueError(f"{name} must be <= {max_value}")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +181,8 @@ def statistical_test(
     interp = (
         f"Reject the null hypothesis (p={pval:.4f} < α={alpha}). Statistically significant."
         if reject else
-        f"Fail to reject the null hypothesis (p={pval:.4f} ≥ α={alpha}). Not statistically significant."
+        "Fail to reject the null hypothesis "
+        f"(p={pval:.4f} ≥ α={alpha}). Not statistically significant."
     )
 
     if test in ("t_test_1samp", "t_test_ind", "t_test_paired", "anova") and 3 <= n <= 5000:
@@ -428,17 +444,20 @@ def monte_carlo_simulate(
     random_seed: int = 42,
 ) -> dict:
     """Run Monte Carlo simulation with configurable variable distributions."""
+    if not variables_json:
+        raise ValueError("variables_json is required")
+    if not expression:
+        raise ValueError("expression is required")
+    n_iterations = _bounded_positive_int(
+        "n_iterations", n_iterations, MAX_MONTE_CARLO_ITERATIONS
+    )
+
     try:
         import numpy as _np
     except ImportError as exc:
         raise RuntimeError(
             "numpy is required. Add numpy to the workflow environment and rebuild it."
         ) from exc
-
-    if not variables_json:
-        raise ValueError("variables_json is required")
-    if not expression:
-        raise ValueError("expression is required")
 
     try:
         var_defs = json.loads(variables_json)
@@ -533,6 +552,20 @@ def bootstrap_ci(
     n_resamples: int = 9999,
 ) -> dict:
     """Bootstrap confidence interval for a column statistic."""
+    if input is None:
+        raise ValueError("input is required")
+    if not column:
+        raise ValueError("column is required")
+    n_resamples = _bounded_positive_int(
+        "n_resamples", n_resamples, MAX_BOOTSTRAP_RESAMPLES
+    )
+    try:
+        confidence_level = float(confidence_level)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("confidence_level must be a number") from exc
+    if not 0.0 < confidence_level < 1.0:
+        raise ValueError("confidence_level must be between 0 and 1")
+
     try:
         import numpy as _np
         from scipy import stats as _stats
@@ -540,11 +573,6 @@ def bootstrap_ci(
         raise RuntimeError(
             "scipy is required. Add scipy to the workflow environment and rebuild it."
         ) from exc
-
-    if input is None:
-        raise ValueError("input is required")
-    if not column:
-        raise ValueError("column is required")
 
     rows = materialize_dataset(input) if is_dataset_ref(input) else list(input)
     data = [float(r[column]) for r in rows if column in r and r[column] is not None]

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 from xml.etree import ElementTree
+
 from defusedxml import DefusedXmlException as _DefusedXmlException
 from defusedxml.ElementTree import ParseError as _XmlParseError
 from defusedxml.ElementTree import fromstring as _safe_xml_fromstring
@@ -31,12 +32,18 @@ from noodle.sdk import node
     params={
         "container_selector": {
             "placeholder": "li.product  (blank = whole page, one record)",
-            "description": "CSS selector for the repeating parent element. Each match becomes one record.",
+            "description": (
+                "CSS selector for the repeating parent element. Each match "
+                "becomes one record."
+            ),
         },
         "selectors_json": {
             "multiline": True,
             "placeholder": '{"title": "h2", "price": ".price", "link": "a"}',
-            "description": "JSON mapping of field name → CSS selector (relative to container, or page if no container).",
+            "description": (
+                "JSON mapping of field name → CSS selector (relative to "
+                "container, or page if no container)."
+            ),
         },
     },
 )
@@ -67,7 +74,9 @@ def html_extract_records(
         html = str(input)
 
     try:
-        field_selectors: dict[str, str] = json.loads(selectors_json) if selectors_json.strip() else {}
+        field_selectors: dict[str, str] = (
+            json.loads(selectors_json) if selectors_json.strip() else {}
+        )
     except json.JSONDecodeError as exc:
         raise ValueError(f"selectors_json must be valid JSON: {exc}") from exc
 
@@ -151,14 +160,16 @@ def sitemap_crawl(
     records: list[dict[str, Any]] = []
     queue = [source]
     seen_sitemaps: set[str] = set()
+    queued_sitemaps: set[str] = set()
     max_count = max(1, int(max_urls or 1000))
 
     while queue and len(records) < max_count and len(seen_sitemaps) < 25:
         sitemap_ref = queue.pop(0)
-        location, xml_text = _load(sitemap_ref)
+        location = sitemap_ref if sitemap_ref.startswith(("http://", "https://")) else "input"
         if location in seen_sitemaps:
             continue
         seen_sitemaps.add(location)
+        location, xml_text = _load(sitemap_ref)
 
         try:
             root = _safe_xml_fromstring(xml_text.encode("utf-8"))
@@ -185,7 +196,12 @@ def sitemap_crawl(
                         "source_sitemap": location,
                     }
                 )
-                if include_nested_sitemaps and loc not in seen_sitemaps:
+                if (
+                    include_nested_sitemaps
+                    and loc not in seen_sitemaps
+                    and loc not in queued_sitemaps
+                ):
+                    queued_sitemaps.add(loc)
                     queue.append(loc)
                 if len(records) >= max_count:
                     break
@@ -296,14 +312,24 @@ def web_feed_parse(input=None, max_items: int = 50) -> dict:
         "url": {"placeholder": "https://example.com"},
         "selector": {
             "placeholder": "#hero  (blank = full page)",
-            "description": "CSS selector to screenshot a specific element. Leave blank to capture the full page.",
+            "description": (
+                "CSS selector to screenshot a specific element. Leave blank "
+                "to capture the full page."
+            ),
         },
-        "full_page": {"description": "Capture the full scrollable page (ignored when selector is set)"},
+        "full_page": {
+            "description": (
+                "Capture the full scrollable page (ignored when selector is set)"
+            )
+        },
         "viewport_width": {"description": "Browser viewport width in pixels (default 1280)"},
         "viewport_height": {"description": "Browser viewport height in pixels (default 800)"},
         "wait_for": {
             "choices": ["networkidle", "load", "domcontentloaded"],
-            "description": "Wait condition before capturing. networkidle waits for no network activity.",
+            "description": (
+                "Wait condition before capturing. networkidle waits for no "
+                "network activity."
+            ),
         },
         "page_timeout_ms": {"description": "Maximum page load wait in ms (default 30000)"},
         "filename": {"placeholder": "screenshot.png"},
@@ -322,11 +348,14 @@ def browser_screenshot(
 ) -> dict:
     """Screenshot a URL or CSS selector to an image artifact using a headless Chromium browser.
 
-    Requires: playwright install chromium  (run once in the environment after installing playwright).
+    Requires: playwright install chromium
+    (run once in the environment after installing playwright).
     """
     target_url = url or (str(input) if input is not None else "")
     if not target_url:
-        raise ValueError("url is required — set a URL in the node config or wire one as input.")
+        raise ValueError(
+            "url is required — set a URL in the node config or wire one as input."
+        )
 
     try:
         from playwright.sync_api import TimeoutError as PWTimeout  # type: ignore[import-not-found]
@@ -387,12 +416,18 @@ def browser_screenshot(
         "url": {"placeholder": "https://example.com/products"},
         "container_selector": {
             "placeholder": "li.product-card",
-            "description": "CSS selector for the repeating element. Each match becomes one record.",
+            "description": (
+                "CSS selector for the repeating element. Each match becomes "
+                "one record."
+            ),
         },
         "selectors_json": {
             "multiline": True,
             "placeholder": '{"title": "h2.name", "price": ".price", "link": "a[href]"}',
-            "description": "JSON mapping of field name → CSS selector (relative to each container).",
+            "description": (
+                "JSON mapping of field name → CSS selector (relative to each "
+                "container)."
+            ),
         },
         "wait_for": {
             "choices": ["networkidle", "load", "domcontentloaded"],
@@ -400,7 +435,10 @@ def browser_screenshot(
         },
         "pagination_next_selector": {
             "placeholder": "a.next-page",
-            "description": "CSS selector for the 'next page' link. Leave blank to disable pagination.",
+            "description": (
+                "CSS selector for the 'next page' link. Leave blank to disable "
+                "pagination."
+            ),
         },
         "max_pages": {"description": "Maximum pages to paginate through (default 1)"},
         "page_timeout_ms": {"description": "Maximum wait per page in ms (default 30000)"},
@@ -418,11 +456,14 @@ def browser_scrape(
 ) -> dict:
     """Navigate to a URL and extract structured records using CSS selectors.
 
-    Requires: playwright install chromium  (run once in the environment after installing playwright).
+    Requires: playwright install chromium
+    (run once in the environment after installing playwright).
     """
     target_url = url or (str(input) if input is not None else "")
     if not target_url:
-        raise ValueError("url is required — set a URL in the node config or wire one as input.")
+        raise ValueError(
+            "url is required — set a URL in the node config or wire one as input."
+        )
     if not selectors_json.strip():
         raise ValueError(
             "selectors_json is required — provide a JSON mapping of field name → CSS selector."
@@ -519,15 +560,24 @@ def browser_scrape(
                 {"action": "fill", "selector": "#username", "value": "user@example.com"},
                 {"action": "fill", "selector": "#password", "value": "secret"},
                 {"action": "click", "selector": "button[type=submit]"},
-                {"action": "wait_for_selector", "selector": ".dashboard", "timeout_ms": 5000},
+                {
+                    "action": "wait_for_selector",
+                    "selector": ".dashboard",
+                    "timeout_ms": 5000,
+                },
             ], indent=2),
             "description": (
                 "JSON list of browser actions. "
-                "Each: {action: click|fill|select|wait_for_selector|wait, selector?, value?, timeout_ms?, ms?}."
+                "Each: {action: click|fill|select|wait_for_selector|wait, "
+                "selector?, value?, timeout_ms?, ms?}."
             ),
         },
         "screenshot_after": {"description": "Capture a screenshot of the final page state"},
-        "page_timeout_ms": {"description": "Maximum page load wait per navigation in ms (default 30000)"},
+        "page_timeout_ms": {
+            "description": (
+                "Maximum page load wait per navigation in ms (default 30000)"
+            )
+        },
         "viewport_width": {"description": "Browser viewport width in pixels (default 1280)"},
         "viewport_height": {"description": "Browser viewport height in pixels (default 800)"},
     },
@@ -543,7 +593,8 @@ def browser_click_fill(
 ) -> dict:
     """Execute a sequence of browser interactions and return the final page state.
 
-    Requires: playwright install chromium  (run once in the environment after installing playwright).
+    Requires: playwright install chromium
+    (run once in the environment after installing playwright).
 
     Supported actions:
       {"action": "click", "selector": "CSS"}
@@ -554,10 +605,14 @@ def browser_click_fill(
     """
     target_url = url or (str(input) if input is not None else "")
     if not target_url:
-        raise ValueError("url is required — set a starting URL in the node config or wire one as input.")
+        raise ValueError(
+            "url is required — set a starting URL in the node config or wire "
+            "one as input."
+        )
     if not actions_json.strip():
         raise ValueError(
-            "actions_json is required — provide a JSON list of browser actions in the node config."
+            "actions_json is required — provide a JSON list of browser actions "
+            "in the node config."
         )
 
     try:
@@ -668,11 +723,14 @@ def browser_pdf_from_url(
 ) -> dict:
     """Print a web page to a PDF artifact using the Chromium browser print engine.
 
-    Requires: playwright install chromium  (run once in the environment after installing playwright).
+    Requires: playwright install chromium
+    (run once in the environment after installing playwright).
     """
     target_url = url or (str(input) if input is not None else "")
     if not target_url:
-        raise ValueError("url is required — set a URL in the node config or wire one as input.")
+        raise ValueError(
+            "url is required — set a URL in the node config or wire one as input."
+        )
 
     try:
         from playwright.sync_api import TimeoutError as PWTimeout  # type: ignore[import-not-found]

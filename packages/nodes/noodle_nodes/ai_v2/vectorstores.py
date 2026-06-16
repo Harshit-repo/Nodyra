@@ -19,12 +19,20 @@ from noodle.ai_runtime import (
 )
 from noodle.sdk import node
 from noodle_nodes._creds import cred_multi
+from noodle_nodes.http_security import assert_public_http_url
 
 AI_CATEGORY = "AI"
 QDRANT_CREDENTIAL_FIELDS = ["url", "api_key"]
+MAX_VECTOR_DOCUMENTS = 5_000
+MAX_VECTOR_TOP_K = 100
 
 
-def documents_from_value(value: Any, *, text_field: str = "text") -> list[Document]:
+def documents_from_value(
+    value: Any,
+    *,
+    text_field: str = "text",
+    max_documents: int = MAX_VECTOR_DOCUMENTS,
+) -> list[Document]:
     """Coerce splitter output, raw lists, or document models into documents."""
     raw = value
     if isinstance(value, dict):
@@ -39,7 +47,13 @@ def documents_from_value(value: Any, *, text_field: str = "text") -> list[Docume
         raw = [{"text": str(raw)}]
 
     documents: list[Document] = []
+    limit = max(1, min(MAX_VECTOR_DOCUMENTS, int(max_documents or MAX_VECTOR_DOCUMENTS)))
     for index, item in enumerate(raw):
+        if len(documents) >= limit:
+            raise ValueError(
+                f"ai vector documents exceed max_documents={limit}; "
+                "split or filter upstream"
+            )
         if isinstance(item, Document):
             documents.append(item)
             continue
@@ -57,6 +71,10 @@ def documents_from_value(value: Any, *, text_field: str = "text") -> list[Docume
             continue
         documents.append(Document(id=f"doc-{index}", text=str(item)))
     return [document for document in documents if document.text]
+
+
+def _top_k(value: int) -> int:
+    return max(1, min(MAX_VECTOR_TOP_K, int(value or 5)))
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -110,7 +128,7 @@ class InMemoryVectorStoreAdapter(VectorStoreAdapter):
             for document, embedding in self._records.values()
         ]
         scored.sort(key=lambda item: item[0], reverse=True)
-        limit = max(1, int(top_k or 5))
+        limit = _top_k(top_k)
         return [
             RetrievedDocument(
                 id=document.id,
@@ -160,14 +178,19 @@ class QdrantVectorStoreAdapter(VectorStoreAdapter):
             headers["api-key"] = self._api_key
         return headers
 
-    def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict:
+    def _target_url(self, path: str) -> str:
         if not self._url:
             raise ValueError("qdrant vector store: url is required")
+        url = f"{self._url}{path}"
+        assert_public_http_url(url, context="qdrant vector store")
+        return url
+
+    def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict:
         if not self._collection:
             raise ValueError("qdrant vector store: collection is required")
         response = requests.request(
             method,
-            f"{self._url}{path}",
+            self._target_url(path),
             headers=self._headers,
             json=payload,
             timeout=max(1, min(300, self._timeout)),
@@ -186,7 +209,7 @@ class QdrantVectorStoreAdapter(VectorStoreAdapter):
     def _collection_exists(self) -> bool:
         response = requests.request(
             "GET",
-            f"{self._url}/collections/{self._collection}",
+            self._target_url(f"/collections/{self._collection}"),
             headers=self._headers,
             timeout=max(1, min(300, self._timeout)),
         )
@@ -268,7 +291,7 @@ class QdrantVectorStoreAdapter(VectorStoreAdapter):
             f"/collections/{self._collection}/points/search",
             {
                 "vector": [float(value) for value in vector],
-                "limit": max(1, int(top_k or 5)),
+                "limit": _top_k(top_k),
                 "with_payload": True,
             },
         )
@@ -431,7 +454,7 @@ def ai_qdrant_vector_store(
     },
     outputs=["store"],
     output_kinds={"store": "ai_vector_store"},
-    param_groups={"Options": ["text_field", "batch_size", "timeout_seconds"]},
+    param_groups={"Options": ["text_field", "batch_size", "max_documents", "timeout_seconds"]},
     params={
         "text_field": {
             "description": "Field to embed when input documents are plain dict rows.",
@@ -439,6 +462,10 @@ def ai_qdrant_vector_store(
         },
         "batch_size": {
             "description": "Documents embedded per provider call.",
+            "group": "Options",
+        },
+        "max_documents": {
+            "description": "Maximum documents to embed/upsert, hard max 5000.",
             "group": "Options",
         },
         "timeout_seconds": {
@@ -453,6 +480,7 @@ def ai_vector_store_upsert(
     store: Any = None,
     text_field: str = "text",
     batch_size: int = 64,
+    max_documents: int = MAX_VECTOR_DOCUMENTS,
     timeout_seconds: int = 60,
 ) -> VectorStoreAdapter:
     """Embed documents and upsert them into a vector store."""
@@ -460,7 +488,11 @@ def ai_vector_store_upsert(
         raise ValueError("ai_vector_store_upsert: connect an AI Embedding Model")
     if not isinstance(store, VectorStoreAdapter):
         raise ValueError("ai_vector_store_upsert: connect an AI Vector Store")
-    docs = documents_from_value(documents, text_field=text_field or "text")
+    docs = documents_from_value(
+        documents,
+        text_field=text_field or "text",
+        max_documents=max_documents,
+    )
     if not docs:
         return store
     batch = max(1, min(256, int(batch_size or 64)))

@@ -20,7 +20,7 @@ from noodle.artifacts import is_artifact_ref, read_bytes, write_bytes
 from noodle.datasets import is_dataset_ref
 from noodle.sdk import node
 from noodle_nodes._creds import cred_single
-from noodle_nodes.datasets import materialize_dataset, read_dataset
+from noodle_nodes.datasets import materialize_dataset
 
 # ---------------------------------------------------------------------------
 # Markers / reference envelopes
@@ -32,6 +32,7 @@ _MODEL_ARTIFACT_MARKER = "__noodle_model_artifact__"
 _MODEL_REGISTRY_MARKER = "__noodle_model_registry__"
 
 ML_CATEGORY = "Machine Learning"
+MAX_FINE_TUNE_EXAMPLES = 100_000
 OPENAI_FINE_TUNE_MODELS = [
     "gpt-4.1-mini",
     "gpt-4o-mini-2024-07-18",
@@ -94,11 +95,27 @@ def _openai_client(api_key: str, base_url: str | None = None, organization: str 
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _to_records(input_value: Any) -> list[dict[str, Any]]:
+def _example_cap(max_examples: int | None) -> int:
+    cap = max(1, int(max_examples or MAX_FINE_TUNE_EXAMPLES))
+    if cap > MAX_FINE_TUNE_EXAMPLES:
+        raise ValueError(
+            f"llm_fine_tune_dataset: max_examples must be <= "
+            f"{MAX_FINE_TUNE_EXAMPLES}."
+        )
+    return cap
+
+
+def _to_records(input_value: Any, *, max_examples: int | None) -> list[dict[str, Any]]:
     """Return input as a list of plain dicts without requiring pandas."""
+    cap = _example_cap(max_examples)
     if is_dataset_ref(input_value):
-        return materialize_dataset(input_value, cap=100_000, allow_truncate=True)
+        return materialize_dataset(input_value, cap=cap, allow_truncate=False)
     if isinstance(input_value, list):
+        if len(input_value) > cap:
+            raise ValueError(
+                f"llm_fine_tune_dataset received {len(input_value)} rows but "
+                f"max_examples is {cap}."
+            )
         return [r for r in input_value if isinstance(r, dict)]
     raise ValueError(
         "input must be a DatasetRef or a list of records — add a Records To "
@@ -147,7 +164,10 @@ def _extract_api_key(credentials: Any) -> tuple[str, str | None, str | None]:
     params={
         "format": {
             "choices": FINE_TUNE_FORMATS,
-            "description": "JSONL format to produce. Use openai_chat_jsonl for ChatCompletion models.",
+            "description": (
+                "JSONL format to produce. Use openai_chat_jsonl for "
+                "ChatCompletion models."
+            ),
         },
         "messages_column": {
             "description": "Column holding pre-formatted messages list (list of {role, content}). "
@@ -174,6 +194,13 @@ def _extract_api_key(credentials: Any) -> tuple[str, str | None, str | None]:
             "group": "Validation",
             "description": "Minimum rows required. Raises an error if dataset is smaller.",
         },
+        "max_examples": {
+            "group": "Validation",
+            "description": (
+                "Maximum input rows to process before producing JSONL "
+                f"(hard cap {MAX_FINE_TUNE_EXAMPLES})."
+            ),
+        },
         "max_tokens_per_example": {
             "group": "Validation",
             "description": "Warn if any example exceeds this token count (0 = no check).",
@@ -199,12 +226,13 @@ def llm_fine_tune_dataset(
     prompt_column: str = "prompt",
     completion_column: str = "completion",
     min_examples: int = 10,
+    max_examples: int = MAX_FINE_TUNE_EXAMPLES,
     max_tokens_per_example: int = 4096,
     dedupe: bool = True,
     validation_split: float = 0.0,
 ) -> dict[str, Any]:
     """Convert rows into provider-ready JSONL and return a FineTuneDatasetRef."""
-    raw_rows = _to_records(input)
+    raw_rows = _to_records(input, max_examples=max_examples)
 
     if dedupe:
         before = len(raw_rows)

@@ -27,6 +27,9 @@ _TIKTOKEN_ERROR = (
     "tiktoken>=0.7 is required for token profiling. Add it to the workflow "
     "environment and rebuild."
 )
+MAX_SYNTHETIC_EXAMPLES = 1_000
+MAX_LLM_ROWS = 1_000
+MAX_LLM_CONCURRENCY = 20
 
 
 def _openai_client(api_key: str, base_url: str | None = None, org: str | None = None):
@@ -75,6 +78,32 @@ def _to_records(input_value: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _bounded_concurrency(value: int, *, label: str = "concurrency") -> int:
+    workers = max(1, int(value or 1))
+    if workers > MAX_LLM_CONCURRENCY:
+        raise ValueError(f"{label} exceeds max allowed value {MAX_LLM_CONCURRENCY}")
+    return workers
+
+
+def _limit_llm_rows(
+    rows: list[dict[str, Any]],
+    *,
+    max_rows: int,
+    label: str,
+) -> list[dict[str, Any]]:
+    requested = int(max_rows or 0)
+    if requested > MAX_LLM_ROWS:
+        raise ValueError(f"{label}: max_rows exceeds cap {MAX_LLM_ROWS}")
+    if requested > 0:
+        return rows[:requested]
+    if len(rows) > MAX_LLM_ROWS:
+        raise ValueError(
+            f"{label}: row count {len(rows)} exceeds cap {MAX_LLM_ROWS}; "
+            "set max_rows to a lower value"
+        )
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Node: Synthetic Examples Generate
 # ---------------------------------------------------------------------------
@@ -120,7 +149,10 @@ def _to_records(input_value: Any) -> list[dict[str, Any]]:
         },
         "batch_size": {
             "group": "Options",
-            "description": "Examples to request per API call (1-20). Larger batches are faster but less diverse.",
+            "description": (
+                "Examples to request per API call (1-20). Larger batches are "
+                "faster but less diverse."
+            ),
         },
         "temperature": {
             "group": "Options",
@@ -128,7 +160,10 @@ def _to_records(input_value: Any) -> list[dict[str, Any]]:
         },
         "seed_column": {
             "group": "Options",
-            "description": "Column from the wired input DatasetRef/records to use as few-shot seeds (leave blank to use all columns).",
+            "description": (
+                "Column from the wired input DatasetRef/records to use as "
+                "few-shot seeds (leave blank to use all columns)."
+            ),
         },
         "n_seed_examples": {
             "group": "Options",
@@ -189,6 +224,11 @@ def synthetic_examples_generate(
                 seed_rows = seeds
 
     n = max(1, int(n_examples or 20))
+    if n > MAX_SYNTHETIC_EXAMPLES:
+        raise ValueError(
+            "synthetic_examples_generate: n_examples exceeds cap "
+            f"{MAX_SYNTHETIC_EXAMPLES}"
+        )
     bs = max(1, min(20, int(batch_size or 5)))
 
     def _build_prompt(batch_n: int) -> str:
@@ -396,9 +436,7 @@ def preference_pair_generate(
             f"prompt_column {p_col!r} not found. Available: {available}"
         )
 
-    cap = int(max_rows or 0)
-    if cap > 0 and len(rows) > cap:
-        rows = rows[:cap]
+    rows = _limit_llm_rows(rows, max_rows=int(max_rows or 0), label="preference_pair_generate")
 
     client = _openai_client(api_key, base_url, org)
 
@@ -443,7 +481,8 @@ def preference_pair_generate(
         result["rejected"] = rejected
         return result
 
-    with ThreadPoolExecutor(max_workers=max(1, int(concurrency or 5))) as pool:
+    worker_count = _bounded_concurrency(concurrency)
+    with ThreadPoolExecutor(max_workers=worker_count) as pool:
         futures = {pool.submit(_process_row, row): i for i, row in enumerate(rows)}
         indexed: dict[int, dict[str, Any] | None] = {}
         for fut in as_completed(futures):
@@ -581,7 +620,7 @@ def weak_label(
         available = list(rows[0].keys())
         raise ValueError(f"text_column {t_col!r} not found. Available: {available}")
 
-    label_list = [l.strip() for l in (labels or "").split(",") if l.strip()]
+    label_list = [label.strip() for label in (labels or "").split(",") if label.strip()]
     out_col = (output_column or "label").strip()
 
     # ------- LLM classify -------
@@ -593,7 +632,8 @@ def weak_label(
             raise ValueError("labels is required for llm_classify mode.")
 
         client = _openai_client(api_key, base_url, org)
-        label_enum = ", ".join(f'"{l}"' for l in label_list)
+        rows = _limit_llm_rows(rows, max_rows=0, label="weak_label")
+        label_enum = ", ".join(f'"{label}"' for label in label_list)
         instr = (label_instruction or "").strip() or (
             f"Classify the text into exactly one of these labels: [{label_enum}]. "
             "Choose the best label based on the content."
@@ -639,7 +679,8 @@ def weak_label(
 
         errors: list[str] = []
         labeled: dict[int, dict[str, Any]] = {}
-        with ThreadPoolExecutor(max_workers=max(1, int(concurrency or 5))) as pool:
+        worker_count = _bounded_concurrency(concurrency)
+        with ThreadPoolExecutor(max_workers=worker_count) as pool:
             futures = {pool.submit(_classify, row): i for i, row in enumerate(rows)}
             for fut in as_completed(futures):
                 idx = futures[fut]
@@ -755,7 +796,10 @@ def weak_label(
             "description": "Tiktoken encoding name (e.g. cl100k_base, o200k_base).",
         },
         "model": {
-            "description": "If set, auto-select encoding from model name (overrides encoding param).",
+            "description": (
+                "If set, auto-select encoding from model name "
+                "(overrides encoding param)."
+            ),
             "placeholder": "gpt-4o",
         },
         "add_token_column": {

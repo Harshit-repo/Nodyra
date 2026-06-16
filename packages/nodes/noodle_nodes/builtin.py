@@ -539,20 +539,35 @@ def loop_over_items(input: Any = None, max_items: int = 0) -> dict:
             "display_name": "Mode",
         },
         "concurrency": {
-            "description": "How many iterations to process at once (default 1). Forced to 1 for while/until.",
+            "description": (
+                "How many iterations to process at once (default 1). "
+                "Forced to 1 for while/until."
+            ),
         },
         "on_error": {
-            "description": "fail = stop the loop on the first failing iteration; continue = collect errors and keep going.",
+            "description": (
+                "fail = stop the loop on the first failing iteration; "
+                "continue = collect errors and keep going."
+            ),
             "choices": ["fail", "continue"],
         },
         "max_rows": {
-            "description": "Maximum input rows allowed before the loop fails (each/batch/group; default 10000).",
+            "description": (
+                "Maximum input rows allowed before the loop fails "
+                "(each/batch/group; default 10000)."
+            ),
         },
         "batch_size": {
-            "description": "Rows per iteration when mode=batch (last may be shorter) or window size when mode=window.",
+            "description": (
+                "Rows per iteration when mode=batch (last may be shorter) "
+                "or window size when mode=window."
+            ),
         },
         "group_key": {
-            "description": "Row field to group by when mode=group; each iteration gets {key, rows}.",
+            "description": (
+                "Row field to group by when mode=group; "
+                "each iteration gets {key, rows}."
+            ),
         },
         "count": {
             "description": "Number of iterations when mode=range.",
@@ -561,22 +576,35 @@ def loop_over_items(input: Any = None, max_items: int = 0) -> dict:
             "description": "First value when mode=range (default 0).",
         },
         "step": {
-            "description": "Step between values (mode=range) or window slide (mode=window); default 1.",
+            "description": (
+                "Step between values (mode=range) or window slide "
+                "(mode=window); default 1."
+            ),
         },
         "accumulate": {
-            "description": "Reduce: thread an accumulator (seeded by `initial`) across for-each iterations; Loop End returns the final accumulator.",
+            "description": (
+                "Reduce: thread an accumulator (seeded by `initial`) "
+                "across for-each iterations; Loop End returns the final "
+                "accumulator."
+            ),
         },
         "initial": {
             "description": "Seed state for mode=while/until (any value or expression).",
         },
         "condition": {
-            "description": "Expression checked each iteration for while/until, e.g. {{ state.count < 10 }}.",
+            "description": (
+                "Expression checked each iteration for while/until, "
+                "e.g. {{ state.count < 10 }}."
+            ),
         },
         "max_iterations": {
             "description": "Safety cap on while/until iterations (default 1000).",
         },
         "on_max_iterations": {
-            "description": "When the cap is hit: fail = raise; stop = emit the current state and warn.",
+            "description": (
+                "When the cap is hit: fail = raise; "
+                "stop = emit the current state and warn."
+            ),
             "choices": ["fail", "stop"],
         },
     },
@@ -618,12 +646,18 @@ def loop_start(
             "description": "Auto-managed id of the paired Loop Start.",
         },
         "output_mode": {
-            "description": "records = a list of each row's result; dataset = a DatasetRef (each result must be a dict / object). For-each modes only.",
+            "description": (
+                "records = a list of each row's result; dataset = a DatasetRef "
+                "(each result must be a dict / object). For-each modes only."
+            ),
             "choices": ["records", "dataset"],
             "display_name": "Output",
         },
         "conditional_output": {
-            "description": "while/until only: final_state = the last accumulator value; all_states = {final, states:[...]}.",
+            "description": (
+                "while/until only: final_state = the last accumulator value; "
+                "all_states = {final, states:[...]}."
+            ),
             "choices": ["final_state", "all_states"],
             "display_name": "Conditional output",
         },
@@ -1487,6 +1521,18 @@ def base64_decode(input: str = "") -> str:
 # Sub-workflows
 # ==========================================================================
 
+MAX_MAP_ITEMS = 10_000
+MAX_MAP_CONCURRENCY = 50
+
+
+def _bounded_map_concurrency(node_id: str, concurrency: int | None) -> int:
+    worker_count = max(1, int(concurrency or 5))
+    if worker_count > MAX_MAP_CONCURRENCY:
+        raise ValueError(
+            f"{node_id}: concurrency must be <= {MAX_MAP_CONCURRENCY}."
+        )
+    return worker_count
+
 
 @node(
     name="Execute Workflow",
@@ -1531,7 +1577,10 @@ async def execute_workflow_node(
             "description": "Maximum concurrent child workflow calls (default 5).",
         },
         "on_error": {
-            "description": "fail = stop on first item error; continue = collect errors on the errors output.",
+            "description": (
+                "fail = stop on first item error; "
+                "continue = collect errors on the errors output."
+            ),
             "choices": ["fail", "continue"],
         },
         "preserve_order": {
@@ -1559,6 +1608,11 @@ async def map_items(
         raise RuntimeError("map_items: no host caller is configured for this run")
 
     items: list = input if isinstance(input, list) else ([] if input is None else [input])
+    if len(items) > MAX_MAP_ITEMS:
+        raise ValueError(
+            f"map_items received {len(items)} items but the hard fan-out cap is "
+            f"{MAX_MAP_ITEMS}."
+        )
 
     # Multi-tenancy C5: every mapped item becomes a child workflow run.
     from noodle.context import org_run_limits
@@ -1569,7 +1623,7 @@ async def map_items(
             f"map_items received {len(items)} items but this organization's "
             f"map fan-out cap is {org_cap}."
         )
-    sem = asyncio.Semaphore(max(1, int(concurrency or 5)))
+    sem = asyncio.Semaphore(_bounded_map_concurrency("map_items", concurrency))
 
     tasks = [
         _map_call_child(
@@ -1619,7 +1673,10 @@ async def map_items(
             "description": "Maximum concurrent child workflow calls (default 5).",
         },
         "on_error": {
-            "description": "fail = stop on first item error; continue = collect errors on the errors output.",
+            "description": (
+                "fail = stop on first item error; "
+                "continue = collect errors on the errors output."
+            ),
             "choices": ["fail", "continue"],
         },
         "preserve_order": {
@@ -1653,13 +1710,17 @@ async def map_group_node(
 
     items: list = input if isinstance(input, list) else ([] if input is None else [input])
     cap = max(1, int(max_items or 10000))
+    if cap > MAX_MAP_ITEMS:
+        raise ValueError(
+            f"map_group: max_items must be <= {MAX_MAP_ITEMS}."
+        )
     if len(items) > cap:
         raise ValueError(
             f"Map Group received {len(items)} items but max_items is {cap}. "
             f"Increase max_items explicitly or reduce the list upstream."
         )
 
-    sem = asyncio.Semaphore(max(1, int(concurrency or 5)))
+    sem = asyncio.Semaphore(_bounded_map_concurrency("map_group", concurrency))
     tasks = [
         _map_call_child(
             caller=caller,

@@ -321,6 +321,36 @@ async def test_map_dataset_max_rows_raises_before_mapping(store_ctx) -> None:
     assert calls == []  # no child calls should have happened
 
 
+async def test_map_dataset_rejects_excessive_row_cap(store_ctx) -> None:
+    from noodle.context import workflow_caller
+
+    async def caller(wf_id: str, payload: dict) -> dict:
+        return {}
+
+    ref = csv_parse(text="x\n1\n", has_header=True)
+    token = workflow_caller.set(caller)
+    try:
+        with pytest.raises(ValueError, match="max_rows"):
+            await map_dataset(input=ref, workflow_id="wf-1", max_rows=10001)
+    finally:
+        workflow_caller.reset(token)
+
+
+async def test_map_dataset_rejects_excessive_concurrency(store_ctx) -> None:
+    from noodle.context import workflow_caller
+
+    async def caller(wf_id: str, payload: dict) -> dict:
+        return {}
+
+    ref = csv_parse(text="x\n1\n", has_header=True)
+    token = workflow_caller.set(caller)
+    try:
+        with pytest.raises(ValueError, match="concurrency"):
+            await map_dataset(input=ref, workflow_id="wf-1", concurrency=51)
+    finally:
+        workflow_caller.reset(token)
+
+
 async def test_map_dataset_continue_on_error(store_ctx) -> None:
     from noodle.context import workflow_caller
 

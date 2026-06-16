@@ -146,6 +146,54 @@ async def test_write_time_pool_validation(client: AsyncClient, mt_on):
             assert exc.value.status_code == 422
 
 
+async def test_environment_create_validates_dedicated_pool_assignment(
+    client: AsyncClient, mt_on
+):
+    """Creating an environment must enforce the same X4 assignment rule as PATCH."""
+    from fastapi import BackgroundTasks, HTTPException
+
+    from app.routers.environments import create_environment
+    from app.schemas import EnvironmentCreate
+
+    async with retention.SessionLocal() as session:
+        session.add_all(
+            [
+                models.Organization(id=DEFAULT_ORG_ID, name="D", slug="default"),
+                models.Organization(
+                    id="org-x",
+                    name="X",
+                    slug="x",
+                    execution_isolation="dedicated_pool",
+                ),
+            ]
+        )
+        own_agent = models.RunnerPool(name="vm", provider="agent", org_id="org-x")
+        own_docker = models.RunnerPool(name="ok", provider="docker", org_id="org-x")
+        session.add_all([own_agent, own_docker])
+        await session.commit()
+
+        token = current_org_id.set("org-x")
+        try:
+            with pytest.raises(HTTPException) as exc:
+                await create_environment(
+                    EnvironmentCreate(name="bad", runner_pool_id=own_agent.id),
+                    BackgroundTasks(),
+                    session,
+                    actor=None,
+                )
+            assert exc.value.status_code == 422
+
+            created = await create_environment(
+                EnvironmentCreate(name="ok", runner_pool_id=own_docker.id),
+                BackgroundTasks(),
+                session,
+                actor=None,
+            )
+            assert created.runner_pool_id == own_docker.id
+        finally:
+            current_org_id.reset(token)
+
+
 async def test_shared_org_unaffected(client: AsyncClient, mt_on):
     async with retention.SessionLocal() as session:
         workflow_id = await _seed(session, isolation="shared", pool_org=None, provider="docker")

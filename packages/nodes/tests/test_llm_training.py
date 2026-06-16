@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import io
 import json
 import sys
-from types import ModuleType
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -20,8 +18,6 @@ from noodle_nodes.llm_training import (
     _FT_DATASET_MARKER,
     _FT_JOB_MARKER,
     _MODEL_REGISTRY_MARKER,
-    _is_ft_dataset,
-    _is_ft_job,
     llm_fine_tune_dataset,
     openai_cancel_fine_tune_job,
     openai_create_fine_tune_job,
@@ -30,7 +26,6 @@ from noodle_nodes.llm_training import (
     openai_upload_fine_tune_file,
     register_fine_tuned_model,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -231,6 +226,32 @@ def test_fine_tune_dataset_too_few_examples(store_ctx) -> None:
         )
 
 
+def test_fine_tune_dataset_rejects_inline_rows_above_max_examples(store_ctx) -> None:
+    rows = _chat_records(6)
+    with pytest.raises(ValueError, match="max_examples"):
+        llm_fine_tune_dataset(
+            input=rows,
+            format="openai_chat_jsonl",
+            user_column="user",
+            assistant_column="assistant",
+            min_examples=1,
+            max_examples=5,
+        )
+
+
+def test_fine_tune_dataset_rejects_dataset_ref_above_max_examples(store_ctx) -> None:
+    ds = records_to_dataset(_chat_records(6))
+    with pytest.raises(ValueError, match="only 5 can be expanded"):
+        llm_fine_tune_dataset(
+            input=ds,
+            format="openai_chat_jsonl",
+            user_column="user",
+            assistant_column="assistant",
+            min_examples=1,
+            max_examples=5,
+        )
+
+
 def test_fine_tune_dataset_prompt_completion_format(store_ctx) -> None:
     rows = [
         {"prompt": f"What is {i}?", "completion": f"It is {i}."}
@@ -281,7 +302,7 @@ def test_fine_tune_dataset_artifact_contains_valid_jsonl(store_ctx) -> None:
     )
     from noodle.artifacts import read_bytes
     data = read_bytes(result["artifact"])
-    lines = [l for l in data.decode().strip().split("\n") if l]
+    lines = [line for line in data.decode().strip().split("\n") if line]
     assert len(lines) == 15
     first = json.loads(lines[0])
     assert "messages" in first

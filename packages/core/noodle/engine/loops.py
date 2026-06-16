@@ -22,6 +22,10 @@ from noodle.engine.types import EventCallback, GraphError
 if TYPE_CHECKING:
     from noodle.process_isolation import ProcessIsolator
 
+MAX_LOOP_ROWS = 10_000
+MAX_LOOP_CONCURRENCY = 50
+MAX_CONDITIONAL_LOOP_ITERATIONS = 10_000
+
 
 @dataclass(frozen=True)
 class LoopRegion:
@@ -117,15 +121,45 @@ class _LoopRowError(Exception):
         self.index = index
 
 
+def _bounded_loop_rows(max_rows: int | None) -> int:
+    cap = max(1, int(max_rows or MAX_LOOP_ROWS))
+    if cap > MAX_LOOP_ROWS:
+        raise ValueError(f"loop_start: max_rows must be <= {MAX_LOOP_ROWS}")
+    return cap
+
+
+def _bounded_loop_concurrency(concurrency: int | None) -> int:
+    cap = max(1, int(concurrency or 1))
+    if cap > MAX_LOOP_CONCURRENCY:
+        raise ValueError(
+            f"loop_start: concurrency must be <= {MAX_LOOP_CONCURRENCY}"
+        )
+    return cap
+
+
+def _bounded_conditional_iterations(max_iterations: int | None) -> int:
+    cap = max(0, int(max_iterations or 1000))
+    if cap > MAX_CONDITIONAL_LOOP_ITERATIONS:
+        raise ValueError(
+            "loop_start: max_iterations must be <= "
+            f"{MAX_CONDITIONAL_LOOP_ITERATIONS}"
+        )
+    return cap
+
+
 def _as_loop_rows(value: Any, *, max_rows: int) -> list[Any]:
     """Resolve a loop_start input into an ordered list of rows (one per item)."""
     from noodle.datasets import is_dataset_ref, materialize_dataset_rows
+    total_cap = _bounded_loop_rows(max_rows)
     if is_dataset_ref(value):
-        total_cap = max(1, int(max_rows or 10000))
         return materialize_dataset_rows(value, cap=total_cap, allow_truncate=False)
     if value is None:
         return []
     if isinstance(value, list):
+        if len(value) > total_cap:
+            raise ValueError(
+                f"loop received {len(value)} rows but max_rows is {total_cap}"
+            )
         return value
     return [value]
 
@@ -151,12 +185,15 @@ def _loop_items(
       * window -> overlapping sliding windows of ``batch_size`` rows, sliding
                   by ``step``; only full windows are produced
     """
+    row_cap = _bounded_loop_rows(max_rows)
     if mode == "range":
         n = max(0, int(count or 0))
+        if n > row_cap:
+            raise ValueError(f"loop range count is {n} but max_rows is {row_cap}")
         st = int(step or 1) or 1
         return [int(start) + k * st for k in range(n)]
 
-    rows = _as_loop_rows(value, max_rows=max_rows)
+    rows = _as_loop_rows(value, max_rows=row_cap)
 
     if mode == "batch":
         size = max(1, int(batch_size or 1))
@@ -207,14 +244,21 @@ async def _run_loop(
     Loop End in item order."""
     start = nodes_by_id[region.start_id]
     mode = str(start.params.get("mode", "each") or "each")
-    concurrency = max(1, int(start.params.get("concurrency", 1) or 1))
-    on_error = str(start.params.get("on_error", "fail") or "fail")
-    max_rows = int(start.params.get("max_rows", 10000) or 10000)
-    batch_size = int(start.params.get("batch_size", 1) or 1)
-    group_key = str(start.params.get("group_key", "") or "")
-    count = int(start.params.get("count", 0) or 0)
-    range_start = int(start.params.get("start", 0) or 0)
-    step = int(start.params.get("step", 1) or 1)
+    try:
+        concurrency = _bounded_loop_concurrency(start.params.get("concurrency", 1))
+        on_error = str(start.params.get("on_error", "fail") or "fail")
+        max_rows = _bounded_loop_rows(start.params.get("max_rows", 10000))
+        batch_size = int(start.params.get("batch_size", 1) or 1)
+        group_key = str(start.params.get("group_key", "") or "")
+        count = int(start.params.get("count", 0) or 0)
+        range_start = int(start.params.get("start", 0) or 0)
+        step = int(start.params.get("step", 1) or 1)
+    except (TypeError, ValueError) as exc:
+        node_outputs[region.end_id] = {"results": [], "errors": []}
+        await finish(NodeRunResult(
+            node_id=region.end_id, status=NodeStatus.error, error=str(exc),
+        ))
+        return RunStatus.error
 
     # The loop_start input is the value on its 'input' port (from the graph).
     # range mode ignores the input.
@@ -223,10 +267,17 @@ async def _run_loop(
     if "input" in start_in:
         src, out = start_in["input"]
         raw_input = (node_outputs.get(src) or {}).get(out)
-    items = _loop_items(
-        raw_input, mode=mode, batch_size=batch_size, group_key=group_key,
-        count=count, start=range_start, step=step, max_rows=max_rows,
-    )
+    try:
+        items = _loop_items(
+            raw_input, mode=mode, batch_size=batch_size, group_key=group_key,
+            count=count, start=range_start, step=step, max_rows=max_rows,
+        )
+    except ValueError as exc:
+        node_outputs[region.end_id] = {"results": [], "errors": []}
+        await finish(NodeRunResult(
+            node_id=region.end_id, status=NodeStatus.error, error=str(exc),
+        ))
+        return RunStatus.error
 
     if len(items) > max_rows:
         node_outputs[region.end_id] = {"results": [], "errors": []}
@@ -446,7 +497,16 @@ async def _run_conditional_loop(
     start = nodes_by_id[region.start_id]
     end = nodes_by_id[region.end_id]
     mode = str(start.params.get("mode", "while") or "while")
-    max_iterations = max(0, int(start.params.get("max_iterations", 1000) or 1000))
+    try:
+        max_iterations = _bounded_conditional_iterations(
+            start.params.get("max_iterations", 1000)
+        )
+    except (TypeError, ValueError) as exc:
+        node_outputs[region.end_id] = {"results": None, "errors": []}
+        await finish(NodeRunResult(
+            node_id=region.end_id, status=NodeStatus.error, error=str(exc),
+        ))
+        return RunStatus.error
     # Multi-tenancy C5: the org's iteration ceiling clamps the node's own cap
     # (while/until loops have no row count to reject up front).
     org_loop_cap = int((org_run_limits.get() or {}).get("max_loop_iterations") or 0)

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import io
+import sys
+from types import SimpleNamespace
+
 import pytest
 
 import noodle_nodes  # noqa: F401 - registers nodes
@@ -38,9 +41,9 @@ def test_pdf_extract_text_raises_missing_package(store_ctx, monkeypatch) -> None
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", mock_import)
-    from noodle_nodes.document_intelligence import pdf_extract_text
     # Write a fake artifact so we pass the None check
     from noodle.artifacts import write_bytes
+    from noodle_nodes.document_intelligence import pdf_extract_text
     fake_ref = write_bytes(b"fake", name="test.pdf", content_type="application/pdf")
     with pytest.raises(RuntimeError, match="pdfplumber"):
         pdf_extract_text(input=fake_ref)
@@ -50,6 +53,7 @@ def test_pdf_extract_text_raises_for_scanned_pdf(store_ctx) -> None:
     """PDF with no text layer raises ValueError with helpful message."""
     pytest.importorskip("pdfplumber")
     from unittest.mock import MagicMock, patch
+
     from noodle.artifacts import write_bytes
     from noodle_nodes.document_intelligence import pdf_extract_text
 
@@ -72,6 +76,7 @@ def test_pdf_extract_text_raises_for_scanned_pdf(store_ctx) -> None:
 def test_pdf_extract_text_returns_text_and_artifact(store_ctx) -> None:
     pytest.importorskip("pdfplumber")
     from unittest.mock import MagicMock, patch
+
     from noodle.artifacts import write_bytes
     from noodle_nodes.document_intelligence import pdf_extract_text
 
@@ -105,6 +110,7 @@ def test_pdf_extract_tables_no_tables_returns_zero(store_ctx) -> None:
     pytest.importorskip("pdfplumber")
     pytest.importorskip("pandas")
     from unittest.mock import MagicMock, patch
+
     from noodle.artifacts import write_bytes
     from noodle_nodes.document_intelligence import pdf_extract_tables
 
@@ -130,6 +136,7 @@ def test_pdf_extract_tables_returns_dataset_ref(store_ctx) -> None:
     pytest.importorskip("pdfplumber")
     pytest.importorskip("pandas")
     from unittest.mock import MagicMock, patch
+
     from noodle.artifacts import write_bytes
     from noodle_nodes.document_intelligence import pdf_extract_tables
 
@@ -222,6 +229,26 @@ def test_pdf_generate_renders_template_variables(store_ctx) -> None:
     assert raw[:4] == b"%PDF"
 
 
+def test_pdf_generate_blocks_external_resource_fetches(store_ctx, monkeypatch) -> None:
+    from noodle_nodes.document_intelligence import pdf_generate
+
+    class FakeHTML:
+        def __init__(self, *, string: str, url_fetcher) -> None:
+            self.string = string
+            self.url_fetcher = url_fetcher
+
+        def write_pdf(self) -> bytes:
+            return self.url_fetcher("file:///etc/passwd")  # type: ignore[return-value]
+
+    monkeypatch.setitem(sys.modules, "weasyprint", SimpleNamespace(HTML=FakeHTML))
+
+    with pytest.raises(ValueError, match="external resource fetch blocked"):
+        pdf_generate(
+            input={},
+            template='<html><body><img src="file:///etc/passwd"></body></html>',
+        )
+
+
 def test_docx_generate_raises_missing_package(store_ctx, monkeypatch) -> None:
     import builtins
     real_import = builtins.__import__
@@ -249,7 +276,8 @@ def test_docx_generate_returns_artifact(store_ctx) -> None:
 def test_docx_generate_fills_template_placeholders(store_ctx) -> None:
     pytest.importorskip("docx")
     from docx import Document
-    from noodle.artifacts import write_bytes, read_bytes
+
+    from noodle.artifacts import read_bytes, write_bytes
     from noodle_nodes.document_intelligence import docx_generate
 
     # Build a real .docx template with {{name}} placeholder
@@ -284,6 +312,7 @@ def test_docx_generate_fills_template_placeholders(store_ctx) -> None:
 def test_docx_generate_raises_for_unfilled_placeholders(store_ctx) -> None:
     pytest.importorskip("docx")
     from docx import Document
+
     from noodle.artifacts import write_bytes
     from noodle_nodes.document_intelligence import docx_generate
 
@@ -291,7 +320,13 @@ def test_docx_generate_raises_for_unfilled_placeholders(store_ctx) -> None:
     doc.add_paragraph("Hello {{name}}, your code is {{code}}.")
     buf = io.BytesIO()
     doc.save(buf)
-    template_ref = write_bytes(buf.getvalue(), name="tpl.docx", content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    template_ref = write_bytes(
+        buf.getvalue(),
+        name="tpl.docx",
+        content_type=(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ),
+    )
 
     with pytest.raises(ValueError, match="name"):
         docx_generate(input={}, template_artifact=template_ref)
@@ -300,6 +335,7 @@ def test_docx_generate_raises_for_unfilled_placeholders(store_ctx) -> None:
 def test_docx_extract_returns_paragraphs(store_ctx) -> None:
     pytest.importorskip("docx")
     from docx import Document
+
     from noodle.artifacts import write_bytes
     from noodle_nodes.document_intelligence import docx_extract
 
@@ -309,7 +345,13 @@ def test_docx_extract_returns_paragraphs(store_ctx) -> None:
     doc.add_paragraph("Second paragraph.")
     buf = io.BytesIO()
     doc.save(buf)
-    artifact_ref = write_bytes(buf.getvalue(), name="test.docx", content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    artifact_ref = write_bytes(
+        buf.getvalue(),
+        name="test.docx",
+        content_type=(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ),
+    )
 
     result = docx_extract(input=artifact_ref)
     assert result["paragraph_count"] >= 3
@@ -320,6 +362,7 @@ def test_docx_extract_returns_paragraphs(store_ctx) -> None:
 def test_docx_extract_returns_tables(store_ctx) -> None:
     pytest.importorskip("docx")
     from docx import Document
+
     from noodle.artifacts import write_bytes
     from noodle_nodes.document_intelligence import docx_extract
 
@@ -333,7 +376,13 @@ def test_docx_extract_returns_tables(store_ctx) -> None:
     tbl.cell(2, 1).text = "87"
     buf = io.BytesIO()
     doc.save(buf)
-    artifact_ref = write_bytes(buf.getvalue(), name="test.docx", content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    artifact_ref = write_bytes(
+        buf.getvalue(),
+        name="test.docx",
+        content_type=(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ),
+    )
 
     result = docx_extract(input=artifact_ref, include_tables=True)
     assert result["table_count"] == 1
@@ -446,7 +495,7 @@ def test_barcode_qr_roundtrip(store_ctx) -> None:
         pytest.importorskip("zxing_cpp")
     else:
         pytest.importorskip("pyzbar")
-    from noodle_nodes.document_intelligence import barcode_qr_generate, barcode_qr_decode
+    from noodle_nodes.document_intelligence import barcode_qr_decode, barcode_qr_generate
 
     gen_result = barcode_qr_generate(input="HELLO-NOODLE-123", format="qr")
     decode_result = barcode_qr_decode(input=gen_result["artifact"])
@@ -463,6 +512,7 @@ def test_barcode_qr_decode_raises_on_blank_image(store_ctx) -> None:
         pytest.importorskip("pyzbar")
     pytest.importorskip("PIL")
     from PIL import Image
+
     from noodle.artifacts import write_bytes
     from noodle_nodes.document_intelligence import barcode_qr_decode
 

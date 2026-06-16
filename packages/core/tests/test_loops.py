@@ -9,6 +9,11 @@ import noodle_nodes  # noqa: F401 - registers loop_start/loop_end/code
 from noodle.artifacts import LocalArtifactStore
 from noodle.context import artifact_store, current_node_id
 from noodle.engine import _loop_items, _loop_regions, _validate_loop_regions, execute
+from noodle.engine.loops import (
+    MAX_CONDITIONAL_LOOP_ITERATIONS,
+    MAX_LOOP_CONCURRENCY,
+    MAX_LOOP_ROWS,
+)
 from noodle.models import WorkflowGraph
 from noodle.sdk import registry
 
@@ -65,6 +70,16 @@ def test_loop_items_group_by_key_stable_order():
 def test_loop_items_range_counts_from_zero():
     assert _loop_items(None, mode="range", count=3, max_rows=100) == [0, 1, 2]
     assert _loop_items(None, mode="range", count=0, max_rows=100) == []
+
+
+def test_loop_items_rejects_range_above_max_rows():
+    with pytest.raises(ValueError, match="max_rows"):
+        _loop_items(None, mode="range", count=MAX_LOOP_ROWS + 1, max_rows=MAX_LOOP_ROWS)
+
+
+def test_loop_items_rejects_inline_rows_above_max_rows():
+    with pytest.raises(ValueError, match="max_rows"):
+        _loop_items(list(range(MAX_LOOP_ROWS + 1)), mode="each", max_rows=MAX_LOOP_ROWS)
 
 
 def test_loop_items_range_start_step():
@@ -600,6 +615,46 @@ async def test_loop_events_are_iteration_tagged():
         if ev.get("type") == "node_finished" and ev.get("node_id") == "e"
     ]
     assert e_paths == [None]  # loop_end runs at parent scope
+
+
+async def test_loop_rejects_excessive_concurrency():
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": [1]}),
+            _n("s", "loop_start", {"concurrency": MAX_LOOP_CONCURRENCY + 1}),
+            _n("b", "code", {"code": "output = input"}),
+            _n("e", "loop_end", {"loop_start_id": "s"}),
+        ],
+        [_e("trig", "s"), _e("s", "b", src_out="item"), _e("b", "e")],
+    )
+    result = await execute(g, registry)
+    end = result.nodes["e"]
+    assert str(end.status) == "error"
+    assert "concurrency" in (end.error or "")
+
+
+async def test_conditional_loop_rejects_excessive_max_iterations():
+    g = _g(
+        [
+            _n(
+                "s",
+                "loop_start",
+                {
+                    "mode": "while",
+                    "initial": {"count": 0},
+                    "condition": "{{ false }}",
+                    "max_iterations": MAX_CONDITIONAL_LOOP_ITERATIONS + 1,
+                },
+            ),
+            _n("b", "code", {"code": "output = input"}),
+            _n("e", "loop_end", {"loop_start_id": "s"}),
+        ],
+        [_e("s", "b", src_out="state"), _e("b", "e")],
+    )
+    result = await execute(g, registry)
+    end = result.nodes["e"]
+    assert str(end.status) == "error"
+    assert "max_iterations" in (end.error or "")
 
 
 async def test_nested_loop_events_carry_full_path():

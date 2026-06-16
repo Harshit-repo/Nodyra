@@ -37,6 +37,12 @@ def _parse_page_selection(pages_str: str, total: int, max_pages: int) -> list[in
 _PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
 
 
+def _block_external_pdf_resource(url: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Reject external resources during HTML-to-PDF rendering."""
+    _ = args, kwargs
+    raise ValueError(f"pdf_generate: external resource fetch blocked: {url}")
+
+
 def _replace_in_doc(doc: Any, data: dict[str, Any], unfilled: list[str]) -> None:
     """Replace {{key}} placeholders in all paragraphs and table cells."""
     def _replace_para(para: Any) -> None:
@@ -129,8 +135,8 @@ def pdf_extract_tables(input=None, pages: str = "", max_pages: int = 0) -> dict:
         raise ValueError("input is required — wire a PDF artifact to this node.")
 
     try:
-        import pdfplumber  # type: ignore[import-not-found]
         import pandas as pd  # type: ignore[import-not-found]
+        import pdfplumber  # type: ignore[import-not-found]
     except ImportError as exc:
         raise RuntimeError(
             "pdfplumber and pandas are required. Add them to the workflow "
@@ -228,8 +234,8 @@ def pdf_generate(
         )
 
     try:
-        import weasyprint  # type: ignore[import-not-found]
         import jinja2  # type: ignore[import-not-found]
+        import weasyprint  # type: ignore[import-not-found]
     except ImportError as exc:
         raise RuntimeError(
             "weasyprint and jinja2 are required. Add them to the workflow "
@@ -251,7 +257,10 @@ def pdf_generate(
     if css:
         rendered_html = f"<style>{css}</style>{rendered_html}"
 
-    pdf_bytes = weasyprint.HTML(string=rendered_html).write_pdf()
+    pdf_bytes = weasyprint.HTML(
+        string=rendered_html,
+        url_fetcher=_block_external_pdf_resource,
+    ).write_pdf()
     artifact = _write_bytes(
         pdf_bytes,
         name=filename or "output.pdf",
@@ -398,7 +407,10 @@ def docx_extract(input=None, include_tables: bool = True) -> dict:
     requirements=["openpyxl>=3.1", "pandas>=2.0"],
     params={
         "sheet_name": {"placeholder": "Report"},
-        "title": {"placeholder": "My Report", "description": "Bold title row inserted above headers"},
+        "title": {
+            "placeholder": "My Report",
+            "description": "Bold title row inserted above headers",
+        },
         "include_chart": {"description": "Add a bar chart of the first numeric column"},
         "filename": {"placeholder": "report.xlsx"},
     },
@@ -416,8 +428,8 @@ def excel_report_generate(
 
     try:
         import openpyxl  # type: ignore[import-not-found]
-        from openpyxl.styles import Font, PatternFill  # type: ignore[import-not-found]
         import pandas as pd  # type: ignore[import-not-found]
+        from openpyxl.styles import Font, PatternFill  # type: ignore[import-not-found]
     except ImportError as exc:
         raise RuntimeError(
             "openpyxl and pandas are required. Add them to the workflow "
@@ -597,7 +609,12 @@ def barcode_qr_generate(
         bc.write(buf)
         img_bytes = buf.getvalue()
 
-    artifact = _write_bytes(img_bytes, name=filename or "barcode.png", content_type="image/png", kind="image")
+    artifact = _write_bytes(
+        img_bytes,
+        name=filename or "barcode.png",
+        content_type="image/png",
+        kind="image",
+    )
     return {"artifact": artifact, "format": format, "value": value, "size_bytes": len(img_bytes)}
 
 

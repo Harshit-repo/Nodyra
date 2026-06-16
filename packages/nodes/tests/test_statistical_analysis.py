@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -272,8 +272,8 @@ def test_distribution_fit_skips_bad_distribution_name(store_ctx) -> None:
 
 def test_distribution_fit_sorted_by_ks_statistic(store_ctx) -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.statistical_analysis import distribution_fit
     from noodle_nodes.datasets import materialize_dataset
+    from noodle_nodes.statistical_analysis import distribution_fit
 
     result = distribution_fit(
         input=ROWS_NUMERIC, column="value", distributions="norm,expon,lognorm"
@@ -326,8 +326,8 @@ def test_correlation_analysis_spearman(store_ctx) -> None:
 
 def test_correlation_analysis_long_format_structure(store_ctx) -> None:
     pytest.importorskip("scipy")
-    from noodle_nodes.statistical_analysis import correlation_analysis
     from noodle_nodes.datasets import materialize_dataset
+    from noodle_nodes.statistical_analysis import correlation_analysis
 
     result = correlation_analysis(
         input=ROWS_NUMERIC, columns="value,value2", method="pearson"
@@ -418,6 +418,23 @@ def test_monte_carlo_simulate_invalid_json_raises() -> None:
         monte_carlo_simulate(variables_json="not json", expression="x", n_iterations=10)
 
 
+def test_monte_carlo_simulate_rejects_unbounded_iterations() -> None:
+    from noodle_nodes.statistical_analysis import (
+        MAX_MONTE_CARLO_ITERATIONS,
+        monte_carlo_simulate,
+    )
+
+    variables = json.dumps([
+        {"name": "x", "distribution": "normal", "loc": 0.0, "scale": 1.0}
+    ])
+    with pytest.raises(ValueError, match="n_iterations"):
+        monte_carlo_simulate(
+            variables_json=variables,
+            expression="x",
+            n_iterations=MAX_MONTE_CARLO_ITERATIONS + 1,
+        )
+
+
 # ---------------------------------------------------------------------------
 # bootstrap_ci
 # ---------------------------------------------------------------------------
@@ -468,6 +485,24 @@ def test_bootstrap_ci_invalid_statistic_raises() -> None:
 
     with pytest.raises(ValueError, match="statistic"):
         bootstrap_ci(input=ROWS_NUMERIC, column="value", statistic="bogus_stat")
+
+
+def test_bootstrap_ci_rejects_unbounded_resamples() -> None:
+    from noodle_nodes.statistical_analysis import MAX_BOOTSTRAP_RESAMPLES, bootstrap_ci
+
+    with pytest.raises(ValueError, match="n_resamples"):
+        bootstrap_ci(
+            input=ROWS_NUMERIC,
+            column="value",
+            n_resamples=MAX_BOOTSTRAP_RESAMPLES + 1,
+        )
+
+
+def test_bootstrap_ci_rejects_invalid_confidence_level() -> None:
+    from noodle_nodes.statistical_analysis import bootstrap_ci
+
+    with pytest.raises(ValueError, match="confidence_level"):
+        bootstrap_ci(input=ROWS_NUMERIC, column="value", confidence_level=1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -539,8 +574,8 @@ def test_regression_analysis_ols_returns_dataset(store_ctx) -> None:
 
 def test_regression_analysis_coefficient_structure(store_ctx) -> None:
     pytest.importorskip("statsmodels")
-    from noodle_nodes.statistical_analysis import regression_analysis
     from noodle_nodes.datasets import materialize_dataset
+    from noodle_nodes.statistical_analysis import regression_analysis
 
     result = regression_analysis(
         input=ROWS_NUMERIC,
@@ -680,8 +715,8 @@ def test_time_series_decompose_returns_dataset(store_ctx) -> None:
 
 def test_time_series_decompose_components_in_output(store_ctx) -> None:
     pytest.importorskip("statsmodels")
-    from noodle_nodes.statistical_analysis import time_series_decompose
     from noodle_nodes.datasets import materialize_dataset
+    from noodle_nodes.statistical_analysis import time_series_decompose
 
     result = time_series_decompose(input=ROWS_TS, value_column="value", period=4)
     rows = materialize_dataset(result["dataset"])
@@ -736,8 +771,8 @@ def test_dimensionality_reduce_pca_returns_dataset(store_ctx) -> None:
 
 def test_dimensionality_reduce_pca_output_columns(store_ctx) -> None:
     pytest.importorskip("sklearn")
-    from noodle_nodes.statistical_analysis import dimensionality_reduce
     from noodle_nodes.datasets import materialize_dataset
+    from noodle_nodes.statistical_analysis import dimensionality_reduce
 
     result = dimensionality_reduce(
         input=ROWS_FEATURES,

@@ -235,6 +235,22 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   }, [id, handleSignature, updateNodeInternals]);
   const runStatus = useEditor((s) => s.runStatus[id]);
   const runMeta = useEditor((s) => s.runMeta[id]);
+  const runIteration = useEditor((s) => s.runIterations[id]);
+  // A "×N" badge on loop-body tiles: live iteration count while the loop runs,
+  // final total once it finishes. Only shown for genuine loops (count > 1).
+  const iterationBadge =
+    runIteration && runIteration.count > 1 ? (
+      <span
+        className="node-iteration-badge nodrag nopan"
+        title={
+          runStatus === "running"
+            ? `Loop iteration ${runIteration.index + 1}`
+            : `Ran ${runIteration.count} loop iterations`
+        }
+      >
+        ×{runIteration.count}
+      </span>
+    ) : null;
   const running = useEditor((s) => s.running);
   const agentActive = useEditor((s) => s.agentActive[id]);
   const isPinned = useEditor((s) => Boolean(s.pinned[id]));
@@ -590,6 +606,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
               )}
             </span>
           )}
+          {iterationBadge}
           {disabled && <span className="node-disabled-pip">○</span>}
           {credentialBadges}
 
@@ -756,6 +773,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
             )}
           </span>
         ) : null}
+        {iterationBadge}
 
         {!runStatus && agentActive && agentActive !== "running" && (
           <span

@@ -23,6 +23,7 @@ from noodle.datasets import is_dataset_ref
 from noodle.sdk import node
 from noodle_nodes._creds import cred_multi, cred_single
 from noodle_nodes.datasets import materialize_dataset, records_to_dataset
+from noodle_nodes.http_security import assert_public_http_url
 
 AI_CATEGORY = "AI"
 DEFAULT_TIMEOUT = 75
@@ -144,6 +145,17 @@ def _with_chat_completions(base_url: str) -> str:
     if base.endswith("/chat/completions"):
         return base
     return f"{base}/chat/completions"
+
+
+def _hosted_https_url(host: str, path: str, *, context: str) -> str:
+    host = str(host or "").strip()
+    if not host:
+        raise ValueError(f"{context}: host is required")
+    if "://" in host or any(ch in host for ch in "/?#@"):
+        raise ValueError(f"{context}: host must be a hostname, not a URL")
+    url = f"https://{host}{path}"
+    assert_public_http_url(url, context=context)
+    return url
 
 
 def _provider_creds(credentials: dict | None) -> dict[str, str]:
@@ -683,6 +695,7 @@ async def _execute_tool(tool: dict[str, Any], arguments: dict[str, Any]) -> Any:
         url = str(tool.get("url") or "")
         if not url:
             raise ValueError(f"tool {tool.get('name')}: url is required")
+        assert_public_http_url(url, context=f"tool:{tool.get('name')}")
         kwargs: dict[str, Any] = {"timeout": 45}
         if method in {"POST", "PUT", "PATCH", "DELETE"}:
             kwargs["json"] = arguments
@@ -1278,7 +1291,7 @@ def ai_vector_retriever(
         raise ValueError("ai_vector_retriever: Pinecone api_key and index_host are required")
     body = _expect_json(
         requests.post(
-            f"https://{index_host}/query",
+            _hosted_https_url(index_host, "/query", context="pinecone"),
             headers={"Api-Key": api_key, "Content-Type": "application/json"},
             json={
                 "vector": embeddings[0],
