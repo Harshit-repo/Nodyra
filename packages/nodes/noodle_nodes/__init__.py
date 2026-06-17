@@ -42,6 +42,9 @@ from noodle_nodes.integrations_v2.providers import google_calendar as google_cal
 from noodle_nodes.integrations_v2.providers import gmail as gmail_v2
 from noodle_nodes.integrations_v2.providers import google_drive as google_drive_v2
 from noodle_nodes.integrations_v2.providers import salesforce as salesforce_v2
+from noodle_nodes.integrations_v2.providers import discord as discord_v2
+from noodle_nodes.integrations_v2.providers import jira as jira_v2
+from noodle_nodes.integrations_v2.providers import linear as linear_v2
 from noodle_nodes import file_nodes as file_nodes
 from noodle_nodes import docker_nodes as docker_nodes
 from noodle_nodes import translation_nodes as translation_nodes
@@ -74,6 +77,9 @@ __all__ = [
     "gmail_v2",
     "google_drive_v2",
     "salesforce_v2",
+    "discord_v2",
+    "jira_v2",
+    "linear_v2",
     "file_nodes",
     "docker_nodes",
     "translation_nodes",
