@@ -674,6 +674,10 @@ export interface EditorStore {
   // the canvas can show a "×N" progress badge instead of the tile blinking once
   // per loop iteration.
   runIterations: Record<string, { index: number; count: number }>;
+  // Per node: text streamed live via node_chunk events while it runs (e.g. LLM
+  // tokens). Cleared when the node restarts or finishes (its final output then
+  // supersedes the preview).
+  runChunks: Record<string, string>;
   runError: string | null;
 
   // Live agent sub-node activity: nodeId -> status. Driven by agent_tool_*
@@ -840,6 +844,22 @@ function shouldCommitChanges(changes: Array<{ type: string; dragging?: boolean }
     if (c.type === "position") return c.dragging === false;
     return c.type === "remove" || c.type === "add" || c.type === "replace";
   });
+}
+
+// Coalesce the history commit when one user gesture is split across separate
+// change handlers in the same tick (React Flow deletes a node by emitting the
+// node-removal and its connected-edge-removals as two calls). The first commit
+// in a tick captures the pristine pre-change state; later commits in the same
+// tick reuse it instead of pushing a second, half-mutated snapshot. Reset on the
+// next microtask so distinct user gestures each get their own history entry.
+let _historyTickOpen = false;
+function openHistoryTick(): boolean {
+  if (_historyTickOpen) return false;
+  _historyTickOpen = true;
+  queueMicrotask(() => {
+    _historyTickOpen = false;
+  });
+  return true;
 }
 
 function cloneParams(params: Record<string, unknown>): Record<string, unknown> {
@@ -1105,6 +1125,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
     const structural = parentChanges.some((c) => STRUCTURAL.has(c.type));
     const commit = shouldCommitChanges(parentChanges as Array<{ type: string; dragging?: boolean }>);
+    const pushHistory = commit && openHistoryTick();
 
     const nextCw = { ...state.childWorkflows };
     for (const [mgId, grpChanges] of Object.entries(byGroup)) {
@@ -1121,7 +1142,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
       nodes: applyNodeChanges(parentChanges, state.nodes),
       childWorkflows: nextCw,
       dirty: state.dirty || structural,
-      ...(commit
+      ...(pushHistory
         ? {
             _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
             _future: [],
@@ -1144,6 +1165,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
     const structural = parentChanges.some((c) => STRUCTURAL.has(c.type));
     const commit = shouldCommitChanges(parentChanges as Array<{ type: string; dragging?: boolean }>);
+    const pushHistory = commit && openHistoryTick();
 
     const nextCw = { ...state.childWorkflows };
     for (const [mgId, grpChanges] of Object.entries(byGroup)) {
@@ -1160,7 +1182,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
       edges: applyEdgeChanges(parentChanges, state.edges),
       childWorkflows: nextCw,
       dirty: state.dirty || structural,
-      ...(commit
+      ...(pushHistory
         ? {
             _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
             _future: [],
@@ -2031,6 +2053,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
       running: true,
       runStatus: nextStatus,
       runIterations: {},
+      runChunks: {},
       runError: null,
       agentActive: {},
       agentToolCalls: {},
@@ -2052,6 +2075,12 @@ export const useEditor = create<EditorStore>((set, get) => ({
         if (!isLoopReiteration) {
           delete nextOutputs[nid];
           delete nextMeta[nid];
+        }
+        // Each (re)start streams fresh — drop any prior preview text.
+        let nextChunks = state.runChunks;
+        if (nid in nextChunks) {
+          nextChunks = { ...nextChunks };
+          delete nextChunks[nid];
         }
         const runIterations =
           iterIndex === null
@@ -2085,9 +2114,20 @@ export const useEditor = create<EditorStore>((set, get) => ({
           runOutputs: nextOutputs,
           runMeta: nextMeta,
           runIterations,
+          runChunks: nextChunks,
           agentActive,
         };
       });
+    } else if (event.type === "node_chunk" && event.node_id) {
+      const nid = event.node_id;
+      const delta = event.delta;
+      if (typeof delta !== "string" || delta.length === 0) return;
+      set((state) => ({
+        runChunks: {
+          ...state.runChunks,
+          [nid]: (state.runChunks[nid] ?? "") + delta,
+        },
+      }));
     } else if (event.type === "agent_action_requested") {
       const agentId = event.agent_node_id;
       const calls = runEventToolCalls(event);
@@ -2176,6 +2216,11 @@ export const useEditor = create<EditorStore>((set, get) => ({
             ),
           );
         }
+        let nextChunks = state.runChunks;
+        if (nid in nextChunks) {
+          nextChunks = { ...nextChunks };
+          delete nextChunks[nid];
+        }
         return {
           runStatus: { ...state.runStatus, [nid]: event.status ?? "success" },
           runOutputs: { ...state.runOutputs, [nid]: event.outputs },
@@ -2190,6 +2235,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
               finishedAt: event.finished_at ?? null,
             },
           },
+          runChunks: nextChunks,
           agentActive,
           agentToolCalls,
         };
@@ -2257,6 +2303,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
       runOutputs: {},
       runMeta: {},
       runIterations: {},
+      runChunks: {},
       runError: null,
       agentActive: {},
       agentToolCalls: {},
@@ -2298,6 +2345,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
       runOutputs: outputs,
       runMeta: meta,
       runIterations: {},
+      runChunks: {},
       running: false,
       runError: null,
     });
