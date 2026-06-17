@@ -230,7 +230,9 @@ function CanvasControls() {
   const nodes = useEditor((s) => s.nodes);
   const running = useEditor((s) => s.running);
   const runHandler = useEditor((s) => s.runHandler);
-  const hasTrigger = useEditor((s) => pickEditorRunTrigger(s.nodes) !== null);
+  const hasTrigger = useEditor((s) =>
+    pickEditorRunTrigger(s.drillStack.length > 0 ? s.drillStack[0]!.nodes : s.nodes) !== null,
+  );
   const undo = useEditor((s) => s.undo);
   const redo = useEditor((s) => s.redo);
   const copySelection = useEditor((s) => s.copySelection);
@@ -802,7 +804,9 @@ export function Canvas() {
           if (!("id" in c) || typeof c.id !== "string") return true;
           if (c.id.startsWith(LOOP_FRAME_ID_PREFIX)) return false;
           if (c.id === "__meta_input_bar__" || c.id === "__meta_output_bar__") {
-            return c.type !== "remove" && c.type !== "position";
+            // Allow drag (position) so the user can slide a pillar aside; never
+            // let React Flow remove a boundary bar.
+            return c.type !== "remove";
           }
           return true;
         }),

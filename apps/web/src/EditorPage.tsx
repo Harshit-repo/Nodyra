@@ -247,7 +247,10 @@ function RunSettingsChip({
 
 // Stable selectors defined outside the component so their references never
 // change between renders, preventing needless Zustand re-subscriptions.
-const selectHasTrigger = (s: EditorStore) => pickEditorRunTrigger(s.nodes) !== null;
+const selectHasTrigger = (s: EditorStore) =>
+  // While drilled into a metanode the live nodes are the interior (no trigger);
+  // runs fold up to the root, so check the root graph for a trigger.
+  pickEditorRunTrigger(s.drillStack.length > 0 ? s.drillStack[0]!.nodes : s.nodes) !== null;
 const selectHasChatTrigger = (s: EditorStore) =>
   s.nodes.some((n) => n.data.manifest?.id === "chat_trigger");
 const selectChatTriggerParams = (s: EditorStore) => {

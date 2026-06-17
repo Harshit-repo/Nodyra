@@ -367,7 +367,10 @@ function makeBar(
     id: side === "input" ? META_BAR_INPUT_ID : META_BAR_OUTPUT_ID,
     type: "metaBar",
     position,
-    draggable: false,
+    // Draggable so the user can slide a pillar aside to make room for more
+    // interior nodes; not deletable/selectable (it's a fixed boundary, not a
+    // real graph node). Position is live-only — re-entering reframes the bars.
+    draggable: true,
     deletable: false,
     selectable: false,
     data: { bar: side, ports },

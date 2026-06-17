@@ -308,6 +308,23 @@ async def start_run(
             current_org_id.reset(org_token)
 
 
+def _expanded_for_gating(graph: dict) -> dict:
+    """Inline transparent metanodes so namespaced step-run targets
+    ("<meta_id>/<child>") resolve to real nodes for the trigger-upstream gate.
+
+    Mirrors the engine's run-time expansion (``scheduler`` calls the same
+    ``_expand_graph_dict``). Best-effort: falls back to the original graph if
+    expansion fails, so gating never crashes a run request.
+    """
+    try:
+        from noodle.engine.metanodes import _expand_graph_dict
+
+        return _expand_graph_dict(graph)
+    except Exception:  # pragma: no cover - defensive
+        logger.debug("metanode expansion for gating failed", exc_info=True)
+        return graph
+
+
 async def _start_run_impl(
     workflow_id: str,
     graph: dict,
@@ -342,7 +359,11 @@ async def _start_run_impl(
                 raise ValueError("Workflow needs a trigger to run.")
             trigger_node_id = chosen["id"] if isinstance(chosen, dict) else chosen.id
         targets = resolve_trigger_targets(graph, trigger_node_id, None)
-    elif not targets_have_trigger(graph, targets):
+    elif not targets_have_trigger(_expanded_for_gating(graph), targets):
+        # Step-run targets inside a transparent metanode are namespaced
+        # ("<meta_id>/<child>"); they only gain their upstream trigger once the
+        # metanode is inlined (the engine does this at execute time), so gate
+        # against the expanded graph too.
         raise ValueError("Connect a trigger upstream before running this step.")
 
     cache = _seed_parameters(graph, cache, parameters, trigger_id=trigger_node_id)

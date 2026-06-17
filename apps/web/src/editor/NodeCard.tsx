@@ -22,6 +22,7 @@ import { isBrandIconName, NodeIcon } from "../NodeIcon";
 import { missingFor } from "./missingPackages";
 import { SdkModal } from "./SdkModal";
 import { isTriggerManifest, type NoodleNode, useEditor } from "./store";
+import { META_BAR_INPUT_ID } from "./store/drillSlice";
 import { useServerPlatform } from "../hooks/useServerPlatform";
 
 const TILE = 72;
@@ -348,6 +349,9 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       for (const prev of bySource.get(cur) ?? []) {
         if (visited.has(prev)) continue;
         visited.add(prev);
+        // Inside a metanode the input bar stands in for the root upstream (which
+        // carries the trigger), so anything wired from it is step-runnable.
+        if (prev === META_BAR_INPUT_ID) return true;
         if (triggerById.get(prev)) return true;
         queue.push(prev);
       }

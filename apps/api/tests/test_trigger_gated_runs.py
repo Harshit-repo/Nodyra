@@ -421,6 +421,73 @@ async def test_run_this_step_on_node_with_trigger_upstream_succeeds(
     assert response.status_code == 202
 
 
+# A transparent metanode whose interior node is fed (via its input port) by a
+# manual trigger at the root. Step-running the interior node by its runtime
+# namespaced id ("mn/inner") must be allowed: the engine inlines transparent
+# metanodes, so "mn/inner" gains the trigger upstream after expansion.
+METANODE_TRIGGER_GRAPH = {
+    "nodes": [
+        {
+            "id": "m",
+            "type": "manual_trigger",
+            "params": {"data": {"ok": True}},
+            "position": {"x": 0, "y": 0},
+        },
+        {
+            "id": "mn",
+            "type": "meta_node",
+            "params": {
+                "execution": "transparent",
+                "name": "MN",
+                "subgraph": {
+                    "nodes": [
+                        {
+                            "id": "inner",
+                            "type": "code",
+                            "params": {"code": "output = 'inner'"},
+                            "position": {"x": 0, "y": 0},
+                        }
+                    ],
+                    "edges": [],
+                },
+                "ports": {
+                    "inputs": [
+                        {
+                            "port": "in_0",
+                            "targets": [{"target": "inner", "target_input": "input"}],
+                        }
+                    ],
+                    "outputs": [],
+                },
+            },
+            "position": {"x": 250, "y": 0},
+        },
+    ],
+    "edges": [
+        {
+            "id": "e_m_mn",
+            "source": "m",
+            "source_output": "main",
+            "target": "mn",
+            "target_input": "in_0",
+        }
+    ],
+}
+
+
+async def test_run_this_step_inside_transparent_metanode_succeeds(
+    client: AsyncClient,
+) -> None:
+    """'Run this step' on a node inside a transparent metanode is allowed: the
+    gate must expand metanodes so the namespaced target sees its trigger."""
+    workflow_id = await _workflow_with(client, "Meta", METANODE_TRIGGER_GRAPH)
+    response = await client.post(
+        f"/workflows/{workflow_id}/run",
+        json={"targets": ["mn/inner"]},
+    )
+    assert response.status_code == 202, response.text
+
+
 def test_chat_trigger_is_recognized_trigger_type() -> None:
     from app.services.graph_utils import is_trigger_type
 
