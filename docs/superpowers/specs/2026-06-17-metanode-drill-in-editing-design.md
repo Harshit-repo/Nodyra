@@ -348,14 +348,39 @@ reuse), loop frames for internal loops.
 Gated/changed while `drillStack.length > 0`:
 - **Empty-canvas onboarding** (`nodes.length === 0` starter grid) is suppressed
   (an empty interior is normal).
-- **Per-node step-run** affordances on `NodeCard` are hidden (interior node ids
-  are namespaced at runtime and aren't independently runnable). NodeCard reads a
-  `drilling` flag (store selector `drillStack.length > 0`) to hide the ▶/↻
-  toolbar buttons; the "open details (⤢)" and disable/delete buttons remain.
-- **Run badges** (`runStatus`, iteration, chunk) are top-level only and naturally
-  absent inside.
 - Bars are excluded from selection-driven grouping and from
   `selectedMetanodeCandidates`.
+
+**Per-node step-run inside a metanode (essential authoring loop — kept, not
+disabled).** When building, a user must be able to run one interior node before
+wiring the next. The engine expands transparent metanodes *before* resolving
+targets (`scheduler.py:436` then `:437`), so an interior node is addressable at
+runtime by its **namespaced id** `<metaId>/…/<childId>`. Design:
+
+- **Drill prefix.** `drillPrefix` is derived from the stack: the `/`-joined chain
+  of `metaId`s, e.g. path `[A, B]` ⇒ `"A/B/"`. The deepest level's interior node
+  `n` maps to runtime id `drillPrefix + n`.
+- **Transparent-only rule.** Step-run inside is enabled **iff every metanode in
+  the current drill path is `transparent`** (the default). A transparent path is
+  flattened to the root run, so `drillPrefix + n` exists in the expanded graph.
+  If **any** ancestor in the path is `isolated`, the interior is *not* flattened
+  to root (it runs as a nested execution whose internal node events are not
+  forwarded to the parent socket), so individual interior nodes aren't
+  addressable. In that case the ▶/↻ buttons are disabled with a tooltip:
+  *"Step-run isn't available inside an isolated metanode — run the metanode from
+  the parent, or set its execution to transparent."*
+- **Targeting.** While drilled on a transparent path, `runFromNode(n, opts)`
+  sends target `drillPrefix + n` to the run handler; reuse-upstream/run-fresh
+  semantics are unchanged (the engine reuses cache within the flattened graph).
+  The optimistic `startRun` ancestor-walk runs on the live interior edges using
+  the bare interior ids (prefix stripped) for the planned-set UI marking.
+- **Result mapping for badges/NDV.** Run events arrive keyed by the namespaced id
+  (`drillPrefix + n`). A selector `runKeyFor(id)` returns `drillPrefix + id` while
+  drilled (bare `id` at root); `NodeCard` (status, iteration, chunk, meta) and
+  the NDV/`DataPanel` (outputs) read through it, so interior tiles light up and
+  show their output exactly as at root. No change to how events are stored.
+- **Run badges at root** for a transparent metanode tile remain absent (it has no
+  runtime node of its own once flattened) — pre-existing behavior, unchanged.
 
 `isValidConnection` already unions child-workflow nodes; extend it to include the
 live interior context so bar↔internal wires validate. Bar ports are kind `any`
@@ -387,8 +412,12 @@ live interior context so bar↔internal wires validate. Bar ports are kind `any`
   `handleNodesChange`, selection, grouping.
 - `store/index.ts` — extend `graphNodeToNode` (meta_node + unknown carry),
   drill-aware `toGraph`, reset in `loadGraph`, the §1 history coalescing.
-- `NodeCard.tsx` — `drilling` flag to hide step-run buttons; "unavailable node"
-  placeholder branch for unknown types.
+- `NodeCard.tsx` — read run state through `runKeyFor(id)` (drill-prefix aware);
+  enable step-run inside on a transparent path and disable with tooltip on an
+  isolated path; "unavailable node" placeholder branch for unknown types.
+- `store/runSlice.ts` (+ `index.ts`) — `runKeyFor` selector / drill-prefix
+  helper; `runFromNode`/`runFromTrigger` prepend `drillPrefix` (transparent path)
+  and `startRun` strips it for optimistic planning.
 
 ### 2.12 Edge-case checklist (must all be covered by tests or explicit handling)
 
@@ -420,6 +449,13 @@ live interior context so bar↔internal wires validate. Bar ports are kind `any`
 16. Escape / breadcrumb-root exits all levels, folding each.
 17. Ungroup of a metanode from the parent still works and equals the round-trip
     inverse (existing `store.metanodes.test.ts` stays green).
+18. Step-run inside a **transparent** metanode targets `drillPrefix + id`;
+    `runFromNode` forwards the namespaced target; interior tile shows status/output
+    via `runKeyFor`.
+19. Step-run inside an **isolated** path (any isolated ancestor) is disabled with
+    the explanatory tooltip; running the metanode from the parent still works.
+20. Nested transparent path `[A, B]` ⇒ prefix `"A/B/"`; targeting and result
+    mapping are correct at depth 2.
 
 ### 2.13 Tests (Deliverable 2)
 
@@ -428,9 +464,14 @@ plus extend `store.metanodes.test.ts` to assert ungroup still round-trips after
 the `graphNodeToNode` extension. Cover `toGraph()` drill-aware folding at depth
 1 and 2.
 
+**Run targeting (vitest):** edge cases 18–20 — `runFromNode` inside a transparent
+path calls the handler with `drillPrefix + id`; `runKeyFor` maps an interior id to
+the namespaced run key; isolated-path step-run is gated off.
+
 **Component (RTL):** bar renders one handle per port + add stub; double-click a
-meta node enters; breadcrumb segments pop to depth; NodeCard hides step-run when
-`drilling`; unavailable-node placeholder renders for unknown type.
+meta node enters; breadcrumb segments pop to depth; NodeCard step-run enabled on a
+transparent path and disabled (with tooltip) on an isolated path; unavailable-node
+placeholder renders for unknown type.
 
 **Regression:** full `apps/web` `tsc`/lint + existing editor tests green.
 
@@ -447,8 +488,9 @@ meta node enters; breadcrumb segments pop to depth; NodeCard hides step-run when
    proxy edges, single-source output enforcement.
 4. **Port lifecycle** — add/remove from inside, stable ids, parent-edge
    reconciliation, edge-case tests 4–9.
-5. **Navigation UX** — `MetanodeBreadcrumb`, double-click reroute, Escape,
-   onboarding suppression, NodeCard `drilling` gating; remove `MetanodePreview`.
+5. **Navigation UX + step-run** — `MetanodeBreadcrumb`, double-click reroute,
+   Escape, onboarding suppression; drill-prefix run targeting (`runKeyFor`,
+   `runFromNode` namespacing, transparent-only gating); remove `MetanodePreview`.
 6. **Hardening** — unknown-node carry-forward, degenerate ports, full edge-case
    sweep + `tsc`/lint.
 
