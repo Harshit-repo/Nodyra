@@ -367,7 +367,7 @@ def bootstrap_user_data(api_url: str, token: str, runner_id: str) -> str:
     return (
         "#!/bin/bash\n"
         "set -e\n"
-        "pip install noodle-runner --quiet\n"
+        f"pip install --find-links {api_url}/runner-pools/wheels/ noodle-runner --quiet\n"
         f"noodle-runner register --api-url {api_url} --token {token} "
         f"--name cloud-{runner_id[:8]}\n"
         "noodle-runner start &\n"

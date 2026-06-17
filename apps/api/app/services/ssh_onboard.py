@@ -77,7 +77,7 @@ def _install_script(req: SSHOnboardRequest, api_url: str, token: str, name: str)
         "set -e\n"
         "PYBIN=$(command -v python3 || command -v python)\n"
         'if [ -z "$PYBIN" ]; then echo "[noodle] no python found" >&2; exit 1; fi\n'
-        '"$PYBIN" -m pip install --user --upgrade noodle-runner\n'
+        f'"$PYBIN" -m pip install --user --upgrade --find-links {q_api}/runner-pools/wheels/ noodle-runner\n'
         f"{register}\n"
         f"echo [noodle] registered runner {q_name}\n"
         f"{start}"

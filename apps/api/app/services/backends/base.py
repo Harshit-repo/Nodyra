@@ -28,7 +28,7 @@ def local_noodle_packages() -> list[str]:
         return []
     return [
         str(root / "packages" / name)
-        for name in ("core", "nodes", "runtime")
+        for name in ("core", "nodes", "runtime", "runner")
         if (root / "packages" / name).is_dir()
     ]
 

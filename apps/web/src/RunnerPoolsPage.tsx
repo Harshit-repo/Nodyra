@@ -714,10 +714,10 @@ function AddMachineDialog({
   };
 
   const installCmd = token
-    ? `pip install noodle-runner
-noodle-runner register \\
-  --api-url ${token.api_url} \\
-  --token ${token.token} \\
+    ? `pip install --find-links ${token.api_url}/runner-pools/wheels/ noodle-runner
+noodle-runner register \
+  --api-url ${token.api_url} \
+  --token ${token.token} \
   --name ${name.trim() || "my-runner"}
 noodle-runner start`
     : "";
