@@ -2156,42 +2156,61 @@ body.is-resizing-vertical {
   padding: 2px 6px;
   white-space: nowrap;
 }
-.meta-bar {
+/* Slim KNIME-style boundary pillar (drill-in input/output bars). */
+.meta-pillar {
   position: relative;
-  width: 168px;
-  background: rgba(20, 24, 34, 0.92);
-  border: 1px solid rgba(120, 130, 160, 0.35);
-  border-radius: 10px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  width: 30px;
+  background: linear-gradient(180deg, rgba(28, 33, 46, 0.96), rgba(18, 22, 31, 0.96));
+  border: 1px solid rgba(120, 130, 160, 0.4);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  overflow: visible;
 }
-.meta-bar-head {
-  height: 34px;
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #9aa4bf;
-  border-bottom: 1px solid rgba(120, 130, 160, 0.25);
+.meta-pillar-input { border-left-width: 3px; border-left-color: rgba(122, 162, 255, 0.7); }
+.meta-pillar-output { border-right-width: 3px; border-right-color: rgba(122, 162, 255, 0.7); }
+.meta-pillar-cap {
+  position: absolute; top: 8px; left: 0; right: 0;
+  text-align: center; font-size: 9px; font-weight: 700;
+  letter-spacing: 0.12em; color: #8b93ab;
 }
-.meta-bar-row { position: absolute; left: 0; right: 0; height: 40px; display: flex; align-items: center; padding: 0 12px; }
-.meta-bar-input .meta-bar-row { justify-content: flex-start; }
-.meta-bar-output .meta-bar-row { justify-content: flex-end; }
-.meta-bar-label { font-size: 12px; color: #d6dbe8; }
-.meta-bar-remove {
+.meta-pillar-port {
+  position: absolute; left: 0; right: 0;
+  transform: translateY(-50%);
+  height: 0;
+}
+/* The connection handle doubles as the coloured port dot. */
+.meta-pillar-handle.react-flow__handle {
+  width: 11px; height: 11px; border-radius: 50%;
+  border: 2px solid; box-shadow: 0 0 0 2px rgba(12, 15, 22, 0.9);
+}
+/* Label + kind chip float outside the pillar, toward the interior. */
+.meta-pillar-tag {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; gap: 1px; white-space: nowrap;
+  pointer-events: none;
+}
+.meta-pillar-input .meta-pillar-tag { left: calc(100% + 12px); align-items: flex-start; text-align: left; }
+.meta-pillar-output .meta-pillar-tag { right: calc(100% + 12px); align-items: flex-end; text-align: right; }
+.meta-pillar-name {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; font-weight: 600; color: #dce1ee;
+}
+.meta-pillar-kind { font-size: 10px; font-weight: 600; opacity: 0.85; }
+.meta-pillar-remove {
+  pointer-events: auto;
   background: none; border: none; color: #7b8398; cursor: pointer;
-  display: inline-flex; padding: 2px; margin: 0 4px;
+  display: inline-flex; padding: 1px; border-radius: 4px;
+  opacity: 0; transition: opacity 0.12s;
 }
-.meta-bar-remove:hover { color: #f06f6f; }
-.meta-bar-add {
-  position: absolute; left: 12px; right: 12px; height: 30px;
-  display: inline-flex; align-items: center; gap: 4px; justify-content: center;
-  background: rgba(99, 102, 241, 0.12); border: 1px dashed rgba(120, 130, 160, 0.4);
-  border-radius: 6px; color: #9aa4bf; font-size: 11px; cursor: pointer;
+.meta-pillar-port:hover .meta-pillar-remove { opacity: 1; }
+.meta-pillar-remove:hover { color: #f06f6f; background: rgba(240, 111, 111, 0.12); }
+.meta-pillar-add {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(99, 102, 241, 0.16); border: 1px dashed rgba(140, 150, 185, 0.5);
+  border-radius: 50%; color: #aab2cc; cursor: pointer;
 }
-.meta-bar-add:hover { color: #c7ccda; border-color: rgba(150, 160, 190, 0.6); }
+.meta-pillar-add:hover { color: #fff; border-color: rgba(160, 170, 200, 0.8); background: rgba(99, 102, 241, 0.3); }
 .meta-breadcrumb {
   position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
   z-index: 6; display: inline-flex; align-items: center; gap: 2px;

@@ -153,6 +153,7 @@ function edgeSummary(
 
 function isMemoryNode(node: NoodleNode): boolean {
   const manifest = node.data.manifest;
+  if (!manifest) return false;
   const label = `${manifest.id} ${manifest.name}`.toLowerCase();
   return (
     label.includes("memory") ||
@@ -508,7 +509,12 @@ export function PortDataViewer() {
   const [collapsed, setCollapsed] = useState(false);
   const dragStart = useRef<{ y: number; height: number } | null>(null);
   const selectedId = useEditor((s) => s.selectedId);
-  const node = useEditor((s) => s.nodes.find((n) => n.id === selectedId));
+  // Manifest-less nodes (metanode boundary bars) aren't inspectable data nodes —
+  // treat them as no-selection so the panel never reads an absent manifest.
+  const node = useEditor((s) => {
+    const found = s.nodes.find((n) => n.id === selectedId);
+    return found?.data.manifest ? found : undefined;
+  });
   const edges = useEditor((s) => s.edges);
   const runOutputs = useEditor((s) => s.runOutputs);
   const runStatus = useEditor((s) => (selectedId ? s.runStatus[selectedId] : null));

@@ -80,7 +80,7 @@ const AGENT_BOTTOM_PORT_LEFT: Record<string, string> = {
   tool: "72%",
 };
 
-function portColor(kind: string | undefined): string {
+export function portColor(kind: string | undefined): string {
   if (!kind || kind === "any" || kind === "main") return DATA_PORT_COLOR;
   return PORT_KIND_COLOR[kind] ?? DATA_PORT_COLOR;
 }
@@ -154,7 +154,7 @@ function isAgentBottomInput(manifestId: string, portName: string): boolean {
   );
 }
 
-function portKindLabel(kind: string | undefined): string {
+export function portKindLabel(kind: string | undefined): string {
   if (kind === "dataset") return "DatasetRef";
   if (kind === "artifact") return "Artifact";
   if (kind === "file") return "File";

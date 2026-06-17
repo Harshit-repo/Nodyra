@@ -100,6 +100,40 @@ describe("metanode collapse / ungroup", () => {
     expect(exec.choices).toEqual(["transparent", "isolated"]);
   });
 
+  it("metanode boundary ports inherit the data_kind of the internal port", () => {
+    // A: code (any out) -> DS: dataset node (dataset in, dataset out) -> B: code
+    const dsManifest: NodeManifest = {
+      id: "ds", name: "Dataset Op", category: "Data", version: "1", description: "",
+      icon: null, inputs: [port("input", "dataset")], outputs: [port("main", "dataset")], params: [],
+    };
+    const mk = (id: string, type: string) => ({
+      id, type, params: {}, position: { x: 0, y: 0 },
+      disabled: false, outputs_override: null, on_error: "stop",
+      retry_on_fail: false, retries: 1, retry_wait_seconds: 0, retry_backoff: false,
+      always_output_data: false, timeout_seconds: null,
+    });
+    const ed = (s: string, t: string) => ({
+      id: `${s}->${t}`, source: s, source_output: "main", target: t, target_input: "input",
+    });
+    useEditor.getState().loadGraph({ nodes: [], edges: [] });
+    useEditor.getState().setManifests([codeManifest(), dsManifest]);
+    useEditor.getState().loadGraph({
+      nodes: [mk("A", "code"), mk("DS", "ds"), mk("B", "code")],
+      edges: [ed("A", "DS"), ed("DS", "B")],
+    });
+
+    const id = useEditor.getState().collapseToMetanode(["DS"])!;
+    const meta = useEditor.getState().nodes.find((n) => n.id === id)!;
+    // input port (fed into DS.input which is dataset) and output port (from DS.main, dataset)
+    expect(meta.data.manifest.inputs[0]!.data_kind).toBe("dataset");
+    expect(meta.data.manifest.outputs[0]!.data_kind).toBe("dataset");
+    const ports = meta.data.params.ports as {
+      inputs: { data_kind?: string }[]; outputs: { data_kind?: string }[];
+    };
+    expect(ports.inputs[0]!.data_kind).toBe("dataset");
+    expect(ports.outputs[0]!.data_kind).toBe("dataset");
+  });
+
   it("ungroup is the inverse of collapse (round-trip)", () => {
     load(chainGraph());
     const id = useEditor.getState().collapseToMetanode(["B", "C"])!;

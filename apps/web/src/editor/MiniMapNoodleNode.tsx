@@ -40,7 +40,19 @@ export function MiniMapNoodleNode({ id, x, y, width, height, selected }: MiniMap
     );
   }
 
+  // Boundary bars (and any other manifest-less render node, e.g. loop frames)
+  // aren't real graph nodes — draw a neutral slab instead of reading a manifest.
   const manifest = (node as NoodleNode).data.manifest;
+  if (!manifest) {
+    return (
+      <rect
+        x={x} y={y} width={width} height={height} rx={4}
+        fill="rgba(120,130,160,0.12)"
+        stroke="rgba(120,130,160,0.4)"
+        strokeWidth={1.2}
+      />
+    );
+  }
   const color = categoryColor(manifest.category);
   const rx = Math.min(Math.round(width * 0.16), 10);
 

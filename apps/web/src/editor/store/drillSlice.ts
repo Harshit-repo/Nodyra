@@ -11,10 +11,12 @@ export interface MetaPortDescriptor {
   label: string;
 }
 
-/** Persisted boundary mapping on a metanode's `params.ports`. */
+/** Persisted boundary mapping on a metanode's `params.ports`. `data_kind` mirrors
+ *  the data kind of the boundary internal port (e.g. "dataset") so the metanode
+ *  surfaces typed ports on the parent instead of a generic "any". */
 export interface MetaPorts {
-  inputs: { port: string; targets: { target: string; target_input: string }[] }[];
-  outputs: { port: string; source: string; source_output: string }[];
+  inputs: { port: string; data_kind?: string; targets: { target: string; target_input: string }[] }[];
+  outputs: { port: string; data_kind?: string; source: string; source_output: string }[];
 }
 
 /** Minimal shape of a stored sub-graph node (mirrors GraphNodeLike in index.ts). */

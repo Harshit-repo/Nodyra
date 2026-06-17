@@ -246,12 +246,12 @@ function graphNodeToNode(
   let unavailableType: string | undefined;
   if (!manifest && gn.type === "meta_node") {
     const ports = ((gn.params ?? {}).ports ?? {}) as {
-      inputs?: { port: string }[];
-      outputs?: { port: string }[];
+      inputs?: { port: string; data_kind?: string }[];
+      outputs?: { port: string; data_kind?: string }[];
     };
     manifest = buildMetanodeManifest(
-      (ports.inputs ?? []).map((p) => p.port),
-      (ports.outputs ?? []).map((p) => p.port),
+      (ports.inputs ?? []).map((p) => ({ name: p.port, data_kind: p.data_kind })),
+      (ports.outputs ?? []).map((p) => ({ name: p.port, data_kind: p.data_kind })),
     );
   }
   if (!manifest) {
@@ -303,8 +303,20 @@ function graphEdgeToEdge(ge: GraphEdgeLike): Edge {
   } as Edge;
 }
 
-function buildMetanodeManifest(inputs: string[], outputs: string[]): NodeManifest {
-  const toPort = (name: string): PortSpec => ({ name, description: "", data_kind: "any" });
+interface MetaPortShape {
+  name: string;
+  data_kind?: string;
+}
+
+function buildMetanodeManifest(
+  inputs: MetaPortShape[],
+  outputs: MetaPortShape[],
+): NodeManifest {
+  const toPort = (p: MetaPortShape): PortSpec => ({
+    name: p.name,
+    description: "",
+    data_kind: (p.data_kind as PortSpec["data_kind"]) || "any",
+  });
   const spec = (overrides: Partial<ParamSpec> & { name: string }): ParamSpec => ({
     type: "string", required: false, default: "", description: "",
     placeholder: "", choices: null, multiline: false, key_value: false,
@@ -318,7 +330,7 @@ function buildMetanodeManifest(inputs: string[], outputs: string[]): NodeManifes
     description: "A group of nodes collapsed into one.",
     icon: "stack",
     inputs: inputs.map(toPort),
-    outputs: outputs.length > 0 ? outputs.map(toPort) : [toPort("main")],
+    outputs: outputs.length > 0 ? outputs.map(toPort) : [toPort({ name: "main" })],
     params: [
       spec({ name: "name", default: "Metanode", description: "Display name for this group." }),
       spec({
@@ -334,11 +346,21 @@ function buildMetanodeManifest(inputs: string[], outputs: string[]): NodeManifes
   } as NodeManifest;
 }
 
+/** data_kind of a node's named input/output port (undefined → treated as "any"). */
+function metaPortKind(
+  node: NoodleNode | undefined,
+  side: "input" | "output",
+  portName: string,
+): string | undefined {
+  const list = side === "input" ? node?.data.manifest?.inputs : node?.data.manifest?.outputs;
+  return list?.find((p) => p.name === portName)?.data_kind;
+}
+
 // ---- Drill-in helpers ------------------------------------------------------
 
 function makeBar(
   side: "input" | "output",
-  ports: { id: string; label: string }[],
+  ports: { id: string; label: string; data_kind?: string }[],
   position: { x: number; y: number },
 ): NoodleNode {
   return {
@@ -380,12 +402,12 @@ function materializeInterior(
 
   const inputBar = makeBar(
     "input",
-    ports.inputs.map((p) => ({ id: p.port, label: p.port })),
+    ports.inputs.map((p) => ({ id: p.port, label: p.port, data_kind: p.data_kind })),
     { x: minX - GAP, y: minY },
   );
   const outputBar = makeBar(
     "output",
-    ports.outputs.map((p) => ({ id: p.port, label: p.port })),
+    ports.outputs.map((p) => ({ id: p.port, label: p.port, data_kind: p.data_kind })),
     { x: maxX + GAP, y: minY },
   );
 
@@ -447,14 +469,22 @@ function foldInterior(
     .filter((e) => interiorIds.has(e.source) && interiorIds.has(e.target))
     .map(edgeToGraphEdge);
 
+  // Re-type each boundary port from the interior node it now bridges, so edits
+  // inside (rewiring, adding nodes) keep the metanode's parent ports accurate.
+  const interiorById = new Map(interior.map((n) => [n.id, n]));
   const inputDescriptors =
     (inputBar?.data as { ports?: { id: string }[] } | undefined)?.ports ?? [];
-  const inputs = inputDescriptors.map((d) => ({
-    port: d.id,
-    targets: liveEdges
+  const inputs = inputDescriptors.map((d) => {
+    const targets = liveEdges
       .filter((e) => e.source === META_BAR_INPUT_ID && (e.sourceHandle ?? "") === d.id)
-      .map((e) => ({ target: e.target, target_input: e.targetHandle ?? "input" })),
-  }));
+      .map((e) => ({ target: e.target, target_input: e.targetHandle ?? "input" }));
+    const first = targets[0];
+    return {
+      port: d.id,
+      data_kind: first ? metaPortKind(interiorById.get(first.target), "input", first.target_input) : undefined,
+      targets,
+    };
+  });
 
   const outputDescriptors =
     (outputBar?.data as { ports?: { id: string }[] } | undefined)?.ports ?? [];
@@ -464,10 +494,15 @@ function foldInterior(
         (e) => e.target === META_BAR_OUTPUT_ID && (e.targetHandle ?? "") === d.id,
       );
       return wire
-        ? { port: d.id, source: wire.source, source_output: wire.sourceHandle ?? "main" }
+        ? {
+            port: d.id,
+            data_kind: metaPortKind(interiorById.get(wire.source), "output", wire.sourceHandle ?? "main"),
+            source: wire.source,
+            source_output: wire.sourceHandle ?? "main",
+          }
         : null;
     })
-    .filter((p): p is MetaPorts["outputs"][number] => p !== null);
+    .filter((p) => p !== null) as MetaPorts["outputs"];
 
   return { subgraph: { nodes: subNodes, edges: subEdges }, ports: { inputs, outputs } };
 }
@@ -482,8 +517,8 @@ function updateMetaNode(
     data: {
       ...meta.data,
       manifest: buildMetanodeManifest(
-        ports.inputs.map((p) => p.port),
-        ports.outputs.map((p) => p.port),
+        ports.inputs.map((p) => ({ name: p.port, data_kind: p.data_kind })),
+        ports.outputs.map((p) => ({ name: p.port, data_kind: p.data_kind })),
       ),
       params: { ...meta.data.params, subgraph, ports },
     },
@@ -1264,12 +1299,12 @@ export const useEditor = create<EditorStore>((set, get) => ({
       let manifest = byId[n.type];
       if (!manifest && n.type === "meta_node") {
         const ports = ((n.params ?? {}).ports ?? {}) as {
-          inputs?: { port: string }[];
-          outputs?: { port: string }[];
+          inputs?: { port: string; data_kind?: string }[];
+          outputs?: { port: string; data_kind?: string }[];
         };
         manifest = buildMetanodeManifest(
-          (ports.inputs ?? []).map((p) => p.port),
-          (ports.outputs ?? []).map((p) => p.port),
+          (ports.inputs ?? []).map((p) => ({ name: p.port, data_kind: p.data_kind })),
+          (ports.outputs ?? []).map((p) => ({ name: p.port, data_kind: p.data_kind })),
         );
       }
       if (!manifest) continue;
@@ -1797,9 +1832,21 @@ export const useEditor = create<EditorStore>((set, get) => ({
       g.consumers.push({ target: e.target, targetHandle: e.targetHandle ?? "input" });
     }
 
-    const inputs = [...inGroups.values()].map((g) => ({ port: g.port, targets: g.targets }));
+    // Boundary ports inherit the data kind of the internal port they bridge:
+    // an input port takes the kind of its first internal target's input; an
+    // output port takes the kind of its internal source's output.
+    const selById = new Map(selNodes.map((n) => [n.id, n]));
+    const inputs = [...inGroups.values()].map((g) => {
+      const first = g.targets[0];
+      return {
+        port: g.port,
+        data_kind: first ? metaPortKind(selById.get(first.target), "input", first.target_input) : undefined,
+        targets: g.targets,
+      };
+    });
     const outputs = [...outGroups.values()].map((g) => ({
       port: g.port,
+      data_kind: metaPortKind(selById.get(g.src), "output", g.srcHandle),
       source: g.src,
       source_output: g.srcHandle,
     }));
@@ -1816,7 +1863,10 @@ export const useEditor = create<EditorStore>((set, get) => ({
       type: "noodle",
       position: { x: cx, y: cy },
       data: {
-        manifest: buildMetanodeManifest(inputs.map((p) => p.port), outputs.map((p) => p.port)),
+        manifest: buildMetanodeManifest(
+          inputs.map((p) => ({ name: p.port, data_kind: p.data_kind })),
+          outputs.map((p) => ({ name: p.port, data_kind: p.data_kind })),
+        ),
         params: { execution: "transparent", name: "Metanode", subgraph, ports: { inputs, outputs } },
         disabled: false,
         outputsOverride: null,
@@ -2005,7 +2055,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
               ...n,
               data: {
                 ...n.data,
-                ports: [...((n.data as unknown as { ports: { id: string; label: string }[] }).ports), { id: newId, label: newId }],
+                ports: [...((n.data as unknown as { ports: { id: string; label: string; data_kind?: string }[] }).ports), { id: newId, label: newId, data_kind: "any" }],
               },
             }
           : n,
