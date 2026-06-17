@@ -437,6 +437,14 @@ export interface CodeModuleFunctionPreview {
   environment_name: string | null;
 }
 
+export interface LintDiagnostic {
+  line: number;
+  column: number;
+  code: string | null;
+  message: string;
+  severity: "error" | "warning";
+}
+
 export interface RunListItem {
   id: string;
   workflow_id: string;
@@ -480,6 +488,13 @@ export interface RunEvent {
   // body: the nested iteration index path (outer-to-inner). Lets the canvas
   // show per-node iteration progress instead of flickering once per iteration.
   iteration_path?: number[] | null;
+  // node_chunk events: an incremental output fragment (e.g. an LLM token)
+  // streamed while the node is still running, plus its stream channel.
+  delta?: string;
+  channel?: string;
+  // node_chunk reset: a retry signals the client to discard the failed
+  // attempt's streamed text before the new attempt streams.
+  reset?: boolean;
 }
 
 export interface Credential {

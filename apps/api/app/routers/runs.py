@@ -11,7 +11,7 @@ from sqlalchemy.orm import noload, selectinload
 from starlette.websockets import WebSocketDisconnect
 
 from app.config import settings
-from app.db import get_session
+from app.db import SessionLocal, get_session
 
 logger = logging.getLogger(__name__)
 from app.models import (
@@ -39,9 +39,8 @@ from app.schemas import (
     RunTimeline,
     RunTimelineEvent,
 )
-from app.security import require_permission
+from app.security import _user_from_session_token, require_permission
 from app.services import queue as run_queue
-from app.services.crypto import verify_token
 from app.services.events import broker
 from app.services.graph_utils import (
     first_trigger_node,
@@ -801,9 +800,15 @@ async def run_events(websocket: WebSocket, run_id: str) -> None:
             auth_header = websocket.headers.get("authorization", "")
             if auth_header.lower().startswith("bearer "):
                 token = auth_header[7:].strip()
-        if token != "ok" and verify_token(token) is None:
-            await websocket.close(code=1008)
-            return
+        # C1: a token revoked via ``sessions_valid_after`` must not open the
+        # live run-event stream. ``verify_token`` only checks signature/exp, so
+        # resolve the user and honour the per-user revocation cutoff. Ticket
+        # auth (``token == "ok"``) was already validated above.
+        if token != "ok":
+            async with SessionLocal() as session:
+                if not token or await _user_from_session_token(token, session) is None:
+                    await websocket.close(code=1008)
+                    return
     await websocket.accept()
     try:
         async def _heartbeat() -> None:

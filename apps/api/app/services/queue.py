@@ -72,7 +72,7 @@ async def notify_queue_workers() -> None:
         from app.redis_client import redis_client  # noqa: PLC0415
         await redis_client.publish(_QUEUE_NOTIFY_CHANNEL, "1")
     except Exception:  # Redis unavailable — polling fallback is still correct
-        pass
+        logger.debug("notify_queue_workers: Redis publish failed — falling back to poll")
 
 
 async def _redis_queue_subscriber() -> None:

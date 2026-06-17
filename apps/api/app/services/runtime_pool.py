@@ -153,23 +153,31 @@ _WORKER_ENV_ALLOWLIST = frozenset(
 )
 
 
+_WORKER_ENV_CACHE: dict[str, str] | None = None
+_WORKER_ENV_CACHE_AT: float = 0.0
+_WORKER_ENV_CACHE_TTL = 60.0
+
+
 def _worker_env() -> dict[str, str]:
     """Allowlisted environment for runtime worker subprocesses.
 
     Passes through OS plumbing and ``NOODLE_*`` variables only; never the
     API's secrets. Name matching is case-insensitive (Windows semantics).
     """
+    global _WORKER_ENV_CACHE, _WORKER_ENV_CACHE_AT
+    now = time.monotonic()
+    if _WORKER_ENV_CACHE is not None and (now - _WORKER_ENV_CACHE_AT) < _WORKER_ENV_CACHE_TTL:
+        return _WORKER_ENV_CACHE
     env = {
         key: value
         for key, value in os.environ.items()
         if key.upper() in _WORKER_ENV_ALLOWLIST or key.upper().startswith("NOODLE_")
     }
-    # Propagate the configurable per-node code timeout so the runtime
-    # subprocess applies the same default as the in-process engine. 0
-    # (default) leaves code uncapped.
     env["NOODLE_CODE_NODE_TIMEOUT_SECONDS"] = str(
         settings.code_node_timeout_seconds
     )
+    _WORKER_ENV_CACHE = env
+    _WORKER_ENV_CACHE_AT = now
     return env
 
 
@@ -263,12 +271,13 @@ class _RuntimeProcess:
         self.process = process
         self.env_id = env_id
         self.dead = False
-        # Wall-clock time this worker was last returned to the idle pool. Used by
-        # the idle reaper. Declared here (not just set dynamically in release) so
-        # the reaper has a stable attribute regardless of release ordering.
         self.idle_since = time.time()
         self._run_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
+        # Background task that drains stderr so the OS pipe buffer never fills
+        # and blocks the subprocess. Stderr lines are logged at debug level so
+        # diagnostic output from the runtime is visible when needed.
+        self._stderr_task: asyncio.Task[None] | None = None
 
     @classmethod
     async def spawn(cls, env_id: str | None) -> "_RuntimeProcess":
@@ -291,13 +300,13 @@ class _RuntimeProcess:
             line = await asyncio.wait_for(
                 process.stdout.readline(), timeout=_startup_timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             process.kill()
             await process.wait()
             raise RuntimeError(
                 f"runtime for env {env_id!r} timed out waiting for ready event "
                 f"({_startup_timeout}s)"
-            )
+            ) from None
         if not line:
             raise RuntimeError(
                 f"runtime for env {env_id!r} did not emit a ready event"
@@ -305,7 +314,29 @@ class _RuntimeProcess:
         ready = json.loads(line)
         if ready.get("type") != "ready":
             raise RuntimeError(f"unexpected first event: {ready}")
-        return cls(process, env_id)
+        wp = cls(process, env_id)
+        wp._start_stderr_consumer()
+        return wp
+
+    def _start_stderr_consumer(self) -> None:
+        """Drain stderr in a background task so the OS pipe buffer never blocks
+        the subprocess. Stale warnings/debug output is logged when non-empty."""
+        if self.process.stderr is None:
+            return
+
+        async def _drain() -> None:
+            try:
+                while not self.dead:
+                    line = await self.process.stderr.readline()
+                    if not line:
+                        break
+                    text = line.decode("utf-8", errors="replace").rstrip()
+                    if text:
+                        logger.debug("runtime stderr (env=%s): %s", self.env_id, text)
+            except Exception:
+                pass
+
+        self._stderr_task = asyncio.create_task(_drain())
 
     async def _write_message(self, message: dict) -> None:
         if self.process.stdin is None:
@@ -468,6 +499,7 @@ class _RuntimeProcess:
     async def close(self) -> None:
         if self.process.returncode is not None:
             self.dead = True
+            await self._cancel_stderr_consumer()
             return
         try:
             self.process.terminate()
@@ -480,6 +512,14 @@ class _RuntimeProcess:
             pass
         finally:
             self.dead = True
+            await self._cancel_stderr_consumer()
+
+    async def _cancel_stderr_consumer(self) -> None:
+        if self._stderr_task is not None and not self._stderr_task.done():
+            self._stderr_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._stderr_task
+            self._stderr_task = None
 
 
 class _EnvPool:

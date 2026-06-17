@@ -28,11 +28,23 @@ import type {
 } from "../../types";
 import { childWorkflowInitialState } from "./childWorkflowSlice";
 import { clipboardInitialState } from "./clipboardSlice";
+import {
+  drillInitialState,
+  type DrillFrame,
+  type GraphNodeShape,
+  type MetaPorts,
+  isMetaBar,
+  drillPrefix,
+  maxPortSuffix,
+  META_BAR_INPUT_ID,
+  META_BAR_OUTPUT_ID,
+} from "./drillSlice";
 import { graphInitialState } from "./graphSlice";
 import { runInitialState } from "./runSlice";
 
 export type { ChildWorkflowSlice } from "./childWorkflowSlice";
 export type { ClipboardSlice } from "./clipboardSlice";
+export type { DrillSliceState } from "./drillSlice";
 export type { GraphSlice } from "./graphSlice";
 export type { RunSlice } from "./runSlice";
 
@@ -212,12 +224,40 @@ function nodeToGraphNode(n: NoodleNode): GraphNodeLike {
   };
 }
 
+function placeholderManifest(typeId: string): NodeManifest {
+  return {
+    id: typeId,
+    name: typeId,
+    category: "Unavailable",
+    version: "0",
+    description: "This node type isn't available in this editor build.",
+    icon: "warning",
+    inputs: [{ name: "input", description: "", data_kind: "any" }],
+    outputs: [{ name: "main", description: "", data_kind: "any" }],
+    params: [],
+  } as NodeManifest;
+}
+
 function graphNodeToNode(
   gn: GraphNodeLike,
   byId: Record<string, NodeManifest>,
 ): NoodleNode | null {
-  const manifest = byId[gn.type];
-  if (!manifest) return null;
+  let manifest = byId[gn.type];
+  let unavailableType: string | undefined;
+  if (!manifest && gn.type === "meta_node") {
+    const ports = ((gn.params ?? {}).ports ?? {}) as {
+      inputs?: { port: string }[];
+      outputs?: { port: string }[];
+    };
+    manifest = buildMetanodeManifest(
+      (ports.inputs ?? []).map((p) => p.port),
+      (ports.outputs ?? []).map((p) => p.port),
+    );
+  }
+  if (!manifest) {
+    manifest = placeholderManifest(gn.type);
+    unavailableType = gn.type;
+  }
   return {
     id: gn.id,
     type: gn.type === "map_group" ? "mapGroup" : "noodle",
@@ -238,6 +278,7 @@ function graphNodeToNode(
       toolName: gn.tool_name ?? null,
       toolDescription: typeof gn.tool_description === "string" ? gn.tool_description : "",
       label: gn.label || undefined,
+      ...(unavailableType ? { unavailableType } : {}),
     },
   } as NoodleNode;
 }
@@ -291,6 +332,207 @@ function buildMetanodeManifest(inputs: string[], outputs: string[]): NodeManifes
       }),
     ],
   } as NodeManifest;
+}
+
+// ---- Drill-in helpers ------------------------------------------------------
+
+function makeBar(
+  side: "input" | "output",
+  ports: { id: string; label: string }[],
+  position: { x: number; y: number },
+): NoodleNode {
+  return {
+    id: side === "input" ? META_BAR_INPUT_ID : META_BAR_OUTPUT_ID,
+    type: "metaBar",
+    position,
+    draggable: false,
+    deletable: false,
+    selectable: false,
+    data: { bar: side, ports },
+  } as unknown as NoodleNode;
+}
+
+interface InteriorMaterial {
+  nodes: NoodleNode[];
+  edges: Edge[];
+}
+
+function materializeInterior(
+  meta: NoodleNode,
+  byId: Record<string, NodeManifest>,
+): InteriorMaterial {
+  const params = meta.data.params as {
+    subgraph?: { nodes: GraphNodeLike[]; edges: GraphEdgeLike[] };
+    ports?: MetaPorts;
+  };
+  const sub = params.subgraph ?? { nodes: [], edges: [] };
+  const ports = params.ports ?? { inputs: [], outputs: [] };
+
+  const interiorNodes = sub.nodes.map((gn) => graphNodeToNode(gn, byId)!).filter(Boolean);
+  const interiorEdges = sub.edges.map(graphEdgeToEdge);
+
+  const xs = interiorNodes.map((n) => n.position.x);
+  const ys = interiorNodes.map((n) => n.position.y);
+  const minX = xs.length ? Math.min(...xs) : 0;
+  const maxX = xs.length ? Math.max(...xs) : 200;
+  const minY = ys.length ? Math.min(...ys) : 0;
+  const GAP = 240;
+
+  const inputBar = makeBar(
+    "input",
+    ports.inputs.map((p) => ({ id: p.port, label: p.port })),
+    { x: minX - GAP, y: minY },
+  );
+  const outputBar = makeBar(
+    "output",
+    ports.outputs.map((p) => ({ id: p.port, label: p.port })),
+    { x: maxX + GAP, y: minY },
+  );
+
+  const proxyEdges: Edge[] = [];
+  for (const p of ports.inputs) {
+    for (const t of p.targets) {
+      proxyEdges.push({
+        id: `proxy_in_${p.port}_${t.target}_${t.target_input}`,
+        source: META_BAR_INPUT_ID,
+        sourceHandle: p.port,
+        target: t.target,
+        targetHandle: t.target_input,
+      } as Edge);
+    }
+  }
+  for (const p of ports.outputs) {
+    proxyEdges.push({
+      id: `proxy_out_${p.port}_${p.source}_${p.source_output}`,
+      source: p.source,
+      sourceHandle: p.source_output,
+      target: META_BAR_OUTPUT_ID,
+      targetHandle: p.port,
+    } as Edge);
+  }
+
+  return {
+    nodes: [inputBar, ...interiorNodes, outputBar],
+    edges: [...interiorEdges, ...proxyEdges],
+  };
+}
+
+function origByIdOf(meta: NoodleNode): Record<string, GraphNodeShape> {
+  const sub = (meta.data.params as { subgraph?: { nodes: GraphNodeShape[] } }).subgraph;
+  return Object.fromEntries((sub?.nodes ?? []).map((gn) => [gn.id, gn]));
+}
+
+function foldInterior(
+  liveNodes: NoodleNode[],
+  liveEdges: Edge[],
+  origById: Record<string, GraphNodeShape>,
+): { subgraph: { nodes: GraphNodeLike[]; edges: GraphEdgeLike[] }; ports: MetaPorts } {
+  const inputBar = liveNodes.find((n) => n.id === META_BAR_INPUT_ID);
+  const outputBar = liveNodes.find((n) => n.id === META_BAR_OUTPUT_ID);
+  const interior = liveNodes.filter((n) => !isMetaBar(n));
+  const interiorIds = new Set(interior.map((n) => n.id));
+
+  const subNodes: GraphNodeLike[] = interior.map((n) => {
+    if (n.data?.unavailableType) {
+      const orig = origById[n.id];
+      return {
+        ...(orig as unknown as GraphNodeLike),
+        position: { x: n.position.x, y: n.position.y },
+      };
+    }
+    return nodeToGraphNode(n);
+  });
+
+  const subEdges: GraphEdgeLike[] = liveEdges
+    .filter((e) => interiorIds.has(e.source) && interiorIds.has(e.target))
+    .map(edgeToGraphEdge);
+
+  const inputDescriptors =
+    (inputBar?.data as { ports?: { id: string }[] } | undefined)?.ports ?? [];
+  const inputs = inputDescriptors.map((d) => ({
+    port: d.id,
+    targets: liveEdges
+      .filter((e) => e.source === META_BAR_INPUT_ID && (e.sourceHandle ?? "") === d.id)
+      .map((e) => ({ target: e.target, target_input: e.targetHandle ?? "input" })),
+  }));
+
+  const outputDescriptors =
+    (outputBar?.data as { ports?: { id: string }[] } | undefined)?.ports ?? [];
+  const outputs = outputDescriptors
+    .map((d) => {
+      const wire = liveEdges.find(
+        (e) => e.target === META_BAR_OUTPUT_ID && (e.targetHandle ?? "") === d.id,
+      );
+      return wire
+        ? { port: d.id, source: wire.source, source_output: wire.sourceHandle ?? "main" }
+        : null;
+    })
+    .filter((p): p is MetaPorts["outputs"][number] => p !== null);
+
+  return { subgraph: { nodes: subNodes, edges: subEdges }, ports: { inputs, outputs } };
+}
+
+function updateMetaNode(
+  meta: NoodleNode,
+  subgraph: { nodes: GraphNodeLike[]; edges: GraphEdgeLike[] },
+  ports: MetaPorts,
+): NoodleNode {
+  return {
+    ...meta,
+    data: {
+      ...meta.data,
+      manifest: buildMetanodeManifest(
+        ports.inputs.map((p) => p.port),
+        ports.outputs.map((p) => p.port),
+      ),
+      params: { ...meta.data.params, subgraph, ports },
+    },
+  };
+}
+
+function reconcileParentEdges(parentEdges: Edge[], metaId: string, ports: MetaPorts): Edge[] {
+  const validIn = new Set(ports.inputs.map((p) => p.port));
+  const validOut = new Set(ports.outputs.map((p) => p.port));
+  return parentEdges.filter((e) => {
+    if (e.target === metaId && !validIn.has(e.targetHandle ?? "")) return false;
+    if (e.source === metaId && !validOut.has(e.sourceHandle ?? "")) return false;
+    return true;
+  });
+}
+
+function serializeGraph(nodes: NoodleNode[], edges: Edge[]): WorkflowGraph {
+  return {
+    nodes: nodes
+      .filter((n) => n.data?.manifest && !isMetaBar(n))
+      .map((n) => ({
+        id: n.id,
+        type: n.data.manifest.id,
+        params: n.data.params,
+        position: { x: n.position.x, y: n.position.y },
+        disabled: Boolean(n.data.disabled),
+        outputs_override: n.data.outputsOverride,
+        on_error: n.data.onError ?? "stop",
+        retry_on_fail: Boolean(n.data.retryOnFail),
+        retries: typeof n.data.retries === "number" ? n.data.retries : 1,
+        retry_wait_seconds: typeof n.data.retryWaitSeconds === "number" ? n.data.retryWaitSeconds : 0,
+        retry_backoff: Boolean(n.data.retryBackoff),
+        always_output_data: Boolean(n.data.alwaysOutputData),
+        timeout_seconds: typeof n.data.timeoutSeconds === "number" ? n.data.timeoutSeconds : null,
+        tool_mode: Boolean(n.data.toolMode),
+        tool_name: n.data.toolName ?? null,
+        tool_description: n.data.toolDescription ?? "",
+        label: n.data.label || undefined,
+      })),
+    edges: edges
+      .filter((e) => !isMetaBar({ id: e.source }) && !isMetaBar({ id: e.target }))
+      .map((e) => ({
+        id: e.id,
+        source: e.source,
+        source_output: e.sourceHandle ?? "main",
+        target: e.target,
+        target_input: e.targetHandle ?? "input",
+      })),
+  };
 }
 
 /** Cheap cycle check over an adjacency map (DFS with a recursion stack). */
@@ -527,7 +769,7 @@ const AGENT_SUBNODE_HANDLES = ["model", "memory", "tool"];
 function collectAgentIds(nodes: NoodleNode[]): Set<string> {
   return new Set(
     nodes
-      .filter((n) => AGENT_MANIFEST_IDS.has(n.data.manifest.id))
+      .filter((n) => n.data?.manifest && AGENT_MANIFEST_IDS.has(n.data.manifest.id))
       .map((n) => n.id),
   );
 }
@@ -743,6 +985,8 @@ export interface EditorStore {
 
   deleteNode: (id: string) => void;
   deleteSelection: () => number;
+  selectAll: () => void;
+  duplicateSelection: () => number;
   toggleDisabled: (id: string) => void;
   autoEnableAgentDependencies: () => number;
   updateNodeSettings: (id: string, patch: NodeSettingsPatch) => void;
@@ -778,6 +1022,18 @@ export interface EditorStore {
   _future: Array<{ nodes: NoodleNode[]; edges: Edge[] }>;
   undo: () => void;
   redo: () => void;
+
+  // Metanode drill-in editing.
+  drillStack: DrillFrame[];
+  drillOrig: Record<string, GraphNodeShape>;
+  drillPortSeq: number;
+  enterMetanode: (metaId: string) => void;
+  exitMetanode: () => void;
+  exitToDepth: (depth: number) => void;
+  addMetaPort: (side: "input" | "output") => void;
+  removeMetaPort: (side: "input" | "output", portId: string) => void;
+  runKeyFor: (nodeId: string) => string;
+  drillStepRunDisabledReason: () => string | null;
 
   devMode: boolean;
   toggleDevMode: () => void;
@@ -882,9 +1138,9 @@ function cloneNode(node: NoodleNode): NoodleNode {
 }
 
 function selectedNodes(nodes: NoodleNode[], selectedId: string | null): NoodleNode[] {
-  const selected = nodes.filter((node) => node.selected);
+  const selected = nodes.filter((node) => node.selected && !isMetaBar(node));
   if (selected.length > 0) return selected;
-  const fallback = selectedId ? nodes.find((node) => node.id === selectedId) : null;
+  const fallback = selectedId ? nodes.find((node) => node.id === selectedId && !isMetaBar(node)) : null;
   return fallback ? [fallback] : [];
 }
 
@@ -987,6 +1243,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
   ...runInitialState,
   ...clipboardInitialState,
   ...childWorkflowInitialState,
+  ...drillInitialState,
   setEnvContext: (ctx) => set(ctx),
   setEnvPackages: (packages) => set({ envPackages: packages }),
   setApplyEnvSwitch: (fn) => set({ applyEnvSwitch: fn }),
@@ -1070,45 +1327,33 @@ export const useEditor = create<EditorStore>((set, get) => ({
       _past: [],
       _future: [],
       childWorkflows: {},
+      drillStack: [],
+      drillOrig: {},
+      drillPortSeq: 1,
     });
   },
 
   toGraph: () => {
-    const { nodes, edges } = get();
-    return {
-      nodes: nodes.filter((n) => n.data.manifest).map((n) => ({
-        id: n.id,
-        type: n.data.manifest.id,
-        params: n.data.params,
-        position: { x: n.position.x, y: n.position.y },
-        disabled: Boolean(n.data.disabled),
-        outputs_override: n.data.outputsOverride,
-        on_error: n.data.onError ?? "stop",
-        retry_on_fail: Boolean(n.data.retryOnFail),
-        retries: typeof n.data.retries === "number" ? n.data.retries : 1,
-        retry_wait_seconds:
-          typeof n.data.retryWaitSeconds === "number"
-            ? n.data.retryWaitSeconds
-            : 0,
-        retry_backoff: Boolean(n.data.retryBackoff),
-        always_output_data: Boolean(n.data.alwaysOutputData),
-        timeout_seconds:
-          typeof n.data.timeoutSeconds === "number"
-            ? n.data.timeoutSeconds
-            : null,
-        tool_mode: Boolean(n.data.toolMode),
-        tool_name: n.data.toolName ?? null,
-        tool_description: n.data.toolDescription ?? "",
-        label: n.data.label || undefined,
-      })),
-      edges: edges.map((e) => ({
-        id: e.id,
-        source: e.source,
-        source_output: e.sourceHandle ?? "main",
-        target: e.target,
-        target_input: e.targetHandle ?? "input",
-      })),
-    };
+    const state = get();
+    if (state.drillStack.length === 0) {
+      return serializeGraph(state.nodes, state.edges);
+    }
+    // Fold the live interior up the stack to reconstruct the root workflow.
+    let nodes = state.nodes;
+    let edges = state.edges;
+    let orig = state.drillOrig;
+    for (let i = state.drillStack.length - 1; i >= 0; i -= 1) {
+      const frame = state.drillStack[i];
+      const { subgraph, ports } = foldInterior(nodes, edges, orig);
+      const meta = frame.nodes.find((n) => n.id === frame.metaId);
+      const parentNodes = meta
+        ? frame.nodes.map((n) => (n.id === frame.metaId ? updateMetaNode(meta, subgraph, ports) : n))
+        : frame.nodes;
+      nodes = parentNodes;
+      edges = reconcileParentEdges(frame.edges, frame.metaId, ports);
+      orig = frame.orig;
+    }
+    return serializeGraph(nodes, edges);
   },
 
   onNodesChange: (changes) => {
@@ -1193,6 +1438,35 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
   onConnect: (connection) => {
     const state = get();
+
+    // Boundary-bar connections bypass manifest validation (bar ports are `any`).
+    if (
+      connection.source === META_BAR_INPUT_ID ||
+      connection.target === META_BAR_OUTPUT_ID
+    ) {
+      const s = get();
+      const dupe = (e: Edge) =>
+        e.source === connection.source &&
+        (e.sourceHandle ?? null) === (connection.sourceHandle ?? null) &&
+        e.target === connection.target &&
+        (e.targetHandle ?? null) === (connection.targetHandle ?? null);
+      const kept =
+        connection.target === META_BAR_OUTPUT_ID
+          ? s.edges.filter(
+              (e) =>
+                !(e.target === META_BAR_OUTPUT_ID &&
+                  (e.targetHandle ?? null) === (connection.targetHandle ?? null)),
+            )
+          : s.edges.filter((e) => !dupe(e));
+      set({
+        edges: addEdge(connection, kept),
+        dirty: true,
+        _past: [...s._past, { nodes: s.nodes, edges: s.edges }].slice(-HISTORY_LIMIT),
+        _future: [],
+      });
+      return { ok: true, message: "", severity: "ok" };
+    }
+
     const allNodes = [
       ...state.nodes,
       ...Object.values(state.childWorkflows).flatMap((cw) => cw.nodes),
@@ -1649,6 +1923,126 @@ export const useEditor = create<EditorStore>((set, get) => ({
     });
   },
 
+  enterMetanode: (metaId) => {
+    const state = get();
+    const meta = state.nodes.find((n) => n.id === metaId);
+    if (!meta || meta.data.manifest.id !== "meta_node") return;
+    const material = materializeInterior(meta, state.manifestsById);
+    const ports = (meta.data.params as { ports?: MetaPorts }).ports ?? { inputs: [], outputs: [] };
+    set({
+      drillStack: [
+        ...state.drillStack,
+        {
+          metaId,
+          name: String((meta.data.params as { name?: string }).name || "Metanode"),
+          nodes: state.nodes,
+          edges: state.edges,
+          _past: state._past,
+          _future: state._future,
+          orig: state.drillOrig,
+          portSeq: state.drillPortSeq,
+        },
+      ],
+      drillOrig: origByIdOf(meta),
+      drillPortSeq: maxPortSuffix(ports) + 1,
+      nodes: material.nodes,
+      edges: material.edges,
+      _past: [],
+      _future: [],
+      selectedId: null,
+      ndvOpenId: null,
+    });
+  },
+
+  exitMetanode: () => {
+    const state = get();
+    if (state.drillStack.length === 0) return;
+    const frame = state.drillStack[state.drillStack.length - 1];
+    const meta = frame.nodes.find((n) => n.id === frame.metaId);
+    if (!meta) {
+      set({
+        nodes: frame.nodes, edges: frame.edges, _past: frame._past, _future: frame._future,
+        drillStack: state.drillStack.slice(0, -1), drillOrig: frame.orig, drillPortSeq: frame.portSeq,
+      });
+      return;
+    }
+    const { subgraph, ports } = foldInterior(state.nodes, state.edges, state.drillOrig);
+    const prev = meta.data.params as { subgraph?: unknown; ports?: unknown };
+    const changed =
+      JSON.stringify(prev.subgraph ?? null) !== JSON.stringify(subgraph) ||
+      JSON.stringify(prev.ports ?? null) !== JSON.stringify(ports);
+    const updatedMeta = updateMetaNode(meta, subgraph, ports);
+    const parentNodes = frame.nodes.map((n) => (n.id === frame.metaId ? updatedMeta : n));
+    const parentEdges = reconcileParentEdges(frame.edges, frame.metaId, ports);
+    set({
+      nodes: parentNodes,
+      edges: parentEdges,
+      _past: frame._past,
+      _future: frame._future,
+      drillStack: state.drillStack.slice(0, -1),
+      drillOrig: frame.orig,
+      drillPortSeq: frame.portSeq,
+      selectedId: frame.metaId,
+      dirty: state.dirty || changed,
+    });
+  },
+
+  exitToDepth: (depth) => {
+    while (get().drillStack.length > depth) {
+      get().exitMetanode();
+    }
+  },
+
+  addMetaPort: (side) => {
+    const state = get();
+    const barId = side === "input" ? META_BAR_INPUT_ID : META_BAR_OUTPUT_ID;
+    const seq = state.drillPortSeq;
+    const newId = `${side === "input" ? "in" : "out"}_${seq}`;
+    set({
+      nodes: state.nodes.map((n) =>
+        n.id === barId
+          ? {
+              ...n,
+              data: {
+                ...n.data,
+                ports: [...((n.data as unknown as { ports: { id: string; label: string }[] }).ports), { id: newId, label: newId }],
+              },
+            }
+          : n,
+      ),
+      drillPortSeq: seq + 1,
+      dirty: true,
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
+    });
+  },
+
+  removeMetaPort: (side, portId) => {
+    const state = get();
+    const barId = side === "input" ? META_BAR_INPUT_ID : META_BAR_OUTPUT_ID;
+    set({
+      nodes: state.nodes.map((n) =>
+        n.id === barId
+          ? {
+              ...n,
+              data: {
+                ...n.data,
+                ports: ((n.data as unknown as { ports: { id: string }[] }).ports).filter((p) => p.id !== portId),
+              },
+            }
+          : n,
+      ),
+      edges: state.edges.filter((e) =>
+        side === "input"
+          ? !(e.source === barId && (e.sourceHandle ?? "") === portId)
+          : !(e.target === barId && (e.targetHandle ?? "") === portId),
+      ),
+      dirty: true,
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
+    });
+  },
+
   addGroupNode: (position) => {
     const state = get();
     const node = {
@@ -1716,6 +2110,47 @@ export const useEditor = create<EditorStore>((set, get) => ({
     if (!clipboard) return { nodeCount: 0, edgeCount: 0 };
     set({ _clipboard: clipboard, clipboardNodeCount: clipboard.nodes.length });
     return { nodeCount: clipboard.nodes.length, edgeCount: clipboard.edges.length };
+  },
+
+  duplicateSelection: () => {
+    const state = get();
+    const targets = selectedNodes(state.nodes, state.selectedId);
+    if (targets.length === 0) return 0;
+    const idMap = new Map<string, string>();
+    for (const node of targets) idMap.set(node.id, newNodeId());
+    const pastedNodes: NoodleNode[] = targets.map((node) => ({
+      ...cloneNode(node),
+      id: idMap.get(node.id)!,
+      selected: true,
+      position: { x: node.position.x + 48, y: node.position.y + 48 },
+      data: cloneValue(node.data),
+      style: node.style ? cloneValue(node.style) : node.style,
+      parentId:
+        typeof node.parentId === "string"
+          ? (idMap.get(node.parentId) ?? node.parentId)
+          : node.parentId,
+    }));
+    const copiedIds = new Set(targets.map((n) => n.id));
+    const pastedEdges: Edge[] = [];
+    for (const edge of state.edges) {
+      if (!copiedIds.has(edge.source) || !copiedIds.has(edge.target)) continue;
+      pastedEdges.push({
+        ...cloneValue(edge),
+        id: newEdgeId(idMap.get(edge.source)!, idMap.get(edge.target)!, edge.sourceHandle, edge.targetHandle),
+        source: idMap.get(edge.source)!,
+        target: idMap.get(edge.target)!,
+        selected: false,
+      });
+    }
+    set({
+      nodes: [...state.nodes.map((n) => ({ ...n, selected: false })), ...pastedNodes],
+      edges: [...state.edges.map((e) => ({ ...e, selected: false })), ...pastedEdges],
+      dirty: true,
+      selectedId: pastedNodes.length === 1 ? pastedNodes[0].id : null,
+      _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
+      _future: [],
+    });
+    return pastedNodes.length;
   },
 
   cutSelection: () => {
@@ -1911,6 +2346,14 @@ export const useEditor = create<EditorStore>((set, get) => ({
     return targets.length;
   },
 
+  selectAll: () => {
+    const state = get();
+    set({
+      nodes: state.nodes.map((n) => ({ ...n, selected: !isMetaBar(n) })),
+      selectedId: null,
+    });
+  },
+
   toggleDisabled: (id) => {
     const state = get();
     set({
@@ -1985,24 +2428,47 @@ export const useEditor = create<EditorStore>((set, get) => ({
   },
 
   setRunHandler: (fn) => set({ runHandler: fn }),
+  runKeyFor: (nodeId) => drillPrefix(get().drillStack) + nodeId,
+
+  drillStepRunDisabledReason: () => {
+    const state = get();
+    if (state.drillStack.length === 0) return null;
+    for (const frame of state.drillStack) {
+      const meta = frame.nodes.find((n) => n.id === frame.metaId);
+      const exec = String((meta?.data.params as { execution?: string } | undefined)?.execution ?? "transparent");
+      if (exec === "isolated") {
+        return "Step-run isn't available inside an isolated metanode — run the metanode from the parent, or set its execution to transparent.";
+      }
+    }
+    return null;
+  },
+
   runFromNode: (id, options = { reuseUpstream: true }) => {
-    const handler = get().runHandler;
-    if (handler) void handler([id], options);
+    const state = get();
+    if (state.drillStepRunDisabledReason()) return;
+    const handler = state.runHandler;
+    if (handler) void handler([state.runKeyFor(id)], options);
   },
   runFromTrigger: (id) => {
-    // Triggers have no ancestors — the engine's ancestor-walk would
-    // collapse `targets=[id]` to "just the trigger". Use the new
-    // `trigger_node_id` gating instead so the trigger AND its descendants
-    // execute.
-    const handler = get().runHandler;
-    if (handler) void handler(undefined, { triggerNodeId: id });
+    const state = get();
+    if (state.drillStepRunDisabledReason()) return;
+    const handler = state.runHandler;
+    if (handler) void handler(undefined, { triggerNodeId: state.runKeyFor(id) });
   },
 
   startRun: (runId, targets, cache?) => {
-    const { nodes, edges, runStatus } = get();
+    const state = get();
+    const { nodes, edges, runStatus } = state;
+    const drillStack = state.drillStack;
+    const prefix = drillStack.length > 0
+      ? drillStack.map((f) => f.metaId).join("/") + "/"
+      : "";
+    const stripId = (id: string) => id.startsWith(prefix) ? id.slice(prefix.length) : id;
     const cachedIds = cache ? new Set(Object.keys(cache)) : new Set<string>();
     const planned = new Set<string>();
-    const targetSet = targets && targets.length > 0 ? new Set(targets) : null;
+    const targetSet = targets && targets.length > 0
+      ? new Set(targets.map(stripId))
+      : null;
     if (targetSet) {
       const visit = (id: string) => {
         if (planned.has(id)) return;
@@ -2011,6 +2477,8 @@ export const useEditor = create<EditorStore>((set, get) => ({
         // they won't re-execute, so their ancestors aren't needed either.
         if (cachedIds.has(id)) return;
         for (const edge of edges) {
+          // Skip bar-proxy edges — bars are not real runnable nodes.
+          if (edge.source === META_BAR_INPUT_ID || edge.target === META_BAR_OUTPUT_ID) continue;
           if (edge.target === id) visit(edge.source);
         }
       };
@@ -2042,6 +2510,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
     const agentIds = collectAgentIds(nodes);
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     for (const id of planned) {
+      if (isMetaBar({ id })) continue;
       // Cached nodes already have their output; don't flash them to "running".
       if (cachedIds.has(id)) continue;
       const node = nodeById.get(id);
@@ -2120,6 +2589,14 @@ export const useEditor = create<EditorStore>((set, get) => ({
       });
     } else if (event.type === "node_chunk" && event.node_id) {
       const nid = event.node_id;
+      // A retry emits a reset so the failed attempt's streamed text is
+      // discarded rather than concatenated with the fresh stream.
+      if (event.reset) {
+        set((state) => ({
+          runChunks: { ...state.runChunks, [nid]: "" },
+        }));
+        return;
+      }
       const delta = event.delta;
       if (typeof delta !== "string" || delta.length === 0) return;
       set((state) => ({

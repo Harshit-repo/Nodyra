@@ -113,6 +113,37 @@ jobs:
         run: >-
           uv run pytest --timeout=300 --timeout-method=thread apps/api/tests
 
+  # Security lane: dependency CVE audit, static security linting, and a scoped
+  # type check of the security-critical modules. pip-audit/bandit start as
+  # advisory so they surface findings without blocking merges; flip
+  # continue-on-error off once each backlog is clear.
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --all-packages
+      - name: pip-audit — dependency CVEs (advisory)
+        continue-on-error: true
+        run: uvx pip-audit
+      - name: bandit — static security lint (advisory)
+        continue-on-error: true
+        run: >-
+          uvx bandit -ll -r
+          apps/api/app
+          packages/core/noodle
+          packages/nodes/noodle_nodes
+      - name: mypy — security-critical modules (advisory)
+        continue-on-error: true
+        run: >-
+          uvx mypy --ignore-missing-imports --follow-imports=skip
+          apps/api/app/services/crypto.py
+          apps/api/app/services/rate_limit.py
+          apps/api/app/logging.py
+          apps/api/app/security.py
+
   web:
     runs-on: ubuntu-latest
     defaults:

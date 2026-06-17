@@ -30,6 +30,16 @@ const BUILTINS = new Set([
   "str", "sum", "super", "tuple", "type", "vars", "zip",
 ]);
 
+// Names available in the code-node execution scope, surfaced as completions so
+// users discover the runtime API without leaving the editor.
+const NODE_API = [
+  "inputs",
+  "context",
+  "items",
+  "params",
+  "return",
+];
+
 function isIdentStart(ch: string): boolean {
   return /[A-Za-z_]/.test(ch);
 }
@@ -125,4 +135,47 @@ export function tokenizePython(src: string): CodeToken[] {
   }
   flush();
   return tokens;
+}
+
+/** The identifier fragment immediately left of the cursor, or "" if the caret
+ *  isn't in/after a word (so we don't pop completions mid-symbol). Stops at a
+ *  `.` so attribute access doesn't merge into the base name. */
+export function getIdentPrefix(value: string, cursorPos: number): string {
+  const before = value.slice(0, cursorPos);
+  const match = before.match(/[A-Za-z_]\w*$/);
+  return match ? match[0] : "";
+}
+
+/** Completion candidates for a Python identifier prefix: keywords, builtins,
+ *  constants, the code-node API names, and identifiers already present in the
+ *  buffer (so locally-defined names complete too). Ranked prefix-first, then
+ *  alphabetical; the typed token itself is excluded. */
+export function computeCodeSuggestions(
+  value: string,
+  cursorPos: number,
+): string[] {
+  const prefix = getIdentPrefix(value, cursorPos);
+  if (prefix.length < 1) return [];
+
+  const pool = new Set<string>([
+    ...KEYWORDS,
+    ...CONSTANTS,
+    ...BUILTINS,
+    ...NODE_API,
+  ]);
+  // Identifiers from the current buffer (dedupe via the set).
+  for (const m of value.matchAll(/[A-Za-z_]\w*/g)) pool.add(m[0]);
+
+  const lower = prefix.toLowerCase();
+  const matches = [...pool].filter(
+    (name) => name !== prefix && name.toLowerCase().startsWith(lower),
+  );
+  matches.sort((a, b) => {
+    // exact-case prefix matches rank above case-insensitive ones, then a→z.
+    const ax = a.startsWith(prefix) ? 0 : 1;
+    const bx = b.startsWith(prefix) ? 0 : 1;
+    if (ax !== bx) return ax - bx;
+    return a.localeCompare(b);
+  });
+  return matches.slice(0, 8);
 }

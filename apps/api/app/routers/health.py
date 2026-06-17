@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -23,19 +25,31 @@ async def ready() -> JSONResponse:
     healthy = True
 
     try:
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
+        async with asyncio.timeout(5):
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
         checks["database"] = "ok"
     except Exception as exc:  # noqa: BLE001
         healthy = False
         checks["database"] = f"error: {exc}"
 
-    try:
-        await redis_client.ping()
-        checks["redis"] = "ok"
-    except Exception as exc:  # noqa: BLE001
-        healthy = False
-        checks["redis"] = f"error: {exc}"
+    # H7: Redis is only a hard dependency when it actually backs the run queue
+    # or a split dispatch topology. A single-process deployment
+    # (queue_backend=none, dispatch_role=inline) has no Redis, so pinging it
+    # would wrongly flap readiness to 503 on every probe.
+    redis_required = (
+        settings.queue_backend == "redis" or settings.dispatch_role != "inline"
+    )
+    if redis_required:
+        try:
+            async with asyncio.timeout(5):
+                await redis_client.ping()
+            checks["redis"] = "ok"
+        except Exception as exc:  # noqa: BLE001
+            healthy = False
+            checks["redis"] = f"error: {exc}"
+    else:
+        checks["redis"] = "not required"
 
     # Sandbox state is informational in "auto" (subprocess fallback is fine)
     # but a hard readiness failure in "required" — runs would error at

@@ -12,6 +12,7 @@ hook and from Code nodes that want to write datasets directly.
 from __future__ import annotations
 
 import re
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,8 @@ _POLARS_ERROR = (
 MAX_MAP_DATASET_ROWS = 10_000
 MAX_MAP_DATASET_CONCURRENCY = 50
 
+_duckdb_conn_local = threading.local()
+
 
 def _duckdb():
     try:
@@ -44,6 +47,36 @@ def _duckdb():
     except ImportError as exc:
         raise RuntimeError(_DUCKDB_ERROR) from exc
     return duckdb
+
+
+def _duckdb_conn():
+    """Get a thread-local DuckDB in-memory connection, reusing it across calls.
+
+    Creating a new ``duckdb.connect(":memory:")`` on every node invocation is
+    wasteful — each one initialises a fresh database instance.  Thread-local
+    reuse avoids that overhead while staying safe for the concurrent Map
+    Dataset fan-out pattern (each worker thread gets its own connection).
+    """
+    conn = getattr(_duckdb_conn_local, "conn", None)
+    if conn is None:
+        conn = _duckdb().connect(":memory:")
+        _duckdb_conn_local.conn = conn
+    return conn
+
+
+def _clear_duckdb_conn():
+    """Close and drop the thread-local DuckDB connection.
+
+    Only needed when a node must guarantee a clean database state (e.g.
+    after mutating SQL session state).  Most nodes never need to call this.
+    """
+    conn = getattr(_duckdb_conn_local, "conn", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _duckdb_conn_local.conn = None
 
 
 def _polars():
@@ -81,23 +114,19 @@ def _schema_from_duckdb(conn) -> list[dict[str, Any]]:
 def _preview_from_table(path: Path, *, limit: int = 50) -> tuple[
     list[dict[str, Any]], list[dict[str, Any]], int, bool,
 ]:
-    duckdb = _duckdb()
-    conn = duckdb.connect(":memory:")
-    try:
-        rel = conn.from_parquet(str(path))
-        row_count = int(rel.count("*").fetchone()[0])
-        preview_rel = rel.limit(limit)
-        columns = preview_rel.columns
-        rows = preview_rel.fetchall()
-        preview = [
-            {col: _jsonify(val) for col, val in zip(columns, row, strict=True)}
-            for row in rows
-        ]
-        types = preview_rel.dtypes
-        schema = [{"name": c, "type": str(t)} for c, t in zip(columns, types, strict=True)]
-        return preview, schema, row_count, row_count > limit
-    finally:
-        conn.close()
+    conn = _duckdb_conn()
+    rel = conn.from_parquet(str(path))
+    row_count = int(rel.count("*").fetchone()[0])
+    preview_rel = rel.limit(limit)
+    columns = preview_rel.columns
+    rows = preview_rel.fetchall()
+    preview = [
+        {col: _jsonify(val) for col, val in zip(columns, row, strict=True)}
+        for row in rows
+    ]
+    types = preview_rel.dtypes
+    schema = [{"name": c, "type": str(t)} for c, t in zip(columns, types, strict=True)]
+    return preview, schema, row_count, row_count > limit
 
 
 def _jsonify(value: Any) -> Any:
@@ -146,19 +175,15 @@ def _finalize_parquet(
 
 def dataframe_to_dataset(df: Any, *, name: str = "dataset.parquet") -> dict[str, Any]:
     """Write a pandas/arrow DataFrame to Parquet and return a DatasetRef."""
-    duckdb = _duckdb()
     path, partial = reserve_artifact_path(
         name, content_type="application/vnd.apache.parquet", kind="dataset"
     )
-    conn = duckdb.connect(":memory:")
-    try:
-        conn.register("df", df)
-        conn.execute(
-            f"COPY (SELECT * FROM df) TO '{str(path).replace(chr(39), chr(39) * 2)}' "
-            "(FORMAT PARQUET, COMPRESSION ZSTD)"
-        )
-    finally:
-        conn.close()
+    conn = _duckdb_conn()
+    conn.register("df", df)
+    conn.execute(
+        f"COPY (SELECT * FROM df) TO '{str(path).replace(chr(39), chr(39) * 2)}' "
+        "(FORMAT PARQUET, COMPRESSION ZSTD)"
+    )
     return _finalize_parquet(path, partial)
 
 
@@ -168,7 +193,6 @@ def records_to_dataset(
     """Write a list of dicts to Parquet and return a DatasetRef."""
     if not isinstance(records, list):
         raise ValueError("records_to_dataset expects a list of dicts")
-    duckdb = _duckdb()
 
     if not records:
         # DuckDB cannot infer schema from zero rows — write an empty Parquet
@@ -186,33 +210,34 @@ def records_to_dataset(
     path, partial = reserve_artifact_path(
         name, content_type="application/vnd.apache.parquet", kind="dataset"
     )
-    conn = duckdb.connect(":memory:")
-    try:
-        # Use Arrow as the bridge to preserve types/nulls.
-        import pyarrow as pa  # type: ignore[import-not-found]
+    conn = _duckdb_conn()
+    # Use Arrow as the bridge to preserve types/nulls.
+    import pyarrow as pa  # type: ignore[import-not-found]
 
-        keys: list[str] = []
-        seen: set[str] = set()
-        for row in records:
-            for key in row:
-                if key not in seen:
-                    seen.add(key)
-                    keys.append(str(key))
-        table = pa.Table.from_pylist(
-            [{k: row.get(k) for k in keys} for row in records]
-        )
-        conn.register("t", table)
-        conn.execute(
-            f"COPY (SELECT * FROM t) TO '{str(path).replace(chr(39), chr(39) * 2)}' "
-            "(FORMAT PARQUET, COMPRESSION ZSTD)"
-        )
-    finally:
-        conn.close()
+    keys: list[str] = []
+    seen: set[str] = set()
+    for row in records:
+        for key in row:
+            if key not in seen:
+                seen.add(key)
+                keys.append(str(key))
+    table = pa.Table.from_pylist(
+        [{k: row.get(k) for k in keys} for row in records]
+    )
+    conn.register("t", table)
+    conn.execute(
+        f"COPY (SELECT * FROM t) TO '{str(path).replace(chr(39), chr(39) * 2)}' "
+        "(FORMAT PARQUET, COMPRESSION ZSTD)"
+    )
     return _finalize_parquet(path, partial)
 
 
 def read_dataset(ref: dict[str, Any]):
-    """Return a DuckDB relation over a DatasetRef's Parquet file."""
+    """Return a DuckDB relation over a DatasetRef's Parquet file.
+
+    Creates a fresh connection because the caller typically holds the returned
+    relation for the lifetime of a node execution.
+    """
     duckdb = _duckdb()
     _ensure_dataset(ref)
     path = dataset_path_for_ref(ref)
@@ -235,26 +260,22 @@ def materialize_dataset(
     """
     dataset = _ensure_dataset(ref, label="input")
     limit = max(1, int(cap or 1))
-    duckdb = _duckdb()
     path = str(dataset_path_for_ref(dataset)).replace("'", "''")
-    conn = duckdb.connect(":memory:")
-    try:
-        total = int(
-            conn.execute(
-                f"SELECT COUNT(*) FROM read_parquet('{path}')"
-            ).fetchone()[0]
+    conn = _duckdb_conn()
+    total = int(
+        conn.execute(
+            f"SELECT COUNT(*) FROM read_parquet('{path}')"
+        ).fetchone()[0]
+    )
+    if total > limit and not allow_truncate:
+        raise ValueError(
+            f"dataset has {total} rows but only {limit} can be expanded "
+            f"inline; reduce rows upstream with Dataset Filter/Limit, or "
+            f"use Dataset To Records with allow_truncate to opt in."
         )
-        if total > limit and not allow_truncate:
-            raise ValueError(
-                f"dataset has {total} rows but only {limit} can be expanded "
-                f"inline; reduce rows upstream with Dataset Filter/Limit, or "
-                f"use Dataset To Records with allow_truncate to opt in."
-            )
-        rel = conn.execute(f"SELECT * FROM read_parquet('{path}') LIMIT {limit}")
-        cols = [d[0] for d in rel.description]
-        rows = rel.fetchall()
-    finally:
-        conn.close()
+    rel = conn.execute(f"SELECT * FROM read_parquet('{path}') LIMIT {limit}")
+    cols = [d[0] for d in rel.description]
+    rows = rel.fetchall()
     return [
         {col: _jsonify(val) for col, val in zip(cols, row, strict=True)}
         for row in rows
@@ -317,8 +338,6 @@ def csv_parse(
     Preview`` to see a sample or ``Dataset To Records`` to materialize
     rows when you must process them inline.
     """
-    duckdb = _duckdb()
-
     payload = text
     if not payload and is_artifact_ref(input):
         from noodle.artifacts import read_text as artifact_read_text
@@ -341,24 +360,21 @@ def csv_parse(
         content_type="application/vnd.apache.parquet",
         kind="dataset",
     )
-    conn = duckdb.connect(":memory:")
+    conn = _duckdb_conn()
+    delim = (delimiter or ",")[:4]
+    delim_sql = delim.replace("'", "''")
+    header_sql = "TRUE" if has_header else "FALSE"
+    src_sql = str(src_path).replace("'", "''")
+    out_sql = str(out_path).replace("'", "''")
+    conn.execute(
+        f"COPY (SELECT * FROM read_csv_auto('{src_sql}', "
+        f"delim='{delim_sql}', header={header_sql})) "
+        f"TO '{out_sql}' (FORMAT PARQUET, COMPRESSION ZSTD)"
+    )
     try:
-        delim = (delimiter or ",")[:4]
-        delim_sql = delim.replace("'", "''")
-        header_sql = "TRUE" if has_header else "FALSE"
-        src_sql = str(src_path).replace("'", "''")
-        out_sql = str(out_path).replace("'", "''")
-        conn.execute(
-            f"COPY (SELECT * FROM read_csv_auto('{src_sql}', "
-            f"delim='{delim_sql}', header={header_sql})) "
-            f"TO '{out_sql}' (FORMAT PARQUET, COMPRESSION ZSTD)"
-        )
-    finally:
-        conn.close()
-        try:
-            src_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        src_path.unlink(missing_ok=True)
+    except OSError:
+        pass
     return _finalize_parquet(out_path, out_partial)
 
 
@@ -394,7 +410,6 @@ def csv_write(
 ) -> dict[str, Any]:
     """Export a DatasetRef as a CSV ArtifactRef (the file, not a string)."""
     ref = _ensure_dataset(input, label="input")
-    duckdb = _duckdb()
     src = str(dataset_path_for_ref(ref)).replace("'", "''")
     out_path, out_partial = reserve_artifact_path(
         filename or "export.csv",
@@ -403,15 +418,12 @@ def csv_write(
     )
     delim_sql = (delimiter or ",")[:4].replace("'", "''")
     header_sql = "TRUE" if include_header else "FALSE"
-    conn = duckdb.connect(":memory:")
-    try:
-        conn.execute(
-            f"COPY (SELECT * FROM read_parquet('{src}')) "
-            f"TO '{str(out_path).replace(chr(39), chr(39) * 2)}' "
-            f"(FORMAT CSV, HEADER {header_sql}, DELIMITER '{delim_sql}')"
-        )
-    finally:
-        conn.close()
+    conn = _duckdb_conn()
+    conn.execute(
+        f"COPY (SELECT * FROM read_parquet('{src}')) "
+        f"TO '{str(out_path).replace(chr(39), chr(39) * 2)}' "
+        f"(FORMAT CSV, HEADER {header_sql}, DELIMITER '{delim_sql}')"
+    )
     return finalize_artifact_ref(
         out_path,
         out_partial,
@@ -525,7 +537,6 @@ def dataset_select(input: Any = None, columns: str = "") -> dict[str, Any]:
     names = [c.strip() for c in (columns or "").split(",") if c.strip()]
     if not names:
         return ref
-    duckdb = _duckdb()
     src = str(dataset_path_for_ref(ref)).replace("'", "''")
     select_list = ", ".join(quote_ident(n) for n in names)
     out_path, out_partial = reserve_artifact_path(
@@ -533,15 +544,12 @@ def dataset_select(input: Any = None, columns: str = "") -> dict[str, Any]:
         content_type="application/vnd.apache.parquet",
         kind="dataset",
     )
-    conn = duckdb.connect(":memory:")
-    try:
-        conn.execute(
-            f"COPY (SELECT {select_list} FROM read_parquet('{src}')) "
-            f"TO '{str(out_path).replace(chr(39), chr(39) * 2)}' "
-            "(FORMAT PARQUET, COMPRESSION ZSTD)"
-        )
-    finally:
-        conn.close()
+    conn = _duckdb_conn()
+    conn.execute(
+        f"COPY (SELECT {select_list} FROM read_parquet('{src}')) "
+        f"TO '{str(out_path).replace(chr(39), chr(39) * 2)}' "
+        "(FORMAT PARQUET, COMPRESSION ZSTD)"
+    )
     return _finalize_parquet(out_path, out_partial)
 
 
@@ -570,22 +578,18 @@ def dataset_filter(input: Any = None, where: str = "") -> dict[str, Any]:
         return ref
     if ";" in where:
         raise ValueError("filter expression must not contain ';'")
-    duckdb = _duckdb()
     src = str(dataset_path_for_ref(ref)).replace("'", "''")
     out_path, out_partial = reserve_artifact_path(
         "dataset.parquet",
         content_type="application/vnd.apache.parquet",
         kind="dataset",
     )
-    conn = duckdb.connect(":memory:")
-    try:
-        conn.execute(
-            f"COPY (SELECT * FROM read_parquet('{src}') WHERE {where}) "
-            f"TO '{str(out_path).replace(chr(39), chr(39) * 2)}' "
-            "(FORMAT PARQUET, COMPRESSION ZSTD)"
-        )
-    finally:
-        conn.close()
+    conn = _duckdb_conn()
+    conn.execute(
+        f"COPY (SELECT * FROM read_parquet('{src}') WHERE {where}) "
+        f"TO '{str(out_path).replace(chr(39), chr(39) * 2)}' "
+        "(FORMAT PARQUET, COMPRESSION ZSTD)"
+    )
     return _finalize_parquet(out_path, out_partial)
 
 
@@ -607,22 +611,18 @@ def dataset_limit(input: Any = None, limit: int = 100, offset: int = 0) -> dict[
     ref = _ensure_dataset(input, label="input")
     n = max(0, int(limit or 0))
     off = max(0, int(offset or 0))
-    duckdb = _duckdb()
     src = str(dataset_path_for_ref(ref)).replace("'", "''")
     out_path, out_partial = reserve_artifact_path(
         "dataset.parquet",
         content_type="application/vnd.apache.parquet",
         kind="dataset",
     )
-    conn = duckdb.connect(":memory:")
-    try:
-        conn.execute(
-            f"COPY (SELECT * FROM read_parquet('{src}') LIMIT {n} OFFSET {off}) "
-            f"TO '{str(out_path).replace(chr(39), chr(39) * 2)}' "
-            "(FORMAT PARQUET, COMPRESSION ZSTD)"
-        )
-    finally:
-        conn.close()
+    conn = _duckdb_conn()
+    conn.execute(
+        f"COPY (SELECT * FROM read_parquet('{src}') LIMIT {n} OFFSET {off}) "
+        f"TO '{str(out_path).replace(chr(39), chr(39) * 2)}' "
+        "(FORMAT PARQUET, COMPRESSION ZSTD)"
+    )
     return _finalize_parquet(out_path, out_partial)
 
 
@@ -662,24 +662,23 @@ def duckdb_sql(input: Any = None, sql: str = "SELECT * FROM input") -> dict[str,
         content_type="application/vnd.apache.parquet",
         kind="dataset",
     )
-    conn = duckdb.connect(":memory:")
+    # Sandboxed query connection: eagerly materialize the wired dataset into
+    # an in-memory TABLE, then latch OFF all external access before the
+    # author's SELECT runs. ``enable_external_access`` is one-way in DuckDB,
+    # so once false the query cannot touch the host filesystem or network.
+    # A fresh connection is required because mutating ``enable_external_access``
+    # would permanently taint the shared thread-local connection for subsequent
+    # nodes (e.g. ``_preview_from_table`` during finalize).
+    sandbox = duckdb.connect(":memory:")
     try:
-        # DSQ-2: eagerly materialize the wired dataset into an in-memory TABLE
-        # (not a lazy view), then latch OFF all external access before the
-        # author's SELECT runs. This is the real guard against server-side file
-        # reads via DuckDB table functions (read_csv_auto/parquet_scan/… — a
-        # name blocklist can't enumerate every alias). ``enable_external_access``
-        # is one-way in DuckDB, so once false the query cannot touch the host
-        # filesystem or network. Mirrors the dataset-explorer fix (DSQ-1).
-        conn.execute(f"CREATE TABLE input AS SELECT * FROM read_parquet('{src}')")
-        conn.execute("SET enable_external_access=false")
-        result = conn.execute(query).arrow()
+        sandbox.execute(f"CREATE TABLE input AS SELECT * FROM read_parquet('{src}')")
+        sandbox.execute("SET enable_external_access=false")
+        result = sandbox.execute(query).arrow()
     finally:
-        conn.close()
+        sandbox.close()
 
-    # Write the result out with a fresh connection: external access is needed to
-    # write the output parquet, but the (sandboxed) author query already ran
-    # above against the in-memory table, so this connection never sees it.
+    # Write the result out with a fresh connection: the sandboxed query ran
+    # above with external access disabled, and sandbox conn is now closed.
     writer = duckdb.connect(":memory:")
     try:
         writer.register("_dsq_result", result)
@@ -825,17 +824,13 @@ async def map_dataset(
             f"map_dataset: concurrency must be <= {MAX_MAP_DATASET_CONCURRENCY}"
         )
     ref = _ensure_dataset(input, label="input")
-    duckdb = _duckdb()
     path = str(dataset_path_for_ref(ref)).replace("'", "''")
-    conn = duckdb.connect(":memory:")
-    try:
-        total = int(
-            conn.execute(
-                f"SELECT COUNT(*) FROM read_parquet('{path}')"
-            ).fetchone()[0]
-        )
-    finally:
-        conn.close()
+    conn = _duckdb_conn()
+    total = int(
+        conn.execute(
+            f"SELECT COUNT(*) FROM read_parquet('{path}')"
+        ).fetchone()[0]
+    )
 
     if total > cap:
         raise ValueError(

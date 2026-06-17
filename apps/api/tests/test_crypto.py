@@ -5,8 +5,10 @@ from unittest.mock import patch
 import pytest
 
 from app.services.crypto import (
+    CredentialDecryptError,
     create_payload_token,
     create_token,
+    decode_session_token,
     decrypt_credential,
     decrypt_data,
     decrypt_with_dek,
@@ -141,6 +143,42 @@ def test_decrypt_credential_tampered_ciphertext_returns_empty() -> None:
 
 
 # ---------------------------------------------------------------------------
+# H1: strict mode — a credential that exists but cannot be decrypted must
+# raise rather than silently degrade a workflow to empty credentials.
+# ---------------------------------------------------------------------------
+
+def test_decrypt_credential_strict_raises_on_invalid_dek() -> None:
+    payload = {"k": "v"}
+    ciphertext, _ = encrypt_credential(payload)
+    with pytest.raises(CredentialDecryptError):
+        decrypt_credential(ciphertext, "invalid-dek", strict=True)
+
+
+def test_decrypt_credential_strict_raises_on_tampered_ciphertext() -> None:
+    _, wrapped_dek = encrypt_credential({"k": "v"})
+    with pytest.raises(CredentialDecryptError):
+        decrypt_credential("tampered-ciphertext", wrapped_dek, strict=True)
+
+
+def test_decrypt_credential_strict_raises_on_legacy_invalid_token() -> None:
+    with pytest.raises(CredentialDecryptError):
+        decrypt_credential("not-a-valid-fernet-token", None, strict=True)
+
+
+def test_decrypt_credential_strict_roundtrip_succeeds() -> None:
+    payload = {"host": "db.example.com", "password": "hunter2"}
+    ciphertext, wrapped_dek = encrypt_credential(payload)
+    assert decrypt_credential(ciphertext, wrapped_dek, strict=True) == payload
+
+
+def test_decrypt_credential_strict_allows_genuinely_empty_payload() -> None:
+    # An empty credential dict decrypts cleanly to {} — that is a valid value,
+    # not a failure, so strict mode must NOT raise on it.
+    ciphertext, wrapped_dek = encrypt_credential({})
+    assert decrypt_credential(ciphertext, wrapped_dek, strict=True) == {}
+
+
+# ---------------------------------------------------------------------------
 # hash_password / verify_password
 # ---------------------------------------------------------------------------
 
@@ -225,6 +263,29 @@ def test_verify_token_returns_none_for_malformed_token() -> None:
     assert verify_token("no-dot-here") is None
     assert verify_token("") is None
     assert verify_token("a.b.c") is None  # too many dots
+
+
+def test_session_token_includes_issued_at() -> None:
+    """C1: session tokens carry ``iat`` so revocation can invalidate every
+    token minted before a cutoff."""
+    before = time.time()
+    token = create_token("user1")
+    payload = decode_session_token(token)
+    assert payload is not None
+    assert payload["sub"] == "user1"
+    assert isinstance(payload["iat"], (int, float))
+    assert payload["iat"] >= before
+
+
+def test_decode_session_token_rejects_non_session_token() -> None:
+    purpose = create_payload_token({"sub": "user1", "typ": "runner"}, ttl_seconds=3600)
+    assert decode_session_token(purpose) is None
+
+
+def test_decode_session_token_rejects_tampered_or_expired() -> None:
+    assert decode_session_token("garbage") is None
+    expired = create_token("user1", ttl_seconds=-1)
+    assert decode_session_token(expired) is None
 
 
 def test_token_expires_after_ttl() -> None:

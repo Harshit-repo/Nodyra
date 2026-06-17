@@ -164,6 +164,61 @@ async def test_runner_upload_must_match_run_org_namespace(client, monkeypatch):
     assert right.status_code == 201, right.text
 
 
+async def test_persist_artifact_refs_stamps_non_default_run_org(client, monkeypatch):
+    """Background artifact persistence must resolve the owning run org-blind."""
+    from app.services import artifacts as artifacts_svc
+
+    monkeypatch.setattr(settings, "multi_tenancy_enabled", True)
+    async with artifacts_svc.SessionLocal() as db:
+        db.add_all(
+            [
+                models.Organization(id=DEFAULT_ORG_ID, name="D", slug="default"),
+                models.Organization(id="org-x", name="X", slug="x"),
+            ]
+        )
+        token = current_org_id.set("org-x")
+        try:
+            wf = models.Workflow(name="wf", draft_graph={"nodes": [], "edges": []})
+            wf.versions.append(models.WorkflowVersion(version=1, graph={}))
+            db.add(wf)
+            await db.flush()
+            run = models.Run(workflow_id=wf.id)
+            db.add(run)
+            await db.commit()
+            run_id = run.id
+        finally:
+            current_org_id.reset(token)
+
+    bg_token = current_org_id.set(None)
+    try:
+        await artifacts_svc.persist_artifact_refs(
+            run_id,
+            [
+                {
+                    "__noodle_artifact__": True,
+                    "artifact_id": "art-orgx",
+                    "run_id": run_id,
+                    "node_id": "n1",
+                    "name": "out.bin",
+                    "storage_backend": "local",
+                    "storage_key": f"org-x/runs/{run_id}/n1/art-orgx-out.bin",
+                    "size_bytes": 1,
+                }
+            ],
+        )
+    finally:
+        current_org_id.reset(bg_token)
+
+    token = current_org_id.set("org-x")
+    try:
+        async with artifacts_svc.SessionLocal() as db:
+            row = await db.get(models.Artifact, "art-orgx")
+            assert row is not None
+            assert row.org_id == "org-x"
+    finally:
+        current_org_id.reset(token)
+
+
 async def test_artifact_of_foreign_org_run_is_404(session, monkeypatch):
     """The artifacts table has no org_id; the guard goes through the parent
     run, which IS org-scoped. An org-a request must not see org-b's bytes."""

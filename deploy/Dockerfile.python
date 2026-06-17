@@ -4,6 +4,15 @@ FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
+ARG NOODLE_UID=10001
+ARG NOODLE_GID=10001
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gosu \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid "${NOODLE_GID}" noodle \
+    && useradd --create-home --uid "${NOODLE_UID}" --gid "${NOODLE_GID}" noodle
+
 ENV UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
     PATH="/app/.venv/bin:$PATH"
@@ -12,6 +21,19 @@ WORKDIR /app
 COPY . .
 
 RUN uv sync --locked --no-dev --all-packages
+
+# Run app processes as an unprivileged user (H6). The entrypoint starts as
+# root only long enough to repair mounted runtime-dir ownership, then execs as
+# noodle. This handles named volumes created before the non-root switch.
+RUN mkdir -p /app/envs /app/artifacts \
+    && chmod +x /app/deploy/python-entrypoint.sh \
+    && chown -R noodle:noodle /app
+ENTRYPOINT ["/app/deploy/python-entrypoint.sh"]
+
+# Liveness probe for the API role. The worker exposes no HTTP port, so it
+# disables this in docker-compose (healthcheck.disable: true).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD gosu noodle python -c "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3).status == 200 else 1)"
 
 # Default command is overridden per service in docker-compose.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

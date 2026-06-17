@@ -1884,8 +1884,421 @@ git commit -m "test(editor): metanode drill-in edge-case sweep (bar leak, reset,
 
 ---
 
+## PHASE 7 — Connection validation, fitView, startRun pruning, edge-case coverage
+
+### Task 14: Bar-aware `isValidConnection` / `validateConnection`
+
+**Files:**
+- Modify: `apps/web/src/editor/connectionValidation.ts` (`validateConnection` ~line 134-169)
+- Modify: `apps/web/src/editor/Canvas.tsx` (`isValidConnection` ~line 728-740)
+- Modify: `apps/web/src/editor/store/index.ts` (`isValidConnection` calls inside `onConnect` ~line 1176-1218; `insertQuickFixNode` / `insertNodeBetweenEdge` if they also call `validateConnection`)
+- Test: `apps/web/src/editor/connectionValidation.test.ts` (extend)
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `connectionValidation.test.ts`:
+
+```ts
+import { META_BAR_INPUT_ID, META_BAR_OUTPUT_ID } from "./store/drillSlice";
+import { validateConnection } from "./connectionValidation";
+
+describe("validateConnection with metaBar nodes", () => {
+  function barNode(id: string, side: "input" | "output", ports: { id: string }[]) {
+    return {
+      id,
+      type: "metaBar",
+      position: { x: 0, y: 0 },
+      data: { bar: side, ports },
+      draggable: false,
+      deletable: false,
+      selectable: false,
+    } as NoodleNode;
+  }
+  function codeNode(id: string) {
+    return {
+      id,
+      type: "noodle",
+      position: { x: 0, y: 0 },
+      data: {
+        manifest: {
+          id: "code", name: "Code", inputs: [{ name: "input", data_kind: "any" }],
+          outputs: [{ name: "main", data_kind: "any" }],
+        } as NodeManifest,
+      },
+    } as unknown as NoodleNode;
+  }
+
+  it("input bar source handle connects to any internal target", () => {
+    const nodes = [barNode(META_BAR_INPUT_ID, "input", [{ id: "in_1" }]), codeNode("A")];
+    const result = validateConnection(nodes, {
+      source: META_BAR_INPUT_ID, sourceHandle: "in_1",
+      target: "A", targetHandle: "input",
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("internal source connects to output bar target handle", () => {
+    const nodes = [codeNode("A"), barNode(META_BAR_OUTPUT_ID, "output", [{ id: "out_1" }])];
+    const result = validateConnection(nodes, {
+      source: "A", sourceHandle: "main",
+      target: META_BAR_OUTPUT_ID, targetHandle: "out_1",
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("output bar target handle rejects as source (wrong bar direction)", () => {
+    const nodes = [barNode(META_BAR_OUTPUT_ID, "output", [{ id: "out_1" }]), codeNode("A")];
+    const result = validateConnection(nodes, {
+      source: META_BAR_OUTPUT_ID, sourceHandle: "out_1",
+      target: "A", targetHandle: "input",
+    });
+    expect(result.ok).toBe(false);
+  });
+});
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `npm run test -- connectionValidation.test.ts`
+Expected: FAIL — `sourceNode.data.manifest` is `undefined` for bar nodes in `validateConnection`.
+
+- [ ] **Step 3: Gate bar nodes early in `validateConnection`**
+
+In `apps/web/src/editor/connectionValidation.ts`, add the import:
+
+```ts
+import { isMetaBar, META_BAR_INPUT_ID, META_BAR_OUTPUT_ID } from "./store/drillSlice";
+```
+
+At the top of `validateConnection`, after the endpoint-existence check, insert:
+
+```ts
+  // Bar ports are wildcards: input-bar source handles and output-bar target
+  // handles accept any data kind. Prevent output-bar from acting as a source
+  // and input-bar from acting as a target (wrong direction).
+  if (sourceNode && isMetaBar(sourceNode)) {
+    return sourceNode.id === META_BAR_INPUT_ID
+      ? { ok: true, severity: "ok", message: "Input bar — any internal target." }
+      : { ok: false, severity: "error", message: "Output bar cannot serve as a connection source." };
+  }
+  if (targetNode && isMetaBar(targetNode)) {
+    return targetNode.id === META_BAR_OUTPUT_ID
+      ? { ok: true, severity: "ok", message: "Output bar — any internal source." }
+      : { ok: false, severity: "error", message: "Input bar cannot serve as a connection target." };
+  }
+```
+
+- [ ] **Step 4: Update `isValidConnection` in Canvas to include all bar nodes**
+
+In `apps/web/src/editor/Canvas.tsx`, the `isValidConnection` callback reads `state.nodes` — this already includes the bar nodes while drilled (they're in the live `nodes`). Confirm by inspection: `state.nodes` is the full live set. No change needed.
+
+- [ ] **Step 5: Update `onConnect` store path and `insertQuickFixNode`**
+
+In `apps/web/src/editor/store/index.ts`, search for all calls to `validateConnection`. The store's `onConnect` reads `state.nodes` which already includes bars — OK.
+
+For `insertQuickFixNode` and `insertNodeBetweenEdge`, check whether they call `validateConnection` with bar-filtered nodes. Add bar guards if needed (bars should never appear in these paths since they operate on normal connections only).
+
+- [ ] **Step 6: Run tests to verify it passes**
+
+Run: `npm run test -- connectionValidation.test.ts`
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add apps/web/src/editor/connectionValidation.ts apps/web/src/editor/connectionValidation.test.ts
+git commit -m "feat(editor): bar-aware isValidConnection — bar ports are wildcard any-kind"
+```
+
+---
+
+### Task 15: `fitView` after entering a metanode
+
+**Files:**
+- Modify: `apps/web/src/editor/Canvas.tsx` (enter handler after double-click or programmatic enter)
+
+- [ ] **Step 1: Add `fitView` call after `enterMetanode`**
+
+In `apps/web/src/editor/Canvas.tsx`, locate the `onNodeDoubleClick` handler where `enterMetanode` is called. After it, call `fitView` on the next frame to let React Flow render the interior nodes first:
+
+```ts
+        onNodeDoubleClick={(_, node) => {
+          const sn = nodes.find((n) => n.id === node.id);
+          if (sn?.data?.manifest?.id === "meta_node") {
+            enterMetanode(node.id);
+            window.setTimeout(() => void fitView({ padding: 0.22, duration: 220 }), 0);
+            return;
+          }
+          if (node.type === "noodle" || node.type === "mapGroup") openNdv(node.id);
+        }}
+```
+
+- [ ] **Step 2: Verify with manual smoke test**
+
+Start the app, double-click a metanode. The canvas should smoothly fit to the interior bounding box (including bars). No `fitView` call is needed on exit — returning to the parent graph, the nodes are still at their original positions from the restored `DrillFrame`. If the parent view feels off, add the same `fitView` call after `exitMetanode`:
+
+```ts
+            window.setTimeout(() => void fitView({ padding: 0.22, duration: 220 }), 0);
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add apps/web/src/editor/Canvas.tsx
+git commit -m "feat(editor): fitView after entering metanode for smooth interior framing"
+```
+
+---
+
+### Task 16: `startRun` — strip drill prefix from targets, exclude bars from ancestor walk
+
+**Files:**
+- Modify: `apps/web/src/editor/store/index.ts` (`startRun` ~line 2001-2061)
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `apps/web/src/editor/store.drillRun.test.ts`:
+
+```ts
+describe("startRun inside a metanode", () => {
+  it("strips the drill prefix from targets for the ancestor walk", () => {
+    load(chainGraph());
+    const meta = useEditor.getState().collapseToMetanode(["B", "C"])!;
+    useEditor.getState().enterMetanode(meta);
+    // startRun receives targets with namespaced ids (as runFromNode would send)
+    const prefix = useEditor.getState().drillStack.length > 0
+      ? useEditor.getState().drillStack.map((f) => f.metaId).join("/") + "/"
+      : "";
+    expect(prefix).toBe(`${meta}/`);
+    useEditor.getState().startRun("test-run-id", [`${meta}/C`]);
+    const status = useEditor.getState().runStatus;
+    // B (ancestor of C) should be planned/running, not the bar
+    expect(status).toHaveProperty("B");
+    expect(status).not.toHaveProperty(META_BAR_INPUT_ID);
+    expect(status).not.toHaveProperty(META_BAR_OUTPUT_ID);
+  });
+
+  it("excludes proxy edges and bars from the ancestor walk", () => {
+    load(chainGraph());
+    const meta = useEditor.getState().collapseToMetanode(["B", "C"])!;
+    useEditor.getState().enterMetanode(meta);
+    // with prefix stripped, target is "C"; B feeds C via a real edge,
+    // but the bar-proxy edges should not pull the bars into planned set
+    useEditor.getState().startRun("test-run-id", [`${meta}/C`]);
+    const status = useEditor.getState().runStatus;
+    expect(status).toHaveProperty("B");
+    // C should also be running
+    expect(status).toHaveProperty("C");
+  });
+});
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `npm run test -- store.drillRun.test.ts`
+Expected: FAIL — `startRun` receives `metaId/C` but the live edges have bare `C`, so `planned` never includes interior nodes; also bar IDs may leak into status.
+
+- [ ] **Step 3: Strip prefix and filter bars in `startRun`**
+
+In `startRun` (~line 2001), add at the very top:
+
+```ts
+    const drillStack = get().drillStack;
+    const prefix = drillStack.length > 0
+      ? drillStack.map((f) => f.metaId).join("/") + "/"
+      : "";
+    const stripId = (id: string) => id.startsWith(prefix) ? id.slice(prefix.length) : id;
+```
+
+Then, in the `targetSet` branch, map targets through `stripId`:
+
+```ts
+    const targetSet = targets && targets.length > 0
+      ? new Set(targets.map(stripId))
+      : null;
+```
+
+This way the ancestor walk operates on bare interior ids while `drillPrefix + id` targets from `runFromNode` are transparently unwrapped.
+
+Then, inside both the `visit` function and the `planned → nextStatus` loop, filter out bar nodes:
+
+In the `for (const edge of edges)` loop inside `visit`, skip proxy edges that involve a bar:
+
+```ts
+        for (const edge of edges) {
+          // Skip bar-proxy edges — bars are not real runnable nodes.
+          if (edge.source === META_BAR_INPUT_ID || edge.target === META_BAR_OUTPUT_ID) continue;
+          if (edge.target === id) visit(edge.source);
+        }
+```
+
+In the final `planned → nextStatus` loop, skip bar nodes:
+
+```ts
+    for (const id of planned) {
+      if (isMetaBar({ id })) continue;
+      if (cachedIds.has(id)) continue;
+      const node = nodeById.get(id);
+      if (node && isAgentSubNode(node, edges, agentIds)) continue;
+      nextStatus[id] = "running";
+    }
+```
+
+- [ ] **Step 4: Run to verify it passes**
+
+Run: `npm run test -- store.drillRun.test.ts`
+Expected: PASS.
+
+- [ ] **Step 5: Run full drill suite + existing run tests**
+
+Run: `npm run test -- store.drill.test.ts store.drillRun.test.ts store.undo.test.ts`
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add apps/web/src/editor/store/index.ts apps/web/src/editor/store.drillRun.test.ts
+git commit -m "feat(editor): startRun strips drill prefix from targets, excludes bars from ancestor walk"
+```
+
+---
+
+### Task 17: Remaining edge-case tests (stable ids, fan-out input, output single-wire, bar-aware validation, startRun)
+
+**Files:**
+- Extend: `apps/web/src/editor/store.drill.test.ts`
+- Extend: `apps/web/src/editor/store.drillRun.test.ts`
+- Extend: `apps/web/src/editor/connectionValidation.test.ts`
+
+- [ ] **Step 1: Stable port ids across add/remove of different ports (edge case 6)**
+
+Append to `store.drill.test.ts`:
+
+```ts
+describe("metanode drill-in: stable port ids", () => {
+  it("add port_1, remove port_0, exit, re-enter: port_0 gone, port_1 keeps id", () => {
+    load(chainGraph());
+    const meta = useEditor.getState().collapseToMetanode(["B", "C"])!;
+    const originalPorts = ((metaNodeParams(meta).ports ?? {}) as MetaPorts).inputs.map((p) => p.port);
+    expect(originalPorts).toHaveLength(1);
+
+    useEditor.getState().enterMetanode(meta);
+    // add another input
+    useEditor.getState().addMetaPort("input");
+    const inBar = useEditor.getState().nodes.find((n) => n.id === META_BAR_INPUT_ID)!;
+    const portIds = (inBar.data as { ports: { id: string }[] }).ports.map((p) => p.id);
+    const originalId = portIds[0];
+    const newId = portIds[1];
+    // remove the original port
+    useEditor.getState().removeMetaPort("input", originalId);
+    useEditor.getState().exitMetanode();
+
+    const portsAfter = ((useEditor.getState().nodes.find((n) => n.id === meta)!
+      .data.params as { ports: MetaPorts }).ports).inputs.map((p) => p.port);
+    expect(portsAfter).not.toContain(originalId);
+    expect(portsAfter).toContain(newId);
+  });
+});
+
+function metaNodeParams(metaId: string): { ports?: MetaPorts } {
+  const n = useEditor.getState().nodes.find((n) => n.id === metaId)!;
+  return n.data.params as { ports?: MetaPorts };
+}
+```
+
+- [ ] **Step 2: Fan-out input port round-trips (edge case 8)**
+
+Append to `store.drill.test.ts`:
+
+```ts
+it("fan-out input port: one bar handle → multiple internal targets round-trips", () => {
+  load(chainGraph());
+  const meta = useEditor.getState().collapseToMetanode(["B", "C"])!;
+  useEditor.getState().enterMetanode(meta);
+  const portId = (useEditor.getState().nodes.find((n) => n.id === META_BAR_INPUT_ID)!
+    .data as { ports: { id: string }[] }).ports[0].id;
+  // wire input bar → B and input bar → C (fan-out)
+  useEditor.getState().onConnect({
+    source: META_BAR_INPUT_ID, sourceHandle: portId,
+    target: "B", targetHandle: "input",
+  });
+  useEditor.getState().onConnect({
+    source: META_BAR_INPUT_ID, sourceHandle: portId,
+    target: "C", targetHandle: "input",
+  });
+  useEditor.getState().exitMetanode();
+  // re-enter and verify both proxy edges still exist
+  useEditor.getState().enterMetanode(meta);
+  const proxyEdges = useEditor.getState().edges.filter(
+    (e) => e.source === META_BAR_INPUT_ID && e.sourceHandle === portId,
+  );
+  expect(proxyEdges).toHaveLength(2);
+});
+```
+
+- [ ] **Step 3: Output-bar single-wire enforcement test (strengthen Task 8's test)**
+
+Append to `store.drill.test.ts`:
+
+```ts
+it("output port with multiple wires is deduped on fold (last wire wins)", () => {
+  load(chainGraph());
+  const meta = useEditor.getState().collapseToMetanode(["B", "C"])!;
+  useEditor.getState().enterMetanode(meta);
+  const outPort = (useEditor.getState().nodes.find((n) => n.id === META_BAR_OUTPUT_ID)!
+    .data as { ports: { id: string }[] }).ports[0].id;
+  // B → output, then C → output (replaces)
+  useEditor.getState().onConnect({ source: "B", sourceHandle: "main", target: META_BAR_OUTPUT_ID, targetHandle: outPort });
+  useEditor.getState().onConnect({ source: "C", sourceHandle: "main", target: META_BAR_OUTPUT_ID, targetHandle: outPort });
+  useEditor.getState().exitMetanode();
+  // Only C should be the output source
+  const out = ((useEditor.getState().nodes.find((n) => n.id === meta)!
+    .data.params as { ports: MetaPorts }).ports).outputs;
+  expect(out).toHaveLength(1);
+  expect(out[0].source).toBe("C");
+});
+```
+
+- [ ] **Step 4: Bar-aware validation test in connectionValidation.test.ts**
+
+Already covered by Task 14 Step 1. Confirm it passes:
+
+Run: `npm run test -- connectionValidation.test.ts`
+Expected: PASS.
+
+- [ ] **Step 5: `startRun` drill-aware test**
+
+Already covered by Task 16 Step 1. Confirm it passes:
+
+Run: `npm run test -- store.drillRun.test.ts`
+Expected: PASS.
+
+- [ ] **Step 6: Full suite sweep**
+
+Run: `npm run test`
+Expected: all PASS. Fix any regressions.
+
+- [ ] **Step 7: Full type-check + lint**
+
+Run:
+```bash
+npx tsc -p apps/web/tsconfig.json --noEmit
+cd apps/web && npm run lint 2>nul; cd ../..
+```
+Expected: clean.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add apps/web/src/editor/store.drill.test.ts apps/web/src/editor/store.drillRun.test.ts apps/web/src/editor/connectionValidation.test.ts
+git commit -m "test(editor): edge-case coverage — stable port ids, fan-out input, output single-wire"
+```
+
+---
+
 ## Self-Review Notes (addressed)
 
-- **Spec coverage:** undo fix (Task 1 ↔ spec §1); drill stack/swap/fold (Tasks 4–7 ↔ §2.2/§2.3); bars + port lifecycle (Tasks 8, 10 ↔ §2.5–§2.8); nested + breadcrumb (Tasks 5, 11 ↔ §2.3/§2.10); step-run namespacing (Task 9 ↔ §2.9); unknown/nested materialize (Task 3 ↔ §2.6); NodeCard run keys + placeholder (Task 12). Edge cases 1–20 map to tests in Tasks 5–9, 13.
+- **Spec coverage:** undo fix (Task 1 ↔ spec §1); drill stack/swap/fold (Tasks 4–7 ↔ §2.2/§2.3); bars + port lifecycle (Tasks 8, 10 ↔ §2.5–§2.8); nested + breadcrumb (Tasks 5, 11 ↔ §2.3/§2.10); step-run namespacing (Task 9 ↔ §2.9); unknown/nested materialize (Task 3 ↔ §2.6); NodeCard run keys + placeholder (Task 12); bar-aware `isValidConnection` (Task 14 ↔ §2.9); `fitView` after enter (Task 15 ↔ §2.2 step 5); `startRun` prefix stripping + bar filtering (Task 16 ↔ §2.9). Edge cases 1–20 map to tests in Tasks 5–9, 13, 17.
 - **Type consistency:** `MetaPorts`, `DrillFrame`, `GraphNodeShape`, `runKeyFor`, `drillStepRunDisabledReason`, `materializeInterior`, `foldInterior`, `updateMetaNode`, `reconcileParentEdges`, `serializeGraph`, `META_BAR_INPUT_ID`/`META_BAR_OUTPUT_ID`, `isMetaBar`, `drillPrefix`, `maxPortSuffix` are defined once and reused by exact name.
 - **Deviation from spec, intentional:** ports are added/removed via explicit bar buttons (`addMetaPort`/`removeMetaPort`) rather than a drag-from-stub (cleaner, KNIME-like); an output port with no internal source wire is dropped on fold (the engine's `port_out` requires a real source), while input ports may persist with empty targets — documented in `foldInterior`.
+- **Gaps closed in Phase 7:** `isValidConnection` now early-returns for bar nodes (bar ports are wildcard any-kind); `enterMetanode` triggers `fitView` to frame the interior; `startRun` strips the drill prefix from targets and excludes bar nodes/proxy edges from the ancestor walk; edge-case tests cover stable ids (add/remove different ports), fan-out input round-trip, output-bar single-wire dedup on fold, and bar-aware validation.

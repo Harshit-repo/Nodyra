@@ -1,5 +1,6 @@
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # The shipped placeholder secret. Centralised so the field default, the
@@ -62,10 +63,12 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://noodle:noodle@localhost:5432/noodle"
     # SQLAlchemy async connection pool tuning. Ignored for SQLite (NullPool).
     # pool_size: steady-state connections kept open; max_overflow adds burst
-    # headroom; pool_recycle prevents stale connections after long idle periods.
+    # headroom; pool_recycle prevents stale connections after long idle periods;
+    # pool_timeout: seconds to wait for a connection from the pool before error.
     db_pool_size: int = 5
     db_pool_max_overflow: int = 10
     db_pool_recycle_seconds: int = 1800
+    db_pool_timeout: int = 30
     redis_url: str = "redis://localhost:6379/0"
     cors_origins: str = "http://localhost:5173"
     envs_dir: str = "./envs"
@@ -243,8 +246,19 @@ class Settings(BaseSettings):
     # Per-IP sliding-window cap on /auth/login + /auth/register attempts.
     # Tunes brute-force friction; set ``auth_rate_limit_enabled=False`` to
     # disable entirely (e.g. when fronted by a WAF that already throttles).
+    # Root log level + structured JSON logging (H4). JSON is the production
+    # posture (log aggregators index request_id/org_id/user_id/trace_id);
+    # operators can keep human-readable text with ``log_json=False``.
+    log_level: str = "INFO"
+    log_json: bool = True
     auth_rate_limit_enabled: bool = True
     auth_rate_limit_per_minute: int = 10
+    # Per-(path, IP) sliding-window cap on public /webhook/{path} ingress (H5).
+    # Protects against a single sender hammering an unauthenticated webhook URL
+    # into a run-queue flood. Set ``webhook_rate_limit_enabled=False`` when a
+    # WAF/CDN already throttles ingress.
+    webhook_rate_limit_enabled: bool = True
+    webhook_rate_limit_per_minute: int = 120
     secret_key: str = DEFAULT_SECRET_KEY
     # Shared secret the worker presents to call /internal/* endpoints.
     # Blank = no check (fine for local dev where only your machine reaches
@@ -281,6 +295,24 @@ class Settings(BaseSettings):
     slack_oauth_client_secret: str = ""
     github_oauth_client_id: str = ""
     github_oauth_client_secret: str = ""
+
+    @model_validator(mode="after")
+    def _harden_multi_tenant_defaults(self) -> "Settings":
+        """M7: multi-tenant SaaS should not silently deploy risky nodes.
+
+        When multi-tenancy is on and the operator has *not* explicitly chosen a
+        policy, raise the default from the single-tenant ``warn`` to
+        ``require_approval`` so deploying a Code/HTTP-bearing workflow needs an
+        explicit acknowledgement. An explicit ``unsafe_node_policy`` (env or
+        kwarg) is always honoured — it appears in ``model_fields_set``.
+        """
+        if (
+            self.multi_tenancy_enabled
+            and "unsafe_node_policy" not in self.model_fields_set
+            and self.unsafe_node_policy == "warn"
+        ):
+            object.__setattr__(self, "unsafe_node_policy", "require_approval")
+        return self
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -346,6 +378,19 @@ class Settings(BaseSettings):
                 f"(dispatch_role={self.dispatch_role}): /internal/* would accept "
                 "unauthenticated worker-level calls. Set a strong shared secret "
                 "(or RUNTIME_ALLOW_INSECURE=true to override)."
+            )
+        if "*" in self.cors_origin_list and boundary_enforced:
+            # The CORS middleware sends ``Access-Control-Allow-Credentials: true``;
+            # pairing that with a wildcard origin lets *any* site drive
+            # credentialed cross-origin requests against an authenticated API
+            # (M1). Browsers reject the combination outright, so it is never a
+            # working config — only a footgun. Fail closed.
+            errors.append(
+                "CORS allows a wildcard origin ('*') while auth/multi-tenancy is "
+                "enabled and credentials are sent: any browser origin could make "
+                "authenticated cross-origin requests. Set cors_origins to the "
+                "explicit list of allowed frontend URLs (or "
+                "RUNTIME_ALLOW_INSECURE=true to override)."
             )
         return errors
 

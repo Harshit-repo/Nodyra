@@ -116,7 +116,9 @@ async def _resolve_ref(
     ):
         raise RuntimeError(f"credential '{cred.name}' is not visible to this run")
 
-    data = await decrypt_credential_for(cred, session)
+    # strict=True (H1): a referenced credential that cannot be decrypted must
+    # abort the run, never inject empty/partial auth into the node graph.
+    data = await decrypt_credential_for(cred, session, strict=True)
     try:
         data = await refresh_credential_if_needed(cred, data, session)
     except OAuthError as exc:

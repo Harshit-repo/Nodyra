@@ -23,7 +23,7 @@ from app.db import SessionLocal
 from app.models import SystemSetting
 
 _SINGLETON_ID = "singleton"
-_CACHE_TTL_SECONDS = 5.0
+_CACHE_TTL_SECONDS = 30.0
 
 
 @dataclass(frozen=True)

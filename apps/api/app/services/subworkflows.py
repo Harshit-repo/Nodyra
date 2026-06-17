@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 
 def meta_for_root_run(
-    *, run_id: str, workflow_id: str, prefer_draft: bool
+    *, run_id: str, workflow_id: str, prefer_draft: bool, org_id: str | None = None
 ) -> SubworkflowMeta:
     """The SubworkflowMeta a root run hands to the engine / run protocol."""
     return SubworkflowMeta(
@@ -53,6 +53,7 @@ def meta_for_root_run(
         depth=0,
         call_chain=frozenset({workflow_id}),
         max_depth=settings.max_subworkflow_depth,
+        org_id=org_id,
     )
 
 
@@ -93,17 +94,18 @@ async def _create_child_run(call: SubworkflowCall, workflow_id: str) -> str:
     parent's org instead of falling back to the default org (pre-A3 bug for
     multi-tenant deployments). Inline children skip this — they execute
     inside the parent's process under the parent's run.
+
+    The child's ``org_id`` is taken from ``call.org_id`` (propagated through
+    the engine's SubworkflowCall/Meta protocol) rather than derived from the
+    parent Run — the parent may have already been GC'd by retention or the
+    tenancy context is explicit.
     """
-    from app.tenancy import DEFAULT_ORG_ID, run_as_system
+    from app.tenancy import run_as_system
 
     child_run_id = uuid.uuid4().hex[:32]
     with run_as_system():
         async with SessionLocal() as session:
-            org_id = DEFAULT_ORG_ID
-            if call.parent_run_id:
-                parent = await session.get(Run, call.parent_run_id)
-                if parent is not None and parent.org_id:
-                    org_id = parent.org_id
+            org_id = call.org_id or "default"
             session.add(
                 Run(
                     id=child_run_id,
@@ -148,114 +150,123 @@ async def resolve_subworkflow(
     * **Spawn-fresh subprocess** — subprocess mode otherwise; goes through
       ``dispatch_subworkflow`` (global-cap bypass + org-aware soft throttle).
     * **In-process** — tests / ``use_subprocess_runner=False``.
+
+    The caller's org context is propagated through ``call.org_id`` so the
+    child workflow lookup, credential resolution, and Run creation all
+    happen in the correct tenant scope.
     """
-    async with SessionLocal() as session:
-        workflow = await session.get(Workflow, call.workflow_id)
-        sub_env_id = workflow.environment_id if workflow else None
-        graph_dict, pinned_cache = await _load_workflow_graph(
-            session, call.workflow_id, use_published=call.use_published
-        )
-        graph_dict = await resolve_credential_refs(
-            session, graph_dict, workflow_id=call.workflow_id
-        )
-        pinned_cache = await resolve_credential_refs(
-            session, pinned_cache, workflow_id=call.workflow_id
-        )
-        await session.commit()
+    from app.tenancy import current_org_id
 
-    graph = WorkflowGraph.model_validate(graph_dict)
-    sources = {edge.source for edge in graph.edges}
-
-    cache: dict[str, dict] = deserialize_value(dict(pinned_cache))
-    trigger = first_trigger_node(graph)
-    if trigger is not None and trigger.id not in cache:
-        cache[trigger.id] = {
-            "main": call.parameters if call.parameters is not None else {}
-        }
-    # Gate execution to the seeded trigger so sibling triggers in the same
-    # sub-graph don't fire on every call.
-    sub_targets = (
-        resolve_trigger_targets(graph_dict, trigger.id, None)
-        if trigger is not None
-        else None
-    )
-
-    if (
-        settings.use_subprocess_runner
-        and parent_env_id is not None
-        and parent_env_id == sub_env_id
-    ):
-        logger.info(
-            "sub-workflow inline workflow_id=%s env_id=%s depth=%s",
-            call.workflow_id, sub_env_id, call.depth,
-        )
-        return InlineSubworkflow(
-            graph=graph_dict,
-            cache=cache or None,
-            targets=sub_targets,
-            sources=tuple(sorted(sources)),
-        )
-
-    child_run_id = await _create_child_run(call, call.workflow_id)
-    child_meta = SubworkflowMeta(
-        use_published=call.use_published,
-        parent_run_id=child_run_id,
-        depth=call.depth,
-        call_chain=call.call_chain,
-        max_depth=settings.max_subworkflow_depth,
-    )
-    status = "error"
+    resolved_org = call.org_id
+    org_token = current_org_id.set(resolved_org) if resolved_org else None
     try:
-        if settings.use_subprocess_runner:
-            from app.services.runtime_pool import pool as runtime_pool
-
-            node_status: dict[str, str] = {}
-            node_outputs: dict[str, dict] = {}
-
-            async def collect(event: dict) -> None:
-                if event.get("type") != "node_finished":
-                    return
-                nid = event.get("node_id")
-                if not isinstance(nid, str):
-                    return
-                node_status[nid] = str(event.get("status") or "")
-                outputs = deserialize_value(event.get("outputs"))
-                if isinstance(outputs, dict):
-                    node_outputs[nid] = outputs
-
-            logger.info(
-                "sub-workflow spawn workflow_id=%s env_id=%s parent_env_id=%s",
-                call.workflow_id, sub_env_id, parent_env_id,
+        async with SessionLocal() as session:
+            workflow = await session.get(Workflow, call.workflow_id)
+            sub_env_id = workflow.environment_id if workflow else None
+            graph_dict, pinned_cache = await _load_workflow_graph(
+                session, call.workflow_id, use_published=call.use_published
             )
-            status = await runtime_pool.dispatch_subworkflow(
-                child_run_id,
-                sub_env_id,
-                graph_dict,
-                cache or None,
-                sub_targets,
-                collect,
-                subworkflow_resolver=resolve_subworkflow,
+            graph_dict = await resolve_credential_refs(
+                session, graph_dict, workflow_id=call.workflow_id
+            )
+            pinned_cache = await resolve_credential_refs(
+                session, pinned_cache, workflow_id=call.workflow_id
+            )
+            await session.commit()
+
+        graph = WorkflowGraph.model_validate(graph_dict)
+        sources = {edge.source for edge in graph.edges}
+
+        cache: dict[str, dict] = deserialize_value(dict(pinned_cache))
+        trigger = first_trigger_node(graph)
+        if trigger is not None and trigger.id not in cache:
+            cache[trigger.id] = {
+                "main": call.parameters if call.parameters is not None else {}
+            }
+        sub_targets = (
+            resolve_trigger_targets(graph_dict, trigger.id, None)
+            if trigger is not None
+            else None
+        )
+
+        if (
+            settings.use_subprocess_runner
+            and parent_env_id is not None
+            and parent_env_id == sub_env_id
+        ):
+            logger.info(
+                "sub-workflow inline workflow_id=%s env_id=%s depth=%s",
+                call.workflow_id, sub_env_id, call.depth,
+            )
+            return InlineSubworkflow(
+                graph=graph_dict,
+                cache=cache or None,
+                targets=sub_targets,
+                sources=tuple(sorted(sources)),
+            )
+
+        child_run_id = await _create_child_run(call, call.workflow_id)
+        child_meta = SubworkflowMeta(
+            use_published=call.use_published,
+            parent_run_id=child_run_id,
+            depth=call.depth,
+            call_chain=call.call_chain,
+            max_depth=settings.max_subworkflow_depth,
+            org_id=resolved_org,
+        )
+        status = "error"
+        try:
+            if settings.use_subprocess_runner:
+                from app.services.runtime_pool import pool as runtime_pool
+
+                node_status: dict[str, str] = {}
+                node_outputs: dict[str, dict] = {}
+
+                async def collect(event: dict) -> None:
+                    if event.get("type") != "node_finished":
+                        return
+                    nid = event.get("node_id")
+                    if not isinstance(nid, str):
+                        return
+                    node_status[nid] = str(event.get("status") or "")
+                    outputs = deserialize_value(event.get("outputs"))
+                    if isinstance(outputs, dict):
+                        node_outputs[nid] = outputs
+
+                logger.info(
+                    "sub-workflow spawn workflow_id=%s env_id=%s parent_env_id=%s",
+                    call.workflow_id, sub_env_id, parent_env_id,
+                )
+                status = await runtime_pool.dispatch_subworkflow(
+                    child_run_id,
+                    sub_env_id,
+                    graph_dict,
+                    cache or None,
+                    sub_targets,
+                    collect,
+                    subworkflow_resolver=resolve_subworkflow,
+                    subworkflow_meta=child_meta,
+                )
+                return extract_leaf_value(sources, node_status, node_outputs)
+
+            from app.services import runner as _runner
+
+            result = await execute(
+                graph,
+                _runner.node_registry,
+                cache=cache or None,
+                targets=sub_targets,
+                default_timeouts=_runner._engine_default_timeouts(),
+                process_isolator=_runner.process_isolator,
+                subworkflow_runner=resolve_subworkflow,
                 subworkflow_meta=child_meta,
             )
+            status = str(result.status)
+            node_status = {nid: str(r.status) for nid, r in result.nodes.items()}
+            node_outputs = {nid: dict(r.outputs) for nid, r in result.nodes.items()}
             return extract_leaf_value(sources, node_status, node_outputs)
-
-        # In-process path (tests / dev). Deliberately NOT wrapped in
-        # runtime_pool.global_slot() — see module docstring (§7 bypass).
-        from app.services import runner as _runner  # late: avoid import cycle
-
-        result = await execute(
-            graph,
-            _runner.node_registry,
-            cache=cache or None,
-            targets=sub_targets,
-            default_timeouts=_runner._engine_default_timeouts(),
-            process_isolator=_runner.process_isolator,
-            subworkflow_runner=resolve_subworkflow,
-            subworkflow_meta=child_meta,
-        )
-        status = str(result.status)
-        node_status = {nid: str(r.status) for nid, r in result.nodes.items()}
-        node_outputs = {nid: dict(r.outputs) for nid, r in result.nodes.items()}
-        return extract_leaf_value(sources, node_status, node_outputs)
+        finally:
+            await _finalize_child_run(child_run_id, status)
     finally:
-        await _finalize_child_run(child_run_id, status)
+        if org_token is not None:
+            current_org_id.reset(org_token)

@@ -1,5 +1,4 @@
-from collections import defaultdict, deque
-from time import monotonic
+import time
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy import func, select
@@ -22,16 +21,17 @@ from app.schemas import (
 )
 from app.security import (
     _extract_token,
+    _user_from_session_token,
     current_user,
     normalize_role,
     require_permission,
 )
+from app.services import rate_limit
 from app.services.audit import log_audit
 from app.services.crypto import (
     create_token,
     hash_password,
     verify_password,
-    verify_token,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -41,71 +41,21 @@ users_router = APIRouter(prefix="/users", tags=["users"])
 require_user_manage = require_permission("user:manage")
 
 
-# Per-(bucket, IP) sliding-window rate limiter for unauthenticated endpoints.
-# When Redis is the queue backend, uses INCR+EXPIRE so all replicas share one
-# counter. Falls back to the in-process deque if Redis is unavailable.
-_AUTH_RATE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
-
-# Evict stale _AUTH_RATE_BUCKETS keys once the dict exceeds this size.
-# Below the threshold the overhead of a full-dict scan is unwarranted — the
-# leak is bounded by unique IPs in the sliding window, which is negligible
-# for typical self-hosted deployments.  Above it a sweep runs after every
-# request so the dict stays roughly capped.
-_AUTH_RATE_BUCKET_EVICT_THRESHOLD = 10_000
-
-
-def _sweep_rate_buckets(now: float) -> None:
-    """Remove dict entries whose full 60-second window has expired."""
-    cutoff = now - 60.0
-    stale = [k for k, v in list(_AUTH_RATE_BUCKETS.items()) if not v or v[-1] < cutoff]
-    for k in stale:
-        _AUTH_RATE_BUCKETS.pop(k, None)
-
-
-def _in_process_rate_limit(key: str, limit: int, bucket: str) -> None:
-    history = _AUTH_RATE_BUCKETS[key]
-    now = monotonic()
-    cutoff = now - 60.0
-    while history and history[0] < cutoff:
-        history.popleft()
-    if len(history) >= limit:
+# Per-(bucket, IP) rate limiting for unauthenticated endpoints is delegated to
+# the shared limiter (app.services.rate_limit), which is Redis-backed across
+# replicas and falls back to an in-process sliding window — see H5.
+async def _enforce_auth_rate_limit(request: Request, bucket: str) -> None:
+    if not settings.auth_rate_limit_enabled:
+        return
+    ip = request.client.host if request.client else "anon"
+    allowed = await rate_limit.allow(
+        bucket, ip, limit=settings.auth_rate_limit_per_minute
+    )
+    if not allowed:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             f"Too many {bucket} attempts; try again in a minute.",
         )
-    history.append(now)
-    # Lazily evict stale keys once the dict grows large enough to matter.
-    if len(_AUTH_RATE_BUCKETS) > _AUTH_RATE_BUCKET_EVICT_THRESHOLD:
-        _sweep_rate_buckets(now)
-
-
-async def _enforce_auth_rate_limit(request: Request, bucket: str) -> None:
-    if not settings.auth_rate_limit_enabled:
-        return
-    limit = settings.auth_rate_limit_per_minute
-    if limit <= 0:
-        return
-    ip = request.client.host if request.client else "anon"
-    key = f"{bucket}:{ip}"
-    if settings.queue_backend == "redis":
-        import app.redis_client as _rc
-        rl_key = f"noodle:rl:{key}"
-        try:
-            count = await _rc.redis_client.incr(rl_key)
-            if count == 1:
-                await _rc.redis_client.expire(rl_key, 60)
-            if count > limit:
-                raise HTTPException(
-                    status.HTTP_429_TOO_MANY_REQUESTS,
-                    f"Too many {bucket} attempts; try again in a minute.",
-                )
-            return
-        except HTTPException:
-            raise
-        except Exception:
-            pass  # Redis unavailable — fall through to in-process
-    _in_process_rate_limit(key, limit, bucket)
-
 
 
 async def _user_count(session: AsyncSession) -> int:
@@ -282,6 +232,16 @@ async def login(
     return result
 
 
+def _revoke_sessions(user: User) -> None:
+    """Stamp the per-user revocation cutoff (C1).
+
+    Every outstanding token has ``iat`` < now (it was minted earlier), so the
+    cutoff invalidates them all. A re-login moments later mints a token with a
+    strictly-larger ``iat`` (sub-second resolution) and survives.
+    """
+    user.sessions_valid_after = time.time()
+
+
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(response: Response) -> None:
     """Clear the httpOnly session cookie and CSRF cookie.
@@ -289,6 +249,49 @@ async def logout(response: Response) -> None:
     Safe to call when not signed in (idempotent cookie deletion).
     """
     _clear_session_cookies(response)
+
+
+@router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
+async def logout_all(
+    response: Response,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Revoke every session for the current user ("log out everywhere").
+
+    Invalidates all outstanding tokens (this device included) by advancing the
+    user's revocation cutoff, then clears this response's cookies.
+    """
+    _revoke_sessions(user)
+    await log_audit(
+        session, "revoke_sessions", "user", user.id, user.email,
+        actor_id=user.id, actor_email=user.email,
+    )
+    await session.commit()
+    _clear_session_cookies(response)
+
+
+@router.post(
+    "/users/{user_id}/revoke-sessions",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_user_manage)],
+)
+async def revoke_user_sessions(
+    user_id: str,
+    actor: User | None = Depends(require_user_manage),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Admin lockout: revoke all of a target user's sessions (C1)."""
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    _revoke_sessions(user)
+    await log_audit(
+        session, "revoke_sessions", "user", user.id, user.email,
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
+    )
+    await session.commit()
 
 
 @router.post("/ws-ticket", response_model=WsTicketResponse)
@@ -326,9 +329,7 @@ async def auth_required(
     user: User | None = None
     token, _ = _extract_token(authorization, request)
     if token:
-        user_id = verify_token(token)
-        if user_id is not None:
-            user = await session.get(User, user_id)
+        user = await _user_from_session_token(token, session)
     count = await _user_count(session)
     from app.services.licensing import current_license
 

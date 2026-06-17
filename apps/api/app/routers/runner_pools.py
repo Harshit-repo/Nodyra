@@ -268,13 +268,19 @@ async def list_runner_pools(
     session: AsyncSession = Depends(get_session),
 ) -> list[RunnerPoolInfo]:
     pools = (await session.scalars(select(RunnerPool).order_by(RunnerPool.created_at))).all()
-    result = []
-    for pool in pools:
-        runners = (
-            await session.scalars(select(Runner).where(Runner.pool_id == pool.id))
-        ).all()
-        result.append(_pool_info(pool, list(runners)))
-    return result
+    if not pools:
+        return []
+    # Batch-load all runners in one query instead of N+1.
+    pool_ids = [p.id for p in pools]
+    runners = (
+        await session.scalars(
+            select(Runner).where(Runner.pool_id.in_(pool_ids))
+        )
+    ).all()
+    by_pool: dict[str, list[Runner]] = {}
+    for r in runners:
+        by_pool.setdefault(r.pool_id, []).append(r)
+    return [_pool_info(p, by_pool.get(p.id, [])) for p in pools]
 
 
 @router.post(
@@ -640,7 +646,12 @@ async def upload_artifact(
     # WebSocket path already rejects unknown runners; mirror that here so a
     # leaked/rotated token can be revoked immediately (by deleting the runner)
     # instead of staying valid until its 24h expiry.
-    runner = await session.get(Runner, payload.get("sub"))
+    # Runner auth uses runner-registration tokens, not X-Org-Id — query
+    # org-blind so the lookup works regardless of the request's org context.
+    runner = await session.get(
+        Runner, payload.get("sub"),
+        execution_options={"skip_org_filter": True},
+    )
     if runner is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Runner has been revoked")
 
@@ -689,6 +700,11 @@ async def upload_artifact(
             Artifact(
                 id=artifact_id,
                 run_id=run_id,
+                # Runner uploads authenticate with a runner token and send no
+                # X-Org-Id, so the before_flush stamp hook would file this under
+                # the default org. Stamp the run's org explicitly so the artifact
+                # is visible to its owning tenant.
+                org_id=run.org_id,
                 node_id=node_id,
                 name=name,
                 kind=kind,

@@ -317,6 +317,28 @@ async def stop_listen_session(path: str) -> None:
     await _stop_listening(path)
 
 
+async def _enforce_webhook_rate_limit(path: str, request: Request) -> None:
+    """H5: throttle public webhook ingress per (path, caller IP).
+
+    Unauthenticated ``/webhook/{path}`` can otherwise be hammered into a
+    run-queue flood. Keyed by path *and* IP so one noisy sender can't starve a
+    different webhook or a different caller of the same one.
+    """
+    if not settings.webhook_rate_limit_enabled:
+        return
+    from app.services import rate_limit
+
+    ip = request.client.host if request.client else "anon"
+    allowed = await rate_limit.allow(
+        "webhook", f"{path}:{ip}", limit=settings.webhook_rate_limit_per_minute
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many webhook requests; slow down.",
+        )
+
+
 @production_router.api_route("/webhook/{path:path}", methods=_METHODS)
 async def trigger_webhook(path: str, request: Request) -> dict:
     """Production webhook — dispatch a run of matching active workflows.
@@ -325,6 +347,7 @@ async def trigger_webhook(path: str, request: Request) -> dict:
     routes like ``/webhook/customers/42/orders`` reach a webhook node whose
     ``path`` template is ``customers/{id}/orders``.
     """
+    await _enforce_webhook_rate_limit(path, request)
     req_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     payload, raw_body = await _payload(request)
     _record_capture(path, _redacted_payload(payload))

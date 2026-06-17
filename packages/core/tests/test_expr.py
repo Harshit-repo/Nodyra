@@ -93,6 +93,24 @@ def test_safe_builtins_block_dangerous_calls() -> None:
     assert isinstance(result, str) and "expr error" in result
 
 
+def test_alias_inside_string_literal_is_not_rewritten() -> None:
+    """H3: the `$json`→`_json` rewrite must not touch string literals.
+
+    Regression for the naive str.replace that corrupted any literal containing
+    an alias substring (e.g. ``"$json"`` became ``"_json"``).
+    """
+    ctx = build_context(first_input={"x": 1})
+    assert evaluate('{{ "$json stays literal" }}', ctx) == "$json stays literal"
+    assert evaluate('{{ "price is $now" }}', ctx) == "price is $now"
+    # And a real alias next to a literal alias still resolves correctly.
+    assert evaluate('{{ "$json=" + str($json.x) }}', ctx) == "$json=1"
+
+
+def test_alias_still_resolves_inside_fstring() -> None:
+    ctx = build_context(first_input={"name": "bob"})
+    assert evaluate('{{ f"hi {$json.name}" }}', ctx) == "hi bob"
+
+
 def test_contains_expression_detects_braces() -> None:
     assert contains_expression("hello {{ $json.x }}") is True
     assert contains_expression({"a": "x", "b": "{{ y }}"}) is True

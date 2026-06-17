@@ -24,6 +24,7 @@ import {
   FromAiParamControl,
 } from "./NodeDetails";
 import { isFromAiExpr } from "./toolParam";
+import type { ExprContext } from "./node-details/expressions";
 import { useEditor } from "./store";
 import { VariablePickerPopover } from "./VariablePickerPopover";
 import { asArtifactRef, artifactDownloadUrl, artifactSummary, formatBytes } from "./artifactValues";
@@ -113,6 +114,14 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
     }
   }
   const hasIncomingInputs = Object.keys(incomingInputs).length > 0;
+
+  // Live context so parameter fields can resolve {{ }} inline against real
+  // upstream data (mirrors the expand-modal preview).
+  const exprContext: ExprContext = {
+    json: Object.values(incomingInputs)[0],
+    inputs: incomingInputs,
+    nodes: runOutputs,
+  };
 
   return (
     <>
@@ -231,6 +240,7 @@ function ParametersTab({ nodeId }: { nodeId: string }) {
                   value={value}
                   onChange={(v) => setParam(spec.name, v)}
                   credentialContext={params}
+                  exprContext={exprContext}
                   nodeId={node.id}
                 />
               )}

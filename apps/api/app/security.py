@@ -23,7 +23,7 @@ from starlette.requests import HTTPConnection
 from app.config import settings
 from app.db import get_session
 from app.models import Membership, Organization, User
-from app.services.crypto import verify_token
+from app.services.crypto import decode_session_token
 from app.tenancy import DEFAULT_ORG_ID, current_org_id
 
 VALID_ROLES = ("viewer", "editor", "admin", "owner")
@@ -90,6 +90,34 @@ def _extract_token(
     return None, False
 
 
+def _token_is_revoked(user: User, payload: dict) -> bool:
+    """C1: reject session tokens minted before the user's revocation cutoff."""
+    cutoff = getattr(user, "sessions_valid_after", None)
+    if cutoff is None:
+        return False
+    return float(payload.get("iat", 0)) < float(cutoff)
+
+
+async def _user_from_session_token(
+    token: str, session: AsyncSession
+) -> User | None:
+    """Resolve + validate a session token to a live, non-revoked user, or None.
+
+    Returns ``None`` for any failure (bad/expired token, missing user, or a
+    token revoked by ``sessions_valid_after``). Callers decide whether ``None``
+    means 401 or anonymous.
+    """
+    payload = decode_session_token(token)
+    if payload is None:
+        return None
+    user = await session.get(User, payload.get("sub"))
+    if user is None:
+        return None
+    if _token_is_revoked(user, payload):
+        return None
+    return user
+
+
 async def current_user(
     request: Request,
     authorization: str | None = Header(default=None),
@@ -98,12 +126,9 @@ async def current_user(
     token, is_cookie = _extract_token(authorization, request)
     if not token:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
-    user_id = verify_token(token)
-    if user_id is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
-    user = await session.get(User, user_id)
+    user = await _user_from_session_token(token, session)
     if user is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
     # Surface cookie-auth mode so the CSRF middleware can check it.
     request.state.cookie_auth = is_cookie
     return user
@@ -119,12 +144,9 @@ async def optional_current_user(
         if settings.auth_required:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
         return None
-    user_id = verify_token(token)
-    if user_id is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
-    user = await session.get(User, user_id)
+    user = await _user_from_session_token(token, session)
     if user is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
     request.state.cookie_auth = is_cookie
     return user
 
@@ -148,10 +170,7 @@ async def _lenient_session_user(
     token, _ = _extract_token(authorization, request)
     if not token:
         return None
-    user_id = verify_token(token)
-    if user_id is None:
-        return None
-    return await session.get(User, user_id)
+    return await _user_from_session_token(token, session)
 
 
 async def resolve_org(
@@ -188,6 +207,11 @@ async def resolve_org_for(
         return None
     org_id = (x_org_id or DEFAULT_ORG_ID).strip() or DEFAULT_ORG_ID
     current_org_id.set(org_id)
+    # Mirror the resolved org into the logging context (H4) so log lines emitted
+    # for the rest of this request carry ``org_id`` for correlation.
+    from app.logging import _org_id as _log_org_id
+
+    _log_org_id.set(org_id)
     if user is None:
         # Anonymous (auth disabled or public endpoint): only the default org
         # is reachable without an identity to check membership against.

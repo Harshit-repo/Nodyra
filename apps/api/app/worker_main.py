@@ -130,10 +130,20 @@ async def _amain() -> None:
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    # Match the API's structured JSON logging (H4) so worker lines correlate
+    # with API lines in the same aggregator. Falls back to plain text when the
+    # operator sets ``log_json=False``.
+    from app.config import settings
+
+    if settings.log_json:
+        from app.logging import configure_logging
+
+        configure_logging()
+    else:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        )
     asyncio.run(_amain())
 
 

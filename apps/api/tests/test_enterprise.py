@@ -65,9 +65,9 @@ async def test_login_rate_limited(client: AsyncClient) -> None:
     """The login endpoint blocks brute-force after auth_rate_limit_per_minute
     failures from the same client IP (QA fix)."""
     from app.config import settings as app_settings
-    from app.routers import auth as auth_router
+    from app.services import rate_limit
 
-    auth_router._AUTH_RATE_BUCKETS.clear()
+    rate_limit.reset()
     app_settings.auth_rate_limit_enabled = True
     app_settings.auth_rate_limit_per_minute = 3
     try:
@@ -85,7 +85,7 @@ async def test_login_rate_limited(client: AsyncClient) -> None:
         assert "Too many" in resp.json()["detail"]
     finally:
         app_settings.auth_rate_limit_per_minute = 10
-        auth_router._AUTH_RATE_BUCKETS.clear()
+        rate_limit.reset()
 
 
 async def test_credentials_never_expose_secret_values(client: AsyncClient) -> None:

@@ -13,6 +13,12 @@ from sqlalchemy.exc import IntegrityError
 
 from app import tracing
 from app.config import settings
+from app.logging import bind_request_context, configure_logging, reset_request_context
+
+# Install structured JSON logging before anything logs (H4). Operators can opt
+# back into plain text with ``log_json=False``.
+if settings.log_json:
+    configure_logging()
 from app.db import SessionLocal, engine
 from app.models import Environment, Run, RunQueueEntry
 from app.redis_client import redis_client
@@ -43,7 +49,6 @@ from app.routers import (
     workflows,
 )
 from app.services import expr_preview
-from app.services.crypto import verify_token
 from app.services.events import broker_reaper_loop
 from app.services.queue import run_queue_dispatch_loop
 from app.services.remote_dispatch import (
@@ -371,7 +376,22 @@ async def lifespan(app: FastAPI):
 # unauthenticated reads with no require_permission dependency — sets the
 # request-scoped org context that the ORM filter and Postgres RLS read.
 # No-op (returns None, sets nothing) while multi_tenancy_enabled is off.
-from app.security import resolve_org  # noqa: E402
+from app.security import _user_from_session_token, resolve_org  # noqa: E402
+
+
+async def _gate_token_valid(token: str) -> bool:
+    """C1: a token passes the gate only when it is well-formed, unexpired, AND
+    not revoked by the user's ``sessions_valid_after`` cutoff.
+
+    ``verify_token`` alone checks only signature/exp, so routes gated solely by
+    this middleware (e.g. ``?token=`` artifact downloads, which carry no
+    ``current_user`` dependency) would otherwise keep honouring a token after a
+    "log out everywhere". Resolving the user here enforces revocation centrally.
+    """
+    if not token:
+        return False
+    async with SessionLocal() as session:
+        return await _user_from_session_token(token, session) is not None
 
 app = FastAPI(
     title="Noodle API",
@@ -440,9 +460,18 @@ async def _body_size_limit(request: Request, call_next):
 
 @app.middleware("http")
 async def _security_headers(request: Request, call_next):
-    """Attach X-Request-ID and Content-Security-Policy to every response."""
+    """Attach X-Request-ID and Content-Security-Policy to every response.
+
+    Also binds the request id into the logging context (H4) so every log line
+    emitted while handling this request carries ``request_id`` for correlation.
+    The org id is bound lazily by ``resolve_org`` once tenancy is resolved.
+    """
     req_id = request.headers.get("x-request-id") or str(uuid.uuid4())
-    response = await call_next(request)
+    tokens = bind_request_context(request_id=req_id)
+    try:
+        response = await call_next(request)
+    finally:
+        reset_request_context(tokens)
     response.headers["X-Request-ID"] = req_id
     # Tight CSP for the API (no HTML rendered here, only JSON).  Relaxed for
     # the docs UI so Swagger/ReDoc can load their CDN assets.
@@ -582,16 +611,16 @@ async def auth_gate(request: Request, call_next):
     # Bearer — verify the token value is valid before passing the request on.
     if not header.startswith("Bearer "):
         cookie_token = request.cookies.get(settings.session_cookie_name, "")
-        if cookie_token and verify_token(cookie_token) is not None:
+        if cookie_token and await _gate_token_valid(cookie_token):
             return await call_next(request)
         # Allow ``?token=`` on routes that are typically opened via plain
         # browser navigation (artifact downloads, ws upgrade is handled
         # elsewhere). The query token is the same bearer token.
         query_token = request.query_params.get("token")
-        if query_token and verify_token(query_token) is not None:
+        if query_token and await _gate_token_valid(query_token):
             return await call_next(request)
         return JSONResponse({"detail": "Authentication required"}, status_code=401)
-    if verify_token(header.removeprefix("Bearer ")) is None:
+    if not await _gate_token_valid(header.removeprefix("Bearer ")):
         return JSONResponse({"detail": "Invalid or expired token"}, status_code=401)
     return await call_next(request)
 

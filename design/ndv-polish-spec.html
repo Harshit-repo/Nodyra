@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Noodle NDV — polish spec (before / after)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --bg:#090b10;--surface:#10141c;--surface-2:#161b25;--surface-3:#1f2632;--canvas:#0b0e14;
+  --line:#242c3a;--line-2:#1a2029;--ink:#e9eef6;--ink-2:#98a4ba;--ink-3:#8a93a6;
+  --accent:#4c9eff;--accent-2:#79b6ff;--accent-deep:#1f4f8f;--accent-glow:rgba(76,158,255,.18);
+  --radius:11px;--radius-sm:7px;--code-bg:#0b0e15;--code-gutter:#0e1219;--cat:#b58bff;
+  --font-display:"Bricolage Grotesque",sans-serif;--font-sans:"Hanken Grotesk",sans-serif;--font-mono:"IBM Plex Mono",monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#06080c;color:var(--ink);font-family:var(--font-sans);-webkit-font-smoothing:antialiased}
+.doc{max-width:1500px;margin:0 auto;padding:40px 36px 100px}
+.doc-head h1{font-family:var(--font-display);font-size:30px;letter-spacing:-.03em;margin:0 0 6px}
+.doc-head p{margin:0;color:var(--ink-3);font-size:14px;max-width:760px;line-height:1.55}
+.legend-key{display:flex;gap:14px;margin-top:16px;font-size:12px;color:var(--ink-3)}
+.chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.07em;padding:3px 9px;border-radius:999px}
+.chip.ship{color:#8fd06f;background:rgba(87,201,138,.13);border:1px solid rgba(87,201,138,.3)}
+.chip.prop{color:var(--accent-2);background:var(--accent-glow);border:1px solid color-mix(in srgb,var(--accent) 26%,transparent)}
+
+.ex{margin-top:42px}
+.ex-head{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+.ex-head h2{font-family:var(--font-display);font-size:18px;margin:0}
+.ex-head p{flex-basis:100%;margin:2px 0 16px;color:var(--ink-3);font-size:13px;line-height:1.5}
+.ba{display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start}
+.ba-col{min-width:0}
+.tag{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin:0 0 9px}
+.tag.t-after{color:var(--accent-2)}
+.frame{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+.frame.flush{padding:0;overflow:hidden}
+
+/* ===== shared component base ===== */
+.btn{font-size:12px;font-weight:600;padding:6px 11px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--surface-2);color:var(--ink);display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.btn-ghost{background:transparent}
+.btn-primary{background:linear-gradient(180deg,var(--accent-2),var(--accent));color:#fff;border-color:var(--accent-deep)}
+.btn-run{background:rgba(87,201,138,.14);border-color:rgba(87,201,138,.32);color:#7bd698}
+.mono-tag{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);background:var(--surface-2);border:1px solid var(--line-2);padding:2px 7px;border-radius:5px}
+.field-input{width:100%;font-family:var(--font-sans);font-size:13px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:var(--radius-sm);padding:8px 10px;outline:none}
+.muted{color:var(--ink-3);font-size:13px}
+.glyph-svg{width:20px;height:20px}
+.inspector-glyph{display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;background:var(--surface-2);border:1px solid var(--line-2);color:var(--cat)}
+.ndv-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;border-bottom:1px solid var(--line-2);background:var(--surface);flex-wrap:wrap}
+.ndv-title{display:flex;align-items:center;gap:12px}
+.ndv-title h3{font-size:17px;margin:0;font-family:var(--font-display);font-weight:700;letter-spacing:-.02em}
+.ndv-meta{display:flex;gap:6px;margin-top:4px}
+.ndv-actions{display:flex;align-items:center;gap:7px}
+.ndv-close{background:transparent;border:none;color:var(--ink-3);font-size:22px;width:30px;height:30px;border-radius:7px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.ndv-panels{display:grid;grid-template-columns:1fr 1.1fr 1fr}
+.ndv-panel{display:flex;flex-direction:column;border-right:1px solid var(--line-2);background:var(--surface);min-height:180px}
+.ndv-panel:last-child{border-right:none}
+.ndv-panel-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line-2);background:var(--bg)}
+.ndv-panel-head h3{font-family:var(--font-display);font-weight:600;font-size:12px;color:var(--ink-2);text-transform:uppercase;letter-spacing:.08em;margin:0;display:flex;align-items:center;gap:8px}
+.ndv-panel-body{flex:1;padding:12px 14px;font-size:12px;color:var(--ink-3)}
+.ndv-middle{display:flex;flex-direction:column;background:var(--surface);border-left:1px solid var(--line-2);border-right:1px solid var(--line-2)}
+.ndv-tabs{display:flex;background:var(--bg);border-bottom:1px solid var(--line-2)}
+.ndv-tabs button{flex:1;font-family:var(--font-display);font-weight:600;font-size:12px;color:var(--ink-3);background:transparent;border:none;padding:11px 0;border-bottom:2px solid transparent;cursor:pointer}
+.ndv-tabs button.active{color:var(--ink);border-bottom-color:var(--accent)}
+.count-badge{font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--accent-2);background:var(--accent-glow);border:1px solid color-mix(in srgb,var(--accent) 26%,transparent);padding:1px 7px;border-radius:999px;text-transform:none;letter-spacing:.02em}
+.kw{color:#c678dd}.bi{color:#61afef}.fn{color:#7cc4ff}.str{color:#98c379}.num{color:#d19a66}.com{color:#7f848e;font-style:italic}
+.input-row{position:relative}.input-row .field-input{padding-right:34px}
+.fx{position:absolute;top:50%;right:5px;transform:translateY(-50%);width:24px;height:20px;display:grid;place-items:center;border-radius:5px;background:transparent;color:var(--ink-3);font-family:var(--font-mono);font-weight:700;font-style:italic;font-size:12px;border:1px solid transparent;cursor:pointer}
+
+/* ===== AFTER polish (one scope drives every "after" instance) ===== */
+.after .inspector-glyph{width:40px;height:40px;border-radius:11px;background:linear-gradient(145deg,color-mix(in srgb,currentColor 26%,var(--surface-2)),var(--surface-2));border:1px solid color-mix(in srgb,currentColor 34%,var(--line-2));box-shadow:0 0 0 4px color-mix(in srgb,currentColor 9%,transparent),0 6px 16px -8px color-mix(in srgb,currentColor 60%,transparent)}
+.after .inspector-glyph .glyph-svg{width:22px;height:22px}
+.after .ndv-head{background:transparent;border-bottom-color:color-mix(in srgb,var(--accent) 8%,var(--line-2))}
+.after .ndv-title h3{font-size:18px;letter-spacing:-.025em}
+.after .mono-tag{border-radius:999px;padding:2px 9px}
+.after .mono-tag.cat{color:var(--cat);background:color-mix(in srgb,var(--cat) 13%,transparent);border-color:color-mix(in srgb,var(--cat) 28%,transparent)}
+.after .sep{width:1px;height:20px;background:var(--line-2);margin:0 3px}
+.after .btn-run{background:linear-gradient(180deg,color-mix(in srgb,#7bd698 26%,transparent),color-mix(in srgb,#57c98a 16%,transparent));border-color:rgba(87,201,138,.5);color:#aef0c4;font-weight:650}
+.after .ndv-close{border-radius:9px;border:1px solid transparent}
+.after .ndv-panel{background:var(--bg)}
+.after .ndv-panel-head{background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 70%,transparent),transparent)}
+.after .ndv-middle{box-shadow:0 0 40px -22px rgba(0,0,0,.9)}
+.after .ndv-tabs{background:transparent;padding:0 6px}
+.after .ndv-tabs button{position:relative;margin:6px 2px 0;padding:9px 0 12px;border-bottom:none;border-radius:8px 8px 0 0}
+.after .ndv-tabs button.active{border-bottom:none}
+.after .ndv-tabs button.active::after{content:"";position:absolute;left:14%;right:14%;bottom:-1px;height:2px;border-radius:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);box-shadow:0 0 10px 1px color-mix(in srgb,var(--accent) 60%,transparent)}
+.after select.field-input,.after .field-input.sel{appearance:none;-webkit-appearance:none;padding-right:30px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%238a93a6' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;background-size:12px;cursor:pointer}
+.after .field-input.hov{border-color:color-mix(in srgb,var(--accent) 30%,var(--line))}
+.after .field-input.foc{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+
+/* empty state medallion */
+.empty{display:flex;flex-direction:column;align-items:center;text-align:center;gap:9px;color:var(--ink-3);padding:8px;max-width:200px;margin:0 auto;font-size:12px;line-height:1.5}
+.empty.before{align-items:flex-start;text-align:left;max-width:none}
+.after .empty::before,.empty.med::before{content:"";width:44px;height:44px;border-radius:13px;border:1px solid var(--line);background:var(--surface-2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='%238a93a6'%3E%3Cpath d='M224 152v56a8 8 0 0 1-8 8H40a8 8 0 0 1-8-8v-56a8 8 0 0 1 16 0v48h160v-48a8 8 0 0 1 16 0ZM85.7 109.7 120 144V32a8 8 0 0 1 16 0v112l34.3-34.3a8 8 0 0 1 11.4 11.4l-48 48a8 8 0 0 1-11.4 0l-48-48a8 8 0 0 1 11.4-11.4Z'/%3E%3C/svg%3E") center/22px no-repeat}
+
+/* code editor (after) */
+.code-ed{border-radius:10px;border:1px solid color-mix(in srgb,var(--accent) 11%,var(--line));overflow:hidden;background:var(--code-bg)}
+.code-strip{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--line-2);background:linear-gradient(180deg,var(--surface-2),transparent)}
+.lang{display:inline-flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:11px;font-weight:600;color:#cde0ff;background:color-mix(in srgb,var(--accent) 14%,transparent);border:1px solid color-mix(in srgb,var(--accent) 28%,transparent);padding:3px 9px;border-radius:999px}
+.lang .dot{width:7px;height:7px;border-radius:50%;background:#f6d050}
+.code-strip .pos{margin-left:auto;font-family:var(--font-mono);font-size:10.5px;color:var(--ink-3)}
+.code-strip .run{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:650;color:#aef0c4;background:linear-gradient(180deg,color-mix(in srgb,#7bd698 26%,transparent),color-mix(in srgb,#57c98a 16%,transparent));border:1px solid rgba(87,201,138,.5);border-radius:7px;padding:4px 10px;cursor:pointer}
+.code-area{position:relative;font-family:var(--font-mono);font-size:13px;line-height:1.6;min-height:0}
+.gut{position:absolute;top:0;bottom:0;left:0;width:44px;background:var(--code-gutter);border-right:1px solid var(--line);text-align:right;color:var(--ink-3);padding:11px 0;z-index:2}
+.gut span{display:block;height:20.8px;padding-right:9px}
+.gut span.active{color:var(--accent-2);font-weight:700}
+.code{position:relative;padding:11px 14px 11px 56px;white-space:pre;color:var(--ink)}
+.band{position:absolute;left:44px;right:0;height:20.8px;background:color-mix(in srgb,var(--accent) 8%,transparent);box-shadow:inset 3px 0 0 var(--accent);z-index:0}
+.guide{position:absolute;width:1px;background:repeating-linear-gradient(180deg,color-mix(in srgb,var(--ink-3) 30%,transparent) 0 6px,transparent 6px 12px);z-index:0}
+.lint{text-decoration:underline wavy #e5c07b;text-underline-offset:4px;text-decoration-thickness:1px}
+.expr{color:#7be0a0;background:rgba(87,201,138,.18);border:1px solid rgba(87,201,138,.4);border-radius:4px;padding:0 3px}
+.code-foot{display:flex;align-items:center;gap:10px;padding:7px 12px;border-top:1px solid var(--line-2);background:var(--surface);font-size:11px;color:var(--ink-3)}
+.code-foot kbd{font-family:var(--font-mono);font-size:10px;background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--ink-2)}
+.var-btn{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;color:#cde0ff;background:color-mix(in srgb,var(--accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--accent) 26%,transparent);border-radius:7px;padding:4px 9px;cursor:pointer;margin-left:auto}
+/* before code = plain */
+.code-plain{font-family:var(--font-mono);font-size:13px;line-height:1.6;white-space:pre;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:var(--radius-sm);padding:11px 12px}
+
+/* var picker popover */
+.vp{width:280px;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;box-shadow:0 16px 40px -12px rgba(0,0,0,.7);overflow:hidden}
+.vp-head{display:flex;align-items:center;gap:8px;padding:9px 11px;border-bottom:1px solid var(--line-2);font-size:12px;font-weight:600}
+.vp-head .d{width:18px;height:18px;border-radius:5px;display:grid;place-items:center;background:var(--accent-glow);color:var(--accent-2);font-family:var(--font-mono);font-weight:700;font-size:11px}
+.vp-s{margin:8px 9px;width:calc(100% - 18px);font-size:12px}
+.vp-node{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3);padding:4px 11px}
+.vp-f{display:flex;align-items:center;gap:8px;padding:6px 11px;font-size:12.5px;cursor:pointer}
+.vp-f:hover{background:rgba(255,255,255,.05)}
+.vp-f .nm{font-family:var(--font-mono);color:var(--ink)}
+.vp-f .ty{margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--ink-3)}
+.vp-f .grip{color:var(--ink-3)}
+
+/* ideas grid */
+.ideas{margin-top:46px}
+.ideas h2{font-family:var(--font-display);font-size:20px;margin:0 0 4px}
+.ideas>p{margin:0 0 18px;color:var(--ink-3);font-size:13px}
+.idea-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.idea{background:var(--surface);border:1px solid var(--line-2);border-radius:10px;padding:14px}
+.idea .h{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.idea .h .ic{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;background:var(--accent-glow);color:var(--accent-2);font-size:14px}
+.idea strong{font-size:13.5px}
+.idea p{margin:0;font-size:12px;color:var(--ink-3);line-height:1.5}
+.idea .area{font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);margin-top:8px}
+hr.div{border:none;border-top:1px solid var(--line-2);margin:46px 0 0}
+</style>
+</head>
+<body>
+<div class="doc">
+  <div class="doc-head">
+    <h1>NDV polish — before / after spec</h1>
+    <p>Every change in one place. Items 1–6 are already applied to the codebase; 7–9 are proposed for the code node, expand modal, and variable picker. The rest are an ideas backlog.</p>
+    <div class="legend-key"><span class="chip ship">Shipped</span> applied to editor.css / components &nbsp;·&nbsp; <span class="chip prop">Proposed</span> awaiting go-ahead</div>
+  </div>
+
+  <!-- 1 -->
+  <section class="ex">
+    <div class="ex-head"><span class="chip ship">Shipped</span><h2>1 · Modal header & node glyph</h2>
+      <p>Flat grey glyph → category-tinted glowing chip. Pill meta tags (category tinted), bigger title, action divider, green-gradient Execute, circular close that tints red + rotates on hover.</p></div>
+    <div class="ba">
+      <div class="ba-col"><div class="tag">Before</div><div class="frame flush"><header class="ndv-head">
+        <div class="ndv-title"><span class="inspector-glyph"><svg class="glyph-svg" viewBox="0 0 256 256" fill="currentColor"><path d="M168 40a88 88 0 1 0 0 176 88 88 0 0 0 0-176Zm0 16a72 72 0 1 1-44 128 88 88 0 0 0 0-112 72 72 0 0 1 44-16ZM56 128a72 72 0 0 1 144 0 72 72 0 0 1-144 0Z"/></svg></span>
+        <div><h3>OpenAI Chat Model</h3><div class="ndv-meta"><span class="mono-tag" style="color:var(--cat)">ai</span><span class="mono-tag">openai_chat</span></div></div></div>
+        <div class="ndv-actions"><button class="btn btn-run">▶ Execute step</button><button class="btn btn-ghost">↻ Run fresh</button><button class="btn">Disable</button><button class="ndv-close">×</button></div>
+      </header></div></div>
+      <div class="ba-col"><div class="tag t-after">After</div><div class="after"><div class="frame flush"><header class="ndv-head">
+        <div class="ndv-title"><span class="inspector-glyph"><svg class="glyph-svg" viewBox="0 0 256 256" fill="currentColor"><path d="M168 40a88 88 0 1 0 0 176 88 88 0 0 0 0-176Zm0 16a72 72 0 1 1-44 128 88 88 0 0 0 0-112 72 72 0 0 1 44-16ZM56 128a72 72 0 0 1 144 0 72 72 0 0 1-144 0Z"/></svg></span>
+        <div><h3>OpenAI Chat Model</h3><div class="ndv-meta"><span class="mono-tag cat" style="color:var(--cat)">ai</span><span class="mono-tag">openai_chat</span></div></div></div>
+        <div class="ndv-actions"><button class="btn btn-run">▶ Execute step</button><button class="btn btn-ghost">↻ Run fresh</button><span class="sep"></span><button class="btn">Disable</button><button class="ndv-close">×</button></div>
+      </header></div></div></div>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section class="ex">
+    <div class="ex-head"><span class="chip ship">Shipped</span><h2>2 · Panels — depth, direction arrows & count badges</h2>
+      <p>Input/Output columns recede to the base background while the middle (where you edit) lifts forward. Panel headers gain a direction arrow + live item-count badge.</p></div>
+    <div class="ba">
+      <div class="ba-col"><div class="tag">Before</div><div class="frame flush"><div class="ndv-panels">
+        <div class="ndv-panel"><div class="ndv-panel-head"><h3>Input</h3></div><div class="ndv-panel-body">2 rows…</div></div>
+        <div class="ndv-middle"><div class="ndv-tabs"><button class="active">Parameters</button><button>Settings</button><button>Logs</button></div><div class="ndv-panel-body">model, prompt, temperature…</div></div>
+        <div class="ndv-panel"><div class="ndv-panel-head"><h3>Output</h3></div><div class="ndv-panel-body">1 row…</div></div>
+      </div></div></div>
+      <div class="ba-col"><div class="tag t-after">After</div><div class="after"><div class="frame flush"><div class="ndv-panels">
+        <div class="ndv-panel"><div class="ndv-panel-head"><h3>↓ Input <span class="count-badge">2 items</span></h3></div><div class="ndv-panel-body">2 rows…</div></div>
+        <div class="ndv-middle"><div class="ndv-tabs"><button class="active">Parameters</button><button>Settings</button><button>Logs</button></div><div class="ndv-panel-body">model, prompt, temperature…</div></div>
+        <div class="ndv-panel"><div class="ndv-panel-head"><h3>↑ Output <span class="count-badge">1 item</span></h3></div><div class="ndv-panel-body">1 row…</div></div>
+      </div></div></div></div>
+    </div>
+  </section>
+
+  <!-- 3 -->
+  <section class="ex">
+    <div class="ex-head"><span class="chip ship">Shipped</span><h2>3 · Tabs</h2>
+      <p>Flat 2px underline → rounded hover background + a soft glowing sliding indicator.</p></div>
+    <div class="ba">
+      <div class="ba-col"><div class="tag">Before</div><div class="frame flush"><div class="ndv-tabs"><button class="active">Parameters</button><button>Settings</button><button>Docs</button><button>Credentials</button><button>Logs</button></div></div></div>
+      <div class="ba-col"><div class="tag t-after">After</div><div class="after"><div class="frame flush"><div class="ndv-tabs"><button class="active">Parameters</button><button>Settings</button><button>Docs</button><button>Credentials</button><button>Logs</button></div></div></div></div>
+    </div>
+  </section>
+
+  <!-- 4 -->
+  <section class="ex">
+    <div class="ex-head"><span class="chip ship">Shipped</span><h2>4 · Empty states</h2>
+      <p>Bare left-aligned grey text → centered icon medallion with a heading + subtext.</p></div>
+    <div class="ba">
+      <div class="ba-col"><div class="tag">Before</div><div class="frame" style="min-height:150px"><p class="empty before">No upstream data yet. Run the workflow to see input here.</p></div></div>
+      <div class="ba-col"><div class="tag t-after">After</div><div class="after"><div class="frame" style="min-height:150px;display:flex;align-items:center"><div class="empty med"><strong style="color:var(--ink-2);font-size:13px">No input yet</strong><span>Run the workflow to see upstream data here.</span></div></div></div></div>
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section class="ex">
+    <div class="ex-head"><span class="chip ship">Shipped</span><h2>5 · Fields & dropdowns</h2>
+      <p>Custom SVG chevron on every select (consistent across OS), accent-tinted hover border on inputs/selects, full ring on focus.</p></div>
+    <div class="ba">
+      <div class="ba-col"><div class="tag">Before</div><div class="frame">
+        <div style="margin-bottom:12px"><select class="field-input"><option>GET</option></select></div>
+        <div><input class="field-input" value="https://api.example.com"></div>
+      </div></div>
+      <div class="ba-col"><div class="tag t-after">After</div><div class="after"><div class="frame">
+        <div style="margin-bottom:12px"><select class="field-input"><option>GET</option></select></div>
+        <div style="margin-bottom:12px"><input class="field-input hov" value="https://api.example.com  (hover)"></div>
+        <div><input class="field-input foc" value="https://api.example.com  (focus)"></div>
+      </div></div></div>
+    </div>
+  </section>
+
+  <!-- 6 -->
+  <section class="ex">
+    <div class="ex-head"><span class="chip prop">Proposed</span><h2>6 · Code node — inline editor</h2>
+      <p>Plain mirror → true code surface with a header strip (Python pill · Ln/Col), separated gutter with active-line highlight, indent guides, lint underline, expression pills, and a footer with the variable affordance.</p></div>
+    <div class="ba">
+      <div class="ba-col"><div class="tag">Before</div><div class="frame flush"><div class="code-plain"><span class="com"># transform</span>
+<span class="kw">def</span> run(items):
+    <span class="kw">for</span> item <span class="kw">in</span> items:
+        score = <span class="bi">float</span>(item[<span class="str">"score"</span>]) * <span class="num">1.5</span>
+    <span class="kw">return</span> items</div></div></div>
+      <div class="ba-col"><div class="tag t-after">After</div><div class="code-ed">
+        <div class="code-strip"><span class="lang"><span class="dot"></span> Python</span><span class="pos">Ln 4 · Col 16</span></div>
+        <div class="code-area"><div class="band" style="top:73px"></div><div class="guide" style="left:78px;top:32px;height:62px"></div>
+          <div class="gut"><span>1</span><span>2</span><span>3</span><span class="active">4</span><span>5</span></div>
+          <div class="code"><span class="com"># transform</span>
+<span class="kw">def</span> <span class="fn">run</span>(items):
+    <span class="kw">for</span> item <span class="kw">in</span> items:
+        score = <span class="bi">float</span>(item[<span class="str">"score"</span>]) * <span class="num">1.5</span>
+    <span class="kw">return</span> items</div></div>
+        <div class="code-foot"><span>Drag from Input · <kbd>Ctrl</kbd> <kbd>Space</kbd></span><button class="var-btn">$ variable</button></div>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- 7 -->
+  <section class="ex">
+    <div class="ex-head"><span class="chip prop">Proposed</span><h2>7 · Expand → full code modal</h2>
+      <p>Today Expand opens a <strong>plain textarea</strong> (no highlighting/gutter). Bring it to parity: same highlighted editor + gutter/active-line, a "Run with input" button, recessed Input/Result panes around a lifted editor, glowing result tabs + a result pill.</p></div>
+    <div class="ba">
+      <div class="ba-col"><div class="tag">Before</div><div class="frame flush"><div style="display:grid;grid-template-columns:0.8fr 1.2fr 1fr">
+        <div class="ndv-panel"><div class="ndv-panel-head"><h3 style="text-transform:none;font-family:var(--font-display)">Input</h3></div><div class="ndv-panel-body" style="font-size:11px">id · qty · price</div></div>
+        <div class="ndv-middle" style="border-left:1px solid var(--line-2)"><div class="ndv-panel-head"><h3 style="text-transform:none">Python</h3></div><div style="padding:10px"><div class="code-plain" style="border-radius:6px"><span class="kw">def</span> run(items): …</div></div></div>
+        <div class="ndv-panel"><div class="ndv-panel-head"><h3 style="text-transform:none">Result</h3></div><div class="ndv-panel-body" style="font-size:11px">[ {…} ]</div></div>
+      </div></div></div>
+      <div class="ba-col"><div class="tag t-after">After</div><div class="after"><div class="frame flush"><div style="display:grid;grid-template-columns:0.8fr 1.2fr 1fr;gap:10px;padding:10px;background:var(--surface)">
+        <div class="ndv-panel" style="border:1px solid var(--line-2);border-radius:9px"><div class="ndv-panel-head"><h3>↓ Input</h3></div><div class="ndv-panel-body" style="font-size:11px">id · qty · price</div></div>
+        <div class="code-ed"><div class="code-strip"><span class="lang"><span class="dot"></span> Python</span><button class="run">▶ Run</button><span class="pos">Ln 2</span></div>
+          <div class="code-area"><div class="band" style="top:52px"></div><div class="gut"><span>1</span><span class="active">2</span><span>3</span></div><div class="code"><span class="kw">def</span> <span class="fn">run</span>(items):
+    <span class="kw">return</span> items</div></div></div>
+        <div class="ndv-panel" style="border:1px solid var(--line-2);border-radius:9px"><div class="ndv-panel-head"><h3>Result <span class="count-badge">2 items</span></h3></div><div class="ndv-panel-body" style="font-size:11px;color:var(--ink-2)">[ {…} ]</div></div>
+      </div></div></div></div>
+    </div>
+  </section>
+
+  <!-- 8 -->
+  <section class="ex">
+    <div class="ex-head"><span class="chip prop">Proposed</span><h2>8 · Variable picker — discoverability</h2>
+      <p>The picker already exists (search upstream → drag/click to insert <code>{{ }}</code>). Add a persistent <strong>{ }</strong> button on every expression field (next to <em>fx</em>) so it's discoverable without the <code>$</code> trick.</p></div>
+    <div class="ba">
+      <div class="ba-col"><div class="tag">Before</div><div class="frame"><div class="input-row"><input class="field-input" value="{{ $json.email }}"><button class="fx">fx</button></div><p class="muted" style="margin:8px 0 0;font-size:11px">Picker only via typing <code>$</code> or a hidden button.</p></div></div>
+      <div class="ba-col"><div class="tag t-after">After</div><div class="after"><div class="frame">
+        <div class="input-row"><input class="field-input" style="padding-right:60px" value="{{ $json.email }}"><button class="fx" style="right:31px;background:rgba(76,158,255,.14);color:var(--accent-2);border-color:color-mix(in srgb,var(--accent) 28%,transparent)">{ }</button><button class="fx">fx</button></div>
+        <div style="margin-top:8px"><div class="vp">
+          <div class="vp-head"><span class="d">$</span> Pick a variable</div>
+          <input class="field-input vp-s" placeholder="Search all nodes…">
+          <div class="vp-node">HTTP Request</div>
+          <div class="vp-f"><span class="grip">⠿</span><span class="nm">json.email</span><span class="ty">str</span></div>
+          <div class="vp-f"><span class="grip">⠿</span><span class="nm">json.user.id</span><span class="ty">int</span></div>
+        </div></div>
+      </div></div></div>
+    </div>
+  </section>
+
+  <hr class="div" />
+
+  <!-- IDEAS -->
+  <section class="ideas">
+    <h2>More ideas — backlog</h2>
+    <p>Beyond the above. Grouped by area; each is independent so we can cherry-pick.</p>
+    <div class="idea-grid">
+      <div class="idea"><div class="h"><span class="ic">⌥</span><strong>Run shortcut hints</strong></div><p>Show <kbd>⌘↵</kbd> on Execute, <kbd>Esc</kbd> to close — surfaced as faint key chips on the buttons.</p><div class="area">NDV header</div></div>
+      <div class="idea"><div class="h"><span class="ic">▤</span><strong>Resizable columns</strong></div><p>Draggable splitters between Input / Settings / Output so users can widen the editor or a data panel.</p><div class="area">NDV layout</div></div>
+      <div class="idea"><div class="h"><span class="ic">◧</span><strong>Status edge ribbon</strong></div><p>Color the modal's top hairline by last-run status — green success / red error / blue running.</p><div class="area">NDV frame</div></div>
+      <div class="idea"><div class="h"><span class="ic">⌕</span><strong>Parameter search</strong></div><p>A filter box for nodes with many params (HTTP, Slack) — jump to a field fast.</p><div class="area">Parameters tab</div></div>
+      <div class="idea"><div class="h"><span class="ic">⚑</span><strong>Required-field summary</strong></div><p>A small banner listing empty required fields, each a click-to-scroll chip.</p><div class="area">Parameters tab</div></div>
+      <div class="idea"><div class="h"><span class="ic">≃</span><strong>Inline value preview</strong></div><p>Under each expression field, show its resolved value as a chip — no need to open the modal.</p><div class="area">Fields</div></div>
+      <div class="idea"><div class="h"><span class="ic">◑</span><strong>Output diff vs last run</strong></div><p>Toggle to highlight what changed in the Output panel since the previous run.</p><div class="area">Output panel</div></div>
+      <div class="idea"><div class="h"><span class="ic">✦</span><strong>AI fix / explain code</strong></div><p>One-click "Explain" or "Fix error" on the code node, feeding the run error to the model.</p><div class="area">Code node</div></div>
+      <div class="idea"><div class="h"><span class="ic">▦</span><strong>Snippet templates</strong></div><p>A starter menu for the code node (map rows, call API, reshape DataFrame).</p><div class="area">Code node</div></div>
+      <div class="idea"><div class="h"><span class="ic">⤿</span><strong>Format on save</strong></div><p>Run ruff/black on save so saved Python is always tidy; "Format" button in the strip.</p><div class="area">Code node</div></div>
+      <div class="idea"><div class="h"><span class="ic">◴</span><strong>Schema tree input</strong></div><p>n8n-style expandable JSON schema view in the Input panel with each leaf draggable + a type icon.</p><div class="area">Input panel</div></div>
+      <div class="idea"><div class="h"><span class="ic">⟲</span><strong>Reset to default</strong></div><p>A subtle revert affordance per field when its value differs from the node default.</p><div class="area">Fields</div></div>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>

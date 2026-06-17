@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import Artifact
+from app.models import Artifact, Run
 from app.services.artifact_backends import (
     LocalBackend,
     get_backend,
@@ -28,6 +28,7 @@ from app.services.artifact_backends import (
     _resolve_local_path as _artifact_path,  # noqa: F401
 )
 from app.services.redaction import load_secret_values, redact_value
+from app.tenancy import run_as_system
 from noodle.artifacts import ARTIFACT_MARKER, LocalArtifactStore, is_artifact_ref
 
 
@@ -88,7 +89,11 @@ def path_for_artifact(artifact: Artifact) -> Path:
 
 
 def _row_from_ref(
-    ref: dict[str, Any], run_id: str, secret_values: list[str] | None = None
+    ref: dict[str, Any],
+    run_id: str,
+    secret_values: list[str] | None = None,
+    *,
+    org_id: str | None = None,
 ) -> Artifact:
     artifact_id = str(ref["artifact_id"])
     node_id = str(ref.get("node_id") or "unknown")
@@ -100,6 +105,10 @@ def _row_from_ref(
     return Artifact(
         id=artifact_id,
         run_id=run_id,
+        # Stamp the owning org explicitly: artifact persistence runs in a
+        # background worker with no request org context, so the before_flush
+        # stamp hook would otherwise file the row under the default org.
+        org_id=org_id,
         node_id=node_id,
         name=name,
         kind=str(ref.get("kind") or "binary"),
@@ -127,53 +136,61 @@ async def persist_artifact_refs(run_id: str, refs: Iterable[dict[str, Any]]) -> 
     configured_backend = (settings.artifact_storage_backend or "local").lower()
 
     async with SessionLocal() as session:
-        secret_values = await load_secret_values(session)
-        existing = set(
-            (
-                await session.scalars(
-                    select(Artifact.id).where(Artifact.id.in_(unique.keys()))
-                )
-            ).all()
-        )
-        for artifact_id, ref in unique.items():
-            if artifact_id in existing:
-                continue
-            row = _row_from_ref(ref, run_id, secret_values)
-            local_path: Path | None = None
-            if row.storage_backend == "local":
-                try:
-                    local_path = path_for_artifact(row)
-                except ValueError:
+        # Artifact persistence runs in workers/background tasks with no request
+        # tenant context. In multi-tenant mode an unset context deliberately
+        # falls back to the default org, so all reads here must opt out and then
+        # stamp rows from the owning Run explicitly.
+        with run_as_system():
+            secret_values = await load_secret_values(session)
+            run_org_id = await session.scalar(
+                select(Run.org_id).where(Run.id == run_id)
+            )
+            existing = set(
+                (
+                    await session.scalars(
+                        select(Artifact.id).where(Artifact.id.in_(unique.keys()))
+                    )
+                ).all()
+            )
+            for artifact_id, ref in unique.items():
+                if artifact_id in existing:
                     continue
-            # Rehome to the configured backend when it isn't local. Workers
-            # always write to the local FS via LocalArtifactStore (no
-            # per-worker S3 credentials, warm-pool reuse); the API uploads
-            # those bytes here so production deployments keep artifacts in
-            # the durable backend instead of local scratch.
-            if (
-                configured_backend != "local"
-                and row.storage_backend == "local"
-                and local_path is not None
-                and local_path.exists()
-            ):
-                try:
-                    target = get_backend(configured_backend)
-                    row.storage_backend = configured_backend
-                    target.upload_from_local(row, local_path)
-                except Exception:  # noqa: BLE001
-                    # Upload failed; keep the local row so the bytes are
-                    # still served via the local backend rather than losing
-                    # them. The error has already been logged by the backend.
-                    row.storage_backend = "local"
-                else:
-                    # Reclaim local scratch — the durable copy is in the
-                    # configured backend now.
+                row = _row_from_ref(ref, run_id, secret_values, org_id=run_org_id)
+                local_path: Path | None = None
+                if row.storage_backend == "local":
                     try:
-                        local_path.unlink(missing_ok=True)
-                    except OSError:
-                        pass
-            session.add(row)
-        await session.commit()
+                        local_path = path_for_artifact(row)
+                    except ValueError:
+                        continue
+                # Rehome to the configured backend when it isn't local. Workers
+                # always write to the local FS via LocalArtifactStore (no
+                # per-worker S3 credentials, warm-pool reuse); the API uploads
+                # those bytes here so production deployments keep artifacts in
+                # the durable backend instead of local scratch.
+                if (
+                    configured_backend != "local"
+                    and row.storage_backend == "local"
+                    and local_path is not None
+                    and local_path.exists()
+                ):
+                    try:
+                        target = get_backend(configured_backend)
+                        row.storage_backend = configured_backend
+                        target.upload_from_local(row, local_path)
+                    except Exception:  # noqa: BLE001
+                        # Upload failed; keep the local row so the bytes are
+                        # still served via the local backend rather than losing
+                        # them. The error has already been logged by the backend.
+                        row.storage_backend = "local"
+                    else:
+                        # Reclaim local scratch — the durable copy is in the
+                        # configured backend now.
+                        try:
+                            local_path.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                session.add(row)
+            await session.commit()
 
 
 def delete_artifact_files(rows: Iterable[Artifact]) -> None:

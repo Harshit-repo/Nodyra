@@ -5,6 +5,7 @@ nodes use their standard Python drivers if the workflow environment provides
 them, and raise an actionable error if the driver is missing.
 """
 
+import functools
 import json
 from email.message import EmailMessage
 from typing import Any
@@ -33,9 +34,12 @@ def _request_json(
     json_body: Any = None,
     data: Any = None,
 ) -> Any:
-    import requests
+    from noodle_nodes.http_security import safe_request
 
-    response = requests.request(
+    # Route through safe_request so integration nodes get the same SSRF guard
+    # (per-hop public-target validation + credential-stripping redirects) as the
+    # builtin HTTP nodes, rather than following redirects blindly via requests.
+    response = safe_request(
         method,
         url,
         headers=headers or None,
@@ -644,6 +648,7 @@ def mysql_query(
         connection.close()
 
 
+@functools.lru_cache(maxsize=16)
 def _boto3_s3_client(
     aws_access_key_id: str = "",
     aws_secret_access_key: str = "",

@@ -15,7 +15,7 @@ from typing import Any
 from noodle.context import node_debug
 from noodle.sdk import node
 from noodle_nodes._creds import cred_multi, cred_single
-from noodle_nodes.http_security import assert_public_http_url
+from noodle_nodes.http_security import safe_request
 
 OPERATORS = [
     "equals",
@@ -839,7 +839,7 @@ def _json_preview(value: Any, *, depth: int = 2, max_items: int = 20) -> Any:
             )
         return preview
     try:
-        return json.loads(json.dumps(value, default=str))
+        return str(value)
     except (TypeError, ValueError):
         return _short_repr(value)
 
@@ -1163,15 +1163,17 @@ def http_request(input: Any = None, url: str = "", method: str = "GET",
 
     import requests
 
-    assert_public_http_url(url, context="http_request")
     timeout = float(timeout_seconds or 30)
     attempts = max(0, int(max_retries or 0)) + 1
     response = None
     for attempt in range(attempts):
         try:
-            response = requests.request(
+            # safe_request re-validates every redirect hop against the SSRF
+            # guard and disables ``requests``' unchecked auto-redirect (C2).
+            response = safe_request(
                 method,
                 url,
+                context="http_request",
                 headers=headers or None,
                 params=query or None,
                 json=body or None,
@@ -1229,13 +1231,13 @@ def graphql_request(
         raise ValueError("graphql_request: url is required")
     if not query:
         raise ValueError("graphql_request: query is required")
-    assert_public_http_url(url, context="graphql_request")
     request_variables = (
         variables if variables is not None else (input if isinstance(input, dict) else {})
     )
-    response = requests.request(
+    response = safe_request(
         "POST",
         url,
+        context="graphql_request",
         headers=headers or None,
         json={"query": query, "variables": request_variables},
         timeout=float(timeout_seconds or 30),

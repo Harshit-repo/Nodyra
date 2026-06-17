@@ -38,7 +38,13 @@ from noodle_nodes.integrations_v2.providers import filesystem as filesystem_v2
 from noodle_nodes.integrations_v2.providers import rss as rss_v2
 from noodle_nodes.integrations_v2.providers import slack as slack_v2
 from noodle_nodes.integrations_v2.providers import stripe as stripe_v2
+from noodle_nodes.integrations_v2.providers import google_calendar as google_calendar_v2
+from noodle_nodes.integrations_v2.providers import gmail as gmail_v2
+from noodle_nodes.integrations_v2.providers import google_drive as google_drive_v2
+from noodle_nodes.integrations_v2.providers import salesforce as salesforce_v2
 from noodle_nodes import file_nodes as file_nodes
+from noodle_nodes import docker_nodes as docker_nodes
+from noodle_nodes import translation_nodes as translation_nodes
 
 __version__ = "0.0.1"
 __all__ = [
@@ -64,7 +70,13 @@ __all__ = [
     "rss_v2",
     "slack_v2",
     "stripe_v2",
+    "google_calendar_v2",
+    "gmail_v2",
+    "google_drive_v2",
+    "salesforce_v2",
     "file_nodes",
+    "docker_nodes",
+    "translation_nodes",
     "llm",
     "llm_evals",
     "llm_training",

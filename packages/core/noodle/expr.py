@@ -27,6 +27,69 @@ _ALIASES = (
     ("$now", "_now"),
     ("$fromAI", "_from_ai"),
 )
+_ALIAS_MAP = dict(_ALIASES)
+
+# A Python string literal (with optional prefix) OR a ``$alias`` token. We must
+# rewrite aliases to legal identifiers without touching their occurrences inside
+# string literals — a naive ``str.replace`` corrupted any literal that merely
+# *contained* an alias substring (H3). f-strings are the deliberate exception:
+# their ``{...}`` fields are real code, so aliases there are still rewritten.
+_ALIAS_REWRITE_RE = re.compile(
+    r"""
+    (?P<str>
+        (?P<prefix>[rRbBfFuU]{0,3})
+        ( \"\"\"(?:\\.|(?!\"\"\").)*\"\"\"
+        | '''(?:\\.|(?!''').)*'''
+        | "(?:\\.|[^"\\])*"
+        | '(?:\\.|[^'\\])*'
+        )
+    )
+    | (?P<alias>\$[A-Za-z_][A-Za-z0-9_]*)
+    """,
+    re.DOTALL | re.VERBOSE,
+)
+
+
+def _rewrite_aliases(code: str) -> str:
+    """Replace ``$alias`` tokens with their legal-identifier targets, leaving
+    occurrences inside ordinary string literals untouched (f-string fields are
+    still rewritten so interpolated aliases keep working)."""
+
+    def _sub(match: re.Match[str]) -> str:
+        literal = match.group("str")
+        if literal is not None:
+            prefix = (match.group("prefix") or "").lower()
+            if "f" in prefix:
+                # f-string: rewrite aliases ONLY inside its ``{...}`` expression
+                # fields, never the literal text. A blanket replace would corrupt
+                # text that merely contains an alias substring, e.g.
+                # ``f"price is $now: {x}"`` would turn the words ``$now`` in the
+                # output into ``_now``.
+                return _rewrite_fstring_fields(literal)
+            return literal
+        alias = match.group("alias")
+        return _ALIAS_MAP.get(alias, alias)
+
+    return _ALIAS_REWRITE_RE.sub(_sub, code)
+
+
+# ``{{`` / ``}}`` are escaped braces (literal text); ``{...}`` (no nested brace)
+# is a real replacement field whose contents are code.
+_FSTRING_FIELD_RE = re.compile(r"\{\{|\}\}|\{[^{}]*\}")
+
+
+def _rewrite_fstring_fields(literal: str) -> str:
+    """Rewrite ``$alias`` tokens inside an f-string's ``{...}`` fields only."""
+
+    def _sub_field(match: re.Match[str]) -> str:
+        segment = match.group(0)
+        if segment in ("{{", "}}"):
+            return segment  # escaped brace — literal text, not a field
+        for alias, target in _ALIASES:
+            segment = segment.replace(alias, target)
+        return segment
+
+    return _FSTRING_FIELD_RE.sub(_sub_field, literal)
 
 _SAFE_BUILTINS: dict[str, Any] = {
     "True": True,
@@ -342,9 +405,7 @@ def from_ai_binding(
 
 
 def _eval_one(expression: str, context: dict[str, Any]) -> Any:
-    code = expression
-    for alias, target in _ALIASES:
-        code = code.replace(alias, target)
+    code = _rewrite_aliases(expression)
     try:
         tree = ast.parse(code, mode="eval")
     except SyntaxError as exc:

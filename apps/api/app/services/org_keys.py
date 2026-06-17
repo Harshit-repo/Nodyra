@@ -104,12 +104,21 @@ async def encrypt_credential_current(
 
 
 async def decrypt_credential_for(
-    credential: Credential, session: AsyncSession
+    credential: Credential, session: AsyncSession, *, strict: bool = False
 ) -> dict:
-    """Decrypt a credential row via its org's KEK with legacy fallbacks."""
+    """Decrypt a credential row via its org's KEK with legacy fallbacks.
+
+    ``strict`` (H1) raises :class:`crypto.CredentialDecryptError` rather than
+    returning ``{}`` when a credential that holds ciphertext cannot be
+    decrypted — used on the execution path so a run fails loudly instead of
+    silently dropping the credential.
+    """
     org_kek = await get_org_kek(getattr(credential, "org_id", None), session)
     return crypto.decrypt_credential(
-        credential.encrypted_data, credential.encrypted_dek, org_kek=org_kek
+        credential.encrypted_data,
+        credential.encrypted_dek,
+        org_kek=org_kek,
+        strict=strict,
     )
 
 

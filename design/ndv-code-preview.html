@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Code node — polish ideas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --bg:#090b10;--surface:#10141c;--surface-2:#161b25;--surface-3:#1f2632;
+  --line:#242c3a;--line-2:#1a2029;--ink:#e9eef6;--ink-2:#98a4ba;--ink-3:#8a93a6;
+  --accent:#4c9eff;--accent-2:#79b6ff;--accent-deep:#1f4f8f;--accent-glow:rgba(76,158,255,.18);
+  --code-bg:#0b0e15;--code-gutter:#0e1219;
+  --font-display:"Bricolage Grotesque",sans-serif;--font-sans:"Hanken Grotesk",sans-serif;--font-mono:"IBM Plex Mono",monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#06080c;color:var(--ink);font-family:var(--font-sans);-webkit-font-smoothing:antialiased;padding:34px 40px}
+.head{max-width:1560px;margin:0 auto 22px}
+.head h1{font-family:var(--font-display);font-size:22px;margin:0 0 4px}
+.head p{margin:0;color:var(--ink-3);font-size:13px}
+.layout{max-width:1560px;margin:0 auto;display:grid;grid-template-columns:1fr 430px;gap:34px;align-items:start}
+
+/* ---------- the polished editor ---------- */
+.editor{border-radius:12px;border:1px solid color-mix(in srgb,var(--accent) 12%,var(--line));overflow:hidden;box-shadow:0 1px 0 rgba(255,255,255,.05) inset,0 24px 60px -30px rgba(0,0,0,.85);background:var(--code-bg)}
+.code-head{display:flex;align-items:center;gap:12px;padding:10px 12px;background:linear-gradient(180deg,var(--surface-2),color-mix(in srgb,var(--surface-2) 35%,transparent));border-bottom:1px solid var(--line-2)}
+.code-lang{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:12px;font-weight:600;color:#cde0ff;background:color-mix(in srgb,var(--accent) 14%,transparent);border:1px solid color-mix(in srgb,var(--accent) 28%,transparent);padding:4px 11px;border-radius:999px}
+.code-lang .dot{width:8px;height:8px;border-radius:50%;background:#f6d050;box-shadow:0 0 0 3px color-mix(in srgb,#f6d050 28%,transparent)}
+.code-title{font-family:var(--font-mono);font-size:12px;color:var(--ink-3)}
+.code-head-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.code-pos{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);margin-right:2px}
+.hbtn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--ink-2);font-size:12px;font-family:var(--font-sans);font-weight:600;cursor:pointer}
+.hbtn:hover{color:var(--ink);border-color:var(--accent-deep)}
+.hbtn.icon{width:28px;padding:0;justify-content:center}
+
+.code-body{position:relative;font-family:var(--font-mono);font-size:14.5px;line-height:1.62}
+.gutter{position:absolute;top:0;bottom:0;left:0;width:52px;background:var(--code-gutter);border-right:1px solid var(--line);text-align:right;color:var(--ink-3);padding:14px 0;user-select:none;z-index:2}
+.gutter span{display:block;height:23.5px;padding-right:10px}
+.gutter span.active{color:var(--accent-2);font-weight:700}
+.gutter span.changed{box-shadow:inset 3px 0 0 #57c98a}
+.code{position:relative;padding:14px 18px 14px 64px;white-space:pre;overflow:hidden;color:var(--ink);min-height:0}
+.row{height:23.5px}
+/* active line band */
+.active-band{position:absolute;left:52px;right:0;height:23.5px;background:color-mix(in srgb,var(--accent) 8%,transparent);box-shadow:inset 3px 0 0 var(--accent);z-index:0;pointer-events:none}
+/* indent guides */
+.guide{position:absolute;width:1px;background:repeating-linear-gradient(180deg,color-mix(in srgb,var(--ink-3) 32%,transparent) 0 6px,transparent 6px 12px);z-index:0}
+/* tokens */
+.kw{color:#c678dd}.bi{color:#61afef}.fn{color:#7cc4ff}.str{color:#98c379}.num{color:#d19a66}.com{color:#7f848e;font-style:italic}.self{color:#e5c07b;font-style:italic}
+.expr{color:#7be0a0;background:rgba(87,201,138,.18);border:1px solid rgba(87,201,138,.4);border-radius:4px;padding:0 3px}
+.bracket{background:rgba(76,158,255,.22);border-radius:2px}
+.sel{background:rgba(76,158,255,.30);border-radius:2px}
+.lint{text-decoration:underline wavy #e5c07b;text-underline-offset:4px;text-decoration-thickness:1px}
+.lint-chip{position:absolute;font-family:var(--font-sans);font-size:11px;color:#e5c07b;background:rgba(229,192,123,.10);border:1px solid rgba(229,192,123,.32);border-radius:6px;padding:2px 8px}
+/* autocomplete popup */
+.ac{position:absolute;z-index:5;min-width:230px;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;box-shadow:0 16px 40px -12px rgba(0,0,0,.7);padding:5px;font-family:var(--font-sans)}
+.ac .ai{display:flex;align-items:center;gap:9px;padding:6px 9px;border-radius:6px;font-size:13px;color:var(--ink-2)}
+.ac .ai .ic{width:16px;height:16px;border-radius:4px;display:grid;place-items:center;font-family:var(--font-mono);font-size:10px;font-weight:700}
+.ac .ai .ic.m{background:rgba(124,196,255,.18);color:#7cc4ff}
+.ac .ai .ic.k{background:rgba(152,195,121,.18);color:#98c379}
+.ac .ai .tail{margin-left:auto;font-family:var(--font-mono);font-size:10.5px;color:var(--ink-3)}
+.ac .ai.sel{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--ink)}
+/* footer */
+.code-foot{display:flex;align-items:center;gap:12px;padding:9px 14px;background:var(--surface);border-top:1px solid var(--line-2);font-size:12px;color:var(--ink-3)}
+.code-foot kbd{font-family:var(--font-mono);font-size:10.5px;background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:1px 7px;color:var(--ink-2)}
+.code-foot .count{margin-left:auto;font-family:var(--font-mono);font-size:11px}
+.var-btn{display:inline-flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:12px;color:#cde0ff;background:color-mix(in srgb,var(--accent) 13%,transparent);border:1px solid color-mix(in srgb,var(--accent) 26%,transparent);border-radius:7px;padding:5px 11px;cursor:pointer}
+
+/* numbered markers */
+.mk{position:absolute;z-index:6;width:21px;height:21px;border-radius:50%;background:var(--accent);color:#04101f;font-family:var(--font-mono);font-weight:700;font-size:11px;display:grid;place-items:center;box-shadow:0 2px 8px rgba(0,0,0,.5),0 0 0 3px rgba(76,158,255,.25)}
+
+/* ---------- legend ---------- */
+.legend{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 18px 8px}
+.legend h3{font-family:var(--font-display);font-size:14px;margin:0 0 14px}
+.legend .item{display:grid;grid-template-columns:22px 1fr;gap:11px;margin-bottom:14px}
+.legend .n{width:21px;height:21px;border-radius:50%;background:var(--accent);color:#04101f;font-family:var(--font-mono);font-weight:700;font-size:11px;display:grid;place-items:center}
+.legend .n.x{background:var(--surface-3);color:var(--ink-2)}
+.legend strong{font-size:13px;display:block;margin-bottom:2px}
+.legend span{font-size:12px;color:var(--ink-3);line-height:1.45}
+.legend .more{border-top:1px solid var(--line-2);margin-top:4px;padding-top:12px}
+.legend .more .item{grid-template-columns:22px 1fr}
+</style>
+</head>
+<body>
+<div class="head">
+  <h1>Code node — polish ideas</h1>
+  <p>One polished editor with the proposed treatments. Numbered markers map to the legend on the right.</p>
+</div>
+
+<div class="layout">
+  <!-- EDITOR -->
+  <div class="editor">
+    <div class="code-head">
+      <span class="code-lang"><span class="dot"></span> Python</span>
+      <span class="code-title">transform.py</span>
+      <div class="code-head-right">
+        <span class="code-pos">Ln 8 · Col 14 · spaces: 4</span>
+        <button class="hbtn">Format</button>
+        <button class="hbtn icon" title="Find">⌕</button>
+        <button class="hbtn icon" title="Copy">⧉</button>
+        <button class="hbtn icon" title="Expand">⤢</button>
+      </div>
+      <span class="mk" style="top:8px;left:104px">1</span>
+    </div>
+
+    <div class="code-body">
+      <!-- active line band on line 8 (index 7) -->
+      <div class="active-band" style="top:178.5px"></div>
+      <!-- indent guides -->
+      <div class="guide" style="left:82px;top:108px;height:164px"></div>
+      <div class="guide" style="left:116px;top:155px;height:94px"></div>
+
+      <div class="gutter">
+        <span>1</span><span class="changed">2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span class="active">8</span><span>9</span><span>10</span><span>11</span><span>12</span><span>13</span><span class="changed">14</span>
+      </div>
+
+      <div class="code"><span class="com"># Transform incoming items</span>
+<span class="kw">import</span> <span class="lint">json</span>
+
+<span class="kw">def</span> <span class="fn">run</span>(items):
+    results = []
+    <span class="kw">for</span> item <span class="kw">in</span> items:
+        name = item[<span class="str">"name"</span>].strip()
+        score = <span class="bi">float</span><span class="bracket">(</span>item.get(<span class="str">"score"</span>, <span class="num">0</span>)<span class="bracket">)</span> * <span class="num">1.5</span>
+        <span class="kw">if</span> <span class="sel">score</span> &gt; <span class="num">10</span>:
+            results.append({<span class="str">"name"</span>: name, <span class="str">"score"</span>: score})
+    <span class="kw">return</span> results
+
+<span class="com"># pull a value from an upstream node</span>
+threshold = <span class="expr">{{ $node["Filter"].json.threshold }}</span></div>
+
+      <!-- lint chip -->
+      <div class="lint-chip" style="top:38px;left:560px">⚠ 'json' imported but unused</div>
+
+      <!-- autocomplete popup near line 7 -->
+      <div class="ac" style="top:172px;left:300px">
+        <div class="ai sel"><span class="ic k">key</span> "name"<span class="tail">str</span></div>
+        <div class="ai"><span class="ic k">key</span> "score"<span class="tail">str</span></div>
+        <div class="ai"><span class="ic m">fn</span> get()<span class="tail">method</span></div>
+        <div class="ai"><span class="ic m">fn</span> items()<span class="tail">method</span></div>
+      </div>
+
+      <!-- markers -->
+      <span class="mk" style="top:184px;left:20px">2</span>
+      <span class="mk" style="top:128px;left:74px">3</span>
+      <span class="mk" style="top:30px;left:740px">4</span>
+      <span class="mk" style="top:168px;left:520px">5</span>
+      <span class="mk" style="top:300px;left:118px">6</span>
+    </div>
+
+    <div class="code-foot">
+      <span>Drag fields from <strong style="color:var(--ink-2)">Input</strong> to insert &nbsp;·&nbsp; <kbd>Ctrl</kbd> <kbd>Space</kbd> for variables</span>
+      <button class="var-btn" style="margin-left:auto">$ Insert variable</button>
+      <span class="count">14 lines · 312 chars</span>
+      <span class="mk" style="top:9px;left:430px">7</span>
+    </div>
+  </div>
+
+  <!-- LEGEND -->
+  <div class="legend">
+    <h3>What we'd add</h3>
+    <div class="item"><span class="n">1</span><div><strong>Editor header bar</strong><span>Language pill, file name, live Ln/Col + indent, plus Format / Find / Copy / Expand actions.</span></div></div>
+    <div class="item"><span class="n">2</span><div><strong>Active-line highlight</strong><span>Subtle band + accent gutter number track the caret line.</span></div></div>
+    <div class="item"><span class="n">3</span><div><strong>Indent guides</strong><span>Faint vertical guides per indent level — much easier to read nested Python.</span></div></div>
+    <div class="item"><span class="n">4</span><div><strong>Inline lint / errors</strong><span>Wavy underline + a chip for unused imports, undefined names, syntax errors (from a quick client check or the run result).</span></div></div>
+    <div class="item"><span class="n">5</span><div><strong>Expression pills</strong><span>`{{ … }}` rendered as a bordered green pill, clickable to open the variable picker / preview its resolved value.</span></div></div>
+    <div class="item"><span class="n">6</span><div><strong>Autocomplete</strong><span>Suggest input fields ("name", "score"), Python builtins & methods on <kbd>Ctrl</kbd>+<kbd>Space</kbd>.</span></div></div>
+    <div class="item"><span class="n">7</span><div><strong>Footer toolbar</strong><span>Drag-from-Input hint, $ Insert variable button, line/char count.</span></div></div>
+    <div class="more">
+      <div class="item"><span class="n x">+</span><div><strong>Code surface + depth</strong><span>Darker dedicated code background, gutter separation, rounded frame with the same accent hairline as the NDV.</span></div></div>
+      <div class="item"><span class="n x">+</span><div><strong>Bracket match + diff gutter</strong><span>Matching brackets highlighted; changed lines marked green in the gutter.</span></div></div>
+      <div class="item"><span class="n x">+</span><div><strong>Richer syntax theme</strong><span>Function names, <span class="self">self</span>/decorators, f-strings — a fuller token palette.</span></div></div>
+      <div class="item"><span class="n x">+</span><div><strong>Run-this-cell / preview</strong><span>Inline "Run" using current Input data, with the result in the right NDV panel (the expand modal already has input│editor│result).</span></div></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

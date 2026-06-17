@@ -61,3 +61,6 @@ apps/web/playwright-report/
 /ui-home.png
 /ui-runs.png
 /ui-workflow-editor.png
+
+# Playwright MCP session artifacts
+.playwright-mcp/

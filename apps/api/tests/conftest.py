@@ -183,11 +183,11 @@ def _reset_auth_rate_limit_state():
     calls within one minute to trip the brute-force limiter and 429 unrelated
     tests.
     """
-    from app.routers import auth as auth_module
+    from app.services import rate_limit
 
-    auth_module._AUTH_RATE_BUCKETS.clear()
+    rate_limit.reset()
     yield
-    auth_module._AUTH_RATE_BUCKETS.clear()
+    rate_limit.reset()
 
 
 @pytest.fixture(autouse=True)

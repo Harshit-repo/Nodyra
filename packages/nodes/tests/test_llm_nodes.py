@@ -38,6 +38,132 @@ class FakeResponse:
         return self._payload
 
 
+class StreamingFakeResponse:
+    def __init__(self, lines: list[str], status_code: int = 200):
+        self._lines = lines
+        self.status_code = status_code
+        self.text = "\n".join(lines)
+        self.headers = {"content-type": "text/event-stream"}
+
+    def iter_lines(self, decode_unicode: bool = False):
+        for line in self._lines:
+            yield line if decode_unicode else line.encode("utf-8")
+
+    def json(self) -> object:
+        return {}
+
+
+def test_assemble_openai_stream_emits_and_accumulates() -> None:
+    from noodle_nodes.llm import _assemble_openai_stream
+
+    emitted: list[str] = []
+    lines = [
+        'data: {"model":"gpt-x","choices":[{"delta":{"content":"Hel"}}]}',
+        'data: {"choices":[{"delta":{"content":"lo"}}]}',
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"completion_tokens":2}}',
+        "data: [DONE]",
+    ]
+    out = _assemble_openai_stream(lines, emitted.append)
+    assert emitted == ["Hel", "lo"]
+    assert out["text"] == "Hello"
+    assert out["finish_reason"] == "stop"
+    assert out["usage"] == {"completion_tokens": 2}
+    assert out["model"] == "gpt-x"
+    assert out["message"] == {"role": "assistant", "content": "Hello"}
+
+
+def test_assemble_openai_stream_accumulates_tool_call_deltas() -> None:
+    from noodle_nodes.llm import _assemble_openai_stream
+
+    lines = [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",'
+        '"function":{"name":"get","arguments":"{\\"a\\":"}}]}}]}',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+        '"function":{"arguments":"1}"}}]}}]}',
+        "data: [DONE]",
+    ]
+    out = _assemble_openai_stream(lines, lambda _x: None)
+    assert out["tool_calls"] == [
+        {"id": "call_1", "type": "function",
+         "function": {"name": "get", "arguments": '{"a":1}'}}
+    ]
+
+
+def test_assemble_anthropic_stream_emits_text() -> None:
+    from noodle_nodes.llm import _assemble_anthropic_stream
+
+    emitted: list[str] = []
+    lines = [
+        'data: {"type":"message_start","message":{"model":"claude-x",'
+        '"usage":{"input_tokens":3}}}',
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hi"}}',
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":" there"}}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},'
+        '"usage":{"output_tokens":2}}',
+    ]
+    out = _assemble_anthropic_stream(lines, emitted.append)
+    assert emitted == ["Hi", " there"]
+    assert out["text"] == "Hi there"
+    assert out["finish_reason"] == "end_turn"
+    assert out["model"] == "claude-x"
+
+
+def test_ai_chat_streams_when_emitter_active(monkeypatch) -> None:
+    from noodle.context import node_emitter
+
+    chunks: list[str] = []
+
+    def emitter(delta: str, *, channel: str = "output") -> None:
+        chunks.append(delta)
+
+    def fake_post(url: str, **kwargs):
+        assert kwargs["json"].get("stream") is True
+        assert kwargs.get("stream") is True
+        return StreamingFakeResponse(
+            [
+                'data: {"model":"gpt-x","choices":[{"delta":{"content":"Hello"}}]}',
+                'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+                "data: [DONE]",
+            ]
+        )
+
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    token = node_emitter.set(emitter)
+    try:
+        out = ai_chat(
+            {"x": 1},
+            credentials={"provider": "openai", "api_key": "sk-test"},
+            provider="openai",
+            model="gpt-x",
+        )
+    finally:
+        node_emitter.reset(token)
+
+    assert chunks == ["Hello"]
+    assert out["text"] == "Hello"
+    assert out["provider"] == "openai"
+
+
+def test_ai_chat_does_not_stream_without_emitter(monkeypatch) -> None:
+    # No emitter installed → classic non-streaming request (no stream flag).
+    def fake_post(url: str, **kwargs):
+        assert "stream" not in kwargs["json"]
+        return FakeResponse(
+            {"model": "gpt-x", "choices": [
+                {"message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}]}
+        )
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    out = ai_chat(
+        {"x": 1},
+        credentials={"provider": "openai", "api_key": "sk-test"},
+        provider="openai",
+        model="gpt-x",
+    )
+    assert out["text"] == "hi"
+
+
 def test_ai_nodes_register_in_ai_category() -> None:
     manifests = {m.id: m for m in registry.manifests()}
     expected = {

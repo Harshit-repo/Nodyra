@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NDV — Shipped autocomplete + new ideas (v3)</title>
+<style>
+  :root {
+    --bg:#090b10; --surface:#10141c; --surface-2:#141925; --line:#1e2533;
+    --line-2:#283041; --accent:#4c9eff; --ink:#e9eef6; --ink-2:#aab4c5;
+    --ink-3:#6b7587; --radius:11px; --mono:"IBM Plex Mono",ui-monospace,monospace;
+    --sans:"Hanken Grotesk",system-ui,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:
+      radial-gradient(1200px 600px at 20% -10%, #121a2b 0%, transparent 60%),
+      var(--bg);
+    color:var(--ink); font-family:var(--sans); padding:48px; line-height:1.5;
+  }
+  h1 { font-family:"Bricolage Grotesque",var(--sans); font-size:30px; margin:0 0 6px; }
+  .sub { color:var(--ink-2); margin:0 0 36px; max-width:760px; }
+  .shipped-badge {
+    display:inline-block; font-size:11px; font-weight:700; letter-spacing:.04em;
+    color:#7be0a0; background:rgba(123,224,160,.1); border:1px solid rgba(123,224,160,.3);
+    padding:3px 10px; border-radius:999px; text-transform:uppercase; margin-bottom:14px;
+  }
+  .idea-badge {
+    display:inline-block; font-size:11px; font-weight:700; letter-spacing:.04em;
+    color:var(--accent); background:rgba(76,158,255,.1); border:1px solid rgba(76,158,255,.3);
+    padding:3px 10px; border-radius:999px; text-transform:uppercase; margin-bottom:14px;
+  }
+  .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:26px; }
+  .card {
+    background:var(--surface); border:1px solid var(--line); border-radius:14px;
+    padding:22px; position:relative; overflow:hidden;
+  }
+  .card::before {
+    content:""; position:absolute; inset:0 0 auto 0; height:1px;
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.08),transparent);
+  }
+  .card h3 { margin:0 0 4px; font-size:17px; }
+  .card p { margin:0 0 16px; color:var(--ink-2); font-size:13.5px; }
+  .full { grid-column:1 / -1; }
+
+  /* field mockup */
+  .field-label { font-size:12px; color:var(--ink-2); margin-bottom:7px; display:block; }
+  .field-input-row { position:relative; }
+  .field-input {
+    width:100%; background:#0b0e15; border:1px solid var(--line-2); color:var(--ink);
+    border-radius:9px; padding:9px 34px 9px 11px; font-family:var(--mono); font-size:12.5px;
+  }
+  .field-input.expr { color:#c4b5fd; background:rgba(124,58,237,.07); border-color:rgba(139,92,246,.5); }
+  .field-input.focused { border-color:rgba(139,92,246,.85); box-shadow:0 0 0 3px rgba(139,92,246,.18); }
+  .fx {
+    position:absolute; right:5px; top:50%; transform:translateY(-50%);
+    width:24px; height:24px; border-radius:6px; border:1px solid var(--line-2);
+    background:var(--surface-2); color:var(--ink-3); font-family:var(--mono); font-size:11px;
+    display:grid; place-items:center;
+  }
+  .fx.on { color:#c4b5fd; border-color:rgba(139,92,246,.5); }
+
+  /* autocomplete dropdown */
+  .ac {
+    position:absolute; top:calc(100% + 4px); left:0; right:0; margin:0; padding:4px;
+    list-style:none; background:var(--surface-2); border:1px solid var(--line-2);
+    border-radius:9px; box-shadow:0 1px 0 rgba(255,255,255,.03) inset,0 14px 34px -12px rgba(0,0,0,.7);
+    z-index:5;
+  }
+  .ac li {
+    padding:6px 9px; border-radius:6px; font-family:var(--mono); font-size:12px;
+    color:var(--ink-2); display:flex; align-items:center; gap:8px;
+  }
+  .ac li.sel { background:color-mix(in srgb,var(--accent) 16%,transparent); color:var(--ink); box-shadow:inset 2px 0 0 var(--accent); }
+  .ac .kind { margin-left:auto; font-size:10px; color:var(--ink-3); }
+  .caret { display:inline-block; width:1px; height:14px; background:#c4b5fd; vertical-align:-2px; animation:blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+
+  .eip { display:flex; align-items:center; gap:7px; margin-top:8px; font-family:var(--mono); font-size:11px; color:var(--ink-2); background:var(--surface-2); border:1px solid var(--line-2); border-radius:6px; padding:4px 9px; }
+  .eip .arrow { color:var(--ink-3); }
+  .eip .val { color:#7be0a0; }
+
+  /* generic chips/rows for idea mockups */
+  .chiprow { display:flex; gap:8px; flex-wrap:wrap; }
+  .chip { font-family:var(--mono); font-size:11px; padding:4px 9px; border-radius:6px; background:var(--surface-2); border:1px solid var(--line-2); color:var(--ink-2); }
+  .chip.req { color:#f3b06a; border-color:rgba(243,176,106,.35); background:rgba(243,176,106,.08); }
+  .kbd { font-family:var(--mono); font-size:10.5px; padding:2px 6px; border-radius:5px; background:#0b0e15; border:1px solid var(--line-2); box-shadow:0 1px 0 rgba(0,0,0,.4); color:var(--ink-2); }
+  .pillbar { display:flex; gap:6px; align-items:center; font-size:12px; color:var(--ink-2); }
+  .diff-add { color:#7be0a0; } .diff-del { color:#f39a9e; }
+  .mono { font-family:var(--mono); font-size:12px; }
+  .legend { color:var(--ink-3); font-size:11.5px; margin-top:10px; }
+  .arrowlabel { color:var(--ink-3); font-size:11px; text-align:center; margin:6px 0; }
+  .twocol { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .panelmini { background:#0b0e15; border:1px solid var(--line); border-radius:10px; padding:12px; }
+  .panelmini h4 { margin:0 0 8px; font-size:11px; color:var(--ink-3); text-transform:uppercase; letter-spacing:.05em; font-weight:700; }
+</style>
+</head>
+<body>
+  <h1>Node Detail View — v3</h1>
+  <p class="sub">Top: the <b>Expression autocomplete</b> feature you asked to ship, shown live. Below: five fresh ideas, each rendered to scale against the dark design system so you can judge them at a glance.</p>
+
+  <!-- SHIPPED -->
+  <div class="card full" style="margin-bottom:30px;">
+    <span class="shipped-badge">✓ Shipped this round</span>
+    <h3>Expression autocomplete in fields</h3>
+    <p>Type <span class="mono">$</span> inside any string field and a completion dropdown appears — <span class="mono">$json</span> keys come from the live input, <span class="mono">$node[…]</span> from upstream nodes, plus <span class="mono">$env</span>/<span class="mono">$run</span> helpers. Arrow keys to move, <span class="kbd">Tab</span>/<span class="kbd">Enter</span> to accept, <span class="kbd">Esc</span> to dismiss. Works alongside the existing fx toggle and full-text inline preview.</p>
+    <div class="twocol">
+      <div>
+        <span class="field-label">URL</span>
+        <div class="field-input-row">
+          <div class="field-input expr focused">{{ $json.<span class="caret"></span> }}</div>
+          <div class="fx on">ƒx</div>
+          <ul class="ac">
+            <li class="sel">$json.userId <span class="kind">field</span></li>
+            <li>$json.email <span class="kind">field</span></li>
+            <li>$json.orderId <span class="kind">field</span></li>
+            <li>$json.createdAt <span class="kind">field</span></li>
+          </ul>
+        </div>
+        <div class="legend">Typing <span class="mono">$json.</span> → live keys from the Input panel.</div>
+      </div>
+      <div>
+        <span class="field-label">Header value</span>
+        <div class="field-input-row">
+          <div class="field-input expr focused">{{ $no<span class="caret"></span> }}</div>
+          <div class="fx on">ƒx</div>
+          <ul class="ac">
+            <li class="sel">$node["HTTP Request"]. <span class="kind">node</span></li>
+            <li>$node["Set Fields"]. <span class="kind">node</span></li>
+          </ul>
+        </div>
+        <div class="eip"><span class="arrow">→</span><span class="val">resolves: Bearer eyJhbGci…</span></div>
+        <div class="legend">Upstream node ids offered after <span class="mono">$node</span>; inline preview still resolves the full value.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- IDEAS -->
+  <div class="grid">
+
+    <div class="card">
+      <span class="idea-badge">Idea 1</span>
+      <h3>Required-field checklist</h3>
+      <p>A compact summary at the top of Parameters showing which required fields are still empty — click to jump straight to the field. Turns a failed run into a fixable list.</p>
+      <div class="panelmini">
+        <h4>2 required fields need values</h4>
+        <div class="chiprow">
+          <span class="chip req">● URL</span>
+          <span class="chip req">● Method</span>
+          <span class="chip" style="color:#7be0a0;border-color:rgba(123,224,160,.3);background:rgba(123,224,160,.08);">✓ Auth</span>
+        </div>
+      </div>
+      <div class="legend">Red = empty &amp; required, green = satisfied. Disappears when all set.</div>
+    </div>
+
+    <div class="card">
+      <span class="idea-badge">Idea 2</span>
+      <h3>Parameter search / filter</h3>
+      <p>For nodes with dozens of params (HTTP, LLM, DB), a search box at the top of the tab filters fields instantly. <span class="kbd">/</span> to focus, fuzzy match on label + description.</p>
+      <div class="panelmini">
+        <div class="field-input-row" style="margin-bottom:10px;">
+          <div class="field-input" style="padding-left:30px;color:var(--ink-2);">timeout</div>
+          <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--ink-3);">⌕</span>
+        </div>
+        <div class="chiprow" style="flex-direction:column;gap:6px;">
+          <span class="chip" style="width:100%;">Timeout (ms) <span style="color:var(--ink-3)">— matched</span></span>
+          <span class="chip" style="width:100%;opacity:.4;">Retry on timeout</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <span class="idea-badge">Idea 3</span>
+      <h3>Reset-to-default on hover</h3>
+      <p>A subtle ↺ button appears on any field that differs from its node default. One click restores it — no guessing what the original value was.</p>
+      <div class="panelmini">
+        <span class="field-label">Temperature <span style="color:var(--ink-3);font-size:10px;">(changed)</span></span>
+        <div class="field-input-row">
+          <div class="field-input">0.9</div>
+          <div class="fx" style="border-color:var(--line-2);">↺</div>
+        </div>
+        <div class="legend">Hovering the field reveals ↺ → resets to <span class="mono">0.7</span>.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <span class="idea-badge">Idea 4</span>
+      <h3>Output diff vs previous run</h3>
+      <p>When a node has run before, the Output panel can show what changed since the last run — added / removed / modified keys highlighted. Great for debugging flaky transforms.</p>
+      <div class="panelmini mono">
+        <div>{</div>
+        <div style="padding-left:16px;" class="diff-add">+ "status": "paid",</div>
+        <div style="padding-left:16px;" class="diff-del">- "status": "pending",</div>
+        <div style="padding-left:16px;">&nbsp;&nbsp;"total": 4200,</div>
+        <div style="padding-left:16px;" class="diff-add">+ "paidAt": "2026-06-17"</div>
+        <div>}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <span class="idea-badge">Idea 5</span>
+      <h3>Pin sample input</h3>
+      <p>Pin a node's current input so you can iterate on parameters without re-running the whole upstream chain. A 📌 badge marks pinned data; one click to refresh or unpin.</p>
+      <div class="panelmini">
+        <div class="pillbar">
+          <span style="color:#f3b06a;">📌 Pinned input</span>
+          <span style="margin-left:auto;" class="chip">Refresh</span>
+          <span class="chip">Unpin</span>
+        </div>
+        <div class="legend">Edits to params re-evaluate against the pinned data instantly — no upstream re-run.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <span class="idea-badge">Idea 6</span>
+      <h3>Inline error → AI fix</h3>
+      <p>When a node errors, surface the message inside the NDV with a one-click “Explain” / “Fix with AI” action that patches the offending parameter or code in place.</p>
+      <div class="panelmini">
+        <div style="color:#f39a9e;font-size:12px;margin-bottom:8px;">⚠ KeyError: 'amount' — field not found in input</div>
+        <div class="chiprow">
+          <span class="chip" style="color:var(--accent);border-color:rgba(76,158,255,.4);background:rgba(76,158,255,.08);">✦ Fix with AI</span>
+          <span class="chip">Explain</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>

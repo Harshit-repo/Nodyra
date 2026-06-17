@@ -8,6 +8,7 @@ export type RunSlice = Pick<
   | "runOutputs"
   | "runMeta"
   | "runIterations"
+  | "runChunks"
   | "runError"
   | "agentActive"
   | "agentToolCalls"
@@ -30,6 +31,7 @@ export type RunSliceState = Pick<
   | "runOutputs"
   | "runMeta"
   | "runIterations"
+  | "runChunks"
   | "runError"
   | "agentActive"
   | "agentToolCalls"
@@ -43,6 +45,7 @@ export const runInitialState: RunSliceState = {
   runOutputs: {},
   runMeta: {},
   runIterations: {},
+  runChunks: {},
   runError: null,
   agentActive: {},
   agentToolCalls: {},

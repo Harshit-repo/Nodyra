@@ -21,6 +21,7 @@ from sqlalchemy.orm import selectinload
 import noodle_nodes  # noqa: F401 - registers built-in nodes
 from app.db import SessionLocal
 from app.models import NodeRun, Run, RunEvent, User, Workflow, WorkflowVersion
+from app.routers.workflows import STRUCTURAL_NODE_TYPES
 from app.services.audit import log_audit
 from app.services.runner import start_run
 from app.services.triggers import _await_run_terminal, _last_node_output
@@ -357,7 +358,10 @@ def _validate_graph_payload(graph: Any) -> WorkflowGraph:
         {
             n.type
             for n in parsed.nodes
-            if n.type and n.type not in known and not n.type.startswith("user:")
+            if n.type
+            and n.type not in known
+            and n.type not in STRUCTURAL_NODE_TYPES
+            and not n.type.startswith("user:")
         }
     )
     if unknown:

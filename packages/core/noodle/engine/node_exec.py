@@ -7,17 +7,12 @@ import json
 import random
 import sys
 import time
+import types
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from noodle.ai_runtime import AgentActionRequest, AgentApprovalRequired
-from noodle.context import current_node_id, node_debug
-from noodle.expr import build_context, evaluate
-from noodle.models import NodeRunResult, NodeStatus, RunStatus
-from noodle.node_tool import TOOL_MODE_OUTPUT, build_node_tool_adapter
-from noodle.process_isolation import ProcessIsolator, default_isolator
-from noodle.sdk import NodeRegistry
-
+from noodle.context import current_node_id, iteration_path, node_debug, node_emitter
 from noodle.engine.agent import (
     _MAX_AGENT_LOOP_ITERATIONS,
     _dispatch_agent_action_request,
@@ -29,9 +24,59 @@ from noodle.engine.datasets import (
 )
 from noodle.engine.types import EventCallback
 from noodle.engine.validation import _validate_input_kinds, _validate_output_kinds
-
+from noodle.expr import build_context, evaluate
+from noodle.models import NodeRunResult, NodeStatus, RunStatus
+from noodle.node_tool import TOOL_MODE_OUTPUT, build_node_tool_adapter
+from noodle.process_isolation import ProcessIsolator, default_isolator
+from noodle.sdk import NodeRegistry
 
 PROCESS_ISOLATED_NODE_TYPES: frozenset[str] = frozenset({"code"})
+
+# A node streaming chunks from a worker thread hops each one onto the engine's
+# event loop and waits briefly so the chunk is delivered in order (before the
+# node's own ``node_finished``). Bounded so a congested/stalled loop can never
+# wedge the node — streaming is strictly best-effort.
+_CHUNK_EMIT_TIMEOUT = 5.0
+
+
+def _make_chunk_emitter(
+    loop: asyncio.AbstractEventLoop,
+    emit: EventCallback,
+    nid: str,
+    iter_path: tuple[int, ...],
+) -> Callable[..., None]:
+    """Build the ``noodle.emit_chunk`` callback installed while ``nid`` runs.
+
+    Works from both the engine loop (async nodes) and a worker thread (sync
+    nodes run via ``asyncio.to_thread``). The loop-thread case schedules the
+    emit without blocking; the worker-thread case bounces onto the loop and
+    waits (bounded) so chunks stay ordered ahead of ``node_finished``. The
+    iteration path is captured here, in the node's context, so a chunk emitted
+    from inside a loop body is still attributed to its iteration even though the
+    coroutine runs on the (loop-context) engine thread.
+    """
+    base: dict[str, Any] = {"type": "node_chunk", "node_id": nid}
+    if iter_path:
+        base["iteration_path"] = list(iter_path)
+
+    def _emit(delta: str, *, channel: str = "output") -> None:
+        event = {**base, "delta": str(delta), "channel": channel}
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        try:
+            if running is loop:
+                loop.create_task(emit(event))
+            else:
+                future = asyncio.run_coroutine_threadsafe(emit(event), loop)
+                future.result(timeout=_CHUNK_EMIT_TIMEOUT)
+        except Exception:  # noqa: BLE001 - streaming must never break the node
+            pass
+
+    return _emit
+
+
 IncomingConnection = tuple[str, str]
 IncomingPortValue = IncomingConnection | list[IncomingConnection]
 IncomingMap = dict[str, dict[str, IncomingPortValue]]
@@ -153,6 +198,27 @@ def _install_capture() -> None:
         sys.stderr = _CaptureProxy(sys.stderr)
 
 
+# Exceptions that should never be retried — they indicate fundamental
+# programming errors or resource exhaustion, not transient failures. We do NOT
+# include KeyboardInterrupt/SystemExit here: those must propagate so a Ctrl-C or
+# process signal actually interrupts the run instead of being converted into an
+# ordinary node error and retried/continued.
+_FATAL_ERRORS: tuple[type[BaseException], ...] = (
+    MemoryError,
+    RecursionError,
+    SystemError,
+)
+
+
+def _freeze_outputs(outputs: dict[str, Any]) -> types.MappingProxyType:
+    """Wrap the outputs dict in a read-only proxy so that a downstream node
+    cannot accidentally mutate another node's stored outputs via the shared
+    ``node_outputs`` dict. Only the top-level dict is protected — nested
+    values remain mutable (deep-freezing every value is too expensive and
+    would break nodes that legitimately mutate their own input copies)."""
+    return types.MappingProxyType(outputs)
+
+
 def _normalize_outputs(raw: Any, output_names: list[str], node_id: str) -> dict[str, Any]:
     if len(output_names) == 1:
         return {output_names[0]: raw}
@@ -196,10 +262,11 @@ async def _run_one_node(
     graph_node = nodes_by_id[nid]
 
     if nid in cache:
-        node_outputs[nid] = dict(cache[nid])
+        outputs = dict(cache[nid])
+        node_outputs[nid] = _freeze_outputs(outputs)
         await finish(
             NodeRunResult(
-                node_id=nid, status=NodeStatus.success, outputs=node_outputs[nid]
+                node_id=nid, status=NodeStatus.success, outputs=outputs
             )
         )
         return run_status
@@ -252,7 +319,7 @@ async def _run_one_node(
                 passthrough = node_outputs[source][source_output]
                 break
         outputs = {output_names[0]: passthrough}
-        node_outputs[nid] = outputs
+        node_outputs[nid] = _freeze_outputs(outputs)
         await finish(
             NodeRunResult(
                 node_id=nid, status=NodeStatus.success, outputs=outputs,
@@ -278,7 +345,7 @@ async def _run_one_node(
             )
             return run_status
         tool_outputs = {TOOL_MODE_OUTPUT: adapter}
-        node_outputs[nid] = tool_outputs
+        node_outputs[nid] = _freeze_outputs(tool_outputs)
         await finish(
             NodeRunResult(
                 node_id=nid, status=NodeStatus.success, outputs=tool_outputs,
@@ -350,7 +417,15 @@ async def _run_one_node(
     )
     for spec in node_def.manifest.params:
         if spec.name in kwargs:
-            kwargs[spec.name] = evaluate(kwargs[spec.name], expr_context)
+            val = kwargs[spec.name]
+            # ``evaluate`` recurses into dicts/lists, so a structured param (e.g.
+            # an HTTP headers/body object) may carry ``{{ }}`` templates in nested
+            # values. Evaluate every container; for plain strings keep the cheap
+            # "{{" fast-path and skip scalars that can never hold a template.
+            if isinstance(val, (dict, list)) or (
+                isinstance(val, str) and "{{" in val
+            ):
+                kwargs[spec.name] = evaluate(val, expr_context)
 
     timeout = _node_timeout(
         graph_node.type, graph_node.timeout_seconds, default_timeouts
@@ -365,6 +440,11 @@ async def _run_one_node(
     log_token = _log_capture.set(log_buf)
     debug_token = node_debug.set(debug)
     node_token = current_node_id.set(nid)
+    emitter_token = node_emitter.set(
+        _make_chunk_emitter(
+            asyncio.get_running_loop(), emit, nid, iteration_path.get()
+        )
+    )
     if node_def.accepts_var_keyword or not node_def.param_names:
         base_call_kwargs = dict(kwargs)
     else:
@@ -426,6 +506,24 @@ async def _run_one_node(
 
     try:
         for attempt in range(attempts):
+            log_buf.clear()
+            if attempt > 0:
+                # A previous attempt may have streamed ``node_chunk`` deltas to
+                # the client. Tell it to discard them so a retry doesn't render
+                # the failed attempt's partial output concatenated with the new
+                # stream. Awaited (not fire-and-forget) so the reset is ordered
+                # ahead of the retry's chunks.
+                reset_event: dict[str, Any] = {
+                    "type": "node_chunk",
+                    "node_id": nid,
+                    "reset": True,
+                }
+                if iteration_path.get():
+                    reset_event["iteration_path"] = list(iteration_path.get())
+                try:
+                    await emit(reset_event)
+                except Exception:  # noqa: BLE001 - streaming must never break the node
+                    pass
             try:
                 call_kwargs = dict(base_call_kwargs)
                 raw = agent_action_resume.get(nid)
@@ -453,6 +551,9 @@ async def _run_one_node(
             except AgentApprovalRequired as exc:
                 caught = exc
                 break
+            except _FATAL_ERRORS:
+                caught = sys.exc_info()[1]
+                break
             except Exception as exc:  # noqa: BLE001
                 caught = exc
                 if attempt + 1 < attempts and graph_node.retry_wait_seconds > 0:
@@ -461,13 +562,14 @@ async def _run_one_node(
                     delay += random.uniform(0, wait * 0.1)
                     await asyncio.sleep(delay)
     finally:
+        node_emitter.reset(emitter_token)
         current_node_id.reset(node_token)
         node_debug.reset(debug_token)
         _log_capture.reset(log_token)
     logs = "".join(log_buf).splitlines()
 
     if caught is None and outputs is not None:
-        node_outputs[nid] = outputs
+        node_outputs[nid] = _freeze_outputs(outputs)
         await finish(
             NodeRunResult(
                 node_id=nid, status=NodeStatus.success, outputs=outputs,
@@ -513,7 +615,7 @@ async def _run_one_node(
     )
     if continue_on_error:
         fallback_outputs = {output_names[0]: None}
-        node_outputs[nid] = fallback_outputs
+        node_outputs[nid] = _freeze_outputs(fallback_outputs)
         await finish(
             NodeRunResult(
                 node_id=nid, status=NodeStatus.error, error=error_msg,

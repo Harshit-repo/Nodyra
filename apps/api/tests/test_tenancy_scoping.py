@@ -83,6 +83,14 @@ def test_org_scoped_models_discovers_org_id_columns():
     assert models.User not in org_scoped_models()
 
 
+def test_org_scoped_models_is_memoized():
+    """M2: the list is rebuilt only when the mapper set changes, not on every
+    SELECT (do_orm_execute calls this per query)."""
+    first = org_scoped_models()
+    second = org_scoped_models()
+    assert first is second  # same cached object, not recomputed
+
+
 @pytest.mark.asyncio
 async def test_flag_off_returns_all_rows(session, monkeypatch):
     monkeypatch.setattr(settings, "multi_tenancy_enabled", False)

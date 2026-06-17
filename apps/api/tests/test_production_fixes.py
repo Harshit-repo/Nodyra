@@ -76,25 +76,17 @@ def test_scheduler_tick_guards_empty_versions():
 
     source = inspect.getsource(triggers_module._tick)
 
-    # The fix should add an explicit empty-versions guard before the [-1] access.
-    # Check that the guard is present.
-    lines = source.splitlines()
-    found_guard = False
-    for line in lines:
-        stripped = line.strip()
-        if (
-            "not workflow.versions" in stripped
-            or "len(workflow.versions)" in stripped
-            or "workflow.versions:" in stripped and stripped.startswith("if")
-        ):
-            found_guard = True
-            break
-
-    assert found_guard, (
-        "triggers._tick accesses workflow.versions[-1] without a length guard. "
-        "IndexError is raised for newly-created workflows with no versions yet, "
-        "killing the entire scheduler tick. "
-        "Fix: add 'if not workflow.versions: continue' before workflow.versions[-1]"
+    # _tick must never index a workflow's version list unguardedly. The current
+    # implementation resolves the latest version via _latest_versions_by_id and
+    # skips workflows with no version (``if version is None: continue``); an
+    # earlier version did an unguarded ``workflow.versions[-1]``.
+    assert "workflow.versions[-1]" not in source, (
+        "triggers._tick does an unguarded workflow.versions[-1] access, which "
+        "raises IndexError for newly-created workflows with no versions yet."
+    )
+    assert "version is None" in source and "continue" in source, (
+        "triggers._tick must guard a missing latest version with "
+        "'if version is None: continue' before using it."
     )
 
 
@@ -158,31 +150,25 @@ def test_remote_dispatch_uses_get_running_loop():
 # ---------------------------------------------------------------------------
 
 def test_rate_limiter_sweeps_stale_buckets():
-    """_sweep_rate_buckets must remove keys whose full 60s window has expired.
+    """The shared limiter's _sweep must remove keys whose window has expired.
 
-    Before the fix, every unique IP creates an immortal dict entry. After the
-    1-minute sliding window, the deque drains to zero but the key stays forever,
-    leaking memory under IP-spoofing or many unique clients.
-    The fix adds _sweep_rate_buckets which removes fully-expired keys.
+    Before the fix, every unique IP created an immortal dict entry. After the
+    1-minute sliding window the deque drains to zero but the key stayed forever,
+    leaking memory under IP-spoofing or many unique clients. The auth + webhook
+    limiters now share app.services.rate_limit, whose _sweep evicts dead keys.
     """
-    from app.routers import auth as auth_module
+    from app.services import rate_limit
 
-    auth_module._AUTH_RATE_BUCKETS.clear()
+    rate_limit.reset()
 
     stale_key = "test:192.0.2.1"
-    auth_module._AUTH_RATE_BUCKETS[stale_key].append(time.monotonic() - 120)
+    rate_limit._buckets[stale_key].append(rate_limit._now() - 120)
 
-    # The sweep function (added by the fix) should remove the stale key
-    assert hasattr(auth_module, "_sweep_rate_buckets"), (
-        "_sweep_rate_buckets function not found in auth module. "
-        "Fix: add a _sweep_rate_buckets(now) function that removes keys "
-        "with fully-expired sliding windows."
-    )
-    auth_module._sweep_rate_buckets(time.monotonic())
+    rate_limit._sweep(rate_limit._now(), 60.0)
 
-    assert stale_key not in auth_module._AUTH_RATE_BUCKETS, (
-        "_sweep_rate_buckets did not remove a key with a fully-expired window. "
-        "Fix: evict keys where all timestamps are older than 60s."
+    assert stale_key not in rate_limit._buckets, (
+        "_sweep did not remove a key with a fully-expired window. "
+        "Fix: evict keys where all timestamps are older than the window."
     )
 
 

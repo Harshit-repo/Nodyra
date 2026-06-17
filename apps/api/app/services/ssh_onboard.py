@@ -119,7 +119,7 @@ async def onboard_machine(
 
     script = _install_script(req, api_url, token, name)
     try:
-        async with asyncssh.connect(**conn_kwargs) as conn:
+        async with asyncssh.connect(**conn_kwargs, connect_timeout=30) as conn:
             result = await conn.run(script, check=False)
             log = f"{result.stdout or ''}{result.stderr or ''}".strip()
             if result.exit_status != 0:

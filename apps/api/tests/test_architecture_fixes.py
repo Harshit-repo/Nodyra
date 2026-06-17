@@ -889,25 +889,31 @@ def test_enforce_auth_rate_limit_is_async() -> None:
     )
 
 
-async def test_enforce_auth_rate_limit_uses_redis_incr_when_backend_configured(
+async def test_enforce_auth_rate_limit_uses_redis_when_backend_configured(
     monkeypatch,
 ) -> None:
-    """When queue_backend=redis, rate-limit must use Redis INCR+EXPIRE instead
-    of the in-process deque so all replicas share one counter."""
+    """When queue_backend=redis, rate-limit must use the shared Redis counter
+    instead of the in-process deque so all replicas share one counter. The
+    increment + TTL are applied atomically via a single Lua ``eval`` so a key
+    can never get stuck without an expiry (a non-atomic INCR-then-EXPIRE could
+    leave a TTL-less key that throttles an identifier forever)."""
     import app.redis_client as redis_module
     from app.config import settings as live_settings
     from app.routers import auth as auth_module
 
-    incr_calls: list[str] = []
-    expire_calls: list = []
+    eval_calls: list[tuple[str, int]] = []
+    counts: dict[str, int] = {}
+    ttls: dict[str, int] = {}
 
     class FakeRedis:
-        async def incr(self, key: str) -> int:
-            incr_calls.append(key)
-            return 1
-
-        async def expire(self, key: str, ttl: int) -> None:
-            expire_calls.append((key, ttl))
+        async def eval(self, script, numkeys, *args):
+            key = str(args[0])
+            window = int(args[1])
+            eval_calls.append((key, window))
+            counts[key] = counts.get(key, 0) + 1
+            # Mirror the script: only (re)set the TTL when the key lacks one.
+            ttls.setdefault(key, window)
+            return counts[key]
 
     monkeypatch.setattr(live_settings, "queue_backend", "redis")
     monkeypatch.setattr(live_settings, "auth_rate_limit_enabled", True)
@@ -919,11 +925,14 @@ async def test_enforce_auth_rate_limit_uses_redis_incr_when_backend_configured(
 
     await auth_module._enforce_auth_rate_limit(FakeRequest(), "login")
 
-    assert incr_calls, "Redis INCR should have been called"
-    assert any("noodle:rl" in k for k in incr_calls), (
-        f"INCR key should be namespaced 'noodle:rl:…'; got: {incr_calls}"
+    assert eval_calls, "Redis (atomic eval) should have been used"
+    key, window = eval_calls[0]
+    assert "noodle:rl" in key, (
+        f"key should be namespaced 'noodle:rl:…'; got: {key}"
     )
-    assert expire_calls, "Redis EXPIRE should set TTL on first attempt"
+    assert window > 0 and ttls.get(key) == window, (
+        "TTL must be established atomically with the increment"
+    )
 
 
 # --- #5: dispatch_webhook shared session for credential lookup ----------------
@@ -942,31 +951,39 @@ async def test_dispatch_webhook_passes_shared_session_to_resolve_node_auth(
         captured_sessions.append(session)
         return {}
 
+    class FakeVer:
+        version = 1
+        id = "ver-x"
+        graph = {
+            "nodes": [{
+                "id": "wh1",
+                "type": "webhook_trigger",
+                "params": {"path": "test-dispatch-session"},
+                "position": {"x": 0, "y": 0},
+            }],
+            "edges": [],
+        }
+
+    class FakeWF:
+        id = "wf-x"
+        environment_id = None
+        versions = [FakeVer()]
+
     async def fake_active_workflows():
-        class FakeVer:
-            version = 1
-            id = "ver-x"
-            graph = {
-                "nodes": [{
-                    "id": "wh1",
-                    "type": "webhook_trigger",
-                    "params": {"path": "test-dispatch-session"},
-                    "position": {"x": 0, "y": 0},
-                }],
-                "edges": [],
-            }
-
-        class FakeWF:
-            id = "wf-x"
-            environment_id = None
-            versions = [FakeVer()]
-
         return [FakeWF()]
+
+    async def fake_latest_versions(session, workflow_ids):
+        # dispatch_webhook batch-loads the latest version per workflow from the
+        # DB; the fake workflow has no DB row, so stub the resolver to return it.
+        return {"wf-x": FakeVer()}
 
     async def fake_start_run(*args, **kwargs):
         return "run-fake-id"
 
     monkeypatch.setattr(triggers_module, "_active_workflows", fake_active_workflows)
+    monkeypatch.setattr(
+        triggers_module, "_latest_versions_by_id", fake_latest_versions
+    )
     monkeypatch.setattr(triggers_module, "_resolve_node_auth", spy_resolve)
     monkeypatch.setattr(triggers_module, "_webhook_dedup_key", lambda p, r: None)
     # triggers.py binds start_run at import time (``from app.services.runner

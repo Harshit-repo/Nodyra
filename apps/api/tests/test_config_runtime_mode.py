@@ -167,3 +167,65 @@ def test_blank_internal_token_in_split_topology_aborts():
 def test_inline_topology_tolerates_blank_internal_token():
     s = _settings(secret_key="a-strong-random-secret-value", internal_api_token="")
     assert s.security_startup_errors() == []
+
+
+# --- M1: wildcard CORS + credentials is a fail-closed startup error ----------
+
+def test_wildcard_cors_with_auth_aborts():
+    s = _settings(
+        auth_required=True,
+        secret_key="a-strong-random-secret-value",
+        cors_origins="*",
+    )
+    assert any("CORS" in e for e in s.security_startup_errors())
+
+
+def test_wildcard_cors_with_multi_tenancy_aborts():
+    s = _settings(
+        multi_tenancy_enabled=True,
+        secret_key="a-strong-random-secret-value",
+        cors_origins="https://app.example.com, *",
+    )
+    assert any("CORS" in e for e in s.security_startup_errors())
+
+
+def test_explicit_cors_origins_are_allowed():
+    s = _settings(
+        auth_required=True,
+        secret_key="a-strong-random-secret-value",
+        cors_origins="https://app.example.com",
+    )
+    assert s.security_startup_errors() == []
+
+
+def test_wildcard_cors_without_boundary_is_allowed():
+    # Auth-disabled single-user dev keeps booting with the permissive default.
+    s = _settings(auth_required=False, multi_tenancy_enabled=False, cors_origins="*")
+    assert s.security_startup_errors() == []
+
+
+def test_allow_insecure_bypasses_cors_guard():
+    s = _settings(
+        auth_required=True,
+        secret_key="a-strong-random-secret-value",
+        cors_origins="*",
+        runtime_allow_insecure=True,
+    )
+    assert s.security_startup_errors() == []
+
+
+# --- M7: multi-tenancy hardens the unsafe-node policy default ----------------
+
+def test_unsafe_node_policy_defaults_to_require_approval_under_multi_tenancy():
+    s = _settings(multi_tenancy_enabled=True)
+    assert s.unsafe_node_policy == "require_approval"
+
+
+def test_explicit_unsafe_node_policy_is_respected_under_multi_tenancy():
+    s = _settings(multi_tenancy_enabled=True, unsafe_node_policy="warn")
+    assert s.unsafe_node_policy == "warn"
+
+
+def test_unsafe_node_policy_default_unchanged_without_multi_tenancy():
+    s = _settings()
+    assert s.unsafe_node_policy == "warn"

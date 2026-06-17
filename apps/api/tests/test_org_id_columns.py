@@ -12,8 +12,10 @@ from app.db import Base
 from app.tenancy import DEFAULT_ORG_ID, current_org_id, install_org_filter
 
 # The decided Phase A list: every top-level tenant-owned table. Child tables
-# (node_runs, run_events, run_approvals, artifacts, runners) inherit tenancy
-# via their parent FK and deliberately have no org_id.
+# (node_runs, run_events, run_approvals) inherit tenancy via their parent FK
+# and deliberately have no org_id. Artifact and Runner carry their own org_id
+# because they are queried directly (not always through a parent) and the ORM
+# hook only filters models that have the column.
 ORG_SCOPED = [
     models.Workflow,
     models.WorkflowVersion,
@@ -29,14 +31,14 @@ ORG_SCOPED = [
     models.ProviderTriggerSubscription,
     models.ScheduleState,
     models.AuditEvent,
+    models.Artifact,
+    models.Runner,
 ]
 
 CHILD_TABLES = [
     models.NodeRun,
     models.RunEvent,
     models.RunApproval,
-    models.Artifact,
-    models.Runner,
 ]
 
 

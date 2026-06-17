@@ -43,9 +43,12 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.python
-    command: >-
-      sh -c "cd apps/api && alembic upgrade head && cd /app
-      && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        cd apps/api && alembic upgrade head && cd /app
+        && uvicorn app.main:app --host 0.0.0.0 --port 8000
     environment:
       # Production posture so runtime_warnings() actually surface via
       # /ops/runtime-mode (default SECRET_KEY, local artifacts, etc.).
@@ -96,7 +99,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.python
-    command: python -m app.worker_main
+    command: ["python", "-m", "app.worker_main"]
     environment:
       RUNTIME_MODE: production
       DATABASE_URL: postgresql+asyncpg://noodle:noodle@postgres:5432/noodle
@@ -106,6 +109,7 @@ services:
       USE_SUBPROCESS_RUNNER: "true"
       ENVS_DIR: /app/envs
       ARTIFACTS_DIR: /app/artifacts
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
       SECRET_KEY: ${NOODLE_SECRET_KEY:-noodle-dev-secret-change-me-in-production}
       # --- Sandboxed execution (container-per-run isolation) ---
       # Uncomment to run each workflow in a disposable hardened container
@@ -119,10 +123,13 @@ services:
       # (kata > runsc/gVisor > runc). Set explicitly to fail fast when a
       # specific runtime is mandatory.
       # SANDBOX_RUNTIME: auto
+    # The worker has no HTTP surface — disable the image's API healthcheck so it
+    # isn't perpetually "unhealthy".
+    healthcheck:
+      disable: true
     volumes:
       - envdata:/app/envs
       - artifactdata:/app/artifacts
-      - "D:/output_grainbrokers_parquet:/data/grainbrokers:ro"
       # Required for EXECUTION_SANDBOX: lets the worker spawn sibling run
       # containers on the host daemon (Docker-out-of-Docker). The worker
       # itself never runs untrusted code — runs execute in the hardened

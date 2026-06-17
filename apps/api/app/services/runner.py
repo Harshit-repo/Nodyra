@@ -732,6 +732,7 @@ async def _execute_run(
                 runner_pool_id=runner_pool_id,
                 agent_action_resume=agent_action_resume,
                 trace_org=org_id,
+                run_org_id=org_id,
             )
             return
         attrs = {"noodle.run_id": run_id, "noodle.workflow_id": workflow_id}
@@ -748,6 +749,7 @@ async def _execute_run(
                 runner_pool_id=runner_pool_id,
                 agent_action_resume=agent_action_resume,
                 trace_org=org_id,
+                run_org_id=org_id,
             )
             if sp is not None:
                 sp.set_attribute("noodle.status", status)
@@ -767,6 +769,7 @@ async def _execute_run_impl(
     runner_pool_id: str | None = None,
     agent_action_resume: dict[str, AgentActionRequest] | None = None,
     trace_org: str | None = None,
+    run_org_id: str | None = None,
 ) -> str:
     node_events: dict[str, dict] = {}
     # Distinct NodeRun records keyed by (node_id, iteration_path). Non-loop nodes
@@ -780,7 +783,12 @@ async def _execute_run_impl(
     secret_values: list[str] = []
     # A3: sub-workflow context (draft preference, depth/chain seed) travels
     # as explicit meta through the engine / run protocol — no ContextVars.
-    sub_meta = meta_for_root_run(run_id=run_id, workflow_id=workflow_id, prefer_draft=prefer_draft)
+    sub_meta = meta_for_root_run(
+        run_id=run_id,
+        workflow_id=workflow_id,
+        prefer_draft=prefer_draft,
+        org_id=run_org_id,
+    )
     run_id_token = _log_run_id.set(run_id)
     _install_run_id_filter()
     # A5: node-type lookup for node.execute span attributes; only consulted
@@ -877,26 +885,38 @@ async def _execute_run_impl(
         except Exception:  # noqa: BLE001 - never let settings load block a run
             pass
 
-        try:
-            async with SessionLocal() as session:
-                secret_values = await load_secret_values(session)
-        except Exception:  # noqa: BLE001 - redaction should never block execution
-            secret_values = []
-
-        async with SessionLocal() as session:
-            graph_dict = await resolve_credential_refs(session, graph_dict, workflow_id=workflow_id)
-            if cache is not None:
-                cache = await resolve_credential_refs(session, cache, workflow_id=workflow_id)
-            await session.commit()
-
-        # Gather user code modules visible to this workflow:
-        # global + this workflow's env + this workflow. Lives INSIDE the
-        # cancellation try block so a cancel during this DB read still
-        # routes through the outer except and marks the run cancelled.
+        # Combine three sequential DB reads (secret values, credential refs,
+        # workflow + code modules) into a single session to reduce connection
+        # acquire/release overhead on the hot execution path. Each read has its
+        # own error policy — see the nested try blocks below.
         env_id: str | None = None
         run_timeout: float | None = None
-        try:
-            async with SessionLocal() as session:
+        async with SessionLocal() as session:
+            # Secret redaction is best-effort: a failure to load the redaction
+            # word-list must never block a run.
+            try:
+                secret_values = await load_secret_values(session)
+            except Exception:  # noqa: BLE001 - redaction must never block execution
+                secret_values = []
+
+            # H1: credential resolution MUST fail loudly. resolve_credential_refs
+            # -> decrypt_credential_for(strict=True) raises CredentialDecryptError
+            # for a referenced credential that cannot be decrypted. Letting it
+            # propagate to the outer handler aborts the run (status=error) instead
+            # of silently executing with unresolved refs and no auth. Do NOT wrap
+            # this in a tolerant except.
+            graph_dict = await resolve_credential_refs(
+                session, graph_dict, workflow_id=workflow_id
+            )
+            if cache is not None:
+                cache = await resolve_credential_refs(
+                    session, cache, workflow_id=workflow_id
+                )
+            await session.commit()
+
+            # User code modules: tolerate a legacy DB that predates the
+            # code_modules table — an empty module set is a valid outcome.
+            try:
                 workflow = await session.get(Workflow, workflow_id)
                 env_id = workflow.environment_id if workflow else None
                 run_timeout = workflow.run_timeout_seconds if workflow else None
@@ -909,7 +929,7 @@ async def _execute_run_impl(
                             & (CodeModule.environment_id == env_id)
                         )
                         if env_id
-                        else CodeModule.id.is_(None),  # noop predicate
+                        else CodeModule.id.is_(None),
                     )
                 )
                 rows = (await session.scalars(stmt)).all()
@@ -922,8 +942,10 @@ async def _execute_run_impl(
                     }
                     for m in rows
                 ]
-        except Exception:  # noqa: BLE001 - missing table on legacy DB is fine
-            workflow_modules = []
+            except Exception:  # noqa: BLE001 - missing table on legacy DB is fine
+                workflow_modules = []
+                env_id = None
+                run_timeout = None
 
         if settings.use_subprocess_runner:
             if runner_pool_id:

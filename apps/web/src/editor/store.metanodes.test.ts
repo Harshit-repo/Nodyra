@@ -151,4 +151,18 @@ describe("metanode collapse / ungroup", () => {
     // graph unchanged
     expect(useEditor.getState().nodes.map((n) => n.id).sort()).toEqual(["A", "C", "X"]);
   });
+
+  it("round-trips ungroup of a metanode whose subgraph contains a nested metanode", () => {
+    load(chainGraph());
+    // collapse B,C -> meta1; then collapse meta1 + A into meta2
+    const meta1 = useEditor.getState().collapseToMetanode(["B", "C"])!;
+    const meta2 = useEditor.getState().collapseToMetanode([meta1, "A"])!;
+    expect(meta2).toBeTruthy();
+    // ungroup meta2 — the nested meta1 must be restored as a meta_node, not dropped
+    useEditor.getState().ungroupMetanode(meta2);
+    const ids = useEditor.getState().nodes.map((n) => n.id);
+    expect(ids).toContain(meta1);
+    const restored = useEditor.getState().nodes.find((n) => n.id === meta1)!;
+    expect(restored.data.manifest.id).toBe("meta_node");
+  });
 });

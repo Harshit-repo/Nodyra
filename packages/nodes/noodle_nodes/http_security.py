@@ -4,11 +4,21 @@ from __future__ import annotations
 
 import ipaddress
 import socket
-from urllib.parse import urlparse
+from typing import Any, Callable
+from urllib.parse import urljoin, urlsplit, urlparse
 
 
 class UnsafeHttpTargetError(ValueError):
     """Raised when an HTTP node targets a private or unsupported URL."""
+
+
+# 3xx statuses that carry a Location header we must re-validate before following.
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+# Per RFC 7231 these redirects rewrite the method to GET (and drop the body).
+_REDIRECT_TO_GET = frozenset({301, 302, 303})
+# Headers that carry credentials and must never follow a redirect to a
+# different origin (mirrors ``requests.Session.rebuild_auth`` semantics).
+_SENSITIVE_HEADERS = frozenset({"authorization", "proxy-authorization", "cookie"})
 
 
 def _is_private_address(value: str) -> bool:
@@ -43,6 +53,12 @@ def assert_public_http_url(url: str, *, context: str = "HTTP request") -> None:
     DNS resolution is best-effort: literal private hosts are always blocked.
     When DNS resolves, every returned address must be public. If DNS lookup
     fails, the request layer is allowed to surface the normal connection error.
+
+    Resolution is performed fresh on every call. We deliberately do NOT cache
+    the public/private verdict: caching it would let a DNS-rebinding attacker
+    flip a record to a private/metadata IP after a benign first lookup and have
+    that stale "public" verdict honoured for the cache lifetime — widening the
+    very rebinding window ``safe_request`` re-validates each hop to narrow.
     """
     raw = str(url or "").strip()
     if not raw:
@@ -65,17 +81,103 @@ def assert_public_http_url(url: str, *, context: str = "HTTP request") -> None:
     try:
         infos = socket.getaddrinfo(hostname, parsed.port, type=socket.SOCK_STREAM)
     except OSError:
+        # DNS failure — let the request layer surface the normal connection
+        # error rather than masking it here.
         return
     for info in infos:
         sockaddr = info[4]
         if not sockaddr:
             continue
-        address = str(sockaddr[0])
-        if _is_private_address(address):
+        if _is_private_address(str(sockaddr[0])):
             raise UnsafeHttpTargetError(
                 f"{context}: hostname resolves to a private, loopback, "
                 "or link-local address"
             )
 
 
-__all__ = ["UnsafeHttpTargetError", "assert_public_http_url"]
+def _redirect_strips_credentials(old_url: str, new_url: str) -> bool:
+    """True when following ``old_url`` -> ``new_url`` must drop auth headers.
+
+    Credentials leak if the redirect target is a different host, or downgrades
+    an ``https`` request to plaintext ``http`` on the same host.
+    """
+    old = urlsplit(old_url)
+    new = urlsplit(new_url)
+    if (old.hostname or "").lower() != (new.hostname or "").lower():
+        return True
+    return old.scheme.lower() == "https" and new.scheme.lower() != "https"
+
+
+def _strip_sensitive_headers(body_kwargs: dict[str, Any]) -> None:
+    headers = body_kwargs.get("headers")
+    if not headers:
+        return
+    body_kwargs["headers"] = {
+        key: value
+        for key, value in dict(headers).items()
+        if key.lower() not in _SENSITIVE_HEADERS
+    }
+
+
+def safe_request(
+    method: str,
+    url: str,
+    *,
+    request_fn: Callable[..., Any] | None = None,
+    max_redirects: int = 5,
+    context: str = "HTTP request",
+    **kwargs: Any,
+) -> Any:
+    """Perform an HTTP request with SSRF-safe redirect handling (C2).
+
+    ``requests`` follows redirects automatically and never re-checks the hop
+    target, so a public URL that 302-redirects to ``169.254.169.254`` or an
+    internal host would defeat a one-shot pre-check. This helper disables
+    automatic redirects and re-validates *every* hop with
+    :func:`assert_public_http_url` before issuing it. ``request_fn`` is injected
+    for testing; in production it defaults to ``requests.request``.
+
+    Credentials (``Authorization``/``Cookie``) are stripped when a redirect
+    crosses to a different host or downgrades https->http, so a Location chosen
+    by the origin server can never exfiltrate the caller's secrets to another
+    host — matching ``requests.Session.rebuild_auth``.
+
+    Residual risk: a sub-second DNS-rebinding attacker can still flip a record
+    between validation and connect. ``assert_public_http_url`` validates *all*
+    resolved addresses on every hop to narrow that window; true pinning requires
+    a custom transport and multi-tenant deployments must additionally rely on
+    ``sandbox_network`` egress isolation.
+    """
+    if request_fn is None:
+        import requests  # imported lazily — keeps the module import-light
+
+        request_fn = requests.request
+
+    current_url = url
+    current_method = method
+    body_kwargs = dict(kwargs)
+    for _ in range(max_redirects + 1):
+        assert_public_http_url(current_url, context=context)
+        response = request_fn(
+            current_method, current_url, allow_redirects=False, **body_kwargs
+        )
+        status = getattr(response, "status_code", None)
+        headers = getattr(response, "headers", None) or {}
+        location = headers.get("location") or headers.get("Location")
+        if status in _REDIRECT_STATUSES and location:
+            next_url = urljoin(current_url, location)
+            # Drop credentials before crossing to a different origin.
+            if _redirect_strips_credentials(current_url, next_url):
+                _strip_sensitive_headers(body_kwargs)
+            current_url = next_url
+            if status in _REDIRECT_TO_GET:
+                current_method = "GET"
+                # Drop the request body on a method-rewriting redirect.
+                for key in ("json", "data", "files"):
+                    body_kwargs.pop(key, None)
+            continue
+        return response
+    raise UnsafeHttpTargetError(f"{context}: too many redirects (>{max_redirects})")
+
+
+__all__ = ["UnsafeHttpTargetError", "assert_public_http_url", "safe_request"]

@@ -21,6 +21,14 @@ _logger = logging.getLogger(__name__)
 _PBKDF2_ROUNDS = 200_000
 
 
+class CredentialDecryptError(RuntimeError):
+    """Raised when an existing credential's ciphertext cannot be decrypted.
+
+    H1: callers on the execution path must fail loudly here rather than run a
+    workflow with silently-empty credentials (the old ``return {}`` behaviour).
+    """
+
+
 # Cache the derived Fernet keyed on the secret it was built from. Deriving the
 # key (sha256 + base64) and constructing Fernet on every encrypt/decrypt/wrap
 # is pure waste; the cache keys on the current secret so tests that monkeypatch
@@ -139,31 +147,55 @@ def encrypt_credential(data: dict, org_kek: bytes | None = None) -> tuple[str, s
     return encrypt_with_dek(data, dek), wrapped
 
 
+def _decrypt_with_dek_strict(token: str, dek: bytes) -> dict:
+    """Decrypt with a DEK, letting InvalidToken/ValueError propagate."""
+    return json.loads(Fernet(dek).decrypt(token.encode()).decode())
+
+
 def decrypt_credential(
     encrypted_data: str,
     encrypted_dek: str | None,
     org_kek: bytes | None = None,
+    *,
+    strict: bool = False,
 ) -> dict:
     """Decrypt credential data.
 
     Unwrap chain (newest first): org KEK -> master KEK -> legacy KEK-direct
     ciphertext (``encrypted_dek is None``). Fernet's HMAC guarantees only the
     right key succeeds, so trying in order is safe.
+
+    ``strict`` (H1): raise :class:`CredentialDecryptError` when every unwrap
+    path fails for a credential that *does* hold ciphertext, instead of
+    returning ``{}``. The execution path uses this so a corrupt or
+    wrong-key credential aborts the run rather than degrading to no auth. A
+    credential that decrypts cleanly to an empty ``{}`` is a valid value and
+    never raises.
     """
-    if encrypted_dek is None:
-        # Legacy path: data was encrypted directly with the master KEK.
-        return decrypt_data(encrypted_data)
-    if org_kek is not None:
-        try:
-            dek = Fernet(org_kek).decrypt(encrypted_dek.encode())
-            return decrypt_with_dek(encrypted_data, dek)
-        except (InvalidToken, ValueError):
-            pass  # not org-wrapped; fall through to the master unwrap
     try:
+        if encrypted_dek is None:
+            # Legacy path: data was encrypted directly with the master KEK.
+            return json.loads(_fernet().decrypt(encrypted_data.encode()).decode())
+        if org_kek is not None:
+            # The org KEK only applies if it can unwrap the DEK; a failure here
+            # just means the row is still master-wrapped, so fall through.
+            try:
+                dek = Fernet(org_kek).decrypt(encrypted_dek.encode())
+            except (InvalidToken, ValueError):
+                dek = None
+            if dek is not None:
+                return _decrypt_with_dek_strict(encrypted_data, dek)
         dek = unwrap_dek(encrypted_dek)
-        return decrypt_with_dek(encrypted_data, dek)
-    except (InvalidToken, ValueError):
-        _logger.warning("decrypt_credential: failed to decrypt credential data (invalid token or key)")
+        return _decrypt_with_dek_strict(encrypted_data, dek)
+    except (InvalidToken, ValueError) as exc:
+        if strict:
+            raise CredentialDecryptError(
+                "credential could not be decrypted (invalid token or wrong key)"
+            ) from exc
+        _logger.warning(
+            "decrypt_credential: failed to decrypt credential data "
+            "(invalid token or key)"
+        )
         return {}
 
 
@@ -208,7 +240,13 @@ def create_token(user_id: str, ttl_seconds: int | None = None) -> str:
     # minted with the same key (runner registration, OAuth state, k8s run).
     # ``verify_token`` requires typ=="session" so a purpose token can never be
     # replayed as a session credential through the auth gate (see TOK-1).
-    payload = {"sub": user_id, "exp": int(time.time()) + ttl, "typ": "session"}
+    now = time.time()
+    # ``iat`` (issued-at, float epoch seconds) lets revocation invalidate every
+    # token minted before a per-user cutoff (User.sessions_valid_after) — see
+    # decode_session_token / current_user (C1). Sub-second resolution means a
+    # re-login moments after a "log out everywhere" reliably outlives the
+    # cutoff while the revoked token does not.
+    payload = {"sub": user_id, "iat": now, "exp": now + ttl, "typ": "session"}
     body = _encode_body(payload)
     return f"{body}.{_sign(body)}"
 
@@ -237,6 +275,27 @@ def verify_token(token: str) -> str | None:
     if payload.get("typ") != "session":
         return None
     return payload.get("sub")
+
+
+def decode_session_token(token: str) -> dict | None:
+    """Verify a session token and return its full payload (``sub``, ``iat``).
+
+    Like :func:`verify_token` but returns the whole payload so callers can
+    enforce ``iat``-based revocation (C1). Returns ``None`` for tampered,
+    expired, or non-session tokens.
+    """
+    try:
+        body, signature = token.split(".", maxsplit=1)
+    except ValueError:
+        return None
+    if not hmac.compare_digest(signature, _sign(body)):
+        return None
+    payload = _decode_body(body)
+    if payload is None or payload.get("exp", 0) < time.time():
+        return None
+    if payload.get("typ") != "session":
+        return None
+    return payload
 
 
 def decode_payload_token(token: str) -> dict | None:

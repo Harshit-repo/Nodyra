@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Canvas panning — drag to pan</title>
+<style>
+  :root {
+    --bg:#090b10; --canvas:#0b0e14; --surface:#10141c; --surface-2:#141925;
+    --line:#1e2533; --line-2:#283041; --accent:#4c9eff; --accent-deep:#2f6fd0;
+    --ink:#e9eef6; --ink-2:#aab4c5; --ink-3:#6b7587;
+    --sans:"Hanken Grotesk",system-ui,sans-serif; --mono:"IBM Plex Mono",monospace;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans); padding:46px; }
+  h1 { font-family:"Bricolage Grotesque",var(--sans); font-size:26px; margin:0 0 6px; }
+  .sub { color:var(--ink-2); margin:0 0 30px; max-width:740px; }
+  .row { display:flex; gap:34px; flex-wrap:wrap; align-items:flex-start; }
+  .stage {
+    position:relative; width:420px; height:230px; border-radius:14px; overflow:hidden;
+    background:
+      radial-gradient(circle at 1px 1px, rgba(255,255,255,.08) 1px, transparent 0) 0 0 / 22px 22px,
+      var(--canvas);
+    border:1px solid var(--line);
+  }
+  .stage.grab { cursor:grab; }
+  .label { font-size:12px; color:var(--ink-3); margin-top:10px; text-align:center; width:420px; }
+  .controls {
+    position:absolute; top:14px; right:14px; display:inline-flex; align-items:center; gap:4px;
+    padding:5px; background:rgba(16,20,28,.92); border:1px solid var(--line);
+    border-radius:8px; box-shadow:0 10px 30px -12px rgba(0,0,0,.7); backdrop-filter:blur(8px);
+  }
+  .controls button {
+    width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center;
+    border:1px solid transparent; border-radius:7px; background:transparent; color:var(--ink-2);
+  }
+  .sep { width:1px; height:22px; background:var(--line); margin:0 2px; }
+  svg { width:15px; height:15px; }
+  .node { position:absolute; width:118px; height:46px; border-radius:10px; background:var(--surface);
+    border:1px solid var(--line-2); box-shadow:0 8px 24px -14px #000; display:flex; align-items:center;
+    gap:8px; padding:0 12px; font-size:12px; color:var(--ink-2); }
+  .node .dot { width:9px; height:9px; border-radius:3px; background:var(--accent); }
+  .n1 { left:38px; top:60px; } .n2 { left:225px; top:128px; }
+  .ghost { position:absolute; border:1.5px dashed rgba(76,158,255,.7); background:rgba(76,158,255,.1); border-radius:4px; }
+  .cursor { position:absolute; font-size:18px; }
+  .hint { position:absolute; left:50%; bottom:14px; transform:translateX(-50%); color:var(--ink-3); font-size:11.5px; }
+  .legend { margin-top:28px; color:var(--ink-2); font-size:13.5px; max-width:760px; line-height:1.6; }
+  .legend b { color:var(--ink); }
+  kbd { font-family:var(--mono); font-size:11px; padding:2px 7px; border-radius:5px;
+    background:#0b0e15; border:1px solid var(--line-2); color:var(--ink-2); }
+  table { border-collapse:collapse; margin-top:14px; font-size:13px; }
+  td { padding:7px 16px 7px 0; color:var(--ink-2); border-bottom:1px solid var(--line); }
+  td b { color:var(--ink); font-weight:600; }
+</style>
+</head>
+<body>
+  <h1>Canvas panning — no button needed</h1>
+  <p class="sub">Left-drag on empty canvas now pans, so you can move around without zooming. Dragging a node still moves the node; box-select moves to <kbd>Shift</kbd>+drag. The hand button is gone.</p>
+
+  <div class="row">
+    <div>
+      <div class="stage grab">
+        <div class="node n1"><span class="dot"></span>HTTP Request</div>
+        <div class="node n2"><span class="dot"></span>Set Fields</div>
+        <div class="controls">
+          <button title="Fit view"><svg viewBox="0 0 256 256" fill="currentColor"><path d="M48 96a8 8 0 0 1-16 0V48a16 16 0 0 1 16-16h48a8 8 0 0 1 0 16H48Zm160-64h-48a8 8 0 0 0 0 16h48v48a8 8 0 0 0 16 0V48a16 16 0 0 0-16-16ZM96 208H48v-48a8 8 0 0 0-16 0v48a16 16 0 0 0 16 16h48a8 8 0 0 0 0-16Zm120-56a8 8 0 0 0-8 8v48h-48a8 8 0 0 0 0 16h48a16 16 0 0 0 16-16v-48a8 8 0 0 0-8-8Z"/></svg></button>
+          <span class="sep"></span>
+          <button title="Zoom out"><svg viewBox="0 0 256 256" fill="currentColor"><path d="M224 128a8 8 0 0 1-8 8H40a8 8 0 0 1 0-16h176a8 8 0 0 1 8 8Z"/></svg></button>
+          <button title="Zoom in"><svg viewBox="0 0 256 256" fill="currentColor"><path d="M224 128a8 8 0 0 1-8 8h-80v80a8 8 0 0 1-16 0v-80H40a8 8 0 0 1 0-16h80V40a8 8 0 0 1 16 0v80h80a8 8 0 0 1 8 8Z"/></svg></button>
+        </div>
+        <div class="cursor" style="left:150px;top:175px;">✊</div>
+        <div class="hint">grab cursor on empty space — drag to pan</div>
+      </div>
+      <div class="label">Empty canvas → left-drag pans (toolbar has no hand button)</div>
+    </div>
+
+    <div>
+      <div class="stage">
+        <div class="node n1"><span class="dot"></span>HTTP Request</div>
+        <div class="node n2"><span class="dot"></span>Set Fields</div>
+        <div class="ghost" style="left:30px;top:50px;width:150px;height:80px;"></div>
+        <div class="controls">
+          <button title="Fit view"><svg viewBox="0 0 256 256" fill="currentColor"><path d="M48 96a8 8 0 0 1-16 0V48a16 16 0 0 1 16-16h48a8 8 0 0 1 0 16H48Zm160-64h-48a8 8 0 0 0 0 16h48v48a8 8 0 0 0 16 0V48a16 16 0 0 0-16-16ZM96 208H48v-48a8 8 0 0 0-16 0v48a16 16 0 0 0 16 16h48a8 8 0 0 0 0-16Zm120-56a8 8 0 0 0-8 8v48h-48a8 8 0 0 0 0 16h48a16 16 0 0 0 16-16v-48a8 8 0 0 0-8-8Z"/></svg></button>
+          <span class="sep"></span>
+          <button title="Zoom out"><svg viewBox="0 0 256 256" fill="currentColor"><path d="M224 128a8 8 0 0 1-8 8H40a8 8 0 0 1 0-16h176a8 8 0 0 1 8 8Z"/></svg></button>
+          <button title="Zoom in"><svg viewBox="0 0 256 256" fill="currentColor"><path d="M224 128a8 8 0 0 1-8 8h-80v80a8 8 0 0 1-16 0v-80H40a8 8 0 0 1 0-16h80V40a8 8 0 0 1 16 0v80h80a8 8 0 0 1 8 8Z"/></svg></button>
+        </div>
+        <div class="hint" style="color:var(--accent);">Shift + drag → box-select</div>
+      </div>
+      <div class="label">Shift+drag keeps box-selection; dragging a node still moves it</div>
+    </div>
+  </div>
+
+  <table>
+    <tr><td><b>Left-drag empty space</b></td><td>Pan the canvas (grab cursor)</td></tr>
+    <tr><td><b>Drag a node</b></td><td>Move the node (unchanged)</td></tr>
+    <tr><td><b>Shift + drag</b></td><td>Box-select nodes</td></tr>
+    <tr><td><b>Hold <kbd>Space</kbd> + drag</b></td><td>Pan even over nodes (Figma-style)</td></tr>
+    <tr><td><b>Middle / right-drag</b></td><td>Pan (still works)</td></tr>
+  </table>
+</body>
+</html>

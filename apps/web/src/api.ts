@@ -18,6 +18,7 @@ import type {
   PinnedItem,
   CodeModule,
   CodeModuleFunctionPreview,
+  LintDiagnostic,
   Deployment,
   DeploymentCreate,
   DeploymentUpdate,
@@ -551,6 +552,16 @@ export const api = {
     }),
   workflowCustomNodeManifests: (workflowId: string) =>
     request<NodeManifest[]>(`/code-modules/manifests/workflow/${workflowId}`),
+  formatCode: (code: string) =>
+    request<{ code: string; changed: boolean; error: string | null }>(
+      "/code-modules/format",
+      { method: "POST", body: JSON.stringify({ code }) },
+    ),
+  lintCode: (code: string) =>
+    request<{ diagnostics: LintDiagnostic[]; linter: string }>(
+      "/code-modules/lint",
+      { method: "POST", body: JSON.stringify({ code }) },
+    ),
 
   listCredentials: () => request<Credential[]>("/credentials"),
   listCredentialTypes: () => request<CredentialTypeInfo[]>("/credentials/types"),

@@ -128,6 +128,44 @@ async def test_decrypt_for_legacy_master_wrapped_credential(session):
     assert await org_keys.decrypt_credential_for(cred, session) == {"token": "old"}
 
 
+async def test_decrypt_credential_for_strict_raises_on_corruption(session):
+    """H1: a credential whose ciphertext is unreadable must raise in strict
+    mode rather than silently degrade to {}."""
+    enc, dek = await org_keys.encrypt_credential_for(
+        DEFAULT_ORG_ID, {"token": "s3cret"}, session
+    )
+    cred = models.Credential(
+        name="broken", type="generic",
+        encrypted_data="corrupt-ciphertext", encrypted_dek=dek,
+    )
+    session.add(cred)
+    await session.commit()
+    # Tolerant default still degrades to {} for non-execution callers.
+    assert await org_keys.decrypt_credential_for(cred, session) == {}
+    with pytest.raises(crypto.CredentialDecryptError):
+        await org_keys.decrypt_credential_for(cred, session, strict=True)
+
+
+async def test_resolve_credential_refs_raises_on_corrupt_credential(session):
+    """H1 end-to-end: the execution-path resolver must abort the run, not
+    inject empty credentials, when a referenced credential can't be decrypted."""
+    from app.services.credentials import credential_ref, resolve_credential_refs
+
+    enc, dek = await org_keys.encrypt_credential_for(
+        DEFAULT_ORG_ID, {"token": "s3cret"}, session
+    )
+    cred = models.Credential(
+        name="broken", type="generic",
+        encrypted_data="corrupt-ciphertext", encrypted_dek=dek, scope="global",
+    )
+    session.add(cred)
+    await session.commit()
+    with pytest.raises(crypto.CredentialDecryptError):
+        await resolve_credential_refs(
+            session, {"auth": credential_ref(cred.id, "token")}
+        )
+
+
 async def test_rewrap_org_credentials(session):
     """The migration helper: master-wrapped DEKs get rewrapped under the org
     KEK; KEK-direct legacy rows (NULL dek) are left alone."""

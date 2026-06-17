@@ -48,9 +48,10 @@ class SubworkflowCall:
     parent_run_id: str | None
     depth: int  # 1 = direct child of the root run
     call_chain: frozenset[str] = frozenset()  # ancestors + this workflow
+    org_id: str | None = None  # tenant scope for the child workflow
 
     def to_payload(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "workflow_id": self.workflow_id,
             "input": self.parameters,
             "use_published": self.use_published,
@@ -58,9 +59,12 @@ class SubworkflowCall:
             "depth": self.depth,
             "call_chain": sorted(self.call_chain),
         }
+        if self.org_id is not None:
+            d["org_id"] = self.org_id
+        return d
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any]) -> "SubworkflowCall":
+    def from_payload(cls, payload: dict[str, Any]) -> SubworkflowCall:
         return cls(
             workflow_id=str(payload.get("workflow_id") or ""),
             parameters=payload.get("input"),
@@ -68,6 +72,7 @@ class SubworkflowCall:
             parent_run_id=payload.get("parent_run_id") or None,
             depth=int(payload.get("depth") or 1),
             call_chain=frozenset(payload.get("call_chain") or ()),
+            org_id=payload.get("org_id") or None,
         )
 
 
@@ -80,18 +85,22 @@ class SubworkflowMeta:
     depth: int = 0  # depth of THIS graph (0 = root run)
     call_chain: frozenset[str] = frozenset()  # must include this graph's id
     max_depth: int = 16  # 0 = unlimited
+    org_id: str | None = None  # tenant scope for child workflow calls
 
     def to_payload(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "use_published": self.use_published,
             "parent_run_id": self.parent_run_id,
             "depth": self.depth,
             "call_chain": sorted(self.call_chain),
             "max_depth": self.max_depth,
         }
+        if self.org_id is not None:
+            d["org_id"] = self.org_id
+        return d
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any]) -> "SubworkflowMeta":
+    def from_payload(cls, payload: dict[str, Any]) -> SubworkflowMeta:
         raw_max = payload.get("max_depth")
         return cls(
             use_published=bool(payload.get("use_published", True)),
@@ -99,6 +108,7 @@ class SubworkflowMeta:
             depth=int(payload.get("depth") or 0),
             call_chain=frozenset(payload.get("call_chain") or ()),
             max_depth=cls.max_depth if raw_max is None else int(raw_max),
+            org_id=payload.get("org_id") or None,
         )
 
 
@@ -149,10 +159,10 @@ def extract_leaf_value(
 def make_workflow_caller(
     runner: SubworkflowRunner,
     meta: SubworkflowMeta,
-    registry: "NodeRegistry",
+    registry: NodeRegistry,
     *,
     default_timeouts: dict[str, float] | None = None,
-    process_isolator: "ProcessIsolator | None" = None,
+    process_isolator: ProcessIsolator | None = None,
 ) -> Callable[[str, Any], Awaitable[Any]]:
     """Build the ``noodle.context.workflow_caller`` adapter for one run.
 
@@ -172,6 +182,7 @@ def make_workflow_caller(
             depth=call.depth,
             call_chain=call.call_chain,
             max_depth=meta.max_depth,
+            org_id=call.org_id or meta.org_id,
         )
         result = await execute(
             WorkflowGraph.model_validate(directive.graph),
@@ -206,6 +217,7 @@ def make_workflow_caller(
             parent_run_id=meta.parent_run_id,
             depth=depth,
             call_chain=frozenset(chain | {workflow_id}),
+            org_id=meta.org_id,
         )
         token = call_chain.set(chain | {workflow_id})
         try:

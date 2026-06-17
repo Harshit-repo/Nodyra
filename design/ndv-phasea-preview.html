@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Phase A — code intelligence (active line, autocomplete, lint)</title>
+<style>
+  :root {
+    --bg:#090b10; --surface:#10141c; --surface-2:#141925; --line:#1e2533;
+    --line-2:#283041; --accent:#4c9eff; --ink:#e9eef6; --ink-2:#aab4c5;
+    --ink-3:#6b7587; --code-bg:#0b0e15; --code-gutter:#0e1219;
+    --mono:"IBM Plex Mono",ui-monospace,monospace;
+    --sans:"Hanken Grotesk",system-ui,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:
+      radial-gradient(1100px 560px at 18% -12%, #121a2b 0%, transparent 60%), var(--bg);
+    color:var(--ink); font-family:var(--sans); padding:46px; line-height:1.5;
+  }
+  h1 { font-family:"Bricolage Grotesque",var(--sans); font-size:28px; margin:0 0 6px; }
+  .sub { color:var(--ink-2); margin:0 0 34px; max-width:780px; }
+  .shipped { display:inline-block; font-size:11px; font-weight:700; letter-spacing:.04em;
+    color:#7be0a0; background:rgba(123,224,160,.1); border:1px solid rgba(123,224,160,.3);
+    padding:3px 10px; border-radius:999px; text-transform:uppercase; margin-bottom:12px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:26px; align-items:start; }
+  .card { background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:20px; }
+  .card h3 { margin:0 0 4px; font-size:16px; }
+  .card .tag { font-size:11px; color:var(--accent); font-weight:700; letter-spacing:.04em; text-transform:uppercase; }
+  .card p { margin:6px 0 16px; color:var(--ink-2); font-size:13px; }
+
+  /* code editor mock */
+  .editor { position:relative; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--code-bg); font-family:var(--mono); font-size:13px; line-height:1.5; }
+  .editor.focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(76,158,255,.18); }
+  .gutter { position:absolute; left:0; top:0; bottom:0; width:42px; background:var(--code-gutter); border-right:1px solid var(--line); color:var(--ink-3); text-align:right; padding:10px 0; user-select:none; }
+  .gutter span { display:block; padding:0 8px 0 0; opacity:.6; position:relative; }
+  .gutter span.active { opacity:1; color:var(--ink); }
+  .gutter span.err { opacity:1; color:#f3797e; }
+  .gutter span.warn { opacity:1; color:#e8b563; }
+  .gutter span.err::before, .gutter span.warn::before { content:""; position:absolute; left:3px; top:50%; width:5px; height:5px; border-radius:50%; transform:translateY(-50%); }
+  .gutter span.err::before { background:#f3797e; }
+  .gutter span.warn::before { background:#e8b563; }
+  .code { padding:10px 12px 10px 54px; white-space:pre; position:relative; }
+  .activeline { position:absolute; left:0; right:0; background:rgba(76,158,255,.07); border-left:2px solid rgba(76,158,255,.5); pointer-events:none; }
+  .kw { color:#c678dd; } .bi { color:#61afef; } .str { color:#98c379; } .num { color:#d19a66; } .com { color:#7f848e; font-style:italic; } .pl { color:var(--ink); }
+  .caret { display:inline-block; width:1px; height:15px; background:var(--ink); vertical-align:-3px; animation:blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+
+  /* autocomplete */
+  .ac { position:absolute; z-index:20; padding:4px; margin:0; list-style:none; min-width:170px;
+    background:var(--surface-2); border:1px solid var(--line-2); border-radius:9px;
+    box-shadow:0 1px 0 rgba(255,255,255,.03) inset,0 14px 34px -12px rgba(0,0,0,.7); }
+  .ac li { padding:5px 9px; border-radius:6px; font-size:12px; color:var(--ink-2); display:flex; gap:8px; }
+  .ac li .k { margin-left:auto; color:var(--ink-3); font-size:10px; }
+  .ac li.sel { background:color-mix(in srgb,var(--accent) 16%,transparent); color:var(--ink); box-shadow:inset 2px 0 0 var(--accent); }
+
+  /* diagnostics strip */
+  .diags { list-style:none; margin:8px 0 0; padding:0; border:1px solid var(--line-2); border-radius:8px; background:var(--surface); overflow:hidden; }
+  .diag { display:flex; align-items:baseline; gap:9px; padding:6px 10px; font-size:12px; cursor:pointer; border-left:2px solid transparent; }
+  .diag:hover { background:var(--surface-2); }
+  .diag.err { border-left-color:#f3797e; }
+  .diag.warn { border-left-color:#e8b563; }
+  .diag .loc { font-family:var(--mono); font-size:11px; color:var(--ink-3); min-width:38px; }
+  .diag .code { font-family:var(--mono); font-size:11px; }
+  .diag.err .code { color:#f3797e; } .diag.warn .code { color:#e8b563; }
+  .diag .msg { color:var(--ink-2); }
+  .legend { color:var(--ink-3); font-size:11.5px; margin-top:12px; }
+  .full { grid-column:1 / -1; }
+  .kbd { font-family:var(--mono); font-size:10.5px; padding:2px 6px; border-radius:5px; background:#0b0e15; border:1px solid var(--line-2); color:var(--ink-2); }
+</style>
+</head>
+<body>
+  <h1>Phase A — Code intelligence <span class="shipped">✓ shipped</span></h1>
+  <p class="sub">Three features layered onto the shared <code style="color:#98c379">HighlightedTextarea</code> (the inline node-code editor and the Expand modal both get them). All gated to <code style="color:#c678dd">language="python"</code>, so expression fields are untouched.</p>
+
+  <div class="grid">
+
+    <!-- A1 + A2 -->
+    <div class="card">
+      <div class="tag">A1 · active line  +  A2 · autocomplete</div>
+      <h3>Caret context as you type</h3>
+      <p>The current line gets a subtle accent band + a brightened gutter number. Type an identifier and a caret-anchored completion popover appears — keywords, builtins, the code-node API (<code class="bi" style="font-family:var(--mono)">inputs / context / items</code>) and names already in the buffer. <span class="kbd">↑</span><span class="kbd">↓</span> move, <span class="kbd">Tab</span> accept, <span class="kbd">Esc</span> close.</p>
+      <div class="editor focus">
+        <div class="gutter">
+          <span>1</span><span>2</span><span class="active">3</span><span>4</span><span>5</span>
+        </div>
+        <div class="code"><span class="activeline" style="top:48px;height:19.5px;"></span><span class="kw">def</span> <span class="pl">transform</span>(<span class="pl">inputs</span>):
+    <span class="pl">rows</span> = <span class="pl">inputs</span>[<span class="str">"main"</span>]
+    <span class="kw">ret</span><span class="caret"></span>
+    <span class="com"># map each row</span>
+    <span class="kw">return</span> <span class="pl">rows</span><ul class="ac" style="top:67px;left:78px;">
+            <li class="sel">return <span class="k">kw</span></li>
+            <li>repr <span class="k">builtin</span></li>
+            <li>reversed <span class="k">builtin</span></li>
+          </ul></div>
+      </div>
+      <div class="legend">Band sits above the syntax mirror but below the caret layer, so colours stay visible.</div>
+    </div>
+
+    <!-- A3 -->
+    <div class="card">
+      <div class="tag">A3 · lint</div>
+      <h3>Ruff diagnostics, inline</h3>
+      <p>Debounced lint runs through <code style="color:#98c379">ruff check</code> on the backend (never executes code). Offending lines get a coloured gutter dot; a strip below lists every finding — click to jump. Falls back to an AST syntax check if ruff isn't available.</p>
+      <div class="editor">
+        <div class="gutter">
+          <span class="warn">1</span><span>2</span><span>3</span><span class="err">4</span><span>5</span>
+        </div>
+        <div class="code"><span class="kw">import</span> <span class="pl">os</span>
+<span class="kw">def</span> <span class="pl">run</span>(<span class="pl">inputs</span>):
+    <span class="pl">total</span> = <span class="num">0</span>
+    <span class="kw">return</span> <span class="pl">amount</span>
+    <span class="com"># unreachable</span></div>
+      </div>
+      <ul class="diags">
+        <li class="diag warn"><span class="loc">1:8</span><span class="code">F401</span><span class="msg">`os` imported but unused</span></li>
+        <li class="diag err"><span class="loc">4:12</span><span class="code">F821</span><span class="msg">undefined name `amount`</span></li>
+      </ul>
+      <div class="legend">Amber = warning, red = error. Worst severity wins per line in the gutter.</div>
+    </div>
+
+  </div>
+</body>
+</html>

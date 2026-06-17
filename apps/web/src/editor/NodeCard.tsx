@@ -1,4 +1,16 @@
-import { Key, Lock, Warning } from "@phosphor-icons/react";
+import {
+  ArrowClockwise,
+  ArrowsOut,
+  ChatTeardropText,
+  Code,
+  Key,
+  Lock,
+  Play,
+  ToggleLeft,
+  ToggleRight,
+  Warning,
+  X,
+} from "@phosphor-icons/react";
 import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
@@ -14,7 +26,7 @@ import { useServerPlatform } from "../hooks/useServerPlatform";
 
 const TILE = 72;
 const AGENT_CARD_HEIGHT = 150;
-const TOOLBAR_HIDE_DELAY_MS = 350;
+const TOOLBAR_HIDE_DELAY_MS = 200;
 
 const AGENT_INPUT_PORTS = [
   { name: "input", label: "Chat Input" },
@@ -233,9 +245,11 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   useEffect(() => {
     updateNodeInternals(id);
   }, [id, handleSignature, updateNodeInternals]);
-  const runStatus = useEditor((s) => s.runStatus[id]);
-  const runMeta = useEditor((s) => s.runMeta[id]);
-  const runIteration = useEditor((s) => s.runIterations[id]);
+  const runKey = useEditor((s) => s.runKeyFor(id));
+  const runStatus = useEditor((s) => s.runStatus[runKey]);
+  const runMeta = useEditor((s) => s.runMeta[runKey]);
+  const runIteration = useEditor((s) => s.runIterations[runKey]);
+  const runChunk = useEditor((s) => s.runChunks[runKey]);
   // A "×N" badge on loop-body tiles: live iteration count while the loop runs,
   // final total once it finishes. Only shown for genuine loops (count > 1).
   const iterationBadge =
@@ -250,6 +264,15 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       >
         ×{runIteration.count}
       </span>
+    ) : null;
+  // Live token preview: incremental output streamed via node_chunk while the
+  // node runs (e.g. an LLM writing its answer). Replaced by the real output on
+  // node_finished. Capped so a long generation can't balloon the tile.
+  const streamPreview =
+    runChunk && runStatus === "running" ? (
+      <div className="node-stream-preview nodrag nopan" title="Streaming…">
+        {runChunk.length > 400 ? `…${runChunk.slice(-400)}` : runChunk}
+      </div>
     ) : null;
   const running = useEditor((s) => s.running);
   const agentActive = useEditor((s) => s.agentActive[id]);
@@ -294,6 +317,8 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const runFromTrigger = useEditor((s) => s.runFromTrigger);
   const isTrigger = isTriggerManifest(manifest);
   const devMode = useEditor((s) => s.devMode);
+  const stepRunDisabledReason = useEditor((s) => s.drillStepRunDisabledReason());
+  const isUnavailable = Boolean((data as unknown as { unavailableType?: string }).unavailableType);
   const [sdkModalOpen, setSdkModalOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -383,7 +408,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
     >
       <button
         type="button"
-        aria-label={
+        aria-label={stepRunDisabledReason ?? (
           !canRunStep
             ? "Connect a trigger upstream to run this node"
             : isWebhook
@@ -391,8 +416,8 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
               : isTrigger
                 ? "Run this trigger and its downstream nodes"
                 : "Run step using current upstream data"
-        }
-        title={
+        )}
+        title={stepRunDisabledReason ?? (
           !canRunStep
             ? "Connect a trigger upstream to run this node"
             : isWebhook
@@ -400,40 +425,40 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
               : isTrigger
                 ? "Run this trigger and its downstream nodes"
                 : "Run step using current upstream data"
-        }
+        )}
         onClick={(e) => {
           stop(e);
           if (isTrigger) runFromTrigger(id);
           else runFromNode(id);
         }}
-        disabled={running || !canRunStep}
+        disabled={running || !canRunStep || Boolean(stepRunDisabledReason)}
       >
-        ▶
+        <Play size={12} weight="fill" />
       </button>
       <button
         type="button"
-        aria-label={
+        aria-label={stepRunDisabledReason ?? (
           !canRunStep
             ? "Connect a trigger upstream to run this node"
             : isTrigger
               ? "Run this trigger and its downstream nodes"
               : "Run step fresh, recomputing upstream nodes"
-        }
-        title={
+        )}
+        title={stepRunDisabledReason ?? (
           !canRunStep
             ? "Connect a trigger upstream to run this node"
             : isTrigger
               ? "Run this trigger and its downstream nodes"
               : "Run step fresh, recomputing upstream nodes"
-        }
+        )}
         onClick={(e) => {
           stop(e);
           if (isTrigger) runFromTrigger(id);
           else runFromNode(id, { reuseUpstream: false });
         }}
-        disabled={running || !canRunStep}
+        disabled={running || !canRunStep || Boolean(stepRunDisabledReason)}
       >
-        ↻
+        <ArrowClockwise size={12} weight="bold" />
       </button>
       <button
         type="button"
@@ -444,7 +469,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
           openNdv(id);
         }}
       >
-        ⤢
+        <ArrowsOut size={12} weight="bold" />
       </button>
       {isChatTrigger && (
         <button
@@ -457,7 +482,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
             openChat();
           }}
         >
-          💬
+          <ChatTeardropText size={12} weight="bold" />
         </button>
       )}
       <button
@@ -470,7 +495,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
           toggleDisabled(id);
         }}
       >
-        {disabled ? "●" : "◐"}
+        {disabled ? <ToggleLeft size={12} weight="bold" /> : <ToggleRight size={12} weight="bold" />}
       </button>
       <button
         type="button"
@@ -482,7 +507,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
           setConfirmDelete(true);
         }}
       >
-        ×
+        <X size={12} weight="bold" />
       </button>
       {devMode && (
         <button
@@ -495,7 +520,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
             setSdkModalOpen(true);
           }}
         >
-          {"</>"}
+          <Code size={12} weight="bold" />
         </button>
       )}
     </div>
@@ -613,6 +638,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
           {runMeta?.error && runStatus === "error" && (
             <ErrorCallout error={runMeta.error} />
           )}
+          {streamPreview}
 
           {agentSideInputs.map((item, i) => {
             const top = agentPortTop(i, agentSideInputs.length);
@@ -733,6 +759,19 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
     );
   }
 
+  if (isUnavailable) {
+    return (
+      <div className="node">
+        <div className="node-tile node-unavailable" title={`Unavailable node type: ${(data as unknown as { unavailableType?: string }).unavailableType}`}>
+          <Warning size={22} weight="bold" />
+          <Handle type="target" position={Position.Left} id="input" />
+          <Handle type="source" position={Position.Right} id="main" />
+        </div>
+        <div className="node-label">{(data as unknown as { unavailableType?: string }).unavailableType}</div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={nodeClass.join(" ")}
@@ -810,8 +849,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
         {runMeta?.error && runStatus === "error" && (
           <ErrorCallout error={runMeta.error} />
         )}
-
-
+        {streamPreview}
 
         {sideInputs.map((port, i) => (
           <Handle

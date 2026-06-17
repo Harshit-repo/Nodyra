@@ -94,6 +94,22 @@ describe("NodeCard", () => {
     useEditor.getState().clearRun();
   });
 
+  it("shows streamed token text while a node is running", () => {
+    useEditor.setState({
+      runStatus: { llm: "running" },
+      runChunks: { llm: "Hello wor" },
+    });
+    const props = {
+      id: "llm",
+      data: standardNodeData(),
+      selected: false,
+    } as unknown as Parameters<typeof NodeCard>[0];
+    render(<NodeCard {...props} />);
+
+    expect(screen.getByText("Hello wor")).toBeTruthy();
+    useEditor.getState().clearRun();
+  });
+
   it("renders tool-mode output on the top without a visible port tag", () => {
     const props = {
       id: "cmd",

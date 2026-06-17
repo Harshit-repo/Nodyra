@@ -35,6 +35,17 @@
   --font-display: "Bricolage Grotesque", system-ui, sans-serif;
   --font-sans: "Hanken Grotesk", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Semantic colors — theme-aware aliases */
+  --color-error: #f0747a;
+  --color-error-bg: rgba(240, 116, 122, 0.12);
+  --color-error-border: rgba(240, 116, 122, 0.45);
+  --color-success: #8fd06f;
+  --color-success-bg: rgba(87, 201, 138, 0.12);
+  --color-warning: #ffd479;
+  --color-warning-bg: rgba(255, 212, 121, 0.12);
+  --color-danger-hover-bg: rgba(229, 102, 79, 0.15);
+  --color-danger-hover-text: #ef8d6f;
 }
 
 :root[data-font="brand"] {
@@ -246,13 +257,13 @@ textarea:focus-visible {
   padding: 0;
 }
 .btn-danger {
-  border-color: rgba(240, 116, 122, 0.42);
-  color: #f0747a;
-  background: rgba(240, 116, 122, 0.08);
+  border-color: var(--color-error-border, rgba(240, 116, 122, 0.42));
+  color: var(--color-error, #f0747a);
+  background: var(--color-error-bg, rgba(240, 116, 122, 0.08));
 }
 .btn-danger:hover {
-  border-color: rgba(240, 116, 122, 0.72);
-  background: rgba(240, 116, 122, 0.14);
+  border-color: var(--color-error-border, rgba(240, 116, 122, 0.72));
+  background: var(--color-danger-hover-bg, rgba(240, 116, 122, 0.14));
 }
 
 /* ---- fields ---- */
@@ -302,14 +313,14 @@ textarea:focus-visible {
 .field-input-expr {
   font-family: var(--font-mono);
   font-size: 12px;
-  color: #c4b5fd;
-  background: rgba(124, 58, 237, 0.07);
-  border-color: rgba(139, 92, 246, 0.4);
+  color: var(--expr-text, #c4b5fd);
+  background: var(--expr-bg, rgba(124, 58, 237, 0.07));
+  border-color: var(--expr-border, rgba(139, 92, 246, 0.4));
 }
 .field-wrap-expr .field-input:focus,
 .field-input-expr:focus {
-  border-color: rgba(139, 92, 246, 0.85);
-  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.18);
+  border-color: var(--expr-border-focus, rgba(139, 92, 246, 0.85));
+  box-shadow: 0 0 0 3px var(--expr-glow, rgba(139, 92, 246, 0.18));
 }
 .fx-toggle {
   position: absolute;
@@ -343,9 +354,9 @@ textarea:focus-visible {
 .fx-toggle-on,
 .fx-toggle-on:hover {
   color: #fff;
-  background: #7c3aed;
+  background: var(--expr-active-bg, #7c3aed);
   border-color: rgba(139, 92, 246, 0.9);
-  box-shadow: 0 0 8px rgba(139, 92, 246, 0.5);
+  box-shadow: 0 0 8px var(--expr-glow, rgba(139, 92, 246, 0.5));
 }
 
 /* ---- utility ---- */
@@ -354,7 +365,7 @@ textarea:focus-visible {
   font-size: 13px;
 }
 .error-text {
-  color: #f0747a;
+  color: var(--color-error, #f0747a);
   font-size: 13px;
   font-family: var(--font-mono);
 }
@@ -564,6 +575,11 @@ textarea:focus-visible {
     border-color 120ms ease,
     transform 120ms ease;
 }
+.home-stat-strip button:focus-visible,
+.dashboard-grid button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .home-stat-strip button:hover,
 .dashboard-grid button:hover {
   background: var(--surface-2);
@@ -615,7 +631,10 @@ textarea:focus-visible {
     transform 140ms ease,
     background 140ms ease;
 }
-.wf-card::before {
+.wf-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
   content: "";
   position: absolute;
   left: 0;
@@ -725,16 +744,16 @@ textarea:focus-visible {
   margin-top: 8px;
 }
 .wf-meta-draft {
-  color: #e0a83e;
+  color: var(--badge-draft, #e0a83e);
 }
 .wf-meta-run-success {
-  color: #4ade80;
+  color: var(--color-run-success, #4ade80);
 }
 .wf-meta-run-error {
-  color: #f87171;
+  color: var(--color-run-error, #f87171);
 }
 .wf-meta-run-running {
-  color: #60a5fa;
+  color: var(--color-run-running, var(--accent, #60a5fa));
 }
 
 /* Three-dots context menu */

@@ -27,7 +27,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy import text
 
 from app.config import settings
-from app.db import engine
+from app.db import SessionLocal
 
 logger = logging.getLogger("noodle.leader")
 
@@ -52,20 +52,18 @@ async def hold_leader_lock(name: str) -> AsyncIterator[bool]:
     """Try to acquire an advisory lock for ``name`` for the duration of the
     context. Yields ``True`` if acquired, ``False`` otherwise.
 
-    The Postgres path opens a dedicated connection so the lock survives across
-    short-lived ORM sessions. Always release via ``pg_advisory_unlock`` on
-    exit (the conn close would do it too, but explicit is cheaper than
-    waiting for the pool to GC).
+    Uses an ORM session from the shared pool so no dedicated connection is
+    burned. The session-scoped PG advisory lock is released explicitly
+    (``pg_advisory_unlock``) before the session closes, keeping the pooled
+    connection clean for its next consumer.
     """
     if not _is_postgres():
-        # SQLite / aiosqlite: single-writer process, no real contention.
         yield True
         return
 
     key = _stable_key(name)
-    conn = await engine.connect()
-    acquired = False
-    try:
+    async with SessionLocal() as session:
+        conn = await session.connection()
         result = await conn.scalar(
             text("SELECT pg_try_advisory_lock(:k)"), {"k": key}
         )
@@ -73,19 +71,16 @@ async def hold_leader_lock(name: str) -> AsyncIterator[bool]:
         if not acquired:
             yield False
             return
-        yield True
-    finally:
-        if acquired:
+        try:
+            yield True
+        finally:
             try:
+                conn = await session.connection()
                 await conn.execute(
                     text("SELECT pg_advisory_unlock(:k)"), {"k": key}
                 )
             except Exception:  # noqa: BLE001
                 logger.exception("pg_advisory_unlock(%s) failed", name)
-        try:
-            await conn.close()
-        except Exception:  # noqa: BLE001
-            pass
 
 
 async def run_with_leader_election(

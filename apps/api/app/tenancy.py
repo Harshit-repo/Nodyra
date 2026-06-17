@@ -84,15 +84,29 @@ def run_as_org(org_id: str | None):
         current_org_id.reset(token)
 
 
+# Memoized result of org_scoped_models(), keyed on the mapper count so a newly
+# registered model (notably test-local ones) transparently rebuilds the list.
+_scoped_models_cache: tuple[int, list[type]] | None = None
+
+
 def org_scoped_models() -> list[type]:
-    """Every mapped class carrying an ``org_id`` column."""
+    """Every mapped class carrying an ``org_id`` column.
+
+    M2: called on every SELECT via the ``do_orm_execute`` hook, so the result
+    is memoized. The mapper registry is effectively immutable after startup;
+    keying the cache on ``len(mappers)`` still picks up dynamically-added
+    models (e.g. test fixtures) without rescanning on the hot path.
+    """
+    global _scoped_models_cache
     from app.db import Base  # late import: db imports tenancy at engine setup
 
-    return [
-        mapper.class_
-        for mapper in Base.registry.mappers
-        if "org_id" in mapper.columns
-    ]
+    mappers = Base.registry.mappers
+    count = len(mappers)
+    if _scoped_models_cache is not None and _scoped_models_cache[0] == count:
+        return _scoped_models_cache[1]
+    models = [mapper.class_ for mapper in mappers if "org_id" in mapper.columns]
+    _scoped_models_cache = (count, models)
+    return models
 
 
 def stamp(obj: object) -> object:

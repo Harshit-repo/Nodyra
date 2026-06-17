@@ -8,11 +8,20 @@ import {
   getLlmVariant,
   visibleCredentialFields,
 } from "../llmProviders";
+import {
+  CredentialFieldInput,
+  LLM_FIELD_DEFS,
+  mergedCredentialPresets,
+  type CredentialPreset,
+  type CredentialScope,
+} from "../credentialPresets";
 import { isBrandIconName, NodeIcon } from "../NodeIcon";
+import { useCredentialTypes } from "../queries";
 import { useModalA11y } from "../useModalA11y";
 import { useToast } from "../ToastProvider";
 import type {
   Credential,
+  LintDiagnostic,
   NodeManifest,
   NodeSource,
   ParamSpec,
@@ -26,16 +35,22 @@ import { useEditor } from "./store";
 import { useServerPlatform } from "../hooks/useServerPlatform";
 import { credentialMatchesParam } from "./node-details/credentials";
 import { getUpstreamNodes } from "./node-details/upstreamFields";
-import { tokenizePython } from "./node-details/pythonHighlight";
+import {
+  computeCodeSuggestions,
+  getIdentPrefix,
+  tokenizePython,
+} from "./node-details/pythonHighlight";
 import {
   buildLoadOptionsParams,
   matchesDisplayWhen,
 } from "./node-details/displayRules";
 import {
+  computeSuggestions,
   EXPR_RE,
   EXPR_RE_GLOBAL,
   type ExprContext,
   formatResultText,
+  getTokenBeforeCursor,
   type PreviewPart,
   type ResultView,
 } from "./node-details/expressions";
@@ -649,11 +664,60 @@ function CredentialCreateModal({
   workflowId: string | null;
   credentialContext?: Record<string, unknown>;
   onClose: () => void;
-  onCreated: (id: string, key: string, credential: Credential) => void;
+  onCreated: (id: string, key: string, credential: Credential | null) => void;
 }) {
   const displayLabel = CRED_TYPE_LABELS[credType] ?? typeLabel;
   const isLlm = credType === "llm_provider";
+  const credentialTypesQuery = useCredentialTypes();
+  const credentialTypes = credentialTypesQuery.data ?? null;
+
+  // The credential ref key is dictated by the node, independent of which preset
+  // fields render: multi-field pickers store ``*``; single-field pickers store
+  // the one field name the node reads.
+  const refKey = fields.length > 1 ? "*" : (fields[0] ?? credType);
+
+  // Fallback preset built from the node's declared fields, used when no
+  // built-in or backend preset matches this credential type.
+  const fallbackPreset = useMemo<CredentialPreset>(
+    () => ({
+      id: credType,
+      type: credType,
+      label: displayLabel,
+      group: "",
+      summary: "",
+      description: displayLabel,
+      fields: fields.map((f) => ({
+        key: f,
+        label: credentialFieldLabel(f),
+        kind: isSecretField(f) ? "password" : "text",
+      })),
+    }),
+    [credType, displayLabel, fields],
+  );
+
+  // Prefer the shared preset (rich placeholders/help/field kinds and OAuth
+  // detection) so the NDV form matches the credentials page for this type.
+  const preset = useMemo<CredentialPreset>(() => {
+    const merged = mergedCredentialPresets(credentialTypes);
+    const found = merged.find((p) => p.type === credType);
+    if (!found) return fallbackPreset;
+    // A matched preset with no fields (e.g. the "generic" catch-all) must not
+    // hide the fields the node actually declares — keep the node's fields
+    // unless this is an OAuth type whose form is driven by the connect flow.
+    if (found.fields.length === 0 && found.authMethod !== "oauth2" && fields.length > 0) {
+      return { ...found, fields: fallbackPreset.fields };
+    }
+    return found;
+  }, [credentialTypes, credType, fallbackPreset, fields.length]);
+
+  const isOAuth = preset.authMethod === "oauth2";
+
   const [name, setName] = useState(displayLabel);
+  const [scope, setScope] = useState<CredentialScope>(
+    workflowId ? "workflow" : "global",
+  );
+  const [environmentId, setEnvironmentId] = useState("");
+  const [runnerPoolId, setRunnerPoolId] = useState("");
   const [fieldValues, setFieldValues] = useState<Record<string, string>>(() => {
     const init = Object.fromEntries(fields.map((f) => [f, ""]));
     if (isLlm) {
@@ -662,23 +726,65 @@ function CredentialCreateModal({
     }
     return init;
   });
-  const [scope, setScope] = useState<"workflow" | "global">(
-    workflowId ? "workflow" : "global",
-  );
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState("");
+  const [oauthStarted, setOauthStarted] = useState("");
+  const oauthPopupRef = useRef<Window | null>(null);
   const { notify } = useToast();
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalA11y(dialogRef, onClose);
 
-  const refKey = fields.length > 1 ? "*" : (fields[0] ?? credType);
   const variant = isLlm ? getLlmVariant(fieldValues.provider) : null;
   // The set of credential fields actually rendered (provider-aware for LLM).
   const renderedFields = isLlm
     ? visibleCredentialFields(fieldValues.provider, showAdvanced)
-    : fields;
+    : preset.fields.map((f) => f.key);
+
+  // Seed default values for preset fields that arrive after the first render
+  // (e.g. backend-only credential types loaded asynchronously) without
+  // clobbering anything the user has already typed.
+  useEffect(() => {
+    if (isLlm) return;
+    setFieldValues((cur) => {
+      let changed = false;
+      const next = { ...cur };
+      for (const field of preset.fields) {
+        if (!(field.key in next)) {
+          next[field.key] = field.defaultValue ?? "";
+          changed = true;
+        }
+      }
+      return changed ? next : cur;
+    });
+  }, [preset, isLlm]);
+
+  // Auto-select the credential created by the OAuth popup flow.
+  useEffect(() => {
+    if (!isOAuth) return;
+    function handleMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) return;
+      if (!event.data || typeof event.data !== "object") return;
+      const { type, message: msg, credentialId } = event.data as {
+        type?: string;
+        message?: string;
+        credentialId?: string;
+      };
+      if (type === "noodle_oauth_success") {
+        setOauthStarted("");
+        oauthPopupRef.current = null;
+        notify("Credential connected.", "success");
+        if (credentialId) onCreated(credentialId, refKey, null);
+      } else if (type === "noodle_oauth_error") {
+        setOauthStarted("");
+        oauthPopupRef.current = null;
+        setError(msg ?? "OAuth failed.");
+      }
+    }
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [isOAuth, notify, onCreated, refKey]);
 
   function setField(key: string, value: string): void {
     setFieldValues((cur) => ({ ...cur, [key]: value }));
@@ -694,35 +800,80 @@ function CredentialCreateModal({
     setShowAdvanced(false);
   }
 
-  function collectData(): Record<string, string> {
+  function validateScopeInputs(): boolean {
+    if (scope === "environment" && !environmentId.trim()) {
+      setError("Enter Environment ID.");
+      return false;
+    }
+    if (scope === "runner_pool" && !runnerPoolId.trim()) {
+      setError("Enter Runner pool ID.");
+      return false;
+    }
+    return true;
+  }
+
+  /** Build the credential data dict. Returns null and sets an inline error when
+   *  a required field is missing. */
+  function collectData(): Record<string, string> | null {
     const data: Record<string, string> = {};
-    if (isLlm && fieldValues.provider) {
-      data.provider = fieldValues.provider;
+    if (isLlm) {
+      data.provider = fieldValues.provider || "openai";
       if (variant?.apiKey === "required" && !fieldValues.api_key?.trim()) {
-        throw new Error("Enter API key.");
+        setError("Enter API key.");
+        return null;
+      }
+      // Persist only the chosen provider's fields (advanced included if filled).
+      for (const key of visibleCredentialFields(fieldValues.provider, true)) {
+        if (fieldValues[key]?.trim()) data[key] = fieldValues[key].trim();
+      }
+      return data;
+    }
+    for (const field of preset.fields) {
+      const value = fieldValues[field.key] ?? "";
+      if (field.required && !value.trim()) {
+        setError(`Enter ${field.label}.`);
+        return null;
+      }
+      if (value.trim() || field.defaultValue !== undefined) {
+        data[field.key] = value.trim();
       }
     }
-    const fieldsToPersist = isLlm
-      ? visibleCredentialFields(fieldValues.provider, true)
-      : renderedFields;
-    for (const f of fieldsToPersist) {
-      if (fieldValues[f]?.trim()) data[f] = fieldValues[f].trim();
+    if (credType === "google_sheets" && !data.api_key && !data.access_token) {
+      setError("Enter either API key or OAuth access token.");
+      return null;
     }
     return data;
+  }
+
+  function scopeIds() {
+    return {
+      workflow_id: scope === "workflow" ? workflowId : null,
+      environment_id: scope === "environment" ? environmentId.trim() : null,
+      runner_pool_id: scope === "runner_pool" ? runnerPoolId.trim() : null,
+    };
   }
 
   async function handleCreate(): Promise<void> {
     if (!name.trim() || busy) return;
     setBusy(true);
     setError("");
+    const data = collectData();
+    if (data === null) {
+      setBusy(false);
+      return;
+    }
+    if (!validateScopeInputs()) {
+      setBusy(false);
+      return;
+    }
     try {
       const created = await api.createCredential({
         name: name.trim(),
         type: credType,
         scope,
-        workflow_id: scope === "workflow" ? workflowId : null,
+        ...scopeIds(),
         description: displayLabel,
-        data: collectData(),
+        data,
       });
       notify("Credential created.", "success");
       onCreated(created.id, refKey, created);
@@ -736,10 +887,15 @@ function CredentialCreateModal({
     if (testing) return;
     setTesting(true);
     setError("");
+    const data = collectData();
+    if (data === null) {
+      setTesting(false);
+      return;
+    }
     try {
       const result = await api.testCredentialDraft({
         type: credType,
-        data: collectData(),
+        data,
         context: credentialContext ?? {},
       });
       notify(
@@ -752,6 +908,44 @@ function CredentialCreateModal({
       setError(errorMessage(err));
     } finally {
       setTesting(false);
+    }
+  }
+
+  async function startOAuth(): Promise<void> {
+    if (!name.trim() || busy || !isOAuth) return;
+    setBusy(true);
+    setError("");
+    setOauthStarted("");
+    if (!validateScopeInputs()) {
+      setBusy(false);
+      return;
+    }
+    try {
+      const started = await api.startCredentialOAuth({
+        credential_type: credType,
+        name: name.trim(),
+        scope,
+        ...scopeIds(),
+        description: displayLabel,
+        scopes: preset.defaultScopes ?? [],
+      });
+      const popup = window.open(
+        started.authorization_url,
+        "noodle_oauth",
+        "width=600,height=720,resizable=yes,scrollbars=yes",
+      );
+      if (!popup) {
+        window.location.assign(started.authorization_url);
+        return;
+      }
+      oauthPopupRef.current = popup;
+      setOauthStarted(
+        "Complete authorization in the popup window. This page will update automatically.",
+      );
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -810,11 +1004,73 @@ function CredentialCreateModal({
               value={name}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") void handleCreate();
+                if (e.key === "Enter" && !isOAuth) void handleCreate();
+                if (e.key === "Escape") onClose();
               }}
             />
           </label>
 
+          <label className="credential-form-field">
+            <span>Scope</span>
+            <select
+              className="field-input"
+              value={scope}
+              onChange={(e) => setScope(e.target.value as CredentialScope)}
+            >
+              <option value="global">Global</option>
+              <option value="environment">Environment</option>
+              {workflowId && <option value="workflow">This workflow</option>}
+              <option value="runner_pool">Runner pool</option>
+            </select>
+          </label>
+        </div>
+
+        {scope === "environment" && (
+          <label className="credential-form-field cred-quick-scope-id">
+            <span>Environment ID *</span>
+            <input
+              className="field-input"
+              placeholder="Environment ID"
+              value={environmentId}
+              onChange={(e) => setEnvironmentId(e.target.value)}
+            />
+          </label>
+        )}
+        {scope === "runner_pool" && (
+          <label className="credential-form-field cred-quick-scope-id">
+            <span>Runner pool ID *</span>
+            <input
+              className="field-input"
+              placeholder="Runner pool ID"
+              value={runnerPoolId}
+              onChange={(e) => setRunnerPoolId(e.target.value)}
+            />
+          </label>
+        )}
+
+        {isOAuth && (
+          <div className="credential-oauth-panel">
+            <div>
+              <h3>Provider authorization</h3>
+              <p>
+                {preset.defaultScopes?.length
+                  ? preset.defaultScopes.join(" ")
+                  : "OAuth scopes configured by the provider."}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => void startOAuth()}
+              disabled={busy || !name.trim()}
+            >
+              {busy ? "Opening…" : "Connect OAuth"}
+            </button>
+            {oauthStarted && <small>{oauthStarted}</small>}
+          </div>
+        )}
+
+        <div className="credential-form-grid cred-quick-grid">
           {isLlm && (
             <label className="credential-form-field">
               <span>Provider</span>
@@ -832,29 +1088,29 @@ function CredentialCreateModal({
             </label>
           )}
 
-          {renderedFields.map((field) => (
-            <label key={field} className="credential-form-field">
-              <span>
-                {credentialFieldLabel(field)}
-                {isLlm &&
-                field === "api_key" &&
-                variant?.apiKey === "required"
-                  ? " *"
-                  : ""}
-              </span>
-              <input
-                className="field-input"
-                type={isSecretField(field) ? "password" : "text"}
-                placeholder={credentialFieldLabel(field)}
-                value={fieldValues[field] ?? ""}
-                onChange={(e) => setField(field, e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void handleCreate();
-                  if (e.key === "Escape") onClose();
-                }}
-              />
-            </label>
-          ))}
+          {isLlm
+            ? renderedFields.map((key) => {
+                const def = LLM_FIELD_DEFS[key];
+                if (!def) return null;
+                const required =
+                  key === "api_key" && variant?.apiKey === "required";
+                return (
+                  <CredentialFieldInput
+                    key={key}
+                    field={{ ...def, required }}
+                    value={fieldValues[key] ?? ""}
+                    onChange={(next) => setField(key, next)}
+                  />
+                );
+              })
+            : preset.fields.map((field) => (
+                <CredentialFieldInput
+                  key={field.key}
+                  field={field}
+                  value={fieldValues[field.key] ?? ""}
+                  onChange={(next) => setField(field.key, next)}
+                />
+              ))}
         </div>
 
         {isLlm &&
@@ -869,33 +1125,6 @@ function CredentialCreateModal({
               {showAdvanced ? "Hide advanced" : "Advanced options"}
             </button>
           )}
-
-        {workflowId && (
-          <div className="cred-quick-scope" role="radiogroup" aria-label="Credential scope">
-            <label className={scope === "workflow" ? "is-selected" : ""}>
-              <input
-                type="radio"
-                checked={scope === "workflow"}
-                onChange={() => setScope("workflow")}
-              />
-              <span>
-                <strong>This workflow</strong>
-                <small>Only available inside the current workflow.</small>
-              </span>
-            </label>
-            <label className={scope === "global" ? "is-selected" : ""}>
-              <input
-                type="radio"
-                checked={scope === "global"}
-                onChange={() => setScope("global")}
-              />
-              <span>
-                <strong>Global</strong>
-                <small>Reusable from every workflow.</small>
-              </span>
-            </label>
-          </div>
-        )}
 
         <div className="credential-security-note">
           Secret values are encrypted at rest and are not returned by the API
@@ -912,21 +1141,23 @@ function CredentialCreateModal({
           >
             Cancel
           </button>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            disabled={testing}
-            onClick={() => void handleTest()}
-          >
-            {testing ? "Testing…" : "Test connection"}
-          </button>
+          {!isOAuth && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              disabled={testing}
+              onClick={() => void handleTest()}
+            >
+              {testing ? "Testing…" : "Test connection"}
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-primary btn-sm"
             disabled={busy || !name.trim()}
             onClick={() => void handleCreate()}
           >
-            {busy ? "Creating…" : "Create credential"}
+            {busy ? "Creating…" : isOAuth ? "Save manual" : "Create credential"}
           </button>
         </div>
       </div>
@@ -1287,10 +1518,14 @@ function CredentialParamField({
           credentialContext={credentialContext}
           onClose={() => setModalOpen(false)}
           onCreated={(id, key, created) => {
-            setCredentials((items) => [
-              created,
-              ...items.filter((item) => item.id !== created.id),
-            ]);
+            // Manual create returns the new credential; OAuth connect returns
+            // null (only the id), so we rely on load() to refetch the list.
+            if (created) {
+              setCredentials((items) => [
+                created,
+                ...items.filter((item) => item.id !== created.id),
+              ]);
+            }
             onChange(makeCredentialRef(id, key));
             setModalOpen(false);
             load();
@@ -1320,6 +1555,7 @@ function HighlightedTextarea({
   taRef: taRefProp,
   language,
   lineNumbers = false,
+  lint = false,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -1336,11 +1572,149 @@ function HighlightedTextarea({
   language?: "python";
   /** Render a scroll-synced line-number gutter (code mode). */
   lineNumbers?: boolean;
+  /** Debounced ruff lint with gutter markers + a diagnostics strip (code). */
+  lint?: boolean;
 }) {
   const taRefInternal = useRef<HTMLTextAreaElement>(null);
   const taRef = taRefProp ?? taRefInternal;
   const mirrorRef = useRef<HTMLDivElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
+
+  const codeMode = language === "python";
+  // Caret offset + scroll, tracked so the active-line band and the autocomplete
+  // popover can be positioned without re-measuring the DOM each render.
+  const [caret, setCaret] = useState(0);
+  const [scroll, setScroll] = useState({ top: 0, left: 0 });
+  // Editor font metrics, measured once: line-height/padding from computed style,
+  // char width from a canvas (monospace ⇒ uniform advance).
+  const [metrics, setMetrics] = useState<{
+    lh: number;
+    pt: number;
+    pl: number;
+    cw: number;
+  } | null>(null);
+  // A2 autocomplete state.
+  const [acItems, setAcItems] = useState<string[]>([]);
+  const [acSel, setAcSel] = useState(0);
+  const [acOpen, setAcOpen] = useState(false);
+  // A3 lint diagnostics.
+  const [diags, setDiags] = useState<LintDiagnostic[]>([]);
+
+  useEffect(() => {
+    const ta = taRef.current;
+    if (!ta || !codeMode) return;
+    const cs = getComputedStyle(ta);
+    let cw = 7.8;
+    try {
+      const ctx = document.createElement("canvas").getContext("2d");
+      if (ctx) {
+        ctx.font = `${cs.fontSize} ${cs.fontFamily}`;
+        cw = ctx.measureText("M").width || cw;
+      }
+    } catch {
+      /* canvas unavailable — fall back to the estimate */
+    }
+    setMetrics({
+      lh: parseFloat(cs.lineHeight) || 19.5,
+      pt: parseFloat(cs.paddingTop) || 10,
+      pl: parseFloat(cs.paddingLeft) || 12,
+      cw,
+    });
+    // taRef is a stable ref; codeMode is the only meaningful trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codeMode]);
+
+  // A3: debounced lint via ruff (backend). Empty/non-code editors stay quiet.
+  useEffect(() => {
+    if (!lint || !codeMode || !value.trim()) {
+      setDiags([]);
+      return;
+    }
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      api
+        .lintCode(value)
+        .then((res) => {
+          if (!cancelled) setDiags(res.diagnostics);
+        })
+        .catch(() => {
+          /* lint is best-effort — never block editing */
+        });
+    }, 500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [value, lint, codeMode]);
+
+  const caretLine = codeMode
+    ? value.slice(0, caret).split("\n").length - 1
+    : 0;
+  const caretCol = codeMode
+    ? caret - (value.lastIndexOf("\n", caret - 1) + 1)
+    : 0;
+
+  // Worst severity per 1-based line, for gutter markers.
+  const diagByLine = new Map<number, LintDiagnostic>();
+  for (const d of diags) {
+    const ex = diagByLine.get(d.line);
+    if (!ex || (ex.severity !== "error" && d.severity === "error")) {
+      diagByLine.set(d.line, d);
+    }
+  }
+
+  const updateCaret = () => {
+    const ta = taRef.current;
+    if (ta) setCaret(ta.selectionStart ?? 0);
+  };
+
+  const refreshAc = (pos: number, val: string) => {
+    if (!codeMode) return;
+    const prefix = getIdentPrefix(val, pos);
+    if (prefix.length < 1) {
+      setAcOpen(false);
+      setAcItems([]);
+      return;
+    }
+    const items = computeCodeSuggestions(val, pos);
+    setAcItems(items);
+    setAcSel(0);
+    setAcOpen(items.length > 0);
+  };
+
+  const acceptAc = (word: string) => {
+    const ta = taRef.current;
+    const pos = ta?.selectionStart ?? caret;
+    const prefix = getIdentPrefix(value, pos);
+    const start = pos - prefix.length;
+    const next = value.slice(0, start) + word + value.slice(pos);
+    onChange(next);
+    setAcOpen(false);
+    const c = start + word.length;
+    requestAnimationFrame(() => {
+      const el = taRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(c, c);
+        setCaret(c);
+      }
+    });
+  };
+
+  const jumpToLine = (line: number) => {
+    const ta = taRef.current;
+    if (!ta || !metrics) return;
+    const lines = value.split("\n");
+    let pos = 0;
+    for (let i = 0; i < line - 1 && i < lines.length; i++) {
+      pos += lines[i].length + 1;
+    }
+    ta.focus();
+    ta.setSelectionRange(pos, pos);
+    setCaret(pos);
+    ta.scrollTop = Math.max(0, (line - 1) * metrics.lh - metrics.lh * 3);
+    syncScroll();
+  };
 
   const segments = (() => {
     const out: Array<{ text: string; expr: boolean }> = [];
@@ -1400,6 +1774,7 @@ function HighlightedTextarea({
     if (gutterRef.current && ta) {
       gutterRef.current.scrollTop = ta.scrollTop;
     }
+    if (ta && codeMode) setScroll({ top: ta.scrollTop, left: ta.scrollLeft });
   };
 
   // Tab indents instead of leaving the field; Shift+Tab dedents two spaces.
@@ -1441,12 +1816,24 @@ function HighlightedTextarea({
     .join(" ");
 
   return (
+    <>
     <div className={wrapClass}>
       {lineNumbers && (
         <div ref={gutterRef} className="hl-ta-gutter" aria-hidden>
-          {Array.from({ length: lineCount }, (_, i) => (
-            <span key={i}>{i + 1}</span>
-          ))}
+          {Array.from({ length: lineCount }, (_, i) => {
+            const d = diagByLine.get(i + 1);
+            const cls = [
+              codeMode && i === caretLine ? "is-active" : "",
+              d ? `has-${d.severity}` : "",
+            ]
+              .filter(Boolean)
+              .join(" ");
+            return (
+              <span key={i} className={cls || undefined} title={d?.message}>
+                {i + 1}
+              </span>
+            );
+          })}
         </div>
       )}
       <div ref={mirrorRef} className="hl-ta-mirror" aria-hidden>
@@ -1456,6 +1843,18 @@ function HighlightedTextarea({
         {/* Non-breaking space keeps empty lines/empty content rendering. */}
         {value === "" && " "}
       </div>
+      {/* A1: active-line band — sits above the mirror (so its text shows
+          through the translucent fill) and below the transparent textarea. */}
+      {codeMode && metrics && (
+        <div
+          className="hl-ta-activeline"
+          aria-hidden
+          style={{
+            top: metrics.pt + caretLine * metrics.lh - scroll.top,
+            height: metrics.lh,
+          }}
+        />
+      )}
       <textarea
         ref={taRef}
         className="hl-ta-input"
@@ -1464,16 +1863,91 @@ function HighlightedTextarea({
         placeholder={placeholder}
         spellCheck={spellCheck}
         autoFocus={autoFocus}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          onChange(e.target.value);
+          const pos = e.target.selectionStart ?? e.target.value.length;
+          setCaret(pos);
+          refreshAc(pos, e.target.value);
+        }}
+        onSelect={updateCaret}
         onScroll={syncScroll}
+        onBlur={() => window.setTimeout(() => setAcOpen(false), 120)}
         onKeyDown={(e) => {
+          if (codeMode && acOpen && acItems.length > 0) {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setAcSel((s) => (s + 1) % acItems.length);
+              return;
+            }
+            if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setAcSel((s) => (s - 1 + acItems.length) % acItems.length);
+              return;
+            }
+            if (e.key === "Enter" || e.key === "Tab") {
+              e.preventDefault();
+              acceptAc(acItems[acSel]);
+              return;
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              setAcOpen(false);
+              return;
+            }
+          }
           if (handleTabIndent(e)) return;
           onKeyDown?.(e);
         }}
         onDrop={onDrop}
         onDragOver={onDragOver}
       />
+      {/* A2: identifier autocomplete, anchored to the caret. */}
+      {codeMode && acOpen && acItems.length > 0 && metrics && (
+        <ul
+          className="hl-ta-ac"
+          role="listbox"
+          style={{
+            top: metrics.pt + (caretLine + 1) * metrics.lh - scroll.top + 2,
+            left: Math.max(4, metrics.pl + caretCol * metrics.cw - scroll.left),
+          }}
+        >
+          {acItems.map((s, i) => (
+            <li
+              key={s}
+              role="option"
+              aria-selected={i === acSel}
+              className={`hl-ta-ac-item${i === acSel ? " sel" : ""}`}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                acceptAc(s);
+              }}
+              onMouseEnter={() => setAcSel(i)}
+            >
+              {s}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
+      {/* A3: diagnostics strip — click a row to jump to the offending line. */}
+      {lint && codeMode && diags.length > 0 && (
+        <ul className="hl-ta-diags">
+          {diags.map((d, i) => (
+            <li
+              key={`${d.line}:${d.column}:${i}`}
+              className={`hl-ta-diag is-${d.severity}`}
+              onClick={() => jumpToLine(d.line)}
+            >
+              <span className="hl-ta-diag-loc">
+                {d.line}:{d.column}
+              </span>
+              {d.code && <span className="hl-ta-diag-code">{d.code}</span>}
+              <span className="hl-ta-diag-msg">{d.message}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
   );
 }
 
@@ -2355,6 +2829,199 @@ function FileUploadField({
   );
 }
 
+/**
+ * Resolves a field's `{{ }}` template against the live expression context and
+ * shows the *fully substituted* result inline (e.g. the complete URL with the
+ * variable filled in), so users don't have to open the expand modal to check.
+ */
+function InlineExprPreview({
+  value,
+  ctx,
+}: {
+  value: string;
+  ctx?: ExprContext;
+}) {
+  const [state, setState] = useState<{
+    result?: unknown;
+    error: string | null;
+    loading: boolean;
+  }>({ result: undefined, error: null, loading: false });
+
+  const hasExpr = EXPR_RE.test(value);
+  const hasData =
+    !!ctx &&
+    (ctx.json !== undefined ||
+      Object.keys(ctx.nodes ?? {}).length > 0 ||
+      Object.keys(ctx.inputs ?? {}).length > 0);
+
+  useEffect(() => {
+    if (!hasExpr || !hasData || !ctx) {
+      setState({ result: undefined, error: null, loading: false });
+      return;
+    }
+    let cancelled = false;
+    setState((s) => ({ ...s, loading: true }));
+    const handle = window.setTimeout(() => {
+      api
+        .previewExpression({
+          value,
+          json: ctx.json,
+          inputs: ctx.inputs,
+          nodes: ctx.nodes,
+        })
+        .then((res) => {
+          if (!cancelled)
+            setState({ result: res.result, error: res.error, loading: false });
+        })
+        .catch((err) => {
+          if (!cancelled)
+            setState({ result: undefined, error: String(err), loading: false });
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [value, ctx, hasExpr, hasData]);
+
+  if (!hasExpr || !hasData) return null;
+  if (state.loading) {
+    return <div className="expr-inline-preview is-loading">→ resolving…</div>;
+  }
+  if (state.error) {
+    return (
+      <div className="expr-inline-preview is-error" title={state.error}>
+        <span className="eip-arrow">→</span>
+        <span className="eip-val">⚠ {state.error}</span>
+      </div>
+    );
+  }
+  const text = formatResultText(state.result);
+  if (!text) return null;
+  return (
+    <div className="expr-inline-preview" title={text}>
+      <span className="eip-arrow">→</span>
+      <span className="eip-val">{text}</span>
+    </div>
+  );
+}
+
+// Single-line string input with expression autocomplete. When the caret sits
+// just after a `$…` token, it offers a dropdown of completions ($json keys,
+// upstream node ids, $env/$run helpers) driven by computeSuggestions.
+function ExprAutocompleteInput({
+  value,
+  onChange,
+  placeholder,
+  className,
+  ctx,
+  dropHandlers,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  className?: string;
+  ctx?: ExprContext;
+  dropHandlers: {
+    onDragOver: React.DragEventHandler<HTMLInputElement>;
+    onDrop: React.DragEventHandler<HTMLInputElement>;
+  };
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [sel, setSel] = useState(0);
+  const [open, setOpen] = useState(false);
+
+  const refresh = (cursorPos: number, val: string) => {
+    const token = getTokenBeforeCursor(val, cursorPos);
+    if (!token || !token.startsWith("$")) {
+      setOpen(false);
+      setSuggestions([]);
+      return;
+    }
+    const next = computeSuggestions(val, cursorPos, ctx).slice(0, 8);
+    setSuggestions(next);
+    setSel(0);
+    setOpen(next.length > 0);
+  };
+
+  const accept = (suggestion: string) => {
+    const input = inputRef.current;
+    const cursorPos = input?.selectionStart ?? value.length;
+    const token = getTokenBeforeCursor(value, cursorPos);
+    const start = cursorPos - token.length;
+    const next = value.slice(0, start) + suggestion + value.slice(cursorPos);
+    onChange(next);
+    setOpen(false);
+    const caret = start + suggestion.length;
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(caret, caret);
+      }
+    });
+  };
+
+  return (
+    <div className="expr-ac-wrap">
+      <input
+        ref={inputRef}
+        className={className}
+        type="text"
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          refresh(e.target.selectionStart ?? e.target.value.length, e.target.value);
+        }}
+        onKeyDown={(e) => {
+          if (!open || suggestions.length === 0) return;
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setSel((s) => (s + 1) % suggestions.length);
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setSel((s) => (s - 1 + suggestions.length) % suggestions.length);
+          } else if (e.key === "Enter" || e.key === "Tab") {
+            e.preventDefault();
+            accept(suggestions[sel]);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            setOpen(false);
+          }
+        }}
+        onKeyUp={(e) => {
+          if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) {
+            refresh(e.currentTarget.selectionStart ?? value.length, value);
+          }
+        }}
+        onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+        {...dropHandlers}
+      />
+      {open && suggestions.length > 0 && (
+        <ul className="expr-ac" role="listbox">
+          {suggestions.map((s, i) => (
+            <li
+              key={s}
+              role="option"
+              aria-selected={i === sel}
+              className={`expr-ac-item${i === sel ? " sel" : ""}`}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                accept(s);
+              }}
+              onMouseEnter={() => setSel(i)}
+            >
+              {s}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function ParamField({
   spec,
   value,
@@ -2527,6 +3194,7 @@ export function ParamField({
               onClose={() => setExpanderOpen(false)}
             />
           )}
+          {exprContext && <InlineExprPreview value={current} ctx={exprContext} />}
         </div>
       );
     }
@@ -2544,13 +3212,13 @@ export function ParamField({
     return (
       <div className={`field-wrap${isExpr ? " field-wrap-expr" : ""}`}>
         <div className="field-input-row">
-          <input
+          <ExprAutocompleteInput
             className={`field-input${isExpr ? " field-input-expr" : ""}`}
-            type="text"
             placeholder={spec.placeholder}
             value={current}
-            onChange={(e) => onChange(e.target.value)}
-            {...drop}
+            onChange={onChange}
+            ctx={exprContext}
+            dropHandlers={drop}
           />
           <button
             type="button"
@@ -2562,6 +3230,7 @@ export function ParamField({
             ƒx
           </button>
         </div>
+        {exprContext && <InlineExprPreview value={current} ctx={exprContext} />}
         {!isCredField && (
           <div className="expr-tokens-hint">
             <span className="expr-tokens-label">tokens:</span>
@@ -2956,11 +3625,14 @@ function CodeEditorModal({
                 the <code>@node(...)</code> decorator is stripped on save
               </span>
             </div>
-            <textarea
-              className="field-input field-code code-modal-editor"
-              value={draft}
+            <HighlightedTextarea
+              className="code-modal-editor"
+              language="python"
+              lineNumbers
+              lint
               spellCheck={false}
-              onChange={(e) => onChange(e.target.value)}
+              value={draft}
+              onChange={onChange}
               onDrop={drop.onDrop}
               onDragOver={drop.onDragOver}
             />
@@ -3158,9 +3830,21 @@ export function NodeCodePanel({
     setSaving(true);
     try {
       const name = (nameOverride ?? newName).trim() || `${manifest.name} (custom)`;
+      // Format on save (best-effort): tidy the Python with ruff before
+      // persisting. Never blocks the save — falls through on any error.
+      let sourceToSave = draft;
+      try {
+        const fmt = await api.formatCode(draft);
+        if (!fmt.error) {
+          sourceToSave = fmt.code;
+          if (fmt.changed) setDraft(fmt.code);
+        }
+      } catch {
+        /* formatter unavailable — save as typed */
+      }
       // Code modules must be plain functions — strip any @node decorator the
       // user is viewing/editing before persisting.
-      const contents = stripLeadingDecorators(draft);
+      const contents = stripLeadingDecorators(sourceToSave);
       let moduleId: string;
       if (mode === "replace" && info.editable && info.module_id) {
         // Editable custom node → update its module in place.
@@ -3218,13 +3902,17 @@ export function NodeCodePanel({
               : "Built-in node source. Edit it to create your own customizable copy."}
           </p>
           <div className="node-code-editor-wrap">
-            <textarea
-              className="field-input field-code node-code-editor"
-              value={draft}
-              spellCheck={false}
+            <HighlightedTextarea
+              className="node-code-editor"
+              language="python"
+              lineNumbers
+              lint
               rows={18}
-              onChange={(e) => setDraft(e.target.value)}
-              {...exprDropHandlers(draft, setDraft)}
+              spellCheck={false}
+              value={draft}
+              onChange={setDraft}
+              onDrop={exprDropHandlers(draft, setDraft).onDrop}
+              onDragOver={exprDropHandlers(draft, setDraft).onDragOver}
             />
             <button
               type="button"
@@ -3243,14 +3931,38 @@ export function NodeCodePanel({
             </p>
           )}
           {!askSave ? (
-            <button
-              className="btn btn-sm"
-              style={{ marginTop: 8 }}
-              disabled={saving}
-              onClick={() => setAskSave(true)}
-            >
-              Save…
-            </button>
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button
+                className="btn btn-sm"
+                disabled={saving}
+                onClick={() => setAskSave(true)}
+              >
+                Save…
+              </button>
+              <button
+                className="btn btn-sm btn-ghost"
+                disabled={saving}
+                title="Format with ruff"
+                onClick={async () => {
+                  try {
+                    const fmt = await api.formatCode(draft);
+                    if (fmt.error) {
+                      toast.notify(`Format: ${fmt.error}`, "error");
+                    } else {
+                      if (fmt.changed) setDraft(fmt.code);
+                      toast.notify(
+                        fmt.changed ? "Formatted." : "Already formatted.",
+                        "success",
+                      );
+                    }
+                  } catch (e) {
+                    toast.notify(`Format failed: ${e}`, "error");
+                  }
+                }}
+              >
+                Format
+              </button>
+            </div>
           ) : (
             <div className="node-code-save">
               <div className="field-label">

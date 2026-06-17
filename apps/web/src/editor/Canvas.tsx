@@ -4,6 +4,7 @@ import {
   MiniMap,
   ReactFlow,
   useReactFlow,
+  useStore,
 } from "@xyflow/react";
 import {
   ArrowClockwise,
@@ -34,7 +35,8 @@ import { useToast } from "../ToastProvider";
 import { LoopFrame } from "./LoopFrame";
 import { LOOP_FRAME_ID_PREFIX, computeLoopFrames } from "./loopFrames";
 import { MapGroupNode } from "./MapGroupNode";
-import { MetanodePreview } from "./MetanodePreview";
+import { MetaBar } from "./MetaBar";
+import { MetanodeBreadcrumb } from "./MetanodeBreadcrumb";
 import { MiniMapNoodleNode } from "./MiniMapNoodleNode";
 import { NodeCard } from "./NodeCard";
 import { NodeGroup } from "./NodeGroup";
@@ -50,6 +52,7 @@ const nodeTypes = {
   group: NodeGroup,
   mapGroup: MapGroupNode,
   loopFrame: LoopFrame,
+  metaBar: MetaBar,
 };
 const edgeTypes = { default: NoodleEdge };
 const CANVAS_QUICK_ADD_LIMIT = 8;
@@ -214,6 +217,7 @@ function DatasetConnectionHealth() {
 
 function CanvasControls() {
   const { fitView, zoomIn, zoomOut } = useReactFlow();
+  const zoom = useStore((s) => s.transform[2]);
   const { notify } = useToast();
   const autoLayout = useEditor((s) => s.autoLayout);
   const addStickyNote = useEditor((s) => s.addStickyNote);
@@ -301,6 +305,7 @@ function CanvasControls() {
         <button type="button" title="Zoom out" aria-label="Zoom out" onClick={() => void zoomOut({ duration: 160 })}>
           <Minus size={14} weight="bold" />
         </button>
+        <span className="canvas-zoom-label" title={`Zoom: ${Math.round(zoom * 100)}%`}>{Math.round(zoom * 100)}%</span>
         <button type="button" title="Zoom in" aria-label="Zoom in" onClick={() => void zoomIn({ duration: 160 })}>
           <Plus size={14} weight="bold" />
         </button>
@@ -342,10 +347,10 @@ function CanvasControls() {
           <ClipboardText size={14} weight="bold" />
         </button>
         <span className="canvas-control-sep" />
-        <button type="button" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!canUndo} onClick={() => undo()}>
+        <button type="button" title={canUndo ? "Undo (Ctrl+Z)" : "No undo history"} aria-label="Undo" disabled={!canUndo} onClick={() => undo()}>
           <ArrowCounterClockwise size={14} weight="bold" />
         </button>
-        <button type="button" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled={!canRedo} onClick={() => redo()}>
+        <button type="button" title={canRedo ? "Redo (Ctrl+Shift+Z)" : "No redo history"} aria-label="Redo" disabled={!canRedo} onClick={() => redo()}>
           <ArrowClockwise size={14} weight="bold" />
         </button>
         <button
@@ -439,12 +444,52 @@ export function Canvas() {
 
   interface CtxMenu { x: number; y: number; nodeId?: string }
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
-  const [metaPreviewId, setMetaPreviewId] = useState<string | null>(null);
+  const enterMetanode = useEditor((s) => s.enterMetanode);
+  const drillDepth = useEditor((s) => s.drillStack.length);
   const [quickAdd, setQuickAdd] = useState<CanvasQuickAddState | null>(null);
   const [quickAddActiveIndex, setQuickAddActiveIndex] = useState(0);
   const [ctxActiveIndex, setCtxActiveIndex] = useState(0);
   const ctxMenuRef = useRef<HTMLDivElement | null>(null);
   const quickAddInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Left-drag on empty canvas box-selects (middle/right-drag pans, dragging a
+  // node moves it). Holding Space switches to the hand/pan tool: left-drag then
+  // pans, and nodes ignore the pointer so it pans *over* a dense cluster too.
+  const [spaceDown, setSpaceDown] = useState(false);
+
+  useEffect(() => {
+    // Don't hijack Space from text entry or any control it would activate, so
+    // Space-to-click on buttons keeps working when the canvas isn't focused.
+    const ownsKey = (el: EventTarget | null): boolean => {
+      const node = el as HTMLElement | null;
+      if (!node) return false;
+      const tag = node.tagName;
+      return (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        tag === "BUTTON" ||
+        tag === "A" ||
+        node.isContentEditable ||
+        node.getAttribute?.("role") === "button"
+      );
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "Space" && !e.repeat && !ownsKey(e.target)) {
+        e.preventDefault();
+        setSpaceDown(true);
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") setSpaceDown(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
 
   const onDrop = useCallback(
     (event: DragEvent) => {
@@ -623,6 +668,11 @@ export function Canvas() {
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
         return;
       }
+      if (e.key === "Escape" && useEditor.getState().drillStack.length > 0) {
+        e.preventDefault();
+        useEditor.getState().exitMetanode();
+        return;
+      }
       const meta = e.ctrlKey || e.metaKey;
       if (!meta) return;
       const key = e.key.toLowerCase();
@@ -649,6 +699,15 @@ export function Canvas() {
         if (result.nodeCount > 0) {
           e.preventDefault();
           notify(`${result.nodeCount} node${result.nodeCount === 1 ? "" : "s"} pasted.`, "success");
+        }
+      } else if (key === "a" && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        useEditor.getState().selectAll();
+      } else if (key === "d" && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        const count = useEditor.getState().duplicateSelection();
+        if (count > 0) {
+          notify(`Duplicated ${count} node${count === 1 ? "" : "s"}.`, "success");
         }
       }
     }
@@ -739,9 +798,14 @@ export function Canvas() {
   const handleNodesChange = useCallback(
     (changes: Parameters<typeof onNodesChange>[0]) =>
       onNodesChange(
-        changes.filter(
-          (c) => !("id" in c && typeof c.id === "string" && c.id.startsWith(LOOP_FRAME_ID_PREFIX)),
-        ),
+        changes.filter((c) => {
+          if (!("id" in c) || typeof c.id !== "string") return true;
+          if (c.id.startsWith(LOOP_FRAME_ID_PREFIX)) return false;
+          if (c.id === "__meta_input_bar__" || c.id === "__meta_output_bar__") {
+            return c.type !== "remove" && c.type !== "position";
+          }
+          return true;
+        }),
       ),
     [onNodesChange],
   );
@@ -961,7 +1025,7 @@ export function Canvas() {
 
   return (
     <div
-      className="canvas"
+      className={`canvas${spaceDown ? " canvas--pan" : ""}`}
       onDrop={onDrop}
       onDragOver={onDragOver}
       onClick={() => setCtxMenu(null)}
@@ -982,7 +1046,8 @@ export function Canvas() {
         onNodeDoubleClick={(_, node) => {
           const sn = nodes.find((n) => n.id === node.id);
           if (sn?.data?.manifest?.id === "meta_node") {
-            setMetaPreviewId(node.id);
+            enterMetanode(node.id);
+            window.setTimeout(() => void fitView({ padding: 0.22, duration: 220 }), 0);
             return;
           }
           if (node.type === "noodle" || node.type === "mapGroup") openNdv(node.id);
@@ -990,14 +1055,15 @@ export function Canvas() {
         onPaneClick={() => { setSelected(null); setCtxMenu(null); setQuickAdd(null); }}
         onNodeContextMenu={onNodeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
-        selectionOnDrag
-        panOnDrag={[1, 2]}
+        selectionOnDrag={!spaceDown}
+        panOnDrag={spaceDown ? [0, 1, 2] : [1, 2]}
         colorMode="dark"
         fitView
         minZoom={0.2}
         maxZoom={2}
         defaultEdgeOptions={{ type: "default" }}
       >
+        <MetanodeBreadcrumb />
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} />
         <MiniMap
           pannable
@@ -1017,7 +1083,7 @@ export function Canvas() {
             onDismiss={() => setBlockedConnection(null)}
           />
         )}
-        {nodes.length === 0 && (
+        {nodes.length === 0 && drillDepth === 0 && (
           <div className="canvas-empty-onboarding">
             <div>
               <h2>Start a workflow</h2>
@@ -1035,9 +1101,19 @@ export function Canvas() {
                 </button>
               ))}
             </div>
+            <p className="canvas-empty-hints">
+              Press <kbd>Tab</kbd> to quickly add a node · <kbd>Shift+P</kbd> toggle node palette · <kbd>Ctrl+K</kbd> command palette
+            </p>
           </div>
         )}
       </ReactFlow>
+
+      {(() => {
+        const batchCount = nodes.filter((n) => n.selected).length;
+        return batchCount >= 2 ? (
+          <div className="canvas-batch-count">{batchCount} selected</div>
+        ) : null;
+      })()}
 
       {ctxMenu && (
         <div
@@ -1130,21 +1206,6 @@ export function Canvas() {
         </div>
       )}
 
-      {metaPreviewId && (() => {
-        const meta = nodes.find((n) => n.id === metaPreviewId);
-        if (!meta) return null;
-        return (
-          <MetanodePreview
-            metaNode={meta}
-            onClose={() => setMetaPreviewId(null)}
-            onUngroup={() => {
-              ungroupMetanode(metaPreviewId);
-              setMetaPreviewId(null);
-              notify("Metanode ungrouped.", "success");
-            }}
-          />
-        );
-      })()}
     </div>
   );
 }

@@ -19,6 +19,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
   const nameSavedTimerRef = useRef<number | null>(null);
   const toggleDisabled = useEditor((s) => s.toggleDisabled);
   const deleteNode = useEditor((s) => s.deleteNode);
+  const runStatus = useEditor((s) => s.runStatus[nodeId]);
   const isTrigger = isTriggerManifest(node?.data.manifest);
   // Only allow running a node individually when it is wired to a trigger.
   const hasTriggerUpstream = useEditor((s) => {
@@ -88,7 +89,15 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
   return (
     <div className="modal-overlay ndv-overlay" onClick={closeNdv}>
       <div
-        className="ndv-modal"
+        className={`ndv-modal${
+          runStatus === "success"
+            ? " ndv-edge-ok"
+            : runStatus === "error"
+              ? " ndv-edge-error"
+              : runStatus === "running"
+                ? " ndv-edge-running"
+                : ""
+        }`}
         ref={modalRef}
         role="dialog"
         aria-modal="true"
@@ -131,7 +140,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
                 </h3>
               )}
               <div className="ndv-meta">
-                <span className="mono-tag" style={{ color }}>
+                <span className="mono-tag mono-tag-cat" style={{ color }}>
                   {manifest.category}
                 </span>
                 <span className="mono-tag">{manifest.id}</span>
@@ -169,6 +178,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
                 ↻ Run fresh
               </button>
             )}
+            <span className="ndv-action-sep" aria-hidden="true" />
             <button
               className="btn btn-sm"
               onClick={() => toggleDisabled(currentNode.id)}

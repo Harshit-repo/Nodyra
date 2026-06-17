@@ -40,6 +40,11 @@ router = APIRouter(prefix="/workflows", tags=["workflows"])
 
 EMPTY_GRAPH: dict = {"nodes": [], "edges": []}
 
+# Structural node types the engine resolves directly (inlined/expanded at plan
+# time) rather than dispatching through a registry manifest. They never appear
+# in ``node_registry.manifests()`` but are valid in a persisted graph.
+STRUCTURAL_NODE_TYPES: frozenset[str] = frozenset({"meta_node"})
+
 
 def _validate_node_types(graph: dict | WorkflowGraph) -> None:
     """422 with a list of unknown node types — guards against typos that
@@ -47,14 +52,21 @@ def _validate_node_types(graph: dict | WorkflowGraph) -> None:
 
     Skips user-defined code-module types (``user:{id}:{fn}``) since those
     are registered dynamically when the workflow runs, not in the global
-    registry visible here.
+    registry visible here. Also skips structural types that the engine
+    handles directly rather than via a registry manifest (e.g. ``meta_node``,
+    which is inlined/expanded at plan time).
     """
     nodes = graph.nodes if isinstance(graph, WorkflowGraph) else graph.get("nodes", [])
     known = {m.id for m in node_registry.manifests()}
     unknown: set[str] = set()
     for n in nodes:
         t = n.type if hasattr(n, "type") else n.get("type")
-        if not t or t in known or t.startswith("user:"):
+        if (
+            not t
+            or t in known
+            or t in STRUCTURAL_NODE_TYPES
+            or t.startswith("user:")
+        ):
             continue
         unknown.add(t)
     if unknown:

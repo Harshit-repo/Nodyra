@@ -26,4 +26,30 @@
   --color-border: rgba(255, 255, 255, 0.1);
   --color-surface-alt: #1e1e1e;
   --color-text: #d4d4d4;
+
+  /* Expression field colors — theme-aware */
+  --expr-bg: rgba(124, 58, 237, 0.07);
+  --expr-border: rgba(139, 92, 246, 0.4);
+  --expr-border-focus: rgba(139, 92, 246, 0.85);
+  --expr-glow: rgba(139, 92, 246, 0.18);
+  --expr-text: #c4b5fd;
+
+  /* Run status colors — theme-aware */
+  --color-run-success: #8fd06f;
+  --color-run-error: #f0747a;
+  --color-run-running: var(--accent);
+  --color-run-skipped: var(--ink-3);
+  --color-run-cancelled: #b59bff;
+  --color-run-bg-success: rgba(87, 201, 138, 0.12);
+  --color-run-bg-error: rgba(240, 116, 122, 0.12);
+  --color-run-border-success: rgba(87, 201, 138, 0.6);
+  --color-run-border-error: rgba(240, 116, 122, 0.7);
+
+  /* Badge colors */
+  --badge-accent: #818cf8;
+  --badge-loop: #b45309;
+  --badge-draft: #e0a83e;
+
+  /* Webhook */
+  --webhook-glow: rgba(102, 178, 255, 0.12);
 }

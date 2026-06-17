@@ -516,3 +516,64 @@ async def test_preview_skips_kwargs_and_classes(client: AsyncClient) -> None:
     assert preview["registered"] == ["ok"]
     skipped_names = {s["name"] for s in preview["skipped"]}
     assert "variadic" in skipped_names
+
+
+async def test_format_endpoint_reformats_valid_code(client: AsyncClient) -> None:
+    resp = await client.post("/code-modules/format", json={"code": "x=1\ny =  2\n"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["error"] is None
+    assert body["changed"] is True
+    assert body["code"] == "x = 1\ny = 2\n"
+
+
+async def test_format_endpoint_leaves_syntax_errors_untouched(
+    client: AsyncClient,
+) -> None:
+    src = "def f(:\n    pass\n"
+    resp = await client.post("/code-modules/format", json={"code": src})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["code"] == src
+    assert body["changed"] is False
+    assert body["error"] is not None
+
+
+async def test_lint_endpoint_flags_unused_import_as_warning(
+    client: AsyncClient,
+) -> None:
+    resp = await client.post("/code-modules/lint", json={"code": "import os\nx = 1\n"})
+    assert resp.status_code == 200
+    body = resp.json()
+    codes = {d["code"] for d in body["diagnostics"]}
+    assert "F401" in codes
+    unused = next(d for d in body["diagnostics"] if d["code"] == "F401")
+    assert unused["severity"] == "warning"
+    assert unused["line"] == 1
+
+
+async def test_lint_endpoint_reports_syntax_error_as_error(
+    client: AsyncClient,
+) -> None:
+    resp = await client.post("/code-modules/lint", json={"code": "def f(:\n    pass\n"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert any(d["severity"] == "error" for d in body["diagnostics"])
+
+
+async def test_lint_endpoint_clean_code_has_no_diagnostics(
+    client: AsyncClient,
+) -> None:
+    resp = await client.post(
+        "/code-modules/lint", json={"code": "def f():\n    return 1\n"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["diagnostics"] == []
+
+
+async def test_lint_endpoint_empty_input(client: AsyncClient) -> None:
+    resp = await client.post("/code-modules/lint", json={"code": "   "})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["diagnostics"] == []
+    assert body["linter"] == "none"

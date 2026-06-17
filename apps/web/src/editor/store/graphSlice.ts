@@ -50,6 +50,8 @@ export type GraphSlice = Pick<
   | "markClean"
   | "deleteNode"
   | "deleteSelection"
+  | "selectAll"
+  | "duplicateSelection"
   | "toggleDisabled"
   | "autoEnableAgentDependencies"
   | "updateNodeSettings"

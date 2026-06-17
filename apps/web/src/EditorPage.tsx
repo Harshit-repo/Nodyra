@@ -1,4 +1,5 @@
 import { ReactFlowProvider } from "@xyflow/react";
+import { Keyboard } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useBlocker, useParams } from "react-router-dom";
 
@@ -1426,6 +1427,16 @@ export function EditorPage() {
               <span>{active ? "Live" : "Paused"}</span>
             </label>
           )}
+
+          <button
+            type="button"
+            className="btn btn-icon"
+            title="Keyboard shortcuts"
+            aria-label="Keyboard shortcuts"
+            onClick={() => setShortcutsOpen(true)}
+          >
+            <Keyboard size={14} weight="bold" />
+          </button>
 
           <OverflowMenu
             items={[
