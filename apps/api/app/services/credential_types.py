@@ -223,6 +223,34 @@ _TYPES: tuple[CredentialTypeSpec, ...] = (
             "https://graph.microsoft.com/Mail.Send",
         ],
     ),
+    CredentialTypeSpec(
+        id="mcp_server",
+        name="MCP Server",
+        provider="MCP",
+        auth_method="api_key",
+        fields=[
+            CredentialFieldSpec(
+                key="url",
+                label="Server URL",
+                secret=False,
+                placeholder="https://example.com/mcp",
+                help="Streamable-HTTP MCP endpoint.",
+            ),
+            CredentialFieldSpec(
+                key="auth_token",
+                label="Bearer token",
+                required=False,
+                placeholder="Optional Authorization bearer token",
+            ),
+            CredentialFieldSpec(
+                key="headers_json",
+                label="Extra headers (JSON object)",
+                required=False,
+                placeholder='{"X-Custom": "value"}',
+            ),
+        ],
+        documentation_url="https://modelcontextprotocol.io",
+    ),
 )
 
 _BY_ID: dict[str, CredentialTypeSpec] = {spec.id: spec for spec in _TYPES}

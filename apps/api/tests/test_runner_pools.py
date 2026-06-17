@@ -82,6 +82,9 @@ async def test_registration_token_creates_runner(client: AsyncClient) -> None:
     assert payload["sub"] == body["runner_id"]
     assert payload["kind"] == "runner_registration"
     assert payload["pool_id"] == pool_id
+    # A4: the response carries the URL the runner should dial — never empty,
+    # and an http(s) URL (the request base), not the SPA origin.
+    assert body["api_url"].startswith("http")
 
     # The runner row exists, offline, listed under the pool.
     runners = (await client.get(f"/runner-pools/{pool_id}/runners")).json()
@@ -103,6 +106,89 @@ def test_payload_token_roundtrip_and_expiry() -> None:
     assert decode_payload_token(expired) is None
 
 
+async def test_fleet_health_flags_pool_without_dispatcher(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """A6: an agent pool with a queued run but no live dispatcher heartbeat is
+    reported unreachable + stuck — the signal behind the 'no dispatcher' banner.
+    A pool whose provider has a heartbeat is reachable."""
+    from app.services import dispatcher_health
+    from app.services.runner import SessionLocal
+
+    dispatcher_health.reset_local()
+
+    agent_pool = (
+        await client.post("/runner-pools", json={"name": "agents", "provider": "agent"})
+    ).json()["id"]
+    docker_pool = (
+        await client.post(
+            "/runner-pools", json={"name": "dock", "provider": "docker"}
+        )
+    ).json()["id"]
+
+    # A queued run on each pool.
+    from app.models import RunQueueEntry
+
+    async with SessionLocal() as session:
+        session.add_all(
+            [
+                RunQueueEntry(run_id="q-agent", workflow_id="wf",
+                              runner_pool_id=agent_pool, status="queued"),
+                RunQueueEntry(run_id="q-docker", workflow_id="wf",
+                              runner_pool_id=docker_pool, status="queued"),
+            ]
+        )
+        await session.commit()
+
+    # Only docker has a live dispatcher (worker); agent has none.
+    async def fake_live() -> set[str]:
+        return {"local", "docker"}
+
+    monkeypatch.setattr(dispatcher_health, "live_providers", fake_live)
+
+    health = (await client.get("/runner-pools/health")).json()
+    by_id = {p["pool_id"]: p for p in health["pools"]}
+    assert by_id[agent_pool]["dispatcher_reachable"] is False
+    assert by_id[agent_pool]["queue_depth"] == 1
+    assert by_id[docker_pool]["dispatcher_reachable"] is True
+    assert "agent" in health["fleet"]["providers_stuck"]
+    assert "docker" not in health["fleet"]["providers_stuck"]
+
+
+async def test_wheel_index_serves_built_wheels(
+    client: AsyncClient, monkeypatch, tmp_path
+) -> None:
+    """A2: the wheel index page lists the noodle-* wheels and each is
+    downloadable, with a path-traversal guard. The actual ``uv build`` is
+    stubbed — that round-trip is covered by the live clean-machine test."""
+    from app.services import wheel_index
+
+    fake = tmp_path / "_runner_wheels"
+    fake.mkdir()
+    for name in ("noodle_core", "noodle_runtime", "noodle_nodes"):
+        (fake / f"{name}-0.0.1-py3-none-any.whl").write_bytes(b"PK\x03\x04 stub")
+
+    monkeypatch.setattr(wheel_index, "wheels_dir", lambda: fake)
+
+    async def fake_ensure(*, force: bool = False):
+        return wheel_index.list_wheels()
+
+    monkeypatch.setattr(wheel_index, "ensure_wheels", fake_ensure)
+
+    index = await client.get("/runner-pools/wheels/")
+    assert index.status_code == 200
+    assert "noodle_core-0.0.1-py3-none-any.whl" in index.text
+    assert "noodle_runtime-0.0.1-py3-none-any.whl" in index.text
+
+    whl = await client.get("/runner-pools/wheels/noodle_core-0.0.1-py3-none-any.whl")
+    assert whl.status_code == 200
+    assert whl.content.startswith(b"PK")
+
+    # Path-traversal / non-wheel requests are refused.
+    assert (await client.get("/runner-pools/wheels/..%2fconfig.py")).status_code == 404
+    assert (await client.get("/runner-pools/wheels/evil.txt")).status_code == 404
+
+
 def test_build_env_payload_hash_is_stable() -> None:
     a = build_env_payload("env1", "3.12", ["pandas", "numpy"])
     b = build_env_payload("env1", "3.12", ["numpy", "pandas"])
@@ -115,6 +201,52 @@ def test_build_env_payload_hash_is_stable() -> None:
 # ---------------------------------------------------------------------------
 # Queue behaviour
 # ---------------------------------------------------------------------------
+
+
+async def test_implicit_global_workflow_honours_env_pool_binding(
+    client: AsyncClient,
+) -> None:
+    """A3: a workflow with NO explicit environment_id still routes to the pool
+    bound to the global environment. Before the fix, pool resolution skipped the
+    env entirely for these workflows, so the binding shown on the Environments
+    page ("runs here execute on <pool>") was silently ignored."""
+    from sqlalchemy import select as _select
+
+    from app.config import settings
+    from app.models import Environment
+    from app.services.runner import SessionLocal
+
+    pool_id = (
+        await client.post("/runner-pools", json={"name": "global-bound"})
+    ).json()["id"]
+    workflow_id = await _create_published_workflow(client)
+
+    # Bind the pool to the GLOBAL env; leave the workflow's environment_id unset.
+    async with SessionLocal() as session:
+        global_env = await session.scalar(
+            _select(Environment).where(Environment.is_global.is_(True))
+        )
+        if global_env is None:
+            global_env = Environment(
+                name="Global", is_global=True, status="ready"
+            )
+            session.add(global_env)
+        global_env.runner_pool_id = pool_id
+        wf = await session.get(Workflow, workflow_id)
+        assert wf.environment_id is None
+        await session.commit()
+
+    old = settings.use_subprocess_runner
+    settings.use_subprocess_runner = True
+    try:
+        resp = await client.post(f"/workflows/{workflow_id}/run", json={})
+        run_id = resp.json()["run_id"]
+    finally:
+        settings.use_subprocess_runner = old
+
+    async with SessionLocal() as session:
+        run = await session.get(Run, run_id)
+        assert run.runner_pool_id == pool_id
 
 
 async def test_run_queues_when_pool_has_no_runners(client: AsyncClient) -> None:

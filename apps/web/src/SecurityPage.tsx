@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { api, getUser } from "./api";
+import { api, errorMessage, getUser } from "./api";
+import { useConfirm } from "./ConfirmProvider";
+import { useEntitlements } from "./entitlements";
 import { HomeHeader } from "./HomeHeader";
 import { useToast } from "./ToastProvider";
 import type { UserAdminInfo } from "./types";
@@ -22,6 +24,8 @@ function roleSummary(role: string): string {
 export function SecurityPage() {
   const currentUser = getUser();
   const { notify } = useToast();
+  const confirm = useConfirm();
+  const ent = useEntitlements();
   const [users, setUsers] = useState<UserAdminInfo[] | null>(null);
   const [error, setError] = useState("");
   const [name, setName] = useState("");
@@ -72,8 +76,8 @@ export function SecurityPage() {
       setRole("viewer");
       notify("User invited.", "success");
     } catch (err) {
+      // Form submission error → inline near the form (toast would be redundant).
       setError(String(err));
-      notify("Could not invite user.", "error");
     } finally {
       setBusy(false);
     }
@@ -87,20 +91,22 @@ export function SecurityPage() {
       );
       notify("Role updated.", "success");
     } catch (err) {
-      setError(String(err));
-      notify("Could not update role.", "error");
+      notify(`Could not update role. ${errorMessage(err)}`, "error");
     }
   }
 
   async function deleteUser(user: UserAdminInfo): Promise<void> {
-    if (!window.confirm(`Delete ${user.email}?`)) return;
+    const ok = await confirm({
+      title: "Delete user?",
+      body: `${user.email} will lose access immediately. This cannot be undone.`,
+    });
+    if (!ok) return;
     try {
       await api.deleteUser(user.id);
       setUsers((items) => (items ?? []).filter((item) => item.id !== user.id));
       notify("User deleted.", "success");
     } catch (err) {
-      setError(String(err));
-      notify("Could not delete user.", "error");
+      notify(`Could not delete user. ${errorMessage(err)}`, "error");
     }
   }
 
@@ -176,7 +182,13 @@ export function SecurityPage() {
               !name.trim() ||
               !company.trim() ||
               !email.trim() ||
-              password.length < 8
+              password.length < 8 ||
+              ent.atLimit("seats", users?.length ?? 0)
+            }
+            title={
+              ent.atLimit("seats", users?.length ?? 0)
+                ? `Seat limit reached on the ${ent.edition} edition — upgrade to add more users.`
+                : undefined
             }
             onClick={() => void createUser()}
           >
@@ -193,7 +205,19 @@ export function SecurityPage() {
           ))}
         </div>
 
-        {!users && !error && <p className="muted">Loading…</p>}
+        {!users && !error && (
+          <div className="security-users" aria-label="Loading users">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <div className="security-user-row skeleton-row" key={index}>
+                <div>
+                  <span className="skeleton-line short" />
+                  <span className="skeleton-line" />
+                </div>
+                <span className="skeleton-line tiny" />
+              </div>
+            ))}
+          </div>
+        )}
 
         {users && (
           <div className="security-users">

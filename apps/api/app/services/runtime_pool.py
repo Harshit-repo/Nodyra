@@ -7,13 +7,11 @@ inside its assigned ``uv`` venv.
 
 The pool also brokers sub-workflow calls back to the host: when an
 ``execute_workflow`` node runs inside a subprocess, it writes a
-``call_workflow`` event to stdout; the pool catches it, invokes the host-side
-``sub_workflow_caller`` passed by the runner (as an ``asyncio.create_task``
-so the new task inherits the caller's ContextVar context — including
-``call_chain`` — for cycle detection), and writes the result back to the
-subprocess's stdin. The host-side caller runs the engine in-process, so
-sub-workflows do not get their own env isolation today (see
-``_call_sub_workflow`` docstring).
+``call_workflow`` event to stdout (carrying the SubworkflowCall payload —
+depth/chain travel explicitly, A3); the pool catches it, invokes the
+host-side ``subworkflow_resolver`` passed by the runner
+(``app.services.subworkflows.resolve_subworkflow``), and writes the result
+— a leaf value or an inline directive — back to the subprocess's stdin.
 
 Each subprocess is serialized via an ``asyncio.Lock`` — concurrent runs to
 the same env queue rather than interleaving their stdio. Different envs run
@@ -29,7 +27,10 @@ import sys
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from noodle.engine.subworkflows import SubworkflowMeta
 
 from app.config import settings
 from app.db import SessionLocal
@@ -41,12 +42,11 @@ from noodle.serialization import deserialize_value, serialize_value
 logger = logging.getLogger(__name__)
 
 EventCallback = Callable[[dict], Awaitable[None]]
-# Signature accepts an optional ``parent_env_id`` kwarg. The runner's
-# ``_call_sub_workflow`` uses it to detect the same-env inline opportunity
-# and may return an ``InlineSubWorkflow`` sentinel instead of a leaf value.
-# Callers that don't care (in-process engine via the ``workflow_caller``
-# ContextVar) omit the kwarg and always get a real leaf back.
-SubWorkflowCaller = Callable[..., Awaitable[Any]]
+# Host-side sub-workflow resolver: (SubworkflowCall, *, parent_env_id) →
+# leaf value | InlineSubworkflow directive. Implemented by
+# app.services.subworkflows.resolve_subworkflow. ``parent_env_id`` lets the
+# resolver detect the same-env inline opportunity.
+SubworkflowResolver = Callable[..., Awaitable[Any]]
 
 
 async def _resolve_pool_sizes(env_id: str | None) -> tuple[int, int]:
@@ -116,6 +116,141 @@ async def _rss_soft_budget_bytes() -> int:
         return max(0, int(settings.worker_rss_soft_budget_bytes))
 
 
+# Environment variables a runtime worker legitimately needs. Everything else
+# — SECRET_KEY (the master KEK), DATABASE_URL, OAuth client secrets, cloud
+# credentials — must NOT reach user code, which can trivially read
+# ``os.environ`` from a Code node. The runtime itself reads only
+# ``NOODLE_CODE_NODE_TIMEOUT_SECONDS`` (set explicitly below); the rest of the
+# allowlist is OS plumbing the interpreter needs to boot and make TLS/temp-file
+# syscalls work, cross-platform.
+_WORKER_ENV_ALLOWLIST = frozenset(
+    name.upper()
+    for name in (
+        "PATH",
+        "HOME",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "LANG",
+        "LC_ALL",
+        "PYTHONIOENCODING",
+        # Windows essentials
+        "SYSTEMROOT",
+        "SYSTEMDRIVE",
+        "COMSPEC",
+        "WINDIR",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "PROGRAMDATA",
+        "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE",
+        # TLS trust stores commonly pointed at by env (certifi overrides)
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE",
+    )
+)
+
+
+_WORKER_ENV_CACHE: dict[str, str] | None = None
+_WORKER_ENV_CACHE_AT: float = 0.0
+_WORKER_ENV_CACHE_TTL = 60.0
+
+
+def _worker_env() -> dict[str, str]:
+    """Allowlisted environment for runtime worker subprocesses.
+
+    Passes through OS plumbing and ``NOODLE_*`` variables only; never the
+    API's secrets. Name matching is case-insensitive (Windows semantics).
+    """
+    global _WORKER_ENV_CACHE, _WORKER_ENV_CACHE_AT
+    now = time.monotonic()
+    if _WORKER_ENV_CACHE is not None and (now - _WORKER_ENV_CACHE_AT) < _WORKER_ENV_CACHE_TTL:
+        return _WORKER_ENV_CACHE
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in _WORKER_ENV_ALLOWLIST or key.upper().startswith("NOODLE_")
+    }
+    env["NOODLE_CODE_NODE_TIMEOUT_SECONDS"] = str(
+        settings.code_node_timeout_seconds
+    )
+    _WORKER_ENV_CACHE = env
+    _WORKER_ENV_CACHE_AT = now
+    return env
+
+
+async def _org_subworkflow_cap(org_id: str) -> int:
+    """The org's max in-flight sub-workflow spawns (C4).
+
+    Org override via org_settings; 0/unset falls back to the global
+    ``max_concurrent_subworkflows`` (itself falling back to
+    ``max_concurrent_runs``). Degrades to the global cap if the DB is
+    unreachable — a throttle must never block dispatch outright.
+    """
+    fallback = max(
+        1, settings.max_concurrent_subworkflows or settings.max_concurrent_runs
+    )
+    try:
+        from app.services.org_limits import effective_limits
+        from app.tenancy import run_as_system
+
+        with run_as_system():
+            async with SessionLocal() as session:
+                limits = await effective_limits(session, org_id)
+        return max(1, limits.max_inflight_subworkflows) if (
+            limits.max_inflight_subworkflows
+        ) else fallback
+    except Exception:  # noqa: BLE001
+        return fallback
+
+
+async def _org_run_limits_for(org_id: str) -> dict:
+    """Amplification caps shipped to the engine in the run request (C5).
+
+    The engine runs in a subprocess with no DB access, so limits resolve
+    host-side at dispatch. Empty dict = uncapped (single-tenant, or a limits
+    lookup failure — caps must never block dispatch outright)."""
+    if not settings.multi_tenancy_enabled:
+        return {}
+    try:
+        from app.services.org_limits import effective_limits
+        from app.tenancy import run_as_system
+
+        with run_as_system():
+            async with SessionLocal() as session:
+                limits = await effective_limits(session, org_id)
+        return {
+            "max_map_width": limits.max_map_width,
+            "max_loop_iterations": limits.max_loop_iterations,
+        }
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+async def _resolve_run_org(run_id: str) -> str:
+    """The org a run belongs to, for artifact key namespacing (Phase F).
+
+    Looked up under ``run_as_system`` because dispatch often happens from
+    background loops with no request org context — the ORM filter would
+    otherwise hide a non-default org's run row and misfile its artifacts.
+    Falls back to the default org so single-tenant behaviour is unchanged.
+    """
+    from app.models import Run
+    from app.tenancy import DEFAULT_ORG_ID, run_as_system
+
+    try:
+        with run_as_system():
+            async with SessionLocal() as session:
+                run = await session.get(Run, run_id)
+                if run is not None and run.org_id:
+                    return run.org_id
+    except Exception:  # noqa: BLE001 - never let namespacing block a dispatch
+        pass
+    return DEFAULT_ORG_ID
+
+
 async def _python_for_env(env_id: str | None) -> str:
     if env_id:
         candidate = await ensure_environment_ready(env_id)
@@ -136,19 +271,18 @@ class _RuntimeProcess:
         self.process = process
         self.env_id = env_id
         self.dead = False
+        self.idle_since = time.time()
         self._run_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
+        # Background task that drains stderr so the OS pipe buffer never fills
+        # and blocks the subprocess. Stderr lines are logged at debug level so
+        # diagnostic output from the runtime is visible when needed.
+        self._stderr_task: asyncio.Task[None] | None = None
 
     @classmethod
     async def spawn(cls, env_id: str | None) -> "_RuntimeProcess":
         python = await _python_for_env(env_id)
-        env = dict(os.environ)
-        # Propagate the configurable per-node code timeout so the runtime
-        # subprocess applies the same default as the in-process engine. 0
-        # (default) leaves code uncapped.
-        env["NOODLE_CODE_NODE_TIMEOUT_SECONDS"] = str(
-            settings.code_node_timeout_seconds
-        )
+        env = _worker_env()
         process = await asyncio.create_subprocess_exec(
             python,
             "-u",
@@ -161,7 +295,18 @@ class _RuntimeProcess:
         )
         if process.stdout is None or process.stdin is None:
             raise RuntimeError("runtime subprocess pipes were not opened")
-        line = await process.stdout.readline()
+        _startup_timeout = 30.0
+        try:
+            line = await asyncio.wait_for(
+                process.stdout.readline(), timeout=_startup_timeout
+            )
+        except TimeoutError:
+            process.kill()
+            await process.wait()
+            raise RuntimeError(
+                f"runtime for env {env_id!r} timed out waiting for ready event "
+                f"({_startup_timeout}s)"
+            ) from None
         if not line:
             raise RuntimeError(
                 f"runtime for env {env_id!r} did not emit a ready event"
@@ -169,7 +314,29 @@ class _RuntimeProcess:
         ready = json.loads(line)
         if ready.get("type") != "ready":
             raise RuntimeError(f"unexpected first event: {ready}")
-        return cls(process, env_id)
+        wp = cls(process, env_id)
+        wp._start_stderr_consumer()
+        return wp
+
+    def _start_stderr_consumer(self) -> None:
+        """Drain stderr in a background task so the OS pipe buffer never blocks
+        the subprocess. Stale warnings/debug output is logged when non-empty."""
+        if self.process.stderr is None:
+            return
+
+        async def _drain() -> None:
+            try:
+                while not self.dead:
+                    line = await self.process.stderr.readline()
+                    if not line:
+                        break
+                    text = line.decode("utf-8", errors="replace").rstrip()
+                    if text:
+                        logger.debug("runtime stderr (env=%s): %s", self.env_id, text)
+            except Exception:
+                pass
+
+        self._stderr_task = asyncio.create_task(_drain())
 
     async def _write_message(self, message: dict) -> None:
         if self.process.stdin is None:
@@ -182,26 +349,21 @@ class _RuntimeProcess:
     async def _handle_call_workflow(
         self,
         event: dict,
-        sub_workflow_caller: SubWorkflowCaller | None,
+        subworkflow_resolver: SubworkflowResolver | None,
     ) -> None:
+        from noodle.engine.subworkflows import InlineSubworkflow, SubworkflowCall
+
         callback_id = event.get("callback_id", "")
         try:
-            if sub_workflow_caller is None:
+            if subworkflow_resolver is None:
                 raise RuntimeError(
-                    "subprocess runner has no host-side sub-workflow caller"
+                    "subprocess runner has no host-side sub-workflow resolver"
                 )
-            outcome = await sub_workflow_caller(
-                event.get("workflow_id", ""),
-                deserialize_value(event.get("input")),
-                parent_env_id=self.env_id,
+            call = SubworkflowCall.from_payload(
+                {**event, "input": deserialize_value(event.get("input"))}
             )
-            # Late import — InlineSubWorkflow is defined in runner.py which
-            # already imports this module; bringing it in at the top would
-            # create a cycle. Keeping it local also means the pool stays
-            # usable from contexts that don't need sub-workflow handling.
-            from app.services.runner import InlineSubWorkflow
-
-            if isinstance(outcome, InlineSubWorkflow):
+            outcome = await subworkflow_resolver(call, parent_env_id=self.env_id)
+            if isinstance(outcome, InlineSubworkflow):
                 await self._write_message(
                     {
                         "type": "call_workflow_response",
@@ -209,7 +371,7 @@ class _RuntimeProcess:
                         "inline_graph": outcome.graph,
                         "inline_cache": outcome.cache,
                         "inline_targets": outcome.targets,
-                        "inline_sources": outcome.sources,
+                        "inline_sources": list(outcome.sources),
                     }
                 )
             else:
@@ -236,10 +398,13 @@ class _RuntimeProcess:
         cache: dict | None,
         targets: list[str] | None,
         on_event: EventCallback,
-        sub_workflow_caller: SubWorkflowCaller | None = None,
+        subworkflow_resolver: SubworkflowResolver | None = None,
+        subworkflow_meta: dict | None = None,
         workflow_modules: list[dict] | None = None,
         pause_on_approval: bool = False,
         agent_action_resume: dict | None = None,
+        artifact_key_prefix: str = "",
+        org_limits: dict | None = None,
     ) -> str:
         async with self._run_lock:
             if self.dead or self.process.returncode is not None:
@@ -263,11 +428,14 @@ class _RuntimeProcess:
                         "workflow_modules": workflow_modules or [],
                         "pause_on_approval": pause_on_approval,
                         "agent_action_resume": agent_action_resume or {},
+                        "subworkflow_meta": subworkflow_meta or {},
                         # Subprocess writes artifact bytes to the SAME path the
                         # API reads from — only safe because the runner is
                         # co-located on the host today. Remote runners (Slice 8)
                         # will need an upload/finalize path instead.
                         "artifacts_dir": str(artifact_base_dir()),
+                        "artifact_key_prefix": artifact_key_prefix,
+                        "org_limits": org_limits or {},
                         "max_artifact_bytes": settings.max_artifact_bytes,
                         "max_artifacts_per_run": settings.max_artifacts_per_run,
                     }
@@ -286,7 +454,7 @@ class _RuntimeProcess:
                     # task so the read loop keeps draining the pipe.
                     if event.get("type") == "call_workflow":
                         task = asyncio.create_task(
-                            self._handle_call_workflow(event, sub_workflow_caller)
+                            self._handle_call_workflow(event, subworkflow_resolver)
                         )
                         callbacks.add(task)
                         task.add_done_callback(callbacks.discard)
@@ -313,14 +481,25 @@ class _RuntimeProcess:
                         recycle_after_run = True
                     await on_event(clean)
             except asyncio.CancelledError:
-                for task in callbacks:
-                    task.cancel()
                 await self.close()
                 raise
+            finally:
+                # Never leave sub-workflow callback tasks running detached. On a
+                # clean result they were already awaited above; on any error
+                # (e.g. the runtime emitted an "error" event, or stdout closed)
+                # they would otherwise keep writing to this worker's stdin while
+                # it gets recycled into the idle pool — corrupting the next run's
+                # stdio. Cancel and drain whatever remains.
+                pending = [t for t in callbacks if not t.done()]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
 
     async def close(self) -> None:
         if self.process.returncode is not None:
             self.dead = True
+            await self._cancel_stderr_consumer()
             return
         try:
             self.process.terminate()
@@ -333,6 +512,14 @@ class _RuntimeProcess:
             pass
         finally:
             self.dead = True
+            await self._cancel_stderr_consumer()
+
+    async def _cancel_stderr_consumer(self) -> None:
+        if self._stderr_task is not None and not self._stderr_task.done():
+            self._stderr_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._stderr_task
+            self._stderr_task = None
 
 
 class _EnvPool:
@@ -517,6 +704,10 @@ class RuntimePool:
         # those). See ``subworkflow_slot`` for why it's a soft cap.
         sub_cap = settings.max_concurrent_subworkflows or settings.max_concurrent_runs
         self._subworkflow_sem = asyncio.Semaphore(max(1, sub_cap))
+        # C4: with multi-tenancy on, each org throttles its own sub-workflow
+        # fan-out (a wide map in one org must not exhaust the shared spawn
+        # budget). Lazily populated per org; cleared by the test reset hook.
+        self._org_subworkflow_sems: dict[str, asyncio.Semaphore] = {}
         # Soft memory ceiling across concurrent top-level runs. See _RssBudget.
         self._rss_budget = _RssBudget()
 
@@ -568,10 +759,19 @@ class RuntimePool:
         anyway: wide fan-out gets throttled (siblings queue briefly) while
         legitimate nesting never blocks indefinitely.
         """
+        sem = self._subworkflow_sem
+        if settings.multi_tenancy_enabled:
+            from app.tenancy import active_org_id
+
+            org_key = active_org_id() or "default"
+            sem = self._org_subworkflow_sems.get(org_key)
+            if sem is None:
+                sem = asyncio.Semaphore(await _org_subworkflow_cap(org_key))
+                self._org_subworkflow_sems[org_key] = sem
         acquired = False
         try:
             await asyncio.wait_for(
-                self._subworkflow_sem.acquire(),
+                sem.acquire(),
                 timeout=settings.subworkflow_spawn_timeout_seconds,
             )
             acquired = True
@@ -585,7 +785,7 @@ class RuntimePool:
             yield
         finally:
             if acquired:
-                self._subworkflow_sem.release()
+                sem.release()
 
     async def _env_pool(self, env_id: str | None) -> _EnvPool:
         key = env_id or "_default"
@@ -606,7 +806,8 @@ class RuntimePool:
         cache: dict | None,
         targets: list[str] | None,
         on_event: EventCallback,
-        sub_workflow_caller: SubWorkflowCaller | None = None,
+        subworkflow_resolver: SubworkflowResolver | None = None,
+        subworkflow_meta: dict | None = None,
         workflow_modules: list[dict] | None = None,
         run_timeout: float | None = None,
         pause_on_approval: bool = False,
@@ -628,16 +829,20 @@ class RuntimePool:
                     else settings.workflow_run_timeout_seconds
                 )
                 try:
+                    run_org = await _resolve_run_org(run_id)
                     run = proc.run(
                         run_id,
                         graph,
                         cache,
                         targets,
                         on_event,
-                        sub_workflow_caller,
+                        subworkflow_resolver,
+                        subworkflow_meta=subworkflow_meta,
                         workflow_modules=workflow_modules,
                         pause_on_approval=pause_on_approval,
                         agent_action_resume=agent_action_resume,
+                        artifact_key_prefix=run_org,
+                        org_limits=await _org_run_limits_for(run_org),
                     )
                     if timeout and timeout > 0:
                         return await asyncio.wait_for(run, timeout=timeout)
@@ -658,7 +863,8 @@ class RuntimePool:
         cache: dict | None,
         targets: list[str] | None,
         on_event: EventCallback,
-        sub_workflow_caller: SubWorkflowCaller | None = None,
+        subworkflow_resolver: SubworkflowResolver | None = None,
+        subworkflow_meta: "SubworkflowMeta | None" = None,
         workflow_modules: list[dict] | None = None,
     ) -> str:
         """Run a sub-workflow in its env's subprocess, bypassing the pool caps.
@@ -684,14 +890,20 @@ class RuntimePool:
         async with self.subworkflow_slot():
             proc = await _RuntimeProcess.spawn(env_id)
             try:
+                run_org = await _resolve_run_org(run_id)
                 run = proc.run(
                     run_id,
                     graph,
                     cache,
                     targets,
                     on_event,
-                    sub_workflow_caller,
+                    subworkflow_resolver,
+                    subworkflow_meta=(
+                        subworkflow_meta.to_payload() if subworkflow_meta else {}
+                    ),
                     workflow_modules=workflow_modules,
+                    artifact_key_prefix=run_org,
+                    org_limits=await _org_run_limits_for(run_org),
                 )
                 timeout = settings.workflow_run_timeout_seconds
                 if timeout and timeout > 0:

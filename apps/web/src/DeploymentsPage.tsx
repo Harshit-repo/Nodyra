@@ -1,9 +1,22 @@
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
-import { api, ApiError } from "./api";
+import { ApiError, errorMessage } from "./api";
+import { useConfirm } from "./ConfirmProvider";
+import { useEntitlements } from "./entitlements";
 import { HomeHeader } from "./HomeHeader";
+import {
+  useCreateDeploymentMutation,
+  useDeleteDeploymentMutation,
+  useDeploymentRuns,
+  useDeployments,
+  useRunDeploymentMutation,
+  useUpdateDeploymentMutation,
+  useWorkflows,
+  useWorkflowVersions,
+} from "./queries";
 import { useToast } from "./ToastProvider";
+import { useModalA11y } from "./useModalA11y";
 import type { Deployment, WorkflowSummary } from "./types";
 
 interface UnsafeFinding {
@@ -38,41 +51,118 @@ function describeSchedule(d: Deployment): string {
   return `every ${every} ${d.schedule_interval || "hours"}`;
 }
 
+function runStatusClass(status: string): string {
+  if (status === "success") return "status-run-success";
+  if (status === "error") return "status-run-error";
+  if (status === "running" || status === "queued" || status === "waiting")
+    return "status-run-skipped";
+  return "status-run-skipped";
+}
+
+function DeploymentHistory({
+  deploymentId,
+  onOpenRun,
+}: {
+  deploymentId: string;
+  onOpenRun: (runId: string) => void;
+}) {
+  const runsQuery = useDeploymentRuns(deploymentId, { refetchInterval: 5000 });
+  const runs = (runsQuery.data ?? []).slice(0, 8);
+  const recent = runsQuery.data ?? [];
+  const finished = recent.filter(
+    (r) => r.status === "success" || r.status === "error",
+  );
+  const successRate = finished.length
+    ? Math.round(
+        (finished.filter((r) => r.status === "success").length /
+          finished.length) *
+          100,
+      )
+    : null;
+
+  return (
+    <div className="deploy-history">
+      <div className="deploy-history-head">
+        <span className="muted">Recent runs</span>
+        {successRate != null && (
+          <span className="muted">
+            {successRate}% success over last {finished.length}
+          </span>
+        )}
+      </div>
+      {runsQuery.isLoading && <p className="muted">Loading…</p>}
+      {!runsQuery.isLoading && runs.length === 0 && (
+        <p className="muted">No runs yet.</p>
+      )}
+      {runs.map((r) => (
+        <button
+          type="button"
+          key={r.id}
+          className="deploy-run-row"
+          onClick={() => onOpenRun(r.id)}
+          title="Open in Executions"
+        >
+          <span className={`run-pill ${runStatusClass(r.status)}`}>
+            {r.status}
+          </span>
+          <span className="muted">{r.trigger_type}</span>
+          <span className="muted">
+            {r.started_at ? when(r.started_at) : "—"}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function DeploymentsPage() {
   const navigate = useNavigate();
-  const [deployments, setDeployments] = useState<Deployment[] | null>(null);
-  const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
-  const [error, setError] = useState("");
   const [editing, setEditing] = useState<Deployment | null>(null);
   const [creating, setCreating] = useState(false);
   const [unsafePrompt, setUnsafePrompt] = useState<UnsafePromptState | null>(null);
+  const [historyId, setHistoryId] = useState<string | null>(null);
+  // Deployment ids with an action (run / toggle) in flight, so their row
+  // controls disable and can't be double-fired while the request is pending.
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const { notify } = useToast();
+  const confirm = useConfirm();
+  const deploymentsQuery = useDeployments();
+  const workflowsQuery = useWorkflows();
+  const runDeploymentMutation = useRunDeploymentMutation();
+  const updateDeploymentMutation = useUpdateDeploymentMutation();
+  const deleteDeploymentMutation = useDeleteDeploymentMutation();
+  const deployments = deploymentsQuery.data ?? null;
+  const workflows = workflowsQuery.data ?? [];
+  const ent = useEntitlements();
+  const atActiveCap = ent.atLimit(
+    "deployments",
+    deployments?.filter((d) => d.active).length ?? 0,
+  );
+  const error =
+    deploymentsQuery.isError && !deploymentsQuery.data
+      ? errorMessage(deploymentsQuery.error)
+      : "";
 
-  function refresh(): void {
-    api
-      .listDeployments()
-      .then(setDeployments)
-      .catch((err) => setError(String(err)));
+  function setBusy(id: string, busy: boolean): void {
+    setBusyIds((current) => {
+      const next = new Set(current);
+      if (busy) next.add(id);
+      else next.delete(id);
+      return next;
+    });
   }
 
-  useEffect(() => {
-    refresh();
-    api
-      .listWorkflows()
-      .then(setWorkflows)
-      .catch(() => {
-        /* nav unaffected */
-      });
-  }, []);
-
   async function runNow(d: Deployment): Promise<void> {
+    if (busyIds.has(d.id)) return;
+    setBusy(d.id, true);
     try {
-      const { run_id } = await api.runDeployment(d.id);
+      const { run_id } = await runDeploymentMutation.mutateAsync(d.id);
       notify("Deployment run started.", "success");
       navigate(`/executions?run=${run_id}`);
     } catch (err) {
-      setError(String(err));
-      notify("Could not start deployment.", "error");
+      notify(`Could not start deployment. ${errorMessage(err)}`, "error");
+    } finally {
+      setBusy(d.id, false);
     }
   }
 
@@ -81,14 +171,17 @@ export function DeploymentsPage() {
     active: boolean,
     approveUnsafe = false,
   ): Promise<void> {
+    setBusy(d.id, true);
     try {
-      await api.updateDeployment(d.id, {
-        active,
-        ...(approveUnsafe ? { approve_unsafe_nodes: true } : {}),
+      await updateDeploymentMutation.mutateAsync({
+        id: d.id,
+        body: {
+          active,
+          ...(approveUnsafe ? { approve_unsafe_nodes: true } : {}),
+        },
       });
       notify(active ? "Deployment activated." : "Deployment paused.", "success");
       setUnsafePrompt(null);
-      refresh();
     } catch (err) {
       if (
         active &&
@@ -113,20 +206,23 @@ export function DeploymentsPage() {
         });
         return;
       }
-      setError(String(err));
-      notify("Could not update deployment.", "error");
+      notify(`Could not update deployment. ${errorMessage(err)}`, "error");
+    } finally {
+      setBusy(d.id, false);
     }
   }
 
   async function remove(d: Deployment): Promise<void> {
-    if (!confirm(`Delete deployment "${d.name}"?`)) return;
+    const ok = await confirm({
+      title: "Delete deployment?",
+      body: `“${d.name}” will be removed and will stop firing on its schedule.`,
+    });
+    if (!ok) return;
     try {
-      await api.deleteDeployment(d.id);
+      await deleteDeploymentMutation.mutateAsync(d.id);
       notify("Deployment deleted.", "success");
-      refresh();
     } catch (err) {
-      setError(String(err));
-      notify("Could not delete deployment.", "error");
+      notify(`Could not delete deployment. ${errorMessage(err)}`, "error");
     }
   }
 
@@ -153,7 +249,19 @@ export function DeploymentsPage() {
         </div>
 
         {error && <p className="error-text">{error}</p>}
-        {!deployments && !error && <p className="muted">Loading…</p>}
+        {!deployments && !error && (
+          <div className="deploy-list" aria-label="Loading deployments">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <div className="deploy-row skeleton-row" key={index}>
+                <div className="deploy-main">
+                  <span className="skeleton-line short" />
+                  <span className="skeleton-line" />
+                </div>
+                <span className="skeleton-line tiny" />
+              </div>
+            ))}
+          </div>
+        )}
 
         {deployments && deployments.length === 0 && (
           <div className="empty-state">
@@ -173,63 +281,89 @@ export function DeploymentsPage() {
         {deployments && deployments.length > 0 && (
           <div className="deploy-list">
             {deployments.map((d) => (
-              <div className="deploy-row" key={d.id}>
-                <div className="deploy-main">
-                  <div className="deploy-name">
-                    {d.name}
-                    <span
-                      className={`run-pill ${
-                        d.active ? "status-run-success" : "status-run-skipped"
-                      }`}
+              <div className="deploy-item" key={d.id}>
+                <div className="deploy-row">
+                  <div className="deploy-main">
+                    <div className="deploy-name" title={d.name}>
+                      {d.name}
+                      <span
+                        className={`run-pill ${
+                          d.active ? "status-run-success" : "status-run-skipped"
+                        }`}
+                      >
+                        {d.active ? "active" : "paused"}
+                      </span>
+                    </div>
+                    <div className="deploy-meta">
+                      <Link to={`/workflows/${d.workflow_id}`}>
+                        {workflowName(d.workflow_id)}
+                      </Link>
+                      {" · "}
+                      {describeSchedule(d)}
+                      {d.workflow_version ? ` · pinned v${d.workflow_version}` : ""}
+                      {d.error_workflow_id
+                        ? ` · error → ${workflowName(d.error_workflow_id)}`
+                        : ""}
+                      {" · last fired "}
+                      {when(d.last_fired)}
+                    </div>
+                  </div>
+                  <div className="deploy-actions">
+                    <label
+                      className="active-toggle"
+                      title={
+                        !d.active && atActiveCap
+                          ? `Active-deployment limit reached on the ${ent.edition} edition — upgrade to activate more.`
+                          : undefined
+                      }
                     >
-                      {d.active ? "active" : "paused"}
-                    </span>
-                  </div>
-                  <div className="deploy-meta">
-                    <Link to={`/workflows/${d.workflow_id}`}>
-                      {workflowName(d.workflow_id)}
-                    </Link>
-                    {" · "}
-                    {describeSchedule(d)}
-                    {d.workflow_version ? ` · pinned v${d.workflow_version}` : ""}
-                    {d.error_workflow_id
-                      ? ` · error workflow ${d.error_workflow_id.slice(0, 8)}`
-                      : ""}
-                    {" · last fired "}
-                    {when(d.last_fired)}
+                      <input
+                        type="checkbox"
+                        checked={d.active}
+                        disabled={busyIds.has(d.id) || (!d.active && atActiveCap)}
+                        onChange={(e) => void toggleActive(d, e.target.checked)}
+                      />
+                      <span className="active-track" />
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => void runNow(d)}
+                      disabled={busyIds.has(d.id)}
+                    >
+                      ▶ Run now
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      onClick={() =>
+                        setHistoryId((cur) => (cur === d.id ? null : d.id))
+                      }
+                    >
+                      {historyId === d.id ? "Hide" : "History"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      onClick={() => setEditing(d)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      onClick={() => void remove(d)}
+                    >
+                      Delete
+                    </button>
                   </div>
                 </div>
-                <div className="deploy-actions">
-                  <label className="active-toggle">
-                    <input
-                      type="checkbox"
-                      checked={d.active}
-                      onChange={(e) => void toggleActive(d, e.target.checked)}
-                    />
-                    <span className="active-track" />
-                  </label>
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    onClick={() => void runNow(d)}
-                  >
-                    ▶ Run now
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
-                    onClick={() => setEditing(d)}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
-                    onClick={() => void remove(d)}
-                  >
-                    Delete
-                  </button>
-                </div>
+                {historyId === d.id && (
+                  <DeploymentHistory
+                    deploymentId={d.id}
+                    onOpenRun={(runId) => navigate(`/executions?run=${runId}`)}
+                  />
+                )}
               </div>
             ))}
           </div>
@@ -246,7 +380,7 @@ export function DeploymentsPage() {
             onSaved={() => {
               setCreating(false);
               setEditing(null);
-              refresh();
+              void deploymentsQuery.refetch();
             }}
           />
         )}
@@ -274,15 +408,20 @@ function UnsafeNodesDialog({
   onApprove: () => void;
 }) {
   const blocked = state.policy === "block";
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onCancel);
   return (
     <div className="modal-overlay" onClick={onCancel}>
       <div
         className="modal"
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
+        aria-labelledby="unsafe-nodes-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2>Risky nodes detected</h2>
+        <h2 id="unsafe-nodes-title">Risky nodes detected</h2>
         <p className="muted">{state.message}</p>
         <ul className="ops-warnings">
           {state.findings.map((f) => (
@@ -350,6 +489,14 @@ function DeploymentDialog({
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const { notify } = useToast();
+  const createDeploymentMutation = useCreateDeploymentMutation();
+  const updateDeploymentMutation = useUpdateDeploymentMutation();
+  const versionsQuery = useWorkflowVersions(workflowId || null);
+  const versions = [...(versionsQuery.data ?? [])].sort(
+    (a, b) => b.version - a.version,
+  );
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
   async function save(): Promise<void> {
     setErr("");
@@ -367,20 +514,23 @@ function DeploymentDialog({
     setSaving(true);
     try {
       if (initial) {
-        await api.updateDeployment(initial.id, {
-          name: name.trim(),
-          schedule_cron: cron,
-          schedule_interval: interval,
-          schedule_every: Math.max(1, every),
-          schedule_tz: tz,
-          default_parameters: parsed,
-          active,
-          workflow_version_id: workflowVersionId.trim() || undefined,
-          error_workflow_id: errorWorkflowId.trim() || undefined,
+        await updateDeploymentMutation.mutateAsync({
+          id: initial.id,
+          body: {
+            name: name.trim(),
+            schedule_cron: cron,
+            schedule_interval: interval,
+            schedule_every: Math.max(1, every),
+            schedule_tz: tz,
+            default_parameters: parsed,
+            active,
+            workflow_version_id: workflowVersionId.trim() || undefined,
+            error_workflow_id: errorWorkflowId.trim() || undefined,
+          },
         });
         notify("Deployment updated.", "success");
       } else {
-        await api.createDeployment({
+        await createDeploymentMutation.mutateAsync({
           workflow_id: workflowId,
           name: name.trim(),
           schedule_cron: cron,
@@ -405,10 +555,18 @@ function DeploymentDialog({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal modal-wide"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="deployment-dialog-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="modal-head">
-          <h2>{initial ? "Edit deployment" : "New deployment"}</h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+          <h2 id="deployment-dialog-title">{initial ? "Edit deployment" : "New deployment"}</h2>
+          <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </header>
@@ -524,33 +682,48 @@ function DeploymentDialog({
 
           <div className="field">
             <div className="field-label">
-              <span className="field-name">Pinned workflow version ID</span>
+              <span className="field-name">Pinned version</span>
             </div>
             <p className="field-desc">
-              Blank pins the latest published version when the deployment is
-              created. Set this to a specific version id for controlled rollout.
+              “Latest published” re-pins on each publish. Pick a specific version
+              for a controlled rollout.
             </p>
-            <input
+            <select
               className="field-input"
               value={workflowVersionId}
               onChange={(e) => setWorkflowVersionId(e.target.value)}
-              placeholder="workflow_version_id"
-            />
+            >
+              <option value="">Latest published</option>
+              {versions.map((v) => (
+                <option key={v.id} value={v.id}>
+                  v{v.version}
+                  {v.published ? "" : " (draft)"}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="field">
             <div className="field-label">
-              <span className="field-name">Error workflow ID</span>
+              <span className="field-name">Error workflow</span>
             </div>
             <p className="field-desc">
               Optional workflow to run when this deployment fails.
             </p>
-            <input
+            <select
               className="field-input"
               value={errorWorkflowId}
               onChange={(e) => setErrorWorkflowId(e.target.value)}
-              placeholder="workflow_id"
-            />
+            >
+              <option value="">None</option>
+              {workflows
+                .filter((w) => w.id !== workflowId)
+                .map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+            </select>
           </div>
 
           <label className="field-toggle">

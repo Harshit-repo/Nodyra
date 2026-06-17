@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -39,15 +41,18 @@ from app.services.oauth import (
     scopes_from_credential_data,
     token_payload_to_credential_data,
 )
+from app.services import org_keys
 from app.services.redaction import invalidate_secret_cache
+from app.tenancy import active_org_id, current_org_id
 
 router = APIRouter(prefix="/credentials", tags=["credentials"])
+logger = logging.getLogger(__name__)
 
 SCOPES = {"global", "environment", "workflow", "runner_pool"}
 
 
-def _info(cred: Credential) -> CredentialInfo:
-    data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek)
+def _info(cred: Credential, org_kek: bytes | None = None) -> CredentialInfo:
+    data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek, org_kek=org_kek)
     type_spec = get_credential_type(cred.type)
     return CredentialInfo(
         id=cred.id,
@@ -77,7 +82,12 @@ def _oauth_http_error(exc: OAuthError) -> HTTPException:
 
 
 async def _load(session: AsyncSession, cred_id: str) -> Credential:
-    cred = await session.get(Credential, cred_id)
+    # populate_existing=True forces a real SELECT instead of returning an
+    # identity-map hit. The map can hold a Credential loaded earlier in the
+    # same session under skip_org_filter=True (e.g. a dispatch path); without
+    # the SELECT the org-filter hook never fires and a caller in org-A could
+    # read/update/delete org-B's credential (cross-tenant IDOR / R-1).
+    cred = await session.get(Credential, cred_id, populate_existing=True)
     if cred is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Credential not found")
     return cred
@@ -211,6 +221,11 @@ async def start_oauth_credential(
                 "description": body.description,
                 "redirect_uri": redirect_uri,
                 "scopes": scopes,
+                # Bind the initiating org into the signed state. The callback is a
+                # provider redirect with no X-Org-Id header, so without this the
+                # credential would be stamped/encrypted under DEFAULT_ORG_ID for
+                # every non-default org (cross-tenant leak / wrong KEK — R-9).
+                "org_id": active_org_id(),
                 "actor_id": actor.id if actor else None,
                 "actor_email": actor.email if actor else None,
             }
@@ -286,40 +301,54 @@ async def oauth_callback(
     workflow_id = payload.get("workflow_id")
     environment_id = payload.get("environment_id")
     runner_pool_id = payload.get("runner_pool_id")
-    await _validate_scope(
-        session,
-        scope,
-        str(workflow_id) if workflow_id else None,
-        str(environment_id) if environment_id else None,
-        str(runner_pool_id) if runner_pool_id else None,
+
+    # Re-establish the org the flow was started under (carried in the signed
+    # state) so scope validation sees the right org's resources, the credential
+    # is stamped to that org, and it is encrypted under that org's KEK (R-9).
+    # ``org_id`` is absent for states minted before this fix and for the
+    # single-tenant default — fall back to the request's current context.
+    state_org_id = payload.get("org_id")
+    org_token = (
+        current_org_id.set(str(state_org_id)) if state_org_id is not None else None
     )
-    _enc_data, _enc_dek = encrypt_credential(data)
-    cred = Credential(
-        name=str(payload["name"]),
-        type=credential_type,
-        scope=scope,
-        workflow_id=str(workflow_id) if scope == "workflow" and workflow_id else None,
-        environment_id=(
-            str(environment_id) if scope == "environment" and environment_id else None
-        ),
-        runner_pool_id=(
-            str(runner_pool_id) if scope == "runner_pool" and runner_pool_id else None
-        ),
-        description=str(payload.get("description") or ""),
-        encrypted_data=_enc_data,
-        encrypted_dek=_enc_dek,
-    )
-    session.add(cred)
-    await log_audit(
-        session,
-        "create",
-        "credential",
-        detail=cred.name,
-        actor_id=str(payload.get("actor_id") or "") or None,
-        actor_email=str(payload.get("actor_email") or "") or None,
-    )
-    await session.commit()
-    await session.refresh(cred)
+    try:
+        await _validate_scope(
+            session,
+            scope,
+            str(workflow_id) if workflow_id else None,
+            str(environment_id) if environment_id else None,
+            str(runner_pool_id) if runner_pool_id else None,
+        )
+        _enc_data, _enc_dek = await org_keys.encrypt_credential_current(data, session)
+        cred = Credential(
+            name=str(payload["name"]),
+            type=credential_type,
+            scope=scope,
+            workflow_id=str(workflow_id) if scope == "workflow" and workflow_id else None,
+            environment_id=(
+                str(environment_id) if scope == "environment" and environment_id else None
+            ),
+            runner_pool_id=(
+                str(runner_pool_id) if scope == "runner_pool" and runner_pool_id else None
+            ),
+            description=str(payload.get("description") or ""),
+            encrypted_data=_enc_data,
+            encrypted_dek=_enc_dek,
+        )
+        session.add(cred)
+        await log_audit(
+            session,
+            "create",
+            "credential",
+            detail=cred.name,
+            actor_id=str(payload.get("actor_id") or "") or None,
+            actor_email=str(payload.get("actor_email") or "") or None,
+        )
+        await session.commit()
+        await session.refresh(cred)
+    finally:
+        if org_token is not None:
+            current_org_id.reset(org_token)
     invalidate_secret_cache()
     return _oauth_popup_html(
         success=True,
@@ -401,9 +430,9 @@ async def refresh_credential(
     actor: User | None = Depends(optional_current_user),
 ) -> CredentialInfo:
     cred = await _load(session, cred_id)
-    data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek)
+    data = await org_keys.decrypt_credential_for(cred, session)
     try:
-        await refresh_stored_credential(cred, data)
+        await refresh_stored_credential(cred, data, session)
     except OAuthError as exc:
         raise _oauth_http_error(exc) from exc
     await log_audit(
@@ -418,7 +447,7 @@ async def refresh_credential(
     await session.commit()
     await session.refresh(cred)
     invalidate_secret_cache()
-    return _info(cred)
+    return _info(cred, await org_keys.get_org_kek(cred.org_id, session))
 
 
 @router.get(
@@ -436,14 +465,40 @@ async def list_credential_test_handlers() -> list[str]:
     return available_test_services()
 
 
+_LIST_CREDENTIALS_HARD_CAP = 500
+
+
 @router.get(
     "",
     response_model=list[CredentialInfo],
     dependencies=[Depends(require_permission("credential:read"))],
 )
 async def list_credentials(session: AsyncSession = Depends(get_session)):
-    result = await session.scalars(select(Credential).order_by(Credential.name))
-    return [_info(c) for c in result.all()]
+    result = await session.scalars(
+        select(Credential)
+        .order_by(Credential.name)
+        .limit(_LIST_CREDENTIALS_HARD_CAP + 1)
+    )
+    rows = result.all()
+    if len(rows) > _LIST_CREDENTIALS_HARD_CAP:
+        logger.warning(
+            "list_credentials: result truncated to %d rows; "
+            "add pagination to serve all credentials",
+            _LIST_CREDENTIALS_HARD_CAP,
+        )
+        rows = rows[:_LIST_CREDENTIALS_HARD_CAP]
+    # _info decrypts each credential (synchronous Fernet); with up to 500 rows
+    # that's enough CPU to stall the event loop. The ORM column attributes are
+    # already loaded, so building the response off-loop is safe (no lazy DB I/O).
+    # Org KEKs are resolved on-loop first (they need the session); rows can
+    # span orgs only when multi-tenancy is off, but the dict handles both.
+    keks: dict[str, bytes | None] = {}
+    for c in rows:
+        if c.org_id not in keks:
+            keks[c.org_id] = await org_keys.get_org_kek(c.org_id, session)
+    return await asyncio.to_thread(
+        lambda: [_info(c, keks.get(c.org_id)) for c in rows]
+    )
 
 
 @router.get(
@@ -473,7 +528,7 @@ async def resolve_credential(
     # ``last_used_at`` at workflow dispatch time, which is the real "used"
     # event. Keeping GET /credentials/resolve side-effect-free avoids
     # surprising last_used_at writes from caches / retries / prefetchers.
-    return _info(cred)
+    return _info(cred, await org_keys.get_org_kek(cred.org_id, session))
 
 
 @router.post(
@@ -494,7 +549,7 @@ async def create_credential(
         body.environment_id,
         body.runner_pool_id,
     )
-    _enc_data, _enc_dek = encrypt_credential(body.data)
+    _enc_data, _enc_dek = await org_keys.encrypt_credential_current(body.data, session)
     cred = Credential(
         name=body.name,
         type=body.type,
@@ -513,7 +568,7 @@ async def create_credential(
     await session.commit()
     await session.refresh(cred)
     invalidate_secret_cache()
-    return _info(cred)
+    return _info(cred, await org_keys.get_org_kek(cred.org_id, session))
 
 
 @router.put(
@@ -556,7 +611,9 @@ async def update_credential(
     if body.description is not None:
         cred.description = body.description
     if body.data is not None:
-        cred.encrypted_data, cred.encrypted_dek = encrypt_credential(body.data)
+        cred.encrypted_data, cred.encrypted_dek = await org_keys.encrypt_credential_for(
+            cred.org_id, body.data, session
+        )
     await log_audit(session, "update", "credential", cred.id, cred.name,
                     actor_id=actor.id if actor else None,
                     actor_email=actor.email if actor else None)
@@ -564,7 +621,7 @@ async def update_credential(
     await session.refresh(cred)
     if body.data is not None:
         invalidate_secret_cache()
-    return _info(cred)
+    return _info(cred, await org_keys.get_org_kek(cred.org_id, session))
 
 
 @router.post(
@@ -591,7 +648,7 @@ async def test_credential(
             status.HTTP_403_FORBIDDEN,
             "Credential is not visible for the supplied workflow/environment scope.",
         )
-    data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek)
+    data = await org_keys.decrypt_credential_for(cred, session)
     type_spec = get_credential_type(cred.type)
     test_service = type_spec.test_service if type_spec and type_spec.test_service else cred.type
     result = await test_credential_connection(test_service, data, body.context)

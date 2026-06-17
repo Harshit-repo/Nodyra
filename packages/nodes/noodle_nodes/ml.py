@@ -776,6 +776,8 @@ def save_model(model: Any = None, name: str = "model.joblib") -> dict[str, Any]:
 # *different* workflow (e.g. a webhook prediction service) load it by name.
 # Models are stored on the shared artifact volume under a ``model-registry/``
 # folder that lives *outside* ``runs/`` so run-retention never deletes them.
+# In multi-tenant runs the artifact store's key prefix namespaces this registry
+# the same way it namespaces ordinary run artifacts and DatasetRefs.
 
 
 def _registry_root():
@@ -789,7 +791,12 @@ def _registry_root():
         raise RuntimeError(
             "model registry is unavailable in this execution context."
         )
-    root = Path(store.base_dir) / "model-registry"
+    storage_key = f"{getattr(store, 'key_prefix', '')}model-registry"
+    if hasattr(store, "_path_for_key"):
+        root = store._path_for_key(storage_key)
+    else:  # pragma: no cover - compatibility with custom artifact stores
+        root = (Path(store.base_dir) / storage_key).resolve()
+        root.relative_to(Path(store.base_dir).resolve())
     root.mkdir(parents=True, exist_ok=True)
     return root
 

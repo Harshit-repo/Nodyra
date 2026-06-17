@@ -119,3 +119,39 @@ async def test_delete_workflow(client: AsyncClient) -> None:
 
 async def test_missing_workflow_returns_404(client: AsyncClient) -> None:
     assert (await client.get("/workflows/nope")).status_code == 404
+
+
+async def test_saving_a_graph_with_a_metanode_is_accepted(client: AsyncClient) -> None:
+    """``meta_node`` is a structural type the engine inlines at run time; it has
+    no registry manifest, so node-type validation must exempt it (like ``user:``
+    code-module types) instead of rejecting the autosave with 422."""
+    workflow_id = (await client.post("/workflows", json={"name": "Meta"})).json()["id"]
+    graph = {
+        "nodes": [
+            {
+                "id": "m1",
+                "type": "meta_node",
+                "params": {
+                    "name": "Group",
+                    "execution": "transparent",
+                    "subgraph": {
+                        "nodes": [
+                            {
+                                "id": "c",
+                                "type": "code",
+                                "params": {"code": "output = {}"},
+                                "position": {"x": 0, "y": 0},
+                            }
+                        ],
+                        "edges": [],
+                    },
+                    "ports": {"inputs": [], "outputs": []},
+                },
+                "position": {"x": 10, "y": 20},
+            }
+        ],
+        "edges": [],
+    }
+    resp = await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["graph"]["nodes"][0]["type"] == "meta_node"

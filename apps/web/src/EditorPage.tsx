@@ -1,9 +1,12 @@
 import { ReactFlowProvider } from "@xyflow/react";
-import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Keyboard } from "@phosphor-icons/react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useBlocker, useParams } from "react-router-dom";
 
-import { api, type RunStreamHandle, subscribeToRunEvents } from "./api";
+import { api, errorMessage, getOrgId, getToken, type RunStreamHandle, subscribeToRunEvents } from "./api";
 import { AiDraftModal } from "./AiDraftModal";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { RunnerPoolSelect } from "./RunnerPoolSelect";
 import { Canvas } from "./editor/Canvas";
 import { ChatPanel } from "./editor/ChatPanel";
 import { CommandPalette } from "./editor/CommandPalette";
@@ -13,10 +16,34 @@ import { NodeDetailModal } from "./editor/NodeDetailModal";
 import { NodePalette } from "./editor/NodePalette";
 import { PortDataViewer } from "./editor/PortDataViewer";
 import { WorkflowHistory } from "./editor/WorkflowHistory";
-import { pickEditorRunTrigger, type RunOptions, useEditor } from "./editor/store";
+import {
+  childToGraph,
+  pickEditorRunTrigger,
+  type EditorStore,
+  type PinnedOutput,
+  type RunOptions,
+  useEditor,
+} from "./editor/store";
 import { Logo } from "./Logo";
 import { useCan } from "./permissions";
+import {
+  useEnvironments,
+  useNodes,
+  usePinned,
+  useRunnerPools,
+  useRuns,
+  useWorkflow,
+  useWorkflowCustomNodeManifests,
+} from "./queries";
+import { RunApprovalsPanel } from "./RunApprovalsPanel";
 import { useToast } from "./ToastProvider";
+import { A11yModal } from "./editor/A11yModal";
+import { deriveBarStatus } from "./editor/barStatus";
+import { useAutosave } from "./editor/useAutosave";
+import { SaveIndicator, type SaveState } from "./editor/SaveIndicator";
+import { PublishPill } from "./editor/PublishPill";
+import { OverflowMenu, type OverflowItem } from "./editor/OverflowMenu";
+import { WorkflowSettingsModal } from "./editor/WorkflowSettingsModal";
 import type {
   AiDraftMode,
   AiFixStrategy,
@@ -25,6 +52,7 @@ import type {
   GraphNode,
   RunEvent,
   RunInfo,
+  RunnerPoolInfo,
   WorkflowDetail,
   WorkflowGraph,
 } from "./types";
@@ -91,8 +119,8 @@ function triggerTypes(graph: WorkflowGraph | null | undefined): string[] {
     .sort();
 }
 
-function chatTriggerNode(graph: WorkflowGraph | null | undefined) {
-  return graph?.nodes?.find((n) => n.type === "chat_trigger") ?? null;
+function pinnedPayload(pin: PinnedOutput | undefined): unknown {
+  return pin?.payload;
 }
 
 function buildPublishSummary(
@@ -117,18 +145,144 @@ function buildPublishSummary(
   };
 }
 
+// ---- RunSettingsChip: stacked env+runner chip that opens a popover ----
+
+function RunSettingsChip({
+  environments,
+  environmentId,
+  onEnvChange,
+  pools,
+  defaultRunnerPoolId,
+  onRunnerChange,
+  saving,
+}: {
+  environments: Environment[];
+  environmentId: string | null;
+  onEnvChange: (id: string | null) => void;
+  pools: RunnerPoolInfo[];
+  defaultRunnerPoolId: string | null;
+  onRunnerChange: (id: string | null) => void;
+  saving: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const envName = environments.find((e) => e.id === environmentId)?.name ?? "No env";
+  const poolName = pools.find((p) => p.id === defaultRunnerPoolId)?.name ?? null;
+
+  return (
+    <div className="run-settings-wrap" ref={wrapRef}>
+      <button
+        type="button"
+        className={`run-settings-chip${open ? " is-open" : ""}`}
+        onClick={() => setOpen((v) => !v)}
+        title="Run settings"
+      >
+        {saving ? (
+          <span className="chip-saving">saving…</span>
+        ) : (
+          <>
+            <span className="chip-env">
+              {envName}
+              <span className="chip-caret">▾</span>
+            </span>
+            {poolName && (
+              <span className="chip-runner">
+                <span style={{ color: "#22c55e", lineHeight: 1 }}>●</span>
+                {poolName}
+              </span>
+            )}
+          </>
+        )}
+      </button>
+      {open && (
+        <div className="run-settings-popover">
+          <div className="rsp-title">Run settings</div>
+          <div className="rsp-section">
+            <div className="rsp-label">Environment</div>
+            <select
+              className="rsp-env-select"
+              value={environmentId ?? ""}
+              onChange={(e) => onEnvChange(e.target.value || null)}
+            >
+              {environments.map((env) => (
+                <option key={env.id} value={env.id}>
+                  {env.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="rsp-divider" />
+          <div className="rsp-section">
+            <div className="rsp-label">Runner override</div>
+            <RunnerPoolSelect
+              pools={pools}
+              value={defaultRunnerPoolId}
+              onChange={onRunnerChange}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Stable selectors defined outside the component so their references never
+// change between renders, preventing needless Zustand re-subscriptions.
+const selectHasTrigger = (s: EditorStore) =>
+  // While drilled into a metanode the live nodes are the interior (no trigger);
+  // runs fold up to the root, so check the root graph for a trigger.
+  pickEditorRunTrigger(s.drillStack.length > 0 ? s.drillStack[0]!.nodes : s.nodes) !== null;
+const selectHasChatTrigger = (s: EditorStore) =>
+  s.nodes.some((n) => n.data.manifest?.id === "chat_trigger");
+const selectChatTriggerParams = (s: EditorStore) => {
+  const node = s.nodes.find((n) => n.data.manifest?.id === "chat_trigger");
+  if (!node) return null;
+  return node.data.params as Record<string, string>;
+};
+
+
 export function EditorPage() {
   const { id } = useParams<{ id: string }>();
+  const workflowQuery = useWorkflow(id ?? null);
+  const nodesQuery = useNodes();
+  const customNodesQuery = useWorkflowCustomNodeManifests(id ?? null);
+  const environmentsQuery = useEnvironments();
+  const runnerPoolsQuery = useRunnerPools();
+  const pinnedQuery = usePinned(id ?? null);
+  const runsQuery = useRuns(id ?? null, { enabled: false });
   const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   const [name, setName] = useState("");
   const [active, setActive] = useState(false);
   const [environmentId, setEnvironmentId] = useState<string | null>(null);
+  const [defaultRunnerPoolId, setDefaultRunnerPoolId] = useState<string | null>(null);
+  const [chipSaving, setChipSaving] = useState(false);
   const [runTimeout, setRunTimeout] = useState<string>("");
-  const [environments, setEnvironments] = useState<Environment[]>([]);
+  const [mcpEnabled, setMcpEnabled] = useState(false);
+  const [mcpToolName, setMcpToolName] = useState("");
+  const [mcpDescription, setMcpDescription] = useState("");
+  const environments = environmentsQuery.data ?? [];
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
   const [runsOpen, setRunsOpen] = useState(false);
   const [runsList, setRunsList] = useState<RunInfo[]>([]);
   const [cancellingRun, setCancellingRun] = useState(false);
@@ -149,7 +303,15 @@ export function EditorPage() {
   const [publishUpdateDeployments, setPublishUpdateDeployments] = useState(false);
   const [publishSummary, setPublishSummary] = useState<PublishSummary | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [restoreGraph, setRestoreGraph] = useState<WorkflowGraph | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [publishNotes, setPublishNotes] = useState("");
+  const [saveError, setSaveError] = useState(false);
+  const [togglingActive, setTogglingActive] = useState(false);
+  // Run id of a run paused awaiting tool approval (UX-6). Drives a persistent
+  // banner with inline approve/reject instead of relying on a transient toast.
+  const [waitingRunId, setWaitingRunId] = useState<string | null>(null);
   const [cmdOpen, setCmdOpen] = useState(false);
   const chatOpen = useEditor((s) => s.chatOpen);
   const openChat = useEditor((s) => s.openChat);
@@ -157,6 +319,11 @@ export function EditorPage() {
   const { notify } = useToast();
   const wsRef = useRef<RunStreamHandle | null>(null);
   const webhookTimerRef = useRef<number | null>(null);
+  const listenPathRef = useRef<string | null>(null);
+  const runsMenuRef = useRef<HTMLDivElement | null>(null);
+  const aiAbortRef = useRef<AbortController | null>(null);
+  const saveInProgressRef = useRef(false);
+  const loadedWorkflowIdRef = useRef<string | null>(null);
 
   const setManifests = useEditor((s) => s.setManifests);
   const setEnvContext = useEditor((s) => s.setEnvContext);
@@ -165,14 +332,40 @@ export function EditorPage() {
   const toGraph = useEditor((s) => s.toGraph);
   const markClean = useEditor((s) => s.markClean);
   const dirty = useEditor((s) => s.dirty);
+  const childDirty = useEditor((s) =>
+    Object.values(s.childWorkflows).some((cw) => cw.dirty),
+  );
   const nodeCount = useEditor((s) => s.nodes.length);
-  const hasTrigger = useEditor((s) => pickEditorRunTrigger(s.nodes) !== null);
-  const hasChatTrigger = useEditor((s) => s.nodes.some((n) => n.data.manifest.id === "chat_trigger"));
+  const hasTrigger = useEditor(selectHasTrigger);
+  const hasChatTrigger = useEditor(selectHasChatTrigger);
   const selectedId = useEditor((s) => s.selectedId);
-  const deleteNode = useEditor((s) => s.deleteNode);
+  const deleteSelection = useEditor((s) => s.deleteSelection);
   const duplicateNode = useEditor((s) => s.duplicateNode);
   const canRun = useCan("workflow:run");
   const canWrite = useCan("workflow:write");
+
+  const barStatus = deriveBarStatus({
+    publishedVersion: workflow?.published_version ?? null,
+    active,
+    hasUnpublishedChanges: Boolean(workflow?.has_unpublished_changes),
+    dirty: dirty || childDirty,
+  });
+
+  const saveState: SaveState = saveError
+    ? "error"
+    : saving
+      ? "saving"
+      : dirty || childDirty
+        ? "unsaved"
+        : "saved";
+
+  useAutosave({
+    enabled: Boolean(canWrite && id),
+    dirty: dirty || childDirty,
+    delayMs: 1500,
+    onSave: () => { void save({ notifySuccess: false }); },
+  });
+
   const runId = useEditor((s) => s.runId);
   const running = useEditor((s) => s.running);
   const runError = useEditor((s) => s.runError);
@@ -190,50 +383,127 @@ export function EditorPage() {
   const setRunHandler = useEditor((s) => s.setRunHandler);
   const setWorkflowId = useEditor((s) => s.setWorkflowId);
   const setPinned = useEditor((s) => s.setPinned);
+  const loadChildGraph = useEditor((s) => s.loadChildGraph);
+  const setChildWorkflowLoading = useEditor((s) => s.setChildWorkflowLoading);
+  const markChildClean = useEditor((s) => s.markChildClean);
+  const updateParams = useEditor((s) => s.updateParams);
+  const manifestsById = useEditor((s) => s.manifestsById);
+  const editorNodes = useEditor((s) => s.nodes);
+  const chatTriggerParams = useEditor(selectChatTriggerParams);
+  // Map Group nodes that need a child workflow created.
+  const mapGroupsNeedingChild = useMemo(
+    () =>
+      editorNodes.filter(
+      (n) => n.type === "mapGroup" && !(n.data.params.child_workflow_id as string),
+    ),
+    [editorNodes],
+  );
 
   useEffect(() => {
     if (!id) return;
-    let cancelled = false;
+    loadedWorkflowIdRef.current = null;
     setStatus("loading");
+    setMessage("");
     clearRun();
     closeNdv();
-    (async () => {
-      try {
-        const [manifests, custom, detail, envs, pinnedList] = await Promise.all([
-          api.nodes(),
-          api.workflowCustomNodeManifests(id),
-          api.getWorkflow(id),
-          api.listEnvironments(),
-          api.listPinned(id),
-        ]);
-        if (cancelled) return;
-        setManifests([...manifests, ...custom]);
-        loadGraph(detail.graph);
-        setWorkflow(detail);
-        setName(detail.name);
-        setActive(detail.active);
-        setEnvironmentId(detail.environment_id);
-        setRunTimeout(
-          detail.run_timeout_seconds != null
-            ? String(detail.run_timeout_seconds)
-            : "",
-        );
-        setEnvironments(envs);
-        setWorkflowId(id);
-        const pinnedMap: Record<string, unknown> = {};
-        for (const p of pinnedList) pinnedMap[p.node_id] = p.payload;
-        setPinned(pinnedMap);
-        setStatus("ready");
-      } catch (err) {
-        if (cancelled) return;
-        setMessage(String(err));
-        setStatus("error");
-      }
-    })();
+    setWorkflowId(id);
+  }, [clearRun, closeNdv, id, setWorkflowId]);
+
+  useEffect(() => {
+    if (!id || loadedWorkflowIdRef.current === id) return;
+    if (
+      workflowQuery.isLoading ||
+      nodesQuery.isLoading ||
+      customNodesQuery.isLoading ||
+      environmentsQuery.isLoading ||
+      pinnedQuery.isLoading
+    ) {
+      return;
+    }
+    const loadError =
+      workflowQuery.error ??
+      nodesQuery.error ??
+      customNodesQuery.error ??
+      environmentsQuery.error ??
+      pinnedQuery.error;
+    if (loadError) {
+      setMessage(errorMessage(loadError));
+      setStatus("error");
+      return;
+    }
+    const detail = workflowQuery.data;
+    if (!detail || !nodesQuery.data || !customNodesQuery.data || !pinnedQuery.data) {
+      return;
+    }
+
+    let cancelled = false;
+    setManifests([...nodesQuery.data, ...customNodesQuery.data]);
+    loadGraph(detail.graph);
+    setWorkflow(detail);
+    setName(detail.name);
+    setActive(detail.active);
+    setEnvironmentId(detail.environment_id);
+    setDefaultRunnerPoolId(detail.default_runner_pool_id ?? null);
+    setRunTimeout(
+      detail.run_timeout_seconds != null ? String(detail.run_timeout_seconds) : "",
+    );
+    setMcpEnabled(detail.mcp_enabled ?? false);
+    setMcpToolName(detail.mcp_tool_name ?? "");
+    setMcpDescription(detail.mcp_description ?? "");
+    const pinnedMap: Record<string, PinnedOutput> = {};
+    for (const p of pinnedQuery.data) {
+      pinnedMap[p.node_id] = { payload: p.payload, updatedAt: p.updated_at };
+    }
+    setPinned(pinnedMap);
+    loadedWorkflowIdRef.current = id;
+    setStatus("ready");
+    window.setTimeout(() => window.dispatchEvent(new Event("noodle:fit-view")), 60);
+
+    // Load child workflows for any map_group nodes.
+    const mapGroupNodes = useEditor.getState().nodes.filter(
+      (n) => n.type === "mapGroup" && Boolean(n.data.params.child_workflow_id as string),
+    );
+    if (mapGroupNodes.length > 0) {
+      void Promise.all(
+        mapGroupNodes.map(async (mg) => {
+          if (cancelled) return;
+          const childId = mg.data.params.child_workflow_id as string;
+          setChildWorkflowLoading(mg.id, true);
+          try {
+            const child = await api.getWorkflow(childId);
+            if (!cancelled) loadChildGraph(mg.id, childId, child.graph);
+          } catch (err) {
+            if (!cancelled) setChildWorkflowLoading(mg.id, false, String(err));
+          }
+        }),
+      );
+    }
+
     return () => {
       cancelled = true;
     };
-  }, [id, setManifests, loadGraph, clearRun, closeNdv, setWorkflowId, setPinned]);
+  }, [
+    customNodesQuery.data,
+    customNodesQuery.error,
+    customNodesQuery.isLoading,
+    environmentsQuery.error,
+    environmentsQuery.isLoading,
+    id,
+    loadChildGraph,
+    loadGraph,
+    nodesQuery.data,
+    nodesQuery.error,
+    nodesQuery.isLoading,
+    pinnedQuery.data,
+    pinnedQuery.error,
+    pinnedQuery.isLoading,
+    setChildWorkflowLoading,
+    setManifests,
+    setPinned,
+    workflowQuery.data,
+    workflowQuery.error,
+    workflowQuery.isLoading,
+  ]);
 
   // Mirror the current run-environment context into the editor store so the
   // NDV can flag nodes whose packages the env lacks (and offer fix actions).
@@ -242,6 +512,7 @@ export function EditorPage() {
       id: e.id,
       name: e.name,
       packages: e.packages,
+      backend: e.backend,
     }));
     const current = environments.find((e) => e.id === environmentId) ?? null;
     setEnvContext({
@@ -256,6 +527,50 @@ export function EditorPage() {
     setApplyEnvSwitch((envId: string) => setEnvironmentId(envId));
     return () => setApplyEnvSwitch(null);
   }, [setApplyEnvSwitch]);
+
+  // Auto-create child workflows for newly dropped Map Group nodes.
+  const mgNeedingChildKey = mapGroupsNeedingChild.map((m) => m.id).join(",");
+  useEffect(() => {
+    if (!id || mapGroupsNeedingChild.length === 0) return;
+    const manualTriggerManifest = manifestsById["manual_trigger"];
+    for (const mg of mapGroupsNeedingChild) {
+      setChildWorkflowLoading(mg.id, true, null);
+      void (async () => {
+        try {
+          const childWf = await api.createWorkflow(`${name} — map body`);
+          const initialGraph: WorkflowGraph = {
+            nodes: manualTriggerManifest
+              ? [
+                  {
+                    id: `${mg.id}_t`,
+                    type: "manual_trigger",
+                    params: {},
+                    position: { x: 100, y: 80 },
+                    disabled: false,
+                    outputs_override: null,
+                    on_error: "stop",
+                    retry_on_fail: false,
+                    retries: 1,
+                    retry_wait_seconds: 0,
+                    retry_backoff: false,
+                    always_output_data: false,
+                    timeout_seconds: null,
+                  },
+                ]
+              : [],
+            edges: [],
+          };
+          await api.updateWorkflow(childWf.id, { graph: initialGraph });
+          updateParams(mg.id, { ...mg.data.params, child_workflow_id: childWf.id });
+          loadChildGraph(mg.id, childWf.id, initialGraph);
+        } catch (err) {
+          setChildWorkflowLoading(mg.id, false, String(err));
+          notify(`Could not create map body workflow: ${String(err)}`, "error");
+        }
+      })();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mgNeedingChildKey, id]);
 
   // Task 20: Debug in editor. When ExecutionsPage links to
   // /workflows/<id>?debug_run=<run_id>, load that run's snapshot once the
@@ -273,7 +588,14 @@ export function EditorPage() {
         const snap = await api.runDebugSnapshot(debugRunId);
         if (cancelled) return;
         loadGraph(snap.graph);
-        setPinned(snap.upstream_cache);
+        setPinned(
+          Object.fromEntries(
+            Object.entries(snap.upstream_cache).map(([nodeId, payload]) => [
+              nodeId,
+              { payload, updatedAt: null },
+            ]),
+          ),
+        );
         if (snap.failed_node_id) openNdv(snap.failed_node_id);
         setMessage(
           snap.failed_node_id
@@ -291,10 +613,26 @@ export function EditorPage() {
     };
   }, [id, status, loadGraph, setPinned, openNdv]);
 
+  async function saveRunSetting(patch: { environment_id?: string | null; default_runner_pool_id?: string | null }) {
+    if (!id) return;
+    setChipSaving(true);
+    try {
+      await api.updateWorkflow(id, patch);
+    } catch {
+      // swallow — next explicit save will sync
+    } finally {
+      setChipSaving(false);
+    }
+  }
+
   function stopWebhookListen(): void {
     if (webhookTimerRef.current !== null) {
       window.clearInterval(webhookTimerRef.current);
       webhookTimerRef.current = null;
+    }
+    if (listenPathRef.current) {
+      void api.stopListen(listenPathRef.current).catch(() => undefined);
+      listenPathRef.current = null;
     }
     setWebhookListen(null);
   }
@@ -307,31 +645,109 @@ export function EditorPage() {
     [],
   );
 
+  // Warn before a tab close / refresh drops unsaved graph edits — saving is
+  // manual (Cmd/Ctrl+S, Save, name blur), so without this guard a refresh
+  // silently loses work. Covers the parent graph and any dirty child (map-body)
+  // workflows.
+  useEffect(() => {
+    if (!dirty && !childDirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty, childDirty]);
+
+  // In-app navigation guard (UX-8): block route changes away from a dirty
+  // editor (Logo link, browser back, programmatic nav) and confirm via dialog.
+  // `beforeunload` above only covers real tab-close/refresh, not SPA nav.
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      (dirty || childDirty) &&
+      currentLocation.pathname !== nextLocation.pathname,
+  );
+
+  async function triggerExport(path: string, filename: string): Promise<void> {
+    const headers: Record<string, string> = {};
+    const token = getToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+    // Send the active org so the export resolves to the right tenant. This GET
+    // bypasses the shared request() wrapper (it streams a blob), so the org
+    // header must be added explicitly or the export 404s for non-default orgs (R-10).
+    const orgId = getOrgId();
+    if (orgId) headers["X-Org-Id"] = orgId;
+    try {
+      const resp = await fetch(path, { headers, credentials: "include" });
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => resp.statusText);
+        notify(`Export failed: ${body}`, "error");
+        return;
+      }
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      notify(`Export failed: ${errorMessage(err)}`, "error");
+    }
+  }
+
   async function save(
     options: { notifySuccess?: boolean } = {},
   ): Promise<WorkflowDetail | null> {
     if (!id) return null;
+    if (saveInProgressRef.current) return null;
+    saveInProgressRef.current = true;
     const notifySuccess = options.notifySuccess ?? true;
     setSaving(true);
     setMessage("");
     try {
+      setSaveError(false);
       const updated = await api.updateWorkflow(id, {
         name: name.trim() || "Untitled workflow",
         active,
         environment_id: environmentId ?? undefined,
+        default_runner_pool_id: defaultRunnerPoolId,
         run_timeout_seconds: runTimeout === "" ? null : Math.max(0, parseFloat(runTimeout) || 0),
+        mcp_enabled: mcpEnabled,
+        mcp_tool_name: mcpToolName || null,
+        mcp_description: mcpDescription || null,
         graph: toGraph(),
       });
       setWorkflow(updated);
       markClean();
+
+      // Save dirty child workflows concurrently.
+      const { childWorkflows } = useEditor.getState();
+      const dirtyChildren = Object.entries(childWorkflows).filter(([, cw]) => cw.dirty);
+      if (dirtyChildren.length > 0) {
+        await Promise.all(
+          dirtyChildren.map(async ([mgId, cw]) => {
+            try {
+              await api.updateWorkflow(cw.workflowId, { graph: childToGraph(cw) });
+              markChildClean(mgId);
+            } catch (err) {
+              notify(`Could not save map body workflow: ${String(err)}`, "error");
+            }
+          }),
+        );
+      }
+
       if (notifySuccess) notify("Draft saved.", "success");
       return updated;
     } catch (err) {
-      setMessage(String(err));
-      notify("Could not save draft.", "error");
+      setSaveError(true);
+      notify(`Could not save draft. ${errorMessage(err)}`, "error");
       return null;
     } finally {
       setSaving(false);
+      saveInProgressRef.current = false;
     }
   }
 
@@ -343,22 +759,45 @@ export function EditorPage() {
     setMessage("");
     try {
       const published = await api.publishWorkflow(id, {
-        notes: "Published from editor",
+        notes: publishNotes.trim() || undefined,
         update_deployments: updateDeployments,
       });
       const detail = await api.getWorkflow(id);
       setWorkflow(detail);
+      // Publishing takes the workflow live (backend sets active=true), so the
+      // pill flips to the green "Published" state and the Active toggle reads on.
+      setActive(detail.active);
       setPublishReviewOpen(false);
+      setPublishNotes("");
       const deployNote = published.updated_deployments
         ? ` Updated ${published.updated_deployments} deployment(s).`
         : " Deployments stay pinned until updated.";
       setMessage(`Published v${published.version}.${deployNote}`);
       notify(`Published v${published.version}.`, "success");
     } catch (err) {
-      setMessage(String(err));
-      notify("Could not publish workflow.", "error");
+      notify(`Could not publish workflow. ${errorMessage(err)}`, "error");
     } finally {
       setPublishing(false);
+    }
+  }
+
+  async function toggleActive(next: boolean): Promise<void> {
+    // Flip whether the published version runs live in production. Persist
+    // eagerly (optimistic) so there's no separate save step; roll back the
+    // switch if the request fails. Pausing keeps version history intact.
+    if (!id || togglingActive) return;
+    if (!next && !window.confirm("Pause this workflow? It stops running in production until you switch it back on. Version history is kept.")) return;
+    setActive(next);
+    setTogglingActive(true);
+    try {
+      const updated = await api.updateWorkflow(id, { active: next });
+      setWorkflow(updated);
+      notify(next ? "Workflow is live." : "Workflow paused.", "success");
+    } catch (err) {
+      setActive(!next);
+      notify(`Could not update workflow state. ${errorMessage(err)}`, "error");
+    } finally {
+      setTogglingActive(false);
     }
   }
 
@@ -372,6 +811,10 @@ export function EditorPage() {
 
   async function previewAiDraft(): Promise<void> {
     if (!id || aiBusy || !aiPrompt.trim()) return;
+    aiAbortRef.current?.abort();
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
+    const timeoutId = window.setTimeout(() => controller.abort(), 60_000);
     setAiBusy(true);
     setMessage("");
     try {
@@ -384,14 +827,19 @@ export function EditorPage() {
         failed_node_id: aiMode === "fix" ? aiFailedNodeId : undefined,
         error: aiMode === "fix" ? aiFailedError : undefined,
         fix_strategy: aiFixStrategy,
-      });
+      }, controller.signal);
       setAiPreview(draft);
       notify("AI draft preview ready.", "success");
     } catch (err) {
-      setMessage(String(err));
-      notify("Could not build AI draft.", "error");
+      if (controller.signal.aborted) {
+        notify("AI draft request timed out. Please try again.", "error");
+      } else {
+        notify(`Could not build AI draft. ${errorMessage(err)}`, "error");
+      }
     } finally {
+      window.clearTimeout(timeoutId);
       setAiBusy(false);
+      aiAbortRef.current = null;
     }
   }
 
@@ -413,8 +861,7 @@ export function EditorPage() {
       setMessage(`${aiPreview.explanation}${missing}`);
       notify("AI draft applied.", "success");
     } catch (err) {
-      setMessage(String(err));
-      notify("Could not apply AI draft.", "error");
+      notify(`Could not apply AI draft. ${errorMessage(err)}`, "error");
     } finally {
       setAiBusy(false);
     }
@@ -441,34 +888,6 @@ export function EditorPage() {
     );
     setAiPreview(null);
     setAiOpen(true);
-  }
-
-  async function toggleActive(next: boolean): Promise<void> {
-    // Save eagerly when the user flips Active so the change persists
-    // without a separate Save click. Optimistically update the UI and
-    // roll back if the request fails.
-    if (!id) return;
-    setActive(next);
-    setSaving(true);
-    setMessage("");
-    try {
-      const updated = await api.updateWorkflow(id, {
-        name: name.trim() || "Untitled workflow",
-        active: next,
-        environment_id: environmentId ?? undefined,
-        run_timeout_seconds: runTimeout === "" ? null : Math.max(0, parseFloat(runTimeout) || 0),
-        graph: toGraph(),
-      });
-      setWorkflow(updated);
-      markClean();
-      notify(next ? "Workflow activated." : "Workflow deactivated.", "success");
-    } catch (err) {
-      setActive(!next);
-      setMessage(String(err));
-      notify("Could not update workflow state.", "error");
-    } finally {
-      setSaving(false);
-    }
   }
 
   type RunCache = Record<string, Record<string, unknown>>;
@@ -505,7 +924,7 @@ export function EditorPage() {
       const pinned = pinnedMap[nodeId];
       const output =
         pinned !== undefined
-          ? pinned
+          ? pinnedPayload(pinned)
           : runStatusMap[nodeId] === "success"
             ? runOutputsMap[nodeId]
             : undefined;
@@ -554,13 +973,23 @@ export function EditorPage() {
     );
   }
 
-  function connectRunStream(runId: string, targets?: string[]): void {
-    startRun(runId, targets);
+  function connectRunStream(runId: string, targets?: string[], cache?: RunCache): void {
+    // Tear down any prior run's stream before opening a new one — otherwise a
+    // rapid re-run (or starting a second run) leaks the old socket and lets its
+    // events keep mutating editor state for the wrong run.
+    wsRef.current?.close();
+    wsRef.current = null;
+    setWaitingRunId(null);
+    startRun(runId, targets, cache);
     wsRef.current = subscribeToRunEvents(runId, {
       onMessage: (data) => {
         const payload = data as RunEvent;
         applyRunEvent(payload);
         if (payload.type === "run_finished") {
+          // A "waiting" finish means the run paused for a tool approval. Surface
+          // it as a persistent banner (UX-6) — a transient toast is too easy to
+          // miss for a run that's genuinely blocked.
+          setWaitingRunId(payload.status === "waiting" ? (payload.run_id ?? runId) : null);
           notify(
             payload.status === "success"
               ? "Workflow run succeeded."
@@ -592,6 +1021,19 @@ export function EditorPage() {
     });
   }
 
+  function startChatCanvasRun(runId: string): void {
+    // The chat panel owns the live run socket for chat turns. Reuse its events
+    // to animate the canvas instead of opening a second editor stream.
+    wsRef.current?.close();
+    wsRef.current = null;
+    setWaitingRunId(null);
+    startRun(runId);
+  }
+
+  function applyChatRunEvent(event: RunEvent): void {
+    applyRunEvent(event);
+  }
+
   async function startWebhookTestRun(
     node: GraphNode,
     targets?: string[],
@@ -607,11 +1049,13 @@ export function EditorPage() {
     setNodeOutput(node.id, undefined);
     try {
       await api.clearWebhook(path);
+      await api.startListen(path);
     } catch (err) {
       setMessage(String(err));
       return;
     }
 
+    listenPathRef.current = path;
     setWebhookListen({ nodeId: node.id, path, url, targets: runTargets });
     notify("Listening for test webhook.", "info");
     webhookTimerRef.current = window.setInterval(async () => {
@@ -700,10 +1144,9 @@ export function EditorPage() {
       if (cache && Object.keys(cache).length > 0) {
         notify(`Reused ${Object.keys(cache).length} upstream output(s).`, "info");
       }
-      connectRunStream(run_id, targets);
+      connectRunStream(run_id, targets, cache);
     } catch (err) {
-      setMessage(String(err));
-      notify("Could not start workflow run.", "error");
+      notify(`Could not start workflow run. ${errorMessage(err)}`, "error");
     }
   }
 
@@ -726,8 +1169,7 @@ export function EditorPage() {
         });
       }
     } catch (err) {
-      setMessage(String(err));
-      notify("Could not cancel run.", "error");
+      notify(`Could not cancel run. ${errorMessage(err)}`, "error");
     } finally {
       setCancellingRun(false);
     }
@@ -779,6 +1221,16 @@ export function EditorPage() {
         window.dispatchEvent(new Event("noodle:auto-layout"));
         return;
       }
+      if (e.shiftKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        window.dispatchEvent(new Event("noodle:toggle-node-palette"));
+        return;
+      }
+      if (e.shiftKey && e.key.toLowerCase() === "i") {
+        e.preventDefault();
+        window.dispatchEvent(new Event("noodle:toggle-inspector"));
+        return;
+      }
       if (e.shiftKey && e.key.toLowerCase() === "n") {
         e.preventDefault();
         useEditor.getState().addStickyNote({ x: 200 + Math.random() * 200, y: 200 + Math.random() * 100 });
@@ -789,9 +1241,10 @@ export function EditorPage() {
         useEditor.getState().addGroupNode({ x: 200 + Math.random() * 200, y: 200 + Math.random() * 100 });
         return;
       }
-      if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
+      if (e.key === "Delete" || e.key === "Backspace") {
+        const deleted = deleteSelection();
+        if (deleted === 0) return;
         e.preventDefault();
-        deleteNode(selectedId);
         return;
       }
       if (e.key.toLowerCase() === "d" && selectedId) {
@@ -801,13 +1254,24 @@ export function EditorPage() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [deleteNode, duplicateNode, environmentId, run, save, selectedId]);
+  }, [deleteSelection, duplicateNode, environmentId, run, save, selectedId]);
 
   useEffect(() => {
     function onOpenShortcuts() { setShortcutsOpen(true); }
     window.addEventListener("noodle:open-shortcuts", onOpenShortcuts);
     return () => window.removeEventListener("noodle:open-shortcuts", onOpenShortcuts);
   }, []);
+
+  useEffect(() => {
+    if (!runsOpen) return;
+    function onClickOutside(e: MouseEvent) {
+      if (runsMenuRef.current && !runsMenuRef.current.contains(e.target as Node)) {
+        setRunsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [runsOpen]);
 
   async function openRuns(): Promise<void> {
     if (!id) return;
@@ -816,7 +1280,8 @@ export function EditorPage() {
       return;
     }
     try {
-      const list = await api.listRuns(id);
+      const result = await runsQuery.refetch();
+      const list = result.data ?? [];
       setRunsList(list);
       setRunsOpen(true);
     } catch (err) {
@@ -859,58 +1324,64 @@ export function EditorPage() {
           <input
             className="toolbar-name"
             value={name}
+            aria-label="Workflow name"
             onChange={(e) => setName(e.target.value)}
+            onBlur={() => { if (dirty || name.trim() !== (workflow?.name ?? "")) void save({ notifySuccess: false }); }}
             spellCheck={false}
           />
           <span className="toolbar-meta">
-            published v{workflow?.published_version ?? workflow?.version}
-            {workflow?.has_unpublished_changes ? " · unpublished draft" : ""}
+            {barStatus.versionLabel}
             {" · "}
             {nodeCount} node{nodeCount === 1 ? "" : "s"}
           </span>
         </div>
         <div className="toolbar-right">
-          <select
-            className="toolbar-env"
-            title="Run environment"
-            value={environmentId ?? ""}
-            onChange={(e) => setEnvironmentId(e.target.value || null)}
-          >
-            {environments.length === 0 && <option value="">No environment</option>}
-            {environments.map((env) => (
-              <option key={env.id} value={env.id}>
-                {env.name}
-              </option>
-            ))}
-          </select>
-          <input
-            className="toolbar-timeout"
-            type="number"
-            min={0}
-            step={1}
-            value={runTimeout}
-            placeholder="No timeout"
-            title="Run timeout (seconds). Blank or 0 means the run is never capped."
-            onChange={(e) => setRunTimeout(e.target.value)}
+          <SaveIndicator state={saveState} onRetry={() => { void save({ notifySuccess: false }); }} />
+
+          <RunSettingsChip
+            environments={environments}
+            environmentId={environmentId}
+            onEnvChange={(envId) => {
+              setEnvironmentId(envId);
+              void saveRunSetting({ environment_id: envId });
+            }}
+            pools={runnerPoolsQuery.data ?? []}
+            defaultRunnerPoolId={defaultRunnerPoolId}
+            onRunnerChange={(poolId) => {
+              setDefaultRunnerPoolId(poolId);
+              void saveRunSetting({ default_runner_pool_id: poolId });
+            }}
+            saving={chipSaving}
           />
-          <label className="active-toggle">
-            <input
-              type="checkbox"
-              checked={active}
-              onChange={(e) => void toggleActive(e.target.checked)}
-              disabled={saving}
-            />
-            <span className="active-track" />
-            <span>{active ? "Active" : "Inactive"}</span>
-          </label>
-          <div className="runs-menu">
+
+          {hasChatTrigger ? (
+            <button type="button" className="btn" onClick={openChat} title="Open chat panel">
+              Chat
+            </button>
+          ) : null}
+
+          <button
+            className="btn"
+            onClick={() => {
+              setAiMode("draft");
+              setAiFixStrategy("minimal");
+              setAiFailedNodeId(null);
+              setAiFailedError(null);
+              setAiPreview(null);
+              setAiOpen(true);
+            }}
+            title="Generate an editable draft from a natural-language prompt"
+          >
+            ✨ AI Draft
+          </button>
+
+          <div className="runs-menu" ref={runsMenuRef}>
             <button className="btn" onClick={() => void openRuns()}>
               Runs ▾
             </button>
             {runsOpen && (
               <div
                 className="runs-dropdown"
-                onMouseLeave={() => setRunsOpen(false)}
               >
                 {runsList.length === 0 && (
                   <p className="runs-empty muted">No runs yet.</p>
@@ -932,122 +1403,59 @@ export function EditorPage() {
               </div>
             )}
           </div>
-          <button
-            className="btn"
-            onClick={() => setFunctionsOpen(true)}
-            title="Upload Python files; their functions appear in the palette"
-          >
-            ƒ Functions
-          </button>
-          {hasChatTrigger ? (
-            <button
-              type="button"
-              className="btn"
-              onClick={openChat}
-              title="Open chat panel"
+
+          {canWrite && (
+            <PublishPill
+              status={barStatus}
+              onClick={openPublishReview}
+              disabled={saving || publishing}
+            />
+          )}
+
+          {canWrite && barStatus.kind !== "unpublished" && (
+            <label
+              className="active-toggle"
+              title={active
+                ? "Live — triggers run in production. Switch off to pause."
+                : "Paused — switch on to run the published version live."}
             >
-              Chat
-            </button>
-          ) : null}
+              <input
+                type="checkbox"
+                checked={active}
+                disabled={togglingActive}
+                aria-label={active ? "Pause workflow" : "Activate workflow"}
+                onChange={(e) => void toggleActive(e.target.checked)}
+              />
+              <span className="active-track" />
+              <span>{active ? "Live" : "Paused"}</span>
+            </label>
+          )}
+
           <button
+            type="button"
             className="btn btn-icon"
-            onClick={() => setShortcutsOpen(true)}
             title="Keyboard shortcuts"
             aria-label="Keyboard shortcuts"
+            onClick={() => setShortcutsOpen(true)}
           >
-            ?
+            <Keyboard size={14} weight="bold" />
           </button>
-          <button
-            className="btn"
-            onClick={() => {
-              setAiMode("draft");
-              setAiFixStrategy("minimal");
-              setAiFailedNodeId(null);
-              setAiFailedError(null);
-              setAiPreview(null);
-              setAiOpen(true);
-            }}
-            title="Generate an editable draft from a natural-language prompt"
-          >
-            AI Draft
-          </button>
-          <div className="export-menu">
-            <button className="btn" onClick={() => setExportOpen((o) => !o)}>
-              Export ▾
-            </button>
-            {exportOpen && (
-              <div
-                className="export-dropdown"
-                onMouseLeave={() => setExportOpen(false)}
-              >
-                <a
-                  href={`/api/workflows/${id}/export.py`}
-                  onClick={() => setExportOpen(false)}
-                >
-                  Python script (.py)
-                </a>
-                <a
-                  href={`/api/workflows/${id}/export/docker`}
-                  onClick={() => setExportOpen(false)}
-                >
-                  Docker bundle (.zip)
-                </a>
-              </div>
-            )}
-          </div>
-          {canRun && <button
-            className="btn btn-run"
-            onClick={() => void run()}
-            disabled={running || Boolean(webhookListen) || !hasTrigger}
-            title={
-              !hasTrigger
-                ? "Add a trigger node to run this workflow"
-                : undefined
-            }
-          >
-            {webhookListen ? (
-              <>
-                <span className="node-spinner" />
-                Listening…
-              </>
-            ) : running ? (
-              "Running…"
-            ) : (
-              "▶ Run"
-            )}
-          </button>}
-          {running && (
-            <button
-              className="btn btn-danger"
-              onClick={() => void cancelCurrentRun()}
-              disabled={cancellingRun}
-            >
-              {cancellingRun ? "Stopping…" : "■ Stop"}
-            </button>
-          )}
-          {canWrite && <button className="btn btn-primary" onClick={() => void save()} disabled={saving}>
-            {dirty && <span className="dirty-dot" />}
-            {saving ? "Saving…" : "Save draft"}
-          </button>}
-          {canWrite && <button
-            className="btn"
-            onClick={openPublishReview}
-            disabled={saving || publishing}
-            title="Publish the saved draft as a new production version"
-          >
-            {publishing ? "Publishing…" : "Publish"}
-          </button>}
-          <button
-            className="btn"
-            onClick={() => setShowHistory(true)}
-            title="View version history"
-          >
-            History
-          </button>
+
+          <OverflowMenu
+            items={[
+              { id: "history", label: "History & versions", onSelect: () => setShowHistory(true) },
+              { id: "functions", label: "Functions", onSelect: () => setFunctionsOpen(true) },
+              { id: "export-py", label: "Export · Python script (.py)", onSelect: () => void triggerExport(`/api/workflows/${id}/export.py`, `${name || "workflow"}.py`) },
+              { id: "export-docker", label: "Export · Docker bundle (.zip)", onSelect: () => void triggerExport(`/api/workflows/${id}/export/docker`, `${name || "workflow"}-docker.zip`) },
+              { id: "export-module", label: "Export · Python module (.py)", onSelect: () => void triggerExport(`/api/workflows/${id}/export.module.py`, `${name || "workflow"}_module.py`) },
+              { id: "settings", label: "Workflow settings", dividerBefore: true, onSelect: () => setSettingsOpen(true) },
+              { id: "shortcuts", label: "Keyboard shortcuts", onSelect: () => setShortcutsOpen(true) },
+            ] as (OverflowItem | null | false)[]}
+          />
         </div>
       </header>
 
-      {message && <div className="toolbar-error">{message}</div>}
+      {message && <div className="toolbar-message">{message}</div>}
       {active && (dirty || workflow?.has_unpublished_changes) && (
         <div className="production-warning">
           Draft changes won't affect active production runs until you publish.
@@ -1076,6 +1484,39 @@ export function EditorPage() {
           <button className="btn btn-sm btn-ghost" onClick={openAiFixFailedRun}>
             Fix with AI
           </button>
+        </div>
+      )}
+
+      {waitingRunId && (
+        <div className="toolbar-approval run-approval-banner">
+          <div className="run-approval-head">
+            <span>⏸ This run is paused for tool approval.</span>
+            <div className="run-approval-actions">
+              <Link
+                className="btn btn-sm btn-ghost"
+                to={`/executions?run=${waitingRunId}`}
+              >
+                View run →
+              </Link>
+              <button
+                className="btn btn-sm btn-ghost"
+                aria-label="Dismiss approval banner"
+                onClick={() => setWaitingRunId(null)}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          <RunApprovalsPanel
+            runId={waitingRunId}
+            runStatus="waiting"
+            onChanged={() => {
+              // A decision was made — resume streaming so the editor reflects
+              // the run continuing (or finishing). If it pauses again, the next
+              // run_finished:"waiting" re-arms this banner.
+              connectRunStream(waitingRunId);
+            }}
+          />
         </div>
       )}
 
@@ -1143,24 +1584,13 @@ export function EditorPage() {
       )}
 
       {shortcutsOpen && (
-        <div className="modal-overlay" onClick={() => setShortcutsOpen(false)}>
-          <div
-            className="modal shortcuts-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="shortcuts-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <header className="modal-head">
-              <h2 id="shortcuts-title">Keyboard shortcuts</h2>
-              <button
-                className="btn btn-sm btn-ghost"
-                onClick={() => setShortcutsOpen(false)}
-              >
-                ✕
-              </button>
-            </header>
-            <div className="shortcut-grid">
+        <A11yModal
+          className="shortcuts-modal"
+          titleId="shortcuts-title"
+          title="Keyboard shortcuts"
+          onClose={() => setShortcutsOpen(false)}
+        >
+          <div className="shortcut-grid">
               <span>Save draft</span>
               <kbd>Ctrl</kbd>
               <kbd>S</kbd>
@@ -1170,6 +1600,9 @@ export function EditorPage() {
               <span>Copy selected nodes</span>
               <kbd>Ctrl</kbd>
               <kbd>C</kbd>
+              <span>Cut selected nodes</span>
+              <kbd>Ctrl</kbd>
+              <kbd>X</kbd>
               <span>Paste copied nodes</span>
               <kbd>Ctrl</kbd>
               <kbd>V</kbd>
@@ -1182,10 +1615,19 @@ export function EditorPage() {
               <span>Auto-layout</span>
               <kbd>Shift</kbd>
               <kbd>L</kbd>
+              <span>Toggle node picker</span>
+              <kbd>Shift</kbd>
+              <kbd>P</kbd>
+              <span>Toggle inspector</span>
+              <kbd>Shift</kbd>
+              <kbd>I</kbd>
               <span>Add group frame</span>
               <kbd>Shift</kbd>
               <kbd>G</kbd>
-              <span>Delete selected node</span>
+              <span>Add sticky note</span>
+              <kbd>Shift</kbd>
+              <kbd>N</kbd>
+              <span>Delete selected nodes</span>
               <kbd>Delete</kbd>
               <span />
               <span>Duplicate selected node</span>
@@ -1194,30 +1636,18 @@ export function EditorPage() {
               <span>Open shortcuts</span>
               <kbd>?</kbd>
               <span />
-            </div>
           </div>
-        </div>
+        </A11yModal>
       )}
 
       {publishReviewOpen && publishSummary && (
-        <div className="modal-overlay" onClick={() => setPublishReviewOpen(false)}>
-          <div
-            className="modal publish-review-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="publish-review-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <header className="modal-head">
-              <h2 id="publish-review-title">Review release</h2>
-              <button
-                className="btn btn-sm btn-ghost"
-                onClick={() => setPublishReviewOpen(false)}
-                disabled={publishing}
-              >
-                ✕
-              </button>
-            </header>
+        <A11yModal
+          className="publish-review-modal"
+          titleId="publish-review-title"
+          title="Review release"
+          onClose={() => setPublishReviewOpen(false)}
+          closeDisabled={publishing}
+        >
             <div className="publish-review-grid">
               <div>
                 <strong>{publishSummary.addedNodes}</strong>
@@ -1268,6 +1698,15 @@ export function EditorPage() {
                 Update deployments to this version
               </span>
             </label>
+            <label className="field publish-notes-field">
+              <span>Version notes (optional)</span>
+              <textarea
+                value={publishNotes}
+                placeholder="What changed in this version?"
+                onChange={(e) => setPublishNotes(e.target.value)}
+                rows={3}
+              />
+            </label>
             <div className="modal-actions">
               <button
                 className="btn btn-ghost"
@@ -1284,26 +1723,35 @@ export function EditorPage() {
                 {publishing ? "Publishing..." : "Publish release"}
               </button>
             </div>
-          </div>
-        </div>
+        </A11yModal>
+      )}
+
+      {settingsOpen && (
+        <WorkflowSettingsModal
+          runTimeout={runTimeout}
+          onRunTimeoutChange={setRunTimeout}
+          mcpEnabled={mcpEnabled}
+          onMcpEnabledChange={setMcpEnabled}
+          mcpToolName={mcpToolName}
+          onMcpToolNameChange={setMcpToolName}
+          mcpDescription={mcpDescription}
+          onMcpDescriptionChange={setMcpDescription}
+          onClose={() => { setSettingsOpen(false); void save({ notifySuccess: false }); }}
+        />
       )}
 
       {chatOpen && workflow ? (
-        (() => {
-          const node = chatTriggerNode(toGraph());
-          const params = (node?.params ?? {}) as Record<string, string>;
-          return (
-            <ChatPanel
-              workflowId={workflow.id}
-              title={params.title ?? "Chat"}
-              placeholder={params.input_placeholder ?? "Type a message…"}
-              initialMessage={params.initial_message ?? ""}
-              onRun={(runId) => connectRunStream(runId)}
-              onClose={closeChat}
-              onViewRun={(runId) => viewRun(runId)}
-            />
-          );
-        })()
+        <ChatPanel
+          workflowId={workflow.id}
+          title={chatTriggerParams?.title ?? "Chat"}
+          placeholder={chatTriggerParams?.input_placeholder ?? "Type a message…"}
+          initialMessage={chatTriggerParams?.initial_message ?? ""}
+          onRun={startChatCanvasRun}
+          onRunEvent={applyChatRunEvent}
+          onClose={closeChat}
+          onViewRun={(runId) => viewRun(runId)}
+          live
+        />
       ) : null}
 
       {functionsOpen && id && (
@@ -1312,10 +1760,10 @@ export function EditorPage() {
           onClose={() => setFunctionsOpen(false)}
           onChanged={async () => {
             const [builtins, custom] = await Promise.all([
-              api.nodes(),
-              api.workflowCustomNodeManifests(id),
+              nodesQuery.refetch(),
+              customNodesQuery.refetch(),
             ]);
-            setManifests([...builtins, ...custom]);
+            setManifests([...(builtins.data ?? []), ...(custom.data ?? [])]);
           }}
           onApplyStarterGraph={(graph) => {
             // Apply locally and mark the workflow dirty; the user reviews on
@@ -1330,7 +1778,28 @@ export function EditorPage() {
           workflowId={id}
           onClose={() => setShowHistory(false)}
           onRestore={(graph) => {
-            loadGraph(graph, { dirty: true });
+            setRestoreGraph(graph);
+          }}
+        />
+      )}
+      {blocker.state === "blocked" && (
+        <ConfirmDialog
+          title="Leave with unsaved changes?"
+          body="This workflow has unsaved edits. Leaving now will discard them."
+          confirmLabel="Leave"
+          onCancel={() => blocker.reset()}
+          onConfirm={() => blocker.proceed()}
+        />
+      )}
+      {restoreGraph && (
+        <ConfirmDialog
+          title="Restore this version?"
+          body="This will replace your current draft. Any unsaved changes will be lost."
+          confirmLabel="Restore"
+          onCancel={() => setRestoreGraph(null)}
+          onConfirm={() => {
+            loadGraph(restoreGraph, { dirty: true });
+            setRestoreGraph(null);
             setShowHistory(false);
           }}
         />

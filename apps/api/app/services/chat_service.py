@@ -71,6 +71,26 @@ async def run_chat_turn(
     prefer_draft: bool = True,
     timeout: float = 120.0,
 ) -> ChatTurnResult:
+    run_id, session_id = await start_chat_turn(
+        workflow_id, message, session_id, prefer_draft=prefer_draft
+    )
+    return await await_chat_result(run_id, session_id, timeout=timeout)
+
+
+async def start_chat_turn(
+    workflow_id: str,
+    message: str,
+    session_id: str,
+    *,
+    prefer_draft: bool = True,
+) -> tuple[str, str]:
+    """Seed the Chat Trigger and start a run, returning ``(run_id, session_id)``.
+
+    Unlike :func:`run_chat_turn`, this returns as soon as the run is scheduled
+    so callers can stream the run's live events (agent tool calls, node
+    progress) over the run WebSocket before fetching the final reply with
+    :func:`await_chat_result`.
+    """
     async with SessionLocal() as session:
         workflow = (
             await session.scalars(
@@ -111,7 +131,16 @@ async def run_chat_turn(
         cache={trigger_id: {"main": payload}},
         trigger_node_id=trigger_id,
     )
+    return run_id, session_id
 
+
+async def await_chat_result(
+    run_id: str,
+    session_id: str,
+    *,
+    timeout: float = 120.0,
+) -> ChatTurnResult:
+    """Wait for a started chat run to finish and extract the reply."""
     status = await _await_run_terminal(run_id, timeout)
     if status is None:
         return ChatTurnResult(

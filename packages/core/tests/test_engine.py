@@ -296,6 +296,52 @@ async def test_disabled_node_passes_input_through() -> None:
     assert result.nodes["e"].outputs["main"] == 10
 
 
+async def test_disabled_ai_supplier_errors_instead_of_silent_none() -> None:
+    reg = NodeRegistry()
+
+    @node(
+        name="Memory",
+        id="memory",
+        inputs=[],
+        outputs=["memory"],
+        output_kinds={"memory": "ai_memory"},
+        registry=reg,
+    )
+    def memory() -> object:
+        return object()
+
+    @node(
+        name="Agent",
+        id="agent",
+        inputs=["memory"],
+        input_kinds={"memory": "ai_memory"},
+        registry=reg,
+    )
+    def agent(memory: object | None = None) -> str:  # noqa: ARG001
+        return "ok"
+
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="m", type="memory", disabled=True),
+            GraphNode(id="a", type="agent"),
+        ],
+        edges=[
+            Edge(
+                source="m",
+                source_output="memory",
+                target="a",
+                target_input="memory",
+            )
+        ],
+    )
+    result = await execute(graph, reg)
+
+    assert result.status == RunStatus.error
+    assert result.nodes["a"].status == NodeStatus.error
+    assert "expected AI memory" in (result.nodes["a"].error or "")
+    assert "Enable the upstream node" in (result.nodes["a"].error or "")
+
+
 async def test_expressions_resolve_against_upstream_data() -> None:
     reg = make_registry()
 
@@ -495,3 +541,103 @@ async def test_branch_order_depends_on_insertion_not_position() -> None:
     # Insertion order wins; lexical id sort would have placed "a_second" before "z_first".
     assert order_a == ["src", "z_first", "a_second"]
     assert order_a == order_b
+
+
+# Per-key process pool tests moved: pool ownership left the engine in B4.
+# See tests/test_process_isolation.py for key-reuse, isolation, and eviction.
+
+
+def test_worse_status_ranking() -> None:
+    """error outranks waiting outranks success, regardless of argument order."""
+    from noodle.engine import _worse_status
+
+    assert _worse_status(RunStatus.success, RunStatus.waiting) is RunStatus.waiting
+    assert _worse_status(RunStatus.waiting, RunStatus.success) is RunStatus.waiting
+    assert _worse_status(RunStatus.waiting, RunStatus.error) is RunStatus.error
+    assert _worse_status(RunStatus.error, RunStatus.waiting) is RunStatus.error
+    assert _worse_status(RunStatus.error, RunStatus.success) is RunStatus.error
+    assert _worse_status(RunStatus.success, RunStatus.success) is RunStatus.success
+
+
+async def test_execute_routes_isolated_nodes_through_injected_isolator() -> None:
+    """Sync nodes of PROCESS_ISOLATED_NODE_TYPES must run via the injected
+    ProcessIsolator, not an engine-owned pool."""
+    calls: list[tuple] = []
+
+    class StubIsolator:
+        async def run(self, fn, kwargs, *, timeout=None):
+            calls.append((fn.__name__, dict(kwargs), timeout))
+            return fn(**kwargs)
+
+    reg = NodeRegistry()
+
+    @node(name="CodeLike", id="code", inputs=[], registry=reg)
+    def add_one(value: int = 0) -> int:
+        return value + 1
+
+    graph = WorkflowGraph(
+        nodes=[GraphNode(id="c", type="code", params={"value": 41})]
+    )
+    result = await execute(graph, reg, process_isolator=StubIsolator())
+    assert result.status == RunStatus.success
+    assert result.nodes["c"].outputs["main"] == 42
+    assert len(calls) == 1 and calls[0][0] == "add_one"
+
+
+async def test_independent_branches_are_not_level_barriered() -> None:
+    """src→slow→c and src→fast→d: d must finish before c starts.
+
+    Under level barriers c and d share a level, so d waits for slow (0.4s)
+    even though its own parent finished at 0.05s. Dependency counting starts
+    d as soon as fast completes."""
+    reg = NodeRegistry()
+
+    @node(name="One", id="one", inputs=[], registry=reg)
+    def one() -> int:
+        return 1
+
+    @node(name="SlowEcho", id="slow_echo", registry=reg)
+    async def slow_echo(input: int = 0) -> int:
+        await asyncio.sleep(0.4)
+        return input
+
+    @node(name="FastEcho", id="fast_echo", registry=reg)
+    async def fast_echo(input: int = 0) -> int:
+        await asyncio.sleep(0.05)
+        return input
+
+    @node(name="Echo", id="echo", registry=reg)
+    def echo(input: int = 0) -> int:
+        return input
+
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="src", type="one"),
+            GraphNode(id="slow", type="slow_echo"),
+            GraphNode(id="fast", type="fast_echo"),
+            GraphNode(id="c", type="echo"),
+            GraphNode(id="d", type="echo"),
+        ],
+        edges=[
+            Edge(source="src", target="slow"),
+            Edge(source="src", target="fast"),
+            Edge(source="slow", target="c"),
+            Edge(source="fast", target="d"),
+        ],
+    )
+    events: list[dict] = []
+
+    async def on_event(event: dict) -> None:
+        events.append(event)
+
+    result = await execute(graph, reg, on_event=on_event)
+    assert result.status == RunStatus.success
+    d_finished = next(
+        i for i, e in enumerate(events)
+        if e["type"] == "node_finished" and e["node_id"] == "d"
+    )
+    c_started = next(
+        i for i, e in enumerate(events)
+        if e["type"] == "node_started" and e["node_id"] == "c"
+    )
+    assert d_finished < c_started, "d should complete before the slow branch unblocks c"

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { api, getUser } from "./api";
+import { useConfirm } from "./ConfirmProvider";
 import { HomeHeader } from "./HomeHeader";
 import {
   getFontPreference,
@@ -11,7 +12,7 @@ import {
   type FontPreference,
   type ThemePreference,
 } from "./theme";
-import type { SystemSettings } from "./types";
+import type { LicenseInfo, SystemSettings } from "./types";
 
 const FIELD_DOCS: Record<
   keyof SystemSettings,
@@ -200,6 +201,139 @@ function WorkspaceSettingsPanel() {
   );
 }
 
+function LicensePanel() {
+  const [info, setInfo] = useState<LicenseInfo | null>(null);
+  const [keyDraft, setKeyDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const confirm = useConfirm();
+
+  useEffect(() => {
+    api
+      .getLicense()
+      .then(setInfo)
+      .catch((err) => setError(String(err)));
+  }, []);
+
+  async function apply() {
+    if (busy || !keyDraft.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      const next = await api.applyLicense(keyDraft.trim());
+      setInfo(next);
+      setKeyDraft("");
+      // Edition/limits changed instance-wide — reload so the whole UI reflects it.
+      window.location.reload();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    if (busy) return;
+    const ok = await confirm({
+      title: "Remove license?",
+      body: "The instance reverts to the Community edition and its caps.",
+      confirmLabel: "Remove license",
+    });
+    if (!ok) return;
+    setBusy(true);
+    setError("");
+    try {
+      const next = await api.removeLicense();
+      setInfo(next);
+      window.location.reload();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const fmtLimit = (n: number | undefined) =>
+    n === undefined ? "—" : n === 0 ? "Unlimited" : String(n);
+
+  return (
+    <div className="settings-panel">
+      <h2>License</h2>
+      {info ? (
+        <>
+          <dl className="settings-list">
+            <div>
+              <dt>Edition</dt>
+              <dd>
+                <span className={`role-pill role-${info.edition}`}>
+                  {info.edition}
+                </span>
+              </dd>
+            </div>
+            {info.customer && (
+              <div>
+                <dt>Customer</dt>
+                <dd>{info.customer}</dd>
+              </div>
+            )}
+            {info.expires_at && (
+              <div>
+                <dt>Expires</dt>
+                <dd>{new Date(info.expires_at * 1000).toLocaleDateString()}</dd>
+              </div>
+            )}
+            <div>
+              <dt>Environments</dt>
+              <dd>{fmtLimit(info.limits.environments)}</dd>
+            </div>
+            <div>
+              <dt>Runners</dt>
+              <dd>{fmtLimit(info.limits.runners)}</dd>
+            </div>
+            <div>
+              <dt>Active deployments</dt>
+              <dd>{fmtLimit(info.limits.deployments)}</dd>
+            </div>
+            <div>
+              <dt>Seats</dt>
+              <dd>{fmtLimit(info.limits.seats)}</dd>
+            </div>
+          </dl>
+          {info.notice && <p className="error-text">{info.notice}</p>}
+        </>
+      ) : (
+        <p className="muted">{error || "Loading…"}</p>
+      )}
+
+      <label className="settings-field">
+        <span>Apply a license key</span>
+        <textarea
+          className="field-input"
+          rows={3}
+          placeholder="Paste your Pro / Enterprise license key"
+          value={keyDraft}
+          onChange={(e) => setKeyDraft(e.target.value)}
+        />
+      </label>
+      {error && info && <p className="error-text">{error}</p>}
+      <div className="settings-actions">
+        <button
+          className="btn btn-primary"
+          onClick={() => void apply()}
+          disabled={busy || !keyDraft.trim()}
+        >
+          {busy ? "Applying…" : "Apply license"}
+        </button>
+        {info && info.edition !== "community" && (
+          <button className="btn" onClick={() => void remove()} disabled={busy}>
+            Remove license
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const user = getUser();
   const canAdmin = user?.role === "admin" || user?.role === "owner";
@@ -291,6 +425,8 @@ export function SettingsPage() {
           </div>
 
           {canAdmin && <WorkspaceSettingsPanel />}
+
+          {canAdmin && <LicensePanel />}
 
           <div className="settings-panel">
             <h2>Admin</h2>

@@ -2,6 +2,7 @@ import type { Connection, Edge } from "@xyflow/react";
 
 import type { NodeManifest, PortSpec } from "../types";
 import type { NoodleNode } from "./store";
+import { isMetaBar, META_BAR_INPUT_ID, META_BAR_OUTPUT_ID } from "./store/drillSlice";
 
 export type PortDataKind = NonNullable<PortSpec["data_kind"]>;
 
@@ -140,6 +141,34 @@ export function validateConnection(
   if (!sourceNode || !targetNode) {
     return { ok: false, severity: "error", message: "Connection endpoint is missing." };
   }
+
+  // Bar ports are wildcards: input-bar source handles and output-bar target
+  // handles accept any data kind. Prevent output-bar from acting as a source
+  // and input-bar from acting as a target (wrong direction).
+  if (sourceNode && isMetaBar(sourceNode)) {
+    return sourceNode.id === META_BAR_INPUT_ID
+      ? { ok: true, severity: "ok", message: "Input bar — any internal target." }
+      : { ok: false, severity: "error", message: "Output bar cannot serve as a connection source." };
+  }
+  if (targetNode && isMetaBar(targetNode)) {
+    return targetNode.id === META_BAR_OUTPUT_ID
+      ? { ok: true, severity: "ok", message: "Output bar — any internal source." }
+      : { ok: false, severity: "error", message: "Input bar cannot serve as a connection target." };
+  }
+
+  // Reject cross-boundary connections between parent and body nodes.
+  const sourceParent = sourceNode.parentId ?? null;
+  const targetParent = targetNode.parentId ?? null;
+  if (sourceParent !== targetParent) {
+    return {
+      ok: false,
+      severity: "error",
+      message:
+        "Nodes inside a Map Group cannot connect to nodes outside it. " +
+        "Use the Map Group's input/output handles instead.",
+    };
+  }
+
   // A tool-mode node exposes a single `tool` output of kind ai_tool.
   const sourceKindOverride: PortDataKind | undefined =
     sourceNode.data.toolMode && connection.sourceHandle === "tool"

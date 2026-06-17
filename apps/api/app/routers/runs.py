@@ -1,14 +1,19 @@
 import asyncio
+import contextlib
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, WebSocket, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import noload, selectinload
+from starlette.websockets import WebSocketDisconnect
 
 from app.config import settings
-from app.db import get_session
+from app.db import SessionLocal, get_session
+
+logger = logging.getLogger(__name__)
 from app.models import (
     NodeRun,
     PinnedData,
@@ -34,9 +39,8 @@ from app.schemas import (
     RunTimeline,
     RunTimelineEvent,
 )
-from app.security import require_permission
+from app.security import _user_from_session_token, require_permission
 from app.services import queue as run_queue
-from app.services.crypto import verify_token
 from app.services.events import broker
 from app.services.graph_utils import (
     first_trigger_node,
@@ -63,6 +67,11 @@ async def _graph_for_run(
         version = await session.get(WorkflowVersion, run.workflow_version_id)
         if version is not None:
             return version.graph or EMPTY_GRAPH, version.version, version.id
+        logger.warning(
+            "run %s: pinned version %s not found; falling back to draft graph",
+            run.id,
+            run.workflow_version_id,
+        )
     latest = workflow.versions[-1]
     return _draft_graph(workflow), latest.version, None
 
@@ -134,7 +143,7 @@ async def list_runs(
     result = await session.scalars(
         select(Run)
         .where(Run.workflow_id == workflow_id)
-        .options(selectinload(Run.node_runs))
+        .options(noload(Run.node_runs))
         .order_by(Run.started_at.desc())
         .offset(offset)
         .limit(limit)
@@ -201,6 +210,7 @@ async def list_all_runs(
             workflow_version_id=run.workflow_version_id,
             deployment_id=run.deployment_id,
             triggered_by_error_run_id=run.triggered_by_error_run_id,
+            parent_run_id=run.parent_run_id,
             mode=run.mode,
             status=run.status,
             trigger_type=run.trigger_type,
@@ -237,6 +247,7 @@ async def get_run(run_id: str, session: AsyncSession = Depends(get_session)):
         workflow_version_id=run.workflow_version_id,
         deployment_id=run.deployment_id,
         triggered_by_error_run_id=run.triggered_by_error_run_id,
+        parent_run_id=run.parent_run_id,
         runner_pool_id=getattr(run, 'runner_pool_id', None),
         runner_id=getattr(run, 'runner_id', None),
         batch_id=getattr(run, 'batch_id', None),
@@ -650,6 +661,10 @@ async def run_approvals(
 @router.post(
     "/runs/{run_id}/approvals/{approval_id}/decision",
     response_model=RunApprovalInfo,
+    # RUN-1: approving a side-effecting AI tool call (and resuming the run) is at
+    # least as sensitive as cancelling/replaying a run — all of which require
+    # ``workflow:run``. Without this a ``viewer`` could authorize tool execution.
+    dependencies=[Depends(require_permission("workflow:run"))],
 )
 async def decide_run_approval(
     run_id: str,
@@ -672,7 +687,8 @@ async def decide_run_approval(
             f"Approval has already been {approval.status}.",
         )
 
-    approval.status = "approved" if body.decision == "approve" else "rejected"
+    approved = body.decision in {"approve", "approve_all"}
+    approval.status = "approved" if approved else "rejected"
     approval.reason = body.reason or ""
     approval.resolved_by = body.resolved_by or None
     approval.resolved_at = datetime.now(UTC)
@@ -709,8 +725,14 @@ async def decide_run_approval(
     await session.commit()
     await session.refresh(approval)
     broker.publish(run_id, event_payload)
-    if body.decision == "approve":
-        await resume_waiting_run_from_approval(run_id, approval.id)
+    # Resume the waiting run for both decisions: approval lets the tool run,
+    # rejection feeds a denial back to the agent so it can wrap up gracefully
+    # instead of leaving the run stuck in "waiting" forever.
+    await resume_waiting_run_from_approval(
+        run_id,
+        approval.id,
+        approve_all=body.decision == "approve_all",
+    )
     return approval
 
 
@@ -756,16 +778,37 @@ async def run_debug_snapshot(
 @router.websocket("/ws/runs/{run_id}")
 async def run_events(websocket: WebSocket, run_id: str) -> None:
     if settings.auth_required:
-        # WebSocket upgrades cannot send custom headers in many browsers/clients,
-        # so we accept the token via query param OR Authorization header.
-        token = websocket.query_params.get("token", "")
+        # WebSocket upgrades cannot send custom headers in most browsers,
+        # so we accept auth via:
+        #   1. ``?ticket=`` — a single-use ticket from POST /auth/ws-ticket
+        #      (preferred; avoids persistent tokens in access logs)
+        #   2. ``?token=`` — legacy bearer token query param (deprecated)
+        #   3. ``Authorization: Bearer`` header (non-browser clients)
+        token: str | None = None
+        ticket = websocket.query_params.get("ticket", "")
+        if ticket:
+            from app.services.ws_ticket import consume_ticket
+
+            user_id = await consume_ticket(ticket)
+            if user_id is None:
+                await websocket.close(code=1008)
+                return
+            token = "ok"  # already verified via ticket; skip verify_token below
+        if not token:
+            token = websocket.query_params.get("token", "")
         if not token:
             auth_header = websocket.headers.get("authorization", "")
             if auth_header.lower().startswith("bearer "):
                 token = auth_header[7:].strip()
-        if verify_token(token) is None:
-            await websocket.close(code=1008)
-            return
+        # C1: a token revoked via ``sessions_valid_after`` must not open the
+        # live run-event stream. ``verify_token`` only checks signature/exp, so
+        # resolve the user and honour the per-user revocation cutoff. Ticket
+        # auth (``token == "ok"``) was already validated above.
+        if token != "ok":
+            async with SessionLocal() as session:
+                if not token or await _user_from_session_token(token, session) is None:
+                    await websocket.close(code=1008)
+                    return
     await websocket.accept()
     try:
         async def _heartbeat() -> None:
@@ -779,8 +822,14 @@ async def run_events(websocket: WebSocket, run_id: str) -> None:
         hb_task = asyncio.create_task(_heartbeat())
         try:
             async for event in broker.subscribe(run_id):
-                await websocket.send_json(event)
+                try:
+                    await websocket.send_json(event)
+                except WebSocketDisconnect:
+                    break
         finally:
             hb_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await hb_task
     finally:
-        await websocket.close()
+        with contextlib.suppress(RuntimeError, WebSocketDisconnect):
+            await websocket.close()

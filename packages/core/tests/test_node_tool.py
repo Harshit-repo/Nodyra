@@ -51,3 +51,20 @@ def test_adapter_invoke_runs_node_with_fixed_plus_ai_args() -> None:
     out = asyncio.run(adapter.invoke_async({"text": "hello"}))
     # Output is JSON-encoded since the node returns a dict.
     assert out == '{"shout": ">> HELLO"}'
+
+
+def test_adapter_infers_blank_core_param_when_no_from_ai_bindings() -> None:
+    reg = _registry_with_echo()
+    gnode = GraphNode(
+        id="t",
+        type="echo_upper",
+        tool_mode=True,
+        params={"prefix": ">> ", "text": ""},
+    )
+    adapter = build_node_tool_adapter(reg.get("echo_upper"), gnode)
+
+    assert list(adapter.schema.parameters.properties.keys()) == ["text"]
+    assert adapter.schema.parameters.required == ["text"]
+
+    out = asyncio.run(adapter.invoke_async({"text": "hello"}))
+    assert out == '{"shout": ">> HELLO"}'

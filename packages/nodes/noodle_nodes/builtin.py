@@ -15,7 +15,7 @@ from typing import Any
 from noodle.context import node_debug
 from noodle.sdk import node
 from noodle_nodes._creds import cred_multi, cred_single
-from noodle_nodes.http_security import assert_public_http_url
+from noodle_nodes.http_security import safe_request
 
 OPERATORS = [
     "equals",
@@ -73,6 +73,7 @@ def _as_list(value: Any) -> list:
 
 
 @node(name="Manual Trigger", id="manual_trigger", category="Triggers", icon="play",
+      role="trigger",
       inputs=[], params={"data": {"description": "Sample payload for test runs."}})
 def manual_trigger(data: dict | None = None) -> dict:
     """Start the workflow on demand. Useful while building and testing."""
@@ -80,6 +81,7 @@ def manual_trigger(data: dict | None = None) -> dict:
 
 
 @node(name="Schedule Trigger", id="schedule_trigger", category="Triggers", icon="clock",
+      role="trigger",
       inputs=[], params={
           "interval": {"choices": ["minutes", "hours", "days"]},
           "every": {"description": "Run once per this many intervals."},
@@ -108,6 +110,7 @@ def schedule_trigger(
 
 
 @node(name="Webhook", id="webhook_trigger", category="Triggers", icon="webhook",
+      role="trigger",
       inputs=[], params={
           # --- Core (always shown) ---
           "http_method": {"choices": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
@@ -265,6 +268,7 @@ def webhook_trigger(
 
 
 @node(name="API Endpoint", id="api_endpoint", category="Triggers", icon="webhook",
+      role="trigger",
       inputs=[], outputs=["main"], params={
           "base_path": {
               "placeholder": "customers",
@@ -275,6 +279,7 @@ def webhook_trigger(
               ),
           },
           "routes": {
+              "widget": "routes_table",
               "description": (
                   "Route table: a list of {method, path, output} rows. Each row "
                   "maps an HTTP method + sub-path template (e.g. 'GET /{id}', "
@@ -339,6 +344,7 @@ def api_endpoint(
 
 
 @node(name="Error Trigger", id="error_trigger", category="Triggers", icon="alert",
+      role="trigger",
       inputs=[], params={
           "error": {
               "description": (
@@ -369,8 +375,12 @@ def error_trigger(error: dict | None = None) -> dict:
 
 
 @node(name="Chat Trigger", id="chat_trigger", category="Triggers", icon="chat",
+      role="trigger",
       inputs=[],
-      param_groups={"Options": ["initial_message", "input_placeholder", "title"]},
+      param_groups={"Options": [
+          "initial_message", "input_placeholder", "title",
+          "public_access", "require_login",
+      ]},
       params={
           "initial_message": {
               "widget": "textarea", "group": "Options",
@@ -384,9 +394,21 @@ def error_trigger(error: dict | None = None) -> dict:
               "group": "Options", "placeholder": "Chat",
               "description": "Header label for the chat panel.",
           },
+          "public_access": {
+              "type": "boolean", "group": "Options", "default": False,
+              "description": "Enable the hosted chat page for this workflow.",
+          },
+          "require_login": {
+              "type": "boolean", "group": "Options", "default": True,
+              "description": "Require visitors to sign into this Noodle instance.",
+          },
+          "chat_token": {
+              "type": "string", "widget": "hidden", "default": "",
+          },
       })
 def chat_trigger(initial_message: str = "", input_placeholder: str = "",
-                 title: str = "") -> dict:
+                 title: str = "", public_access: bool = False,
+                 require_login: bool = True, chat_token: str = "") -> dict:
     """Conversational entry point. When a chat turn runs, the chat service seeds
     this node's output with the user's message and session id; on a plain manual
     run it returns the empty shape so the graph stays runnable."""
@@ -477,24 +499,181 @@ def merge_node(input_a: Any = None, input_b: Any = None, mode: str = "append") -
 
 
 @node(name="Loop Over Items", id="loop_over_items", category="Logic", icon="repeat",
+      deprecated=True, replacement_id="loop_start",
       outputs=["item", "done"], params={
           "max_items": {
               "description": "Optional maximum number of items to emit (0 = all).",
           },
       })
 def loop_over_items(input: Any = None, max_items: int = 0) -> dict:
-    """Fan a list into an item branch and a done summary branch.
+    """DEPRECATED — use Loop Start / Loop End for real per-item iteration.
 
     Noodle's current DAG engine executes a node once per run rather than once
     per item. This node therefore emits the selected items as a list on the
-    ``item`` output while also emitting a completion summary on ``done``. It is
-    the UI/runtime-compatible foundation for n8n-style loop authoring.
+    ``item`` output while also emitting a completion summary on ``done``. The
+    Loop Start / Loop End nodes run the in-between sub-DAG once per row, which
+    is what most "loop" use cases actually want.
     """
     items = _as_list(input)
     limit = int(max_items or 0)
     if limit > 0:
         items = items[:limit]
     return {"item": items, "done": {"items": items, "count": len(items)}}
+
+
+@node(
+    name="Loop Start",
+    id="loop_start",
+    category="Logic",
+    icon="repeat",
+    outputs=["item", "index", "state"],
+    params={
+        "mode": {
+            "description": (
+                "each = one row per iteration; batch = a list of N rows; "
+                "group = rows sharing a key; range = loop a fixed count; "
+                "window = overlapping sliding windows of N rows; "
+                "while/until = loop on a condition, carrying state across iterations."
+            ),
+            "choices": ["each", "batch", "group", "range", "window", "while", "until"],
+            "display_name": "Mode",
+        },
+        "concurrency": {
+            "description": (
+                "How many iterations to process at once (default 1). "
+                "Forced to 1 for while/until."
+            ),
+        },
+        "on_error": {
+            "description": (
+                "fail = stop the loop on the first failing iteration; "
+                "continue = collect errors and keep going."
+            ),
+            "choices": ["fail", "continue"],
+        },
+        "max_rows": {
+            "description": (
+                "Maximum input rows allowed before the loop fails "
+                "(each/batch/group; default 10000)."
+            ),
+        },
+        "batch_size": {
+            "description": (
+                "Rows per iteration when mode=batch (last may be shorter) "
+                "or window size when mode=window."
+            ),
+        },
+        "group_key": {
+            "description": (
+                "Row field to group by when mode=group; "
+                "each iteration gets {key, rows}."
+            ),
+        },
+        "count": {
+            "description": "Number of iterations when mode=range.",
+        },
+        "start": {
+            "description": "First value when mode=range (default 0).",
+        },
+        "step": {
+            "description": (
+                "Step between values (mode=range) or window slide "
+                "(mode=window); default 1."
+            ),
+        },
+        "accumulate": {
+            "description": (
+                "Reduce: thread an accumulator (seeded by `initial`) "
+                "across for-each iterations; Loop End returns the final "
+                "accumulator."
+            ),
+        },
+        "initial": {
+            "description": "Seed state for mode=while/until (any value or expression).",
+        },
+        "condition": {
+            "description": (
+                "Expression checked each iteration for while/until, "
+                "e.g. {{ state.count < 10 }}."
+            ),
+        },
+        "max_iterations": {
+            "description": "Safety cap on while/until iterations (default 1000).",
+        },
+        "on_max_iterations": {
+            "description": (
+                "When the cap is hit: fail = raise; "
+                "stop = emit the current state and warn."
+            ),
+            "choices": ["fail", "stop"],
+        },
+    },
+)
+def loop_start(
+    input: Any = None,
+    mode: str = "each",
+    concurrency: int = 1,
+    on_error: str = "fail",
+    max_rows: int = 10000,
+    batch_size: int = 1,
+    group_key: str = "",
+    count: int = 0,
+    start: int = 0,
+    step: int = 1,
+    accumulate: bool = False,
+    initial: Any = None,
+    condition: str = "",
+    max_iterations: int = 1000,
+    on_max_iterations: str = "fail",
+) -> dict[str, Any]:
+    """Start of a loop region. The engine drives this node and runs the
+    nodes between it and the paired Loop End once per iteration; this function
+    is never called directly."""
+    raise RuntimeError(
+        "loop_start is executed by the engine's loop driver, not called directly"
+    )
+
+
+@node(
+    name="Loop End",
+    id="loop_end",
+    category="Logic",
+    icon="repeat",
+    outputs=["results", "errors"],
+    params={
+        "loop_start_id": {
+            "widget": "hidden",
+            "description": "Auto-managed id of the paired Loop Start.",
+        },
+        "output_mode": {
+            "description": (
+                "records = a list of each row's result; dataset = a DatasetRef "
+                "(each result must be a dict / object). For-each modes only."
+            ),
+            "choices": ["records", "dataset"],
+            "display_name": "Output",
+        },
+        "conditional_output": {
+            "description": (
+                "while/until only: final_state = the last accumulator value; "
+                "all_states = {final, states:[...]}."
+            ),
+            "choices": ["final_state", "all_states"],
+            "display_name": "Conditional output",
+        },
+    },
+)
+def loop_end(
+    input: Any = None,
+    loop_start_id: str = "",
+    output_mode: str = "records",
+    conditional_output: str = "final_state",
+) -> dict[str, Any]:
+    """End of a loop region. The engine collects each row's value here; this
+    function is never called directly."""
+    raise RuntimeError(
+        "loop_end is executed by the engine's loop driver, not called directly"
+    )
 
 
 @node(name="Stop And Error", id="stop_and_error", category="Logic", icon="alert",
@@ -660,7 +839,7 @@ def _json_preview(value: Any, *, depth: int = 2, max_items: int = 20) -> Any:
             )
         return preview
     try:
-        return json.loads(json.dumps(value, default=str))
+        return str(value)
     except (TypeError, ValueError):
         return _short_repr(value)
 
@@ -816,6 +995,56 @@ def discover_code_output_ports(code: str) -> list[str]:
     return (["main"] if has_main else []) + ports
 
 
+# Footgun guard, NOT a security boundary. These blocks raise ImportError to
+# steer users toward Noodle's built-in nodes for process/FFI work and to catch
+# accidental misuse. They do NOT contain a determined caller: `os.system`,
+# `os.popen`, `open`, importable C-extension libs, and getattr-based reach all
+# remain available by design (Code nodes are "arbitrary code on the runner
+# host", see app.services.unsafe_nodes — they are flagged unconditionally unsafe
+# and gated by `unsafe_node_policy`). The real isolation boundaries are:
+#   1. process isolation (PROCESS_ISOLATED_NODE_TYPES → ProcessPoolExecutor /
+#      the per-env runtime subprocess), and
+#   2. the deployment-time `unsafe_node_policy` gate (warn/require_approval/block).
+# Hardening toward an actual sandbox (container/seccomp per run) is tracked in
+# docs/production-readiness-audit.md (SEC-1).
+_CODE_NODE_BLOCKED_IMPORTS: frozenset[str] = frozenset({
+    "subprocess",
+    "pty",
+    "ctypes",
+    "cffi",
+    "multiprocessing",
+})
+
+
+def _make_sandboxed_import(original_import: Any) -> Any:
+    """Return an __import__ replacement that blocks the footgun modules.
+
+    See ``_CODE_NODE_BLOCKED_IMPORTS`` — this is a guard, not a sandbox.
+    """
+    def _safe_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        root = name.split(".")[0]
+        if root in _CODE_NODE_BLOCKED_IMPORTS:
+            raise ImportError(
+                f"Module '{name}' is not available in the code sandbox. "
+                "Use Noodle's built-in nodes for process execution."
+            )
+        return original_import(name, *args, **kwargs)
+    return _safe_import
+
+
+def _build_safe_builtins() -> dict:
+    import builtins as _builtins
+    b = vars(_builtins).copy()
+    b["__import__"] = _make_sandboxed_import(_builtins.__import__)
+    return b
+
+
+# Computed once per worker process — reused across all code node executions
+# in the same ProcessPoolExecutor worker to avoid re-copying ~155 builtins
+# entries on every task.
+_SAFE_BUILTINS: dict = _build_safe_builtins()
+
+
 def _run_code_isolated(input: Any, code: str) -> Any:
     """Top-level picklable worker for ProcessPoolExecutor.
 
@@ -839,7 +1068,7 @@ def _run_code_isolated(input: Any, code: str) -> Any:
     except ValueError as exc:
         raise ValueError(f"Unsafe code: {exc}") from exc
 
-    namespace: dict[str, Any] = {"input": input}
+    namespace: dict[str, Any] = {"input": input, "__builtins__": _SAFE_BUILTINS}
     try:
         exec(compile(tree, "<code_node>", "exec"), namespace)  # noqa: S102
     except Exception as exc:  # noqa: BLE001
@@ -894,7 +1123,7 @@ def _http_backoff_seconds(attempt: int) -> float:
     return min(2.0 ** attempt, 30.0)
 
 
-@node(name="HTTP Request", id="http_request", category="Transform", icon="globe", params={
+@node(name="HTTP Request", id="http_request", category="API", icon="globe", params={
     "url": {"placeholder": "https://api.example.com/data"},
     "method": {"choices": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
     "headers": {
@@ -934,15 +1163,17 @@ def http_request(input: Any = None, url: str = "", method: str = "GET",
 
     import requests
 
-    assert_public_http_url(url, context="http_request")
     timeout = float(timeout_seconds or 30)
     attempts = max(0, int(max_retries or 0)) + 1
     response = None
     for attempt in range(attempts):
         try:
-            response = requests.request(
+            # safe_request re-validates every redirect hop against the SSRF
+            # guard and disables ``requests``' unchecked auto-redirect (C2).
+            response = safe_request(
                 method,
                 url,
+                context="http_request",
                 headers=headers or None,
                 params=query or None,
                 json=body or None,
@@ -978,7 +1209,7 @@ def http_request(input: Any = None, url: str = "", method: str = "GET",
     return payload
 
 
-@node(name="GraphQL Request", id="graphql_request", category="Transform", icon="globe", params={
+@node(name="GraphQL Request", id="graphql_request", category="API", icon="globe", params={
     "url": {"placeholder": "https://api.example.com/graphql"},
     "query": {"multiline": True, "description": "GraphQL query or mutation."},
     "variables": {"description": "GraphQL variables object.", "key_value": True},
@@ -1000,13 +1231,13 @@ def graphql_request(
         raise ValueError("graphql_request: url is required")
     if not query:
         raise ValueError("graphql_request: query is required")
-    assert_public_http_url(url, context="graphql_request")
     request_variables = (
         variables if variables is not None else (input if isinstance(input, dict) else {})
     )
-    response = requests.request(
+    response = safe_request(
         "POST",
         url,
+        context="graphql_request",
         headers=headers or None,
         json={"query": query, "variables": request_variables},
         timeout=float(timeout_seconds or 30),
@@ -1027,7 +1258,7 @@ def graphql_request(
 @node(
     name="Respond to Webhook",
     id="respond_to_webhook",
-    category="Transform",
+    category="API",
     icon="webhook",
     params={
         "status_code": {
@@ -1070,7 +1301,7 @@ def _b64url_decode(payload: str) -> bytes:
     return base64.urlsafe_b64decode((payload + padding).encode("ascii"))
 
 
-@node(name="JWT", id="jwt", category="Transform", icon="key", params={
+@node(name="JWT", id="jwt", category="API", icon="key", params={
     "operation": {"choices": ["sign", "verify", "decode"]},
     "secret": {"description": "HMAC secret for sign/verify. Not required for decode."},
     "algorithm": {"group": "Options", "choices": ["HS256", "HS384", "HS512"]},
@@ -1292,6 +1523,18 @@ def base64_decode(input: str = "") -> str:
 # Sub-workflows
 # ==========================================================================
 
+MAX_MAP_ITEMS = 10_000
+MAX_MAP_CONCURRENCY = 50
+
+
+def _bounded_map_concurrency(node_id: str, concurrency: int | None) -> int:
+    worker_count = max(1, int(concurrency or 5))
+    if worker_count > MAX_MAP_CONCURRENCY:
+        raise ValueError(
+            f"{node_id}: concurrency must be <= {MAX_MAP_CONCURRENCY}."
+        )
+    return worker_count
+
 
 @node(
     name="Execute Workflow",
@@ -1319,6 +1562,192 @@ async def execute_workflow_node(
             "execute_workflow: no host caller is configured for this run"
         )
     return await caller(workflow_id, input)
+
+
+@node(
+    name="Map Items",
+    id="map_items",
+    category="Logic",
+    icon="repeat",
+    outputs=["main", "errors"],
+    params={
+        "workflow_id": {
+            "description": "ID of the workflow to call once per item.",
+            "placeholder": "workflow id",
+        },
+        "concurrency": {
+            "description": "Maximum concurrent child workflow calls (default 5).",
+        },
+        "on_error": {
+            "description": (
+                "fail = stop on first item error; "
+                "continue = collect errors on the errors output."
+            ),
+            "choices": ["fail", "continue"],
+        },
+        "preserve_order": {
+            "description": "Return results in input order (default true).",
+        },
+    },
+)
+async def map_items(
+    input: Any = None,
+    workflow_id: str = "",
+    concurrency: int = 5,
+    on_error: str = "fail",
+    preserve_order: bool = True,
+) -> dict[str, Any]:
+    """Call a child workflow once per item in a list and collect results."""
+    import asyncio
+
+    from noodle.context import workflow_caller
+    from noodle_nodes._map import _map_call_child
+
+    if not workflow_id:
+        raise ValueError("map_items: workflow_id is required")
+    caller = workflow_caller.get()
+    if caller is None:
+        raise RuntimeError("map_items: no host caller is configured for this run")
+
+    items: list = input if isinstance(input, list) else ([] if input is None else [input])
+    if len(items) > MAX_MAP_ITEMS:
+        raise ValueError(
+            f"map_items received {len(items)} items but the hard fan-out cap is "
+            f"{MAX_MAP_ITEMS}."
+        )
+
+    # Multi-tenancy C5: every mapped item becomes a child workflow run.
+    from noodle.context import org_run_limits
+
+    org_cap = int((org_run_limits.get() or {}).get("max_map_width") or 0)
+    if org_cap and len(items) > org_cap:
+        raise ValueError(
+            f"map_items received {len(items)} items but this organization's "
+            f"map fan-out cap is {org_cap}."
+        )
+    sem = asyncio.Semaphore(_bounded_map_concurrency("map_items", concurrency))
+
+    tasks = [
+        _map_call_child(
+            caller=caller,
+            workflow_id=workflow_id,
+            payload={"item": item, "index": i},
+            index=i,
+            sem=sem,
+        )
+        for i, item in enumerate(items)
+    ]
+    raw = await asyncio.gather(*tasks)
+    ordered = sorted(raw, key=lambda r: r["index"]) if preserve_order else list(raw)
+
+    if on_error == "fail":
+        for r in ordered:
+            if not r["ok"]:
+                raise RuntimeError(
+                    f"map_items: item {r['index']} failed: {r['error']}"
+                )
+
+    successful = [r["result"] for r in ordered if r["ok"]]
+    errors = [
+        {"index": r["index"], "error": r["error"], "input": r["input"]}
+        for r in ordered
+        if not r["ok"]
+    ]
+    return {"main": successful, "errors": errors}
+
+
+@node(
+    name="Map Group",
+    id="map_group",
+    category="Logic",
+    icon="repeat",
+    outputs=["main", "errors"],
+    params={
+        "child_workflow_id": {
+            "widget": "hidden",
+            "description": "Auto-managed child workflow ID.",
+        },
+        "mode": {
+            "widget": "hidden",
+            "description": "inline or reference",
+        },
+        "concurrency": {
+            "description": "Maximum concurrent child workflow calls (default 5).",
+        },
+        "on_error": {
+            "description": (
+                "fail = stop on first item error; "
+                "continue = collect errors on the errors output."
+            ),
+            "choices": ["fail", "continue"],
+        },
+        "preserve_order": {
+            "description": "Return results in input order (default true).",
+        },
+        "max_items": {
+            "description": "Maximum items allowed before the node fails (default 10000).",
+        },
+    },
+)
+async def map_group_node(
+    input: Any = None,
+    child_workflow_id: str = "",
+    mode: str = "inline",
+    concurrency: int = 5,
+    on_error: str = "fail",
+    preserve_order: bool = True,
+    max_items: int = 10000,
+) -> dict[str, Any]:
+    """Run the map body workflow once per item in the input list."""
+    import asyncio
+
+    from noodle.context import workflow_caller
+    from noodle_nodes._map import _map_call_child
+
+    if not child_workflow_id:
+        raise ValueError("map_group: child_workflow_id is not set — save the workflow first")
+    caller = workflow_caller.get()
+    if caller is None:
+        raise RuntimeError("map_group: no host caller is configured for this run")
+
+    items: list = input if isinstance(input, list) else ([] if input is None else [input])
+    cap = max(1, int(max_items or 10000))
+    if cap > MAX_MAP_ITEMS:
+        raise ValueError(
+            f"map_group: max_items must be <= {MAX_MAP_ITEMS}."
+        )
+    if len(items) > cap:
+        raise ValueError(
+            f"Map Group received {len(items)} items but max_items is {cap}. "
+            f"Increase max_items explicitly or reduce the list upstream."
+        )
+
+    sem = asyncio.Semaphore(_bounded_map_concurrency("map_group", concurrency))
+    tasks = [
+        _map_call_child(
+            caller=caller,
+            workflow_id=child_workflow_id,
+            payload={"item": item, "index": i},
+            index=i,
+            sem=sem,
+        )
+        for i, item in enumerate(items)
+    ]
+    raw = await asyncio.gather(*tasks)
+    ordered = sorted(raw, key=lambda r: r["index"]) if preserve_order else list(raw)
+
+    if on_error == "fail":
+        for r in ordered:
+            if not r["ok"]:
+                raise RuntimeError(f"map_group: item {r['index']} failed: {r['error']}")
+
+    successful = [r["result"] for r in ordered if r["ok"]]
+    errors = [
+        {"index": r["index"], "error": r["error"], "input": r["input"]}
+        for r in ordered
+        if not r["ok"]
+    ]
+    return {"main": successful, "errors": errors}
 
 
 # ---- Data type conversions -----------------------------------------------

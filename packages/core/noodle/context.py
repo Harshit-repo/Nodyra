@@ -41,3 +41,51 @@ current_node_id: ContextVar[str | None] = ContextVar(
 artifact_store: ContextVar[Any | None] = ContextVar(
     "noodle_artifact_store", default=None
 )
+
+# Loop iteration coordinates for the currently executing node, outermost first.
+# Empty tuple = not inside any loop. Set by the engine's loop driver so emitted
+# events and persisted node runs can be attributed to a specific iteration.
+iteration_path: ContextVar[tuple[int, ...]] = ContextVar(
+    "noodle_iteration_path", default=()
+)
+
+# Live output streaming hook for the currently executing node. The engine sets
+# this to a callback that forwards incremental chunks as ``node_chunk`` run
+# events (thread-safe — a node running in a worker thread can call it). Unset
+# when no run is listening, so :func:`emit_chunk` is a no-op outside a live run.
+NodeEmitter = Callable[..., None]
+
+node_emitter: ContextVar[NodeEmitter | None] = ContextVar(
+    "noodle_node_emitter", default=None
+)
+
+
+def emit_chunk(delta: str, *, channel: str = "output") -> None:
+    """Stream an incremental output chunk from inside a running node.
+
+    When the host is rendering this run live (e.g. the editor canvas), the chunk
+    is forwarded as a ``node_chunk`` event so partial output — LLM tokens, long
+    log lines — appears as it is produced instead of only when the node finishes.
+    It is a no-op when nothing is listening (a headless run, an exported script,
+    or a process-isolated node), so node code can call it unconditionally.
+
+    ``channel`` lets a node separate distinct streams (default ``"output"``);
+    consumers accumulate chunks per ``(node, channel)``.
+    """
+    cb = node_emitter.get()
+    if cb is None:
+        return
+    text = str(delta)
+    if not text:
+        return
+    cb(text, channel=channel)
+
+
+# Per-organization amplification caps for the current run (multi-tenancy C5).
+# Keys: "max_map_width" (rows a map node may fan out into child workflows)
+# and "max_loop_iterations" (units a single loop may drive). 0/absent =
+# uncapped. Set by the host (runner / runtime server) before invoking the
+# engine; empty for single-tenant deployments.
+org_run_limits: ContextVar[dict[str, int]] = ContextVar(
+    "noodle_org_run_limits", default={}
+)

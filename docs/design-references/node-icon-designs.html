@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Noodle Node Icon Design References</title>
+  <style>
+    :root {
+      --bg: #080d13;
+      --panel: #0d141d;
+      --panel-2: #111a25;
+      --line: rgba(148, 163, 184, 0.18);
+      --line-strong: rgba(148, 163, 184, 0.28);
+      --text: #eef4fb;
+      --muted: #8b99aa;
+      --teal: #1fd6a5;
+      --blue: #58a6ff;
+      --pink: #ff6f91;
+      --amber: #f8c451;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      padding: 28px;
+    }
+    body.focus-board {
+      padding: 0;
+      overflow: hidden;
+    }
+    .stack {
+      display: grid;
+      gap: 28px;
+      width: 1280px;
+      margin: 0 auto;
+    }
+    body.focus-board .stack {
+      gap: 0;
+      margin: 0;
+    }
+    .board {
+      width: 1280px;
+      height: 720px;
+      overflow: hidden;
+      background:
+        linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+        linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+        #090f16;
+      background-size: 32px 32px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      position: relative;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+    }
+    body.focus-board .board {
+      display: none;
+      border-radius: 0;
+      border: 0;
+      box-shadow: none;
+    }
+    body.focus-board .board.active-board {
+      display: block;
+    }
+    .title {
+      position: absolute;
+      left: 32px;
+      top: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .title h1 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: 0;
+      line-height: 1.1;
+    }
+    .title p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .shell {
+      position: absolute;
+      inset: 84px 28px 28px;
+      display: grid;
+      grid-template-columns: 318px 1fr;
+      gap: 18px;
+    }
+    .palette {
+      min-width: 0;
+      background: rgba(10, 16, 24, 0.92);
+      border-right: 1px solid var(--line-strong);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .search {
+      height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #09101a;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      font-size: 12px;
+    }
+    .chips {
+      display: flex;
+      gap: 7px;
+      color: #b7c3d2;
+      font-size: 11px;
+    }
+    .chip {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 5px 9px;
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .group {
+      margin-top: 4px;
+      color: #768497;
+      font-size: 10px;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+    .rows {
+      display: grid;
+      gap: 7px;
+    }
+    .row {
+      min-height: 46px;
+      display: grid;
+      grid-template-columns: 28px 1fr 18px;
+      gap: 10px;
+      align-items: center;
+      padding: 6px 8px;
+      border-radius: 9px;
+      background: transparent;
+    }
+    .row.active,
+    .row:hover {
+      background: rgba(255, 255, 255, 0.045);
+    }
+    .brand-icon {
+      width: 24px;
+      height: 24px;
+      object-fit: contain;
+      filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.38));
+    }
+    .brand-mark {
+      display: inline-grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      color: #f8fafc;
+      font-weight: 900;
+      line-height: 1;
+      filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.38));
+    }
+    .mark-slack {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 3px;
+      padding: 2px;
+    }
+    .mark-slack span {
+      display: block;
+      width: 100%;
+      height: 100%;
+      border-radius: 999px 999px 999px 4px;
+    }
+    .mark-slack span:nth-child(1) { background: #36c5f0; }
+    .mark-slack span:nth-child(2) { background: #2eb67d; transform: rotate(90deg); }
+    .mark-slack span:nth-child(3) { background: #ecb22e; transform: rotate(-90deg); }
+    .mark-slack span:nth-child(4) { background: #e01e5a; transform: rotate(180deg); }
+    .mark-outlook {
+      border-radius: 6px;
+      background: linear-gradient(135deg, #0078d4, #50a7f5);
+      box-shadow: inset -8px 0 0 rgba(255, 255, 255, 0.14);
+      font-size: 13px;
+    }
+    .mark-s3 {
+      border-radius: 8px 8px 11px 11px;
+      background: linear-gradient(180deg, #f59e0b, #e87920);
+      color: #1f1302;
+      font-size: 10px;
+      letter-spacing: 0;
+    }
+    .glyph-box {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      display: grid;
+      place-items: center;
+      color: #91a4bb;
+      background: rgba(145, 164, 187, 0.12);
+      font-size: 14px;
+    }
+    .name {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+    .name strong {
+      font-size: 13px;
+      line-height: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .badges {
+      display: flex;
+      gap: 5px;
+      font-size: 9px;
+    }
+    .badge {
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      color: #aab7c7;
+    }
+    .badge.auth {
+      color: #ffd66d;
+      background: rgba(248, 196, 81, 0.14);
+    }
+    .star {
+      color: #64748b;
+      font-size: 17px;
+    }
+    .canvas {
+      position: relative;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background:
+        radial-gradient(circle at 12px 12px, rgba(148, 163, 184, 0.18) 1px, transparent 1.5px),
+        rgba(8, 13, 19, 0.76);
+      background-size: 24px 24px;
+      overflow: hidden;
+    }
+    .wire {
+      position: absolute;
+      border: 2px solid rgba(88, 166, 255, 0.38);
+      border-left: 0;
+      border-bottom: 0;
+      border-radius: 0 42px 0 0;
+      height: 72px;
+      width: 138px;
+    }
+    .node {
+      position: absolute;
+      width: 92px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 9px;
+    }
+    .tile {
+      width: 72px;
+      height: 72px;
+      border-radius: 17px;
+      display: grid;
+      place-items: center;
+      position: relative;
+    }
+    .tile.brand {
+      background: transparent;
+      border: 0;
+      box-shadow: none;
+    }
+    .tile.generic {
+      color: var(--blue);
+      background: #121c28;
+      border: 1.5px solid var(--line-strong);
+      box-shadow: 0 12px 24px rgba(0, 0, 0, 0.22);
+    }
+    .tile.brand img {
+      width: 54px;
+      height: 54px;
+      object-fit: contain;
+      filter: drop-shadow(0 9px 14px rgba(0, 0, 0, 0.38));
+    }
+    .tile.brand .brand-mark {
+      width: 54px;
+      height: 54px;
+      font-size: 24px;
+      filter: drop-shadow(0 9px 14px rgba(0, 0, 0, 0.38));
+    }
+    .tile.brand .mark-slack {
+      gap: 7px;
+      padding: 5px;
+    }
+    .tile.brand .mark-s3 {
+      font-size: 21px;
+    }
+    .port {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      border: 2px solid #090f16;
+      background: var(--teal);
+    }
+    .port.left { left: -4px; top: 31px; }
+    .port.right { right: -4px; top: 31px; }
+    .node-label {
+      width: 118px;
+      text-align: center;
+      color: #eaf1f8;
+      font-size: 12px;
+      font-weight: 650;
+      line-height: 1.2;
+    }
+    .note {
+      position: absolute;
+      right: 28px;
+      bottom: 22px;
+      width: 300px;
+      padding: 13px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(10, 16, 24, 0.86);
+      color: #aeb9c8;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .compact-grid {
+      position: absolute;
+      inset: 104px 60px 54px;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 40px 34px;
+      align-items: center;
+    }
+    .design-node {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+    .design-node .tile {
+      width: 86px;
+      height: 86px;
+    }
+    .design-node .tile.brand img {
+      width: 68px;
+      height: 68px;
+    }
+    .design-node .tile.brand .brand-mark {
+      width: 68px;
+      height: 68px;
+      font-size: 30px;
+    }
+    .design-node .tile.brand .mark-slack {
+      gap: 8px;
+      padding: 6px;
+    }
+    .design-node .tile.brand .mark-s3 {
+      font-size: 25px;
+    }
+    .micro-badge {
+      position: absolute;
+      right: 30px;
+      top: 50px;
+      width: 24px;
+      height: 24px;
+      border-radius: 9px;
+      border: 2px solid #090f16;
+      background: #111a25;
+      color: #dce8f5;
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .ports-row {
+      display: flex;
+      gap: 5px;
+    }
+    .mini-port {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--teal);
+    }
+    .mini-port.blue { background: var(--blue); }
+    .mini-port.pink { background: var(--pink); }
+    .mini-port.amber { background: var(--amber); }
+    .node-name {
+      color: #eaf1f8;
+      text-align: center;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .node-sub {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: -7px;
+    }
+    .card-canvas {
+      position: absolute;
+      inset: 108px 48px 46px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background:
+        radial-gradient(circle at 12px 12px, rgba(148, 163, 184, 0.18) 1px, transparent 1.5px),
+        rgba(8, 13, 19, 0.76);
+      background-size: 24px 24px;
+    }
+    .app-card {
+      position: absolute;
+      width: 218px;
+      height: 102px;
+      border: 1.5px solid rgba(148, 163, 184, 0.24);
+      border-radius: 14px;
+      background: linear-gradient(145deg, rgba(19, 29, 42, 0.96), rgba(12, 18, 27, 0.96));
+      box-shadow: 0 18px 36px rgba(0, 0, 0, 0.28);
+      display: grid;
+      grid-template-columns: 54px 1fr;
+      gap: 13px;
+      padding: 16px;
+      align-items: center;
+    }
+    .app-card img {
+      width: 48px;
+      height: 48px;
+      object-fit: contain;
+      filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.34));
+    }
+    .app-card .brand-mark {
+      width: 48px;
+      height: 48px;
+      font-size: 21px;
+      filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.34));
+    }
+    .app-card .mark-slack {
+      gap: 6px;
+      padding: 5px;
+    }
+    .card-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+    .card-copy strong {
+      font-size: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .card-copy span {
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .card-chips {
+      display: flex;
+      gap: 5px;
+    }
+    .card-chip {
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 999px;
+      padding: 2px 7px;
+      color: #b9c4d1;
+      font-size: 9px;
+    }
+    .card-chip.auth {
+      color: #ffd66d;
+      background: rgba(248, 196, 81, 0.11);
+      border-color: rgba(248, 196, 81, 0.22);
+    }
+    .card-port {
+      position: absolute;
+      top: 46px;
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      border: 2px solid #090f16;
+      background: var(--teal);
+    }
+    .card-port.left { left: -7px; }
+    .card-port.right { right: -7px; }
+    .branch {
+      position: absolute;
+      height: 2px;
+      background: rgba(88, 166, 255, 0.44);
+      transform-origin: left center;
+    }
+  </style>
+</head>
+<body>
+  <main class="stack">
+    <section class="board" id="palette-reference">
+      <div class="title">
+        <h1>Reference 1 - Full-logo palette</h1>
+        <p>Brand integrations read as real app logos, while generic nodes keep simple glyph boxes.</p>
+      </div>
+      <div class="shell">
+        <aside class="palette">
+          <div class="search">Search nodes...</div>
+          <div class="chips"><span class="chip">All</span><span class="chip">Integrations</span><span class="chip">AI</span></div>
+          <div class="group">Integrations</div>
+          <div class="rows">
+            <div class="row active"><img class="brand-icon" src="https://cdn.simpleicons.org/googlesheets" alt="" /><div class="name"><strong>Google Sheets Read</strong><div class="badges"><span class="badge">Action</span><span class="badge auth">Auth</span></div></div><span class="star">*</span></div>
+            <div class="row"><span class="brand-icon brand-mark mark-slack"><span></span><span></span><span></span><span></span></span><div class="name"><strong>Slack Send Message</strong><div class="badges"><span class="badge">Action</span><span class="badge auth">Auth</span></div></div><span class="star">*</span></div>
+            <div class="row"><span class="brand-icon brand-mark mark-outlook">O</span><div class="name"><strong>Outlook Send Email</strong><div class="badges"><span class="badge">Action</span><span class="badge auth">Auth</span></div></div><span class="star">*</span></div>
+            <div class="row"><img class="brand-icon" src="https://cdn.simpleicons.org/github" alt="" /><div class="name"><strong>GitHub Create Issue</strong><div class="badges"><span class="badge">Action</span><span class="badge auth">Auth</span></div></div><span class="star">*</span></div>
+            <div class="row"><img class="brand-icon" src="https://cdn.simpleicons.org/stripe" alt="" /><div class="name"><strong>Stripe Create Customer</strong><div class="badges"><span class="badge">Action</span><span class="badge auth">Auth</span></div></div><span class="star">*</span></div>
+            <div class="row"><span class="glyph-box">{ }</span><div class="name"><strong>Code</strong><div class="badges"><span class="badge">Transform</span></div></div><span class="star">*</span></div>
+          </div>
+        </aside>
+        <section class="canvas">
+          <div class="wire" style="left: 194px; top: 176px;"></div>
+          <div class="wire" style="left: 404px; top: 176px;"></div>
+          <div class="node" style="left: 92px; top: 158px;"><div class="tile generic">play<span class="port right"></span></div><div class="node-label">Manual Trigger</div></div>
+          <div class="node" style="left: 302px; top: 158px;"><div class="tile brand"><img src="https://cdn.simpleicons.org/googlesheets" alt="" /><span class="port left"></span><span class="port right"></span></div><div class="node-label">Google Sheets Read</div></div>
+          <div class="node" style="left: 512px; top: 158px;"><div class="tile brand"><span class="brand-mark mark-slack"><span></span><span></span><span></span><span></span></span><span class="port left"></span></div><div class="node-label">Slack Send Message</div></div>
+          <div class="note">Use this for the palette and current square node style: logo is the visual object, not a decoration inside another box.</div>
+        </section>
+      </div>
+    </section>
+
+    <section class="board" id="compact-reference">
+      <div class="title">
+        <h1>Reference 2 - Compact logo nodes</h1>
+        <p>Transparent logo tile, small operation badge, colored data ports, labels below.</p>
+      </div>
+      <div class="compact-grid">
+        <div class="design-node"><div class="tile brand"><img src="https://cdn.simpleicons.org/googlesheets" alt="" /></div><div class="micro-badge">R</div><div class="ports-row"><span class="mini-port blue"></span><span class="mini-port"></span></div><div class="node-name">Google Sheets</div><div class="node-sub">Read rows</div></div>
+        <div class="design-node"><div class="tile brand"><span class="brand-mark mark-slack"><span></span><span></span><span></span><span></span></span></div><div class="micro-badge">S</div><div class="ports-row"><span class="mini-port"></span><span class="mini-port amber"></span></div><div class="node-name">Slack</div><div class="node-sub">Send message</div></div>
+        <div class="design-node"><div class="tile brand"><span class="brand-mark mark-outlook">O</span></div><div class="micro-badge">E</div><div class="ports-row"><span class="mini-port"></span><span class="mini-port pink"></span></div><div class="node-name">Outlook</div><div class="node-sub">Send email</div></div>
+        <div class="design-node"><div class="tile brand"><img src="https://cdn.simpleicons.org/github" alt="" /></div><div class="micro-badge">I</div><div class="ports-row"><span class="mini-port blue"></span><span class="mini-port"></span></div><div class="node-name">GitHub</div><div class="node-sub">Create issue</div></div>
+        <div class="design-node"><div class="tile generic">fn</div><div class="micro-badge">{ }</div><div class="ports-row"><span class="mini-port amber"></span><span class="mini-port blue"></span></div><div class="node-name">Code</div><div class="node-sub">Transform</div></div>
+        <div class="design-node"><div class="tile brand"><img src="https://cdn.simpleicons.org/stripe" alt="" /></div><div class="micro-badge">C</div><div class="ports-row"><span class="mini-port"></span><span class="mini-port pink"></span></div><div class="node-name">Stripe</div><div class="node-sub">Create customer</div></div>
+        <div class="design-node"><div class="tile brand"><img src="https://cdn.simpleicons.org/notion" alt="" /></div><div class="micro-badge">P</div><div class="ports-row"><span class="mini-port blue"></span><span class="mini-port"></span></div><div class="node-name">Notion</div><div class="node-sub">Create page</div></div>
+        <div class="design-node"><div class="tile brand"><img src="https://cdn.simpleicons.org/airtable" alt="" /></div><div class="micro-badge">L</div><div class="ports-row"><span class="mini-port blue"></span><span class="mini-port"></span></div><div class="node-name">Airtable</div><div class="node-sub">List records</div></div>
+        <div class="design-node"><div class="tile brand"><span class="brand-mark mark-s3">S3</span></div><div class="micro-badge">G</div><div class="ports-row"><span class="mini-port"></span><span class="mini-port amber"></span></div><div class="node-name">S3</div><div class="node-sub">Get object</div></div>
+        <div class="design-node"><div class="tile generic">http</div><div class="micro-badge">GET</div><div class="ports-row"><span class="mini-port blue"></span><span class="mini-port"></span></div><div class="node-name">HTTP</div><div class="node-sub">Request</div></div>
+      </div>
+      <div class="note">Best if you want to keep the existing node footprint. The action badge tells users what the node does without boxing the brand mark.</div>
+    </section>
+
+    <section class="board" id="card-reference">
+      <div class="title">
+        <h1>Reference 3 - Wide integration app cards</h1>
+        <p>When detail matters, use app-card nodes with service, operation, auth, status, and ports in one scan.</p>
+      </div>
+      <div class="card-canvas">
+        <div class="branch" style="left: 242px; top: 205px; width: 148px;"></div>
+        <div class="branch" style="left: 608px; top: 205px; width: 138px;"></div>
+        <div class="branch" style="left: 608px; top: 205px; width: 172px; transform: rotate(26deg);"></div>
+        <div class="app-card" style="left: 64px; top: 154px;"><img src="https://cdn.simpleicons.org/googlesheets" alt="" /><div class="card-copy"><strong>Google Sheets</strong><span>Read rows</span><div class="card-chips"><span class="card-chip">Dataset</span><span class="card-chip auth">Auth</span></div></div><span class="card-port right"></span></div>
+        <div class="app-card" style="left: 390px; top: 154px;"><img src="https://cdn.simpleicons.org/stripe" alt="" /><div class="card-copy"><strong>Stripe</strong><span>Create customer</span><div class="card-chips"><span class="card-chip">Action</span><span class="card-chip auth">Auth</span></div></div><span class="card-port left"></span><span class="card-port right"></span></div>
+        <div class="app-card" style="left: 746px; top: 102px;"><span class="brand-mark mark-slack"><span></span><span></span><span></span><span></span></span><div class="card-copy"><strong>Slack</strong><span>Send alert</span><div class="card-chips"><span class="card-chip">Message</span><span class="card-chip auth">Auth</span></div></div><span class="card-port left"></span></div>
+        <div class="app-card" style="left: 782px; top: 284px;"><img src="https://cdn.simpleicons.org/notion" alt="" /><div class="card-copy"><strong>Notion</strong><span>Create page</span><div class="card-chips"><span class="card-chip">Document</span><span class="card-chip auth">Auth</span></div></div><span class="card-port left"></span></div>
+      </div>
+      <div class="note">Best for a richer editor mode or selected-node expansion. It trades canvas density for much better recognition and scanability.</div>
+    </section>
+  </main>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const boardId = params.get("board");
+    if (boardId) {
+      document.body.classList.add("focus-board");
+      for (const board of document.querySelectorAll(".board")) {
+        board.classList.toggle("active-board", board.id === boardId);
+      }
+      window.scrollTo(0, 0);
+    }
+  </script>
+</body>
+</html>

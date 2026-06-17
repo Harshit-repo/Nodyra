@@ -1,7 +1,9 @@
 """Webhook ingress.
 
 * ``/webhook-test/{path}`` captures requests so the editor can show what a
-  webhook node receives while you build a workflow.
+  webhook node receives while you build a workflow. Only active while a
+  listen session is registered via ``POST /webhook-test/{path}/listen``;
+  requests before that return 404.
 * ``/webhook/{path}`` is the production URL — it dispatches a run of every
   active workflow that starts with a matching webhook node.
 
@@ -10,17 +12,25 @@ so the in-memory ``_captured`` dict used to grow unbounded for the life of
 the API process. It's now bounded two ways: each entry carries a timestamp
 and is evicted after ``WEBHOOK_CAPTURE_TTL_SECONDS``, and the dict is capped
 at ``WEBHOOK_CAPTURE_MAX_ENTRIES`` with oldest-first eviction.
+
+Listen sessions: the editor's Listen button registers a session via the
+(authenticated) start endpoint; the test URL handler checks the session store
+before processing any request so external tools (Postman, curl) cannot hit
+the test URL without the editor open. Sessions are kept in Redis when
+configured (so the gate holds across replicas) with an in-process fallback.
 """
 
 import json
 import logging
 import time
+import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from app.config import settings
+from app.security import require_permission
 from app.services.triggers import dispatch_webhook, wait_for_webhook_result
 
 logger = logging.getLogger(__name__)
@@ -41,6 +51,73 @@ _METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 
 WEBHOOK_CAPTURE_TTL_SECONDS = 5 * 60  # 5 min — typical Listen-then-test loop
 WEBHOOK_CAPTURE_MAX_ENTRIES = 256
+
+# Listen sessions. Registered by the editor's "Listen for test event" button;
+# the test URL handler rejects requests when no session is active so Postman
+# can't hit the URL outside of an editor session. Sessions live in Redis when
+# available so the gate works when the editor and the incoming test request
+# land on different replicas; the in-process dict is the single-process
+# fallback (same degradation mode as the capture buffer above).
+WEBHOOK_LISTEN_TTL_SECONDS = 10 * 60  # 10 min — generous for Postman setup time
+_LISTEN_KEY_PREFIX = "noodle:webhook_listen:"
+_listening: dict[str, float] = {}  # path → monotonic expire_at (fallback store)
+
+
+def _listen_redis():
+    """The events broker's connected Redis client, or None.
+
+    The broker is the reliable "is Redis actually deployed" signal — when it
+    isn't holding a client (in-memory event bus, Redis unreachable) every
+    replica is on its own anyway and the in-process store is the best we can
+    do, without paying a doomed TCP connect per webhook-test request.
+    """
+    try:
+        from app.services.events import broker
+
+        return broker._redis
+    except Exception:  # noqa: BLE001 - fall back to the in-process store
+        return None
+
+
+async def _is_listening(path: str) -> bool:
+    """Return True when there is a non-expired listen session for ``path``."""
+    redis = _listen_redis()
+    if redis is not None:
+        try:
+            return bool(await redis.exists(_LISTEN_KEY_PREFIX + path))
+        except Exception:  # noqa: BLE001 - Redis down → in-process fallback
+            pass
+    expire_at = _listening.get(path)
+    if expire_at is None:
+        return False
+    if time.monotonic() > expire_at:
+        _listening.pop(path, None)
+        return False
+    return True
+
+
+async def _start_listening(path: str) -> None:
+    redis = _listen_redis()
+    if redis is not None:
+        try:
+            await redis.set(
+                _LISTEN_KEY_PREFIX + path, "1", ex=WEBHOOK_LISTEN_TTL_SECONDS
+            )
+            return
+        except Exception:  # noqa: BLE001
+            pass
+    _listening[path] = time.monotonic() + WEBHOOK_LISTEN_TTL_SECONDS
+
+
+async def _stop_listening(path: str) -> None:
+    redis = _listen_redis()
+    if redis is not None:
+        try:
+            await redis.delete(_LISTEN_KEY_PREFIX + path)
+        except Exception:  # noqa: BLE001
+            pass
+    _listening.pop(path, None)
+
 
 # Caller-facing detail per rejection status from ``dispatch_webhook``.
 _REJECT_DETAIL = {
@@ -150,10 +227,25 @@ def _redacted_payload(payload: dict) -> dict:
 
 @router.api_route("/webhook-test/{path}", methods=_METHODS)
 async def capture_webhook(path: str, request: Request) -> dict:
-    """Editor test URL — capture the request and dispatch matching workflows
-    using their draft graph (so unpublished credential refs and auth changes
-    apply). Workflow ``active`` is ignored on this path; auth IS still
-    checked, so the user can validate their Basic/Header/Query setup."""
+    """Editor test URL — only active while a listen session is registered.
+
+    Call ``POST /webhook-test/{path}/listen`` first (the editor's Listen button
+    does this automatically). Without an active session the URL returns 404 so
+    external tools cannot hit the test endpoint at arbitrary times.
+
+    When listening, the request is always captured (so the editor shows it),
+    then dispatched against the draft graph. Auth IS checked when a workflow
+    draft has auth configured.
+    """
+    if not await _is_listening(path):
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "No active listen session for this webhook path. "
+                "Click 'Listen for test event' in the editor first."
+            ),
+        )
+    req_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     payload, raw_body = await _payload(request)
     _record_capture(path, _redacted_payload(payload))
     result = await dispatch_webhook(
@@ -161,8 +253,8 @@ async def capture_webhook(path: str, request: Request) -> dict:
         client_ip=request.client.host if request.client else None,
     )
     logger.info(
-        "webhook test path=%s matched=%s runs=%d",
-        path, result.any_match, len(result.run_ids),
+        "webhook test path=%s matched=%s runs=%d req_id=%s",
+        path, result.any_match, len(result.run_ids), req_id,
     )
     if result.reject_status is not None:
         raise HTTPException(
@@ -171,22 +263,80 @@ async def capture_webhook(path: str, request: Request) -> dict:
     return {
         "message": "Noodle test webhook received",
         "path": path,
+        "matched": result.any_match,
         "runs": result.run_ids,
+        "x_request_id": req_id,
     }
 
 
-@router.get("/webhook-test/{path}/last")
+# The editor-facing endpoints below carry their own auth dependency: the
+# "/webhook-test" prefix is exempt from the global auth/CSRF middleware (the
+# capture URL itself must accept unauthenticated external requests), so
+# without a route-level check anyone could open the listen gate or read
+# captured payloads — defeating the gate's purpose.
+_EDITOR_SESSION = [Depends(require_permission("workflow:run"))]
+
+
+@router.get("/webhook-test/{path}/last", dependencies=_EDITOR_SESSION)
 async def last_webhook(path: str) -> dict | None:
-    """Return the most recent request captured for this webhook path."""
+    """Return the most recent request captured for this webhook path.
+
+    Polled by the editor while listening — renew the listen session on each
+    poll so it stays open exactly as long as the editor tab does, instead of
+    hard-expiring mid-session after the initial TTL.
+    """
+    if await _is_listening(path):
+        await _start_listening(path)
     _evict_stale(time.monotonic())
     entry = _captured.get(path)
     return entry[1] if entry is not None else None
 
 
-@router.delete("/webhook-test/{path}/last", status_code=204)
+@router.delete("/webhook-test/{path}/last", status_code=204, dependencies=_EDITOR_SESSION)
 async def clear_webhook(path: str) -> None:
     """Drop the last captured request so a fresh ``Listen`` can wait for new ones."""
     _captured.pop(path, None)
+
+
+@router.post("/webhook-test/{path}/listen", status_code=200, dependencies=_EDITOR_SESSION)
+async def start_listen_session(path: str) -> dict:
+    """Register an active listen session so the test URL accepts incoming requests.
+
+    Called by the editor when the user clicks 'Listen for test event'. The
+    session expires automatically after ``WEBHOOK_LISTEN_TTL_SECONDS`` (10 min)
+    without editor polls (see ``last_webhook``) so a closed browser tab never
+    leaves the test URL permanently open.
+    """
+    await _start_listening(path)
+    return {"listening": True, "ttl_seconds": WEBHOOK_LISTEN_TTL_SECONDS}
+
+
+@router.delete("/webhook-test/{path}/listen", status_code=204, dependencies=_EDITOR_SESSION)
+async def stop_listen_session(path: str) -> None:
+    """Clear the listen session; the test URL returns 404 until re-opened."""
+    await _stop_listening(path)
+
+
+async def _enforce_webhook_rate_limit(path: str, request: Request) -> None:
+    """H5: throttle public webhook ingress per (path, caller IP).
+
+    Unauthenticated ``/webhook/{path}`` can otherwise be hammered into a
+    run-queue flood. Keyed by path *and* IP so one noisy sender can't starve a
+    different webhook or a different caller of the same one.
+    """
+    if not settings.webhook_rate_limit_enabled:
+        return
+    from app.services import rate_limit
+
+    ip = request.client.host if request.client else "anon"
+    allowed = await rate_limit.allow(
+        "webhook", f"{path}:{ip}", limit=settings.webhook_rate_limit_per_minute
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many webhook requests; slow down.",
+        )
 
 
 @production_router.api_route("/webhook/{path:path}", methods=_METHODS)
@@ -197,29 +347,43 @@ async def trigger_webhook(path: str, request: Request) -> dict:
     routes like ``/webhook/customers/42/orders`` reach a webhook node whose
     ``path`` template is ``customers/{id}/orders``.
     """
+    await _enforce_webhook_rate_limit(path, request)
+    req_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     payload, raw_body = await _payload(request)
     _record_capture(path, _redacted_payload(payload))
-    result = await dispatch_webhook(
-        path, payload, raw_body=raw_body,
-        client_ip=request.client.host if request.client else None,
-    )
-    logger.info(
-        "webhook prod path=%s matched=%s runs=%d",
-        path, result.any_match, len(result.run_ids),
-    )
-    if result.reject_status is not None:
-        # Path matched at least one workflow, but every candidate was rejected:
-        # 403 when an IP allowlist blocked the caller, else 401 (auth/HMAC).
-        # Distinct from an unknown-path 404.
-        raise HTTPException(
-            result.reject_status, _REJECT_DETAIL[result.reject_status]
+    # Webhook ingress is inherently cross-org: the path decides which org's
+    # workflow fires, not the caller's X-Org-Id (callers are external systems
+    # with no Noodle identity). Matching runs unscoped; start_run then pins
+    # each run to its workflow's org.
+    from app.tenancy import run_as_system
+
+    with run_as_system():
+        result = await dispatch_webhook(
+            path, payload, raw_body=raw_body,
+            client_ip=request.client.host if request.client else None,
         )
-    if result.sync is not None:
-        shape = await wait_for_webhook_result(
-            **result.sync,
-            timeout=settings.webhook_response_timeout_seconds,
+        logger.info(
+            "webhook prod path=%s matched=%s runs=%d req_id=%s",
+            path, result.any_match, len(result.run_ids), req_id,
         )
-        return _shaped_response(shape)
+        if result.reject_status is not None:
+            # Path matched at least one workflow, but every candidate was
+            # rejected: 403 when an IP allowlist blocked the caller, else 401
+            # (auth/HMAC). Distinct from an unknown-path 404.
+            raise HTTPException(
+                result.reject_status, _REJECT_DETAIL[result.reject_status]
+            )
+        if not result.any_match:
+            # No active workflow registered for this path. Return 404 so
+            # external senders (Stripe, GitHub, etc.) know the endpoint
+            # doesn't exist — a 200 would falsely signal delivery success.
+            raise HTTPException(404, "No active workflow for this webhook path.")
+        if result.sync is not None:
+            shape = await wait_for_webhook_result(
+                **result.sync,
+                timeout=settings.webhook_response_timeout_seconds,
+            )
+            return _shaped_response(shape)
     if result.response is not None:
         return _shaped_response(result.response)
     if result.run_ids:
@@ -232,4 +396,5 @@ async def trigger_webhook(path: str, request: Request) -> dict:
         "message": message,
         "path": path,
         "runs": result.run_ids,
+        "x_request_id": req_id,
     }

@@ -5,11 +5,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Credential, Workflow
-from app.services.crypto import decrypt_credential
+from app.config import settings
+from app.models import Credential, Environment, RunnerPool, Workflow
 from app.services.oauth import OAuthError, refresh_credential_if_needed
+from app.services.org_keys import decrypt_credential_for
+from app.tenancy import active_org_id
 
 CREDENTIAL_REF_MARKER = "__noodle_credential__"
 
@@ -25,10 +28,14 @@ def credential_ref(credential_id: str, key: str) -> dict[str, str | bool]:
 def _scope_visible(
     cred: Credential,
     *,
+    context_org_id: str | None,
     workflow_id: str | None,
     environment_id: str | None,
     runner_pool_id: str | None,
 ) -> bool:
+    if settings.multi_tenancy_enabled:
+        if not context_org_id or cred.org_id != context_org_id:
+            return False
     if cred.scope == "global":
         return True
     if cred.scope == "workflow":
@@ -49,10 +56,46 @@ async def _workflow_environment_id(
     return workflow.environment_id if workflow is not None else None
 
 
+async def _credential_context_org_id(
+    session: AsyncSession,
+    *,
+    workflow_id: str | None,
+    environment_id: str | None,
+    runner_pool_id: str | None,
+) -> str | None:
+    """Resolve the org that owns the run context doing credential injection."""
+    if workflow_id:
+        org_id = await session.scalar(
+            select(Workflow.org_id)
+            .where(Workflow.id == workflow_id)
+            .execution_options(skip_org_filter=True)
+        )
+        if org_id:
+            return str(org_id)
+    if environment_id:
+        org_id = await session.scalar(
+            select(Environment.org_id)
+            .where(Environment.id == environment_id)
+            .execution_options(skip_org_filter=True)
+        )
+        if org_id:
+            return str(org_id)
+    if runner_pool_id:
+        org_id = await session.scalar(
+            select(RunnerPool.org_id)
+            .where(RunnerPool.id == runner_pool_id)
+            .execution_options(skip_org_filter=True)
+        )
+        if org_id:
+            return str(org_id)
+    return active_org_id()
+
+
 async def _resolve_ref(
     session: AsyncSession,
     ref: dict[str, Any],
     *,
+    context_org_id: str | None,
     workflow_id: str | None,
     environment_id: str | None,
     runner_pool_id: str | None,
@@ -66,15 +109,18 @@ async def _resolve_ref(
         raise RuntimeError(f"credential '{cred_id}' was not found")
     if not _scope_visible(
         cred,
+        context_org_id=context_org_id,
         workflow_id=workflow_id,
         environment_id=environment_id,
         runner_pool_id=runner_pool_id,
     ):
         raise RuntimeError(f"credential '{cred.name}' is not visible to this run")
 
-    data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek)
+    # strict=True (H1): a referenced credential that cannot be decrypted must
+    # abort the run, never inject empty/partial auth into the node graph.
+    data = await decrypt_credential_for(cred, session, strict=True)
     try:
-        data = await refresh_credential_if_needed(cred, data)
+        data = await refresh_credential_if_needed(cred, data, session)
     except OAuthError as exc:
         raise RuntimeError(str(exc)) from exc
     cred.last_used_at = datetime.now(UTC)
@@ -110,12 +156,19 @@ async def resolve_credential_refs(
     """
     if environment_id is None:
         environment_id = await _workflow_environment_id(session, workflow_id)
+    context_org_id = await _credential_context_org_id(
+        session,
+        workflow_id=workflow_id,
+        environment_id=environment_id,
+        runner_pool_id=runner_pool_id,
+    )
 
     async def walk(item: Any) -> Any:
         if is_credential_ref(item):
             return await _resolve_ref(
                 session,
                 item,
+                context_org_id=context_org_id,
                 workflow_id=workflow_id,
                 environment_id=environment_id,
                 runner_pool_id=runner_pool_id,

@@ -68,6 +68,10 @@ def test_production_fully_configured_has_no_warnings():
         artifact_storage_backend="s3",
         artifact_s3_bucket="prod-noodle-artifacts",
         queue_backend="redis",
+        secret_key="a-strong-random-production-secret-key-xyz",
+        cors_origins="https://app.example.com",
+        auth_required=True,
+        internal_api_token="a-strong-internal-token-xyz",
     )
     assert s.runtime_warnings() == []
 
@@ -112,3 +116,116 @@ def test_production_with_inline_webhook_role_warns():
         webhook_role="inline",
     )
     assert any("webhook" in w.lower() for w in s.runtime_warnings())
+
+
+# --- AUTH-1 / AUTH-3: fail-closed security startup guard ---------------------
+from app.config import DEFAULT_SECRET_KEY  # noqa: E402
+
+
+def test_default_secret_with_auth_required_aborts():
+    s = _settings(auth_required=True)  # secret_key left at the built-in default
+    errs = s.security_startup_errors()
+    assert any("SECRET_KEY" in e for e in errs)
+
+
+def test_default_secret_with_multi_tenancy_aborts():
+    s = _settings(multi_tenancy_enabled=True)
+    assert any("SECRET_KEY" in e for e in s.security_startup_errors())
+
+
+def test_default_secret_without_boundary_is_allowed():
+    # Auth-disabled single-user dev must keep booting on the default secret.
+    s = _settings(auth_required=False, multi_tenancy_enabled=False)
+    assert s.security_startup_errors() == []
+
+
+def test_strong_secret_with_auth_required_is_allowed():
+    s = _settings(auth_required=True, secret_key="a-strong-random-secret-value")
+    assert s.security_startup_errors() == []
+
+
+def test_allow_insecure_bypasses_security_guard():
+    s = _settings(
+        auth_required=True,
+        secret_key=DEFAULT_SECRET_KEY,
+        runtime_allow_insecure=True,
+    )
+    assert s.security_startup_errors() == []
+
+
+def test_blank_internal_token_in_split_topology_aborts():
+    s = _settings(
+        dispatch_role="control",
+        queue_backend="redis",
+        database_url=_PG,
+        secret_key="a-strong-random-secret-value",
+        internal_api_token="",
+    )
+    assert any("INTERNAL_API_TOKEN" in e for e in s.security_startup_errors())
+
+
+def test_inline_topology_tolerates_blank_internal_token():
+    s = _settings(secret_key="a-strong-random-secret-value", internal_api_token="")
+    assert s.security_startup_errors() == []
+
+
+# --- M1: wildcard CORS + credentials is a fail-closed startup error ----------
+
+def test_wildcard_cors_with_auth_aborts():
+    s = _settings(
+        auth_required=True,
+        secret_key="a-strong-random-secret-value",
+        cors_origins="*",
+    )
+    assert any("CORS" in e for e in s.security_startup_errors())
+
+
+def test_wildcard_cors_with_multi_tenancy_aborts():
+    s = _settings(
+        multi_tenancy_enabled=True,
+        secret_key="a-strong-random-secret-value",
+        cors_origins="https://app.example.com, *",
+    )
+    assert any("CORS" in e for e in s.security_startup_errors())
+
+
+def test_explicit_cors_origins_are_allowed():
+    s = _settings(
+        auth_required=True,
+        secret_key="a-strong-random-secret-value",
+        cors_origins="https://app.example.com",
+    )
+    assert s.security_startup_errors() == []
+
+
+def test_wildcard_cors_without_boundary_is_allowed():
+    # Auth-disabled single-user dev keeps booting with the permissive default.
+    s = _settings(auth_required=False, multi_tenancy_enabled=False, cors_origins="*")
+    assert s.security_startup_errors() == []
+
+
+def test_allow_insecure_bypasses_cors_guard():
+    s = _settings(
+        auth_required=True,
+        secret_key="a-strong-random-secret-value",
+        cors_origins="*",
+        runtime_allow_insecure=True,
+    )
+    assert s.security_startup_errors() == []
+
+
+# --- M7: multi-tenancy hardens the unsafe-node policy default ----------------
+
+def test_unsafe_node_policy_defaults_to_require_approval_under_multi_tenancy():
+    s = _settings(multi_tenancy_enabled=True)
+    assert s.unsafe_node_policy == "require_approval"
+
+
+def test_explicit_unsafe_node_policy_is_respected_under_multi_tenancy():
+    s = _settings(multi_tenancy_enabled=True, unsafe_node_policy="warn")
+    assert s.unsafe_node_policy == "warn"
+
+
+def test_unsafe_node_policy_default_unchanged_without_multi_tenancy():
+    s = _settings()
+    assert s.unsafe_node_policy == "warn"

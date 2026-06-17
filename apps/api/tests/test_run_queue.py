@@ -243,6 +243,57 @@ async def test_heartbeat_extends_lease(session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_lease_provider_filter_separates_agent_and_local(session) -> None:
+    """A1: the dispatch-loop provider filter keeps the WS-terminating control
+    replica ({agent, kubernetes}) and the worker ({local, docker}) from
+    stealing each other's entries — so agent runs never starve behind a worker
+    that can't host their WebSocket, and local runs never block on control."""
+    from app.models import RunnerPool
+    from app.services import queue
+
+    agent_pool = RunnerPool(name="agents", provider="agent")
+    docker_pool = RunnerPool(name="dock", provider="docker")
+    session.add_all([agent_pool, docker_pool])
+    await session.flush()
+
+    now = datetime.now(UTC)
+    session.add_all(
+        [
+            RunQueueEntry(run_id="local", workflow_id="wf", runner_pool_id=None,
+                          available_at=now),
+            RunQueueEntry(run_id="agent", workflow_id="wf",
+                          runner_pool_id=agent_pool.id, available_at=now),
+            RunQueueEntry(run_id="docker", workflow_id="wf",
+                          runner_pool_id=docker_pool.id, available_at=now),
+        ]
+    )
+    await session.commit()
+
+    control_providers = frozenset({"agent", "kubernetes"})
+    worker_providers = frozenset({"local", "docker"})
+
+    # control leases only the agent entry...
+    leased = await queue.lease(session, worker_id="control",
+                               providers=control_providers)
+    await session.commit()
+    assert leased is not None and leased.run_id == "agent"
+
+    # ...and cannot touch the remaining local/docker entries.
+    assert await queue.lease(session, worker_id="control",
+                             providers=control_providers) is None
+
+    # the worker drains local + docker, never the agent entry.
+    drained = set()
+    for _ in range(2):
+        got = await queue.lease(session, worker_id="worker",
+                                providers=worker_providers)
+        await session.commit()
+        assert got is not None
+        drained.add(got.run_id)
+    assert drained == {"local", "docker"}
+
+
+@pytest.mark.asyncio
 async def test_complete_marks_completed(session) -> None:
     from app.services import queue
 
@@ -477,3 +528,135 @@ async def test_lease_uses_config_lease_seconds(session) -> None:
         assert 5 <= delta.total_seconds() <= 9
     finally:
         app_settings.queue_lease_seconds = original
+
+
+@pytest.mark.asyncio
+async def test_lease_filters_by_provider(session) -> None:
+    """A worker may only lease local + docker entries; agent/k8s entries need
+    the WS-holding API process (program A1)."""
+    from app.models import RunnerPool
+    from app.services import queue as q
+
+    agent_pool = RunnerPool(name="agents", provider="agent")
+    docker_pool = RunnerPool(name="dockers", provider="docker")
+    session.add_all([agent_pool, docker_pool])
+    await session.flush()
+
+    await q.enqueue(session, run_id="r-local", workflow_id="w1")
+    await q.enqueue(
+        session, run_id="r-agent", workflow_id="w1", runner_pool_id=agent_pool.id
+    )
+    await q.enqueue(
+        session, run_id="r-docker", workflow_id="w1", runner_pool_id=docker_pool.id
+    )
+    await session.commit()
+
+    worker_caps = frozenset({"local", "docker"})
+    leased = set()
+    while True:
+        entry = await q.lease(session, worker_id="w", providers=worker_caps)
+        if entry is None:
+            break
+        leased.add(entry.run_id)
+    assert leased == {"r-local", "r-docker"}
+
+    # unrestricted lease (inline role) still gets the agent entry
+    entry = await q.lease(session, worker_id="w")
+    assert entry is not None and entry.run_id == "r-agent"
+
+
+@pytest.mark.asyncio
+async def test_requeue_expired_lease_resets_running_run(session) -> None:
+    """A lost worker leaves Run.status='running'; requeue must flip it back to
+    'queued' or _execute_queued_entry will refuse to re-dispatch (A1)."""
+    from app.models import Run
+    from app.services import queue as q
+
+    run = Run(
+        workflow_id="wf-lost", workflow_version=1, mode="production",
+        trigger_type="schedule", status="running",
+    )
+    session.add(run)
+    await session.flush()
+
+    entry = await q.enqueue(session, run_id=run.id, workflow_id="wf-lost")
+    moment = datetime.now(UTC)
+    leased = await q.lease(session, worker_id="lost-worker", now=moment)
+    assert leased is not None and leased.run_id == run.id
+    await session.commit()
+
+    acted = await q.requeue_expired_leases(
+        session, now=moment + timedelta(seconds=9999)
+    )
+    await session.commit()
+    assert acted == 1
+    await session.refresh(entry)
+    await session.refresh(run)
+    assert entry.status == "queued"
+    assert run.status == "queued"
+    assert run.finished_at is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_reconcile_cancels_local_task_for_cancelled_entry(session) -> None:
+    """An API replica can only flip the queue entry to 'cancelled'; the worker
+    holding the executing task must observe that and cancel locally (A1)."""
+    import asyncio
+
+    from app.services import queue as q
+
+    await q.enqueue(session, run_id="r-cancel", workflow_id="w1")
+    await q.cancel(session, run_id="r-cancel")
+    await session.commit()
+
+    async def _hang():
+        await asyncio.sleep(60)
+
+    task = asyncio.ensure_future(_hang())
+    active = {"r-cancel": task, "r-other": asyncio.ensure_future(_hang())}
+    try:
+        cancelled = await q._cancel_reconcile(session, active)
+        assert cancelled == ["r-cancel"]
+        await asyncio.sleep(0)
+        assert task.cancelled()
+        assert not active["r-other"].done()
+    finally:
+        for t in active.values():
+            t.cancel()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_persists_trace_context(session) -> None:
+    from app.services import queue as run_queue
+
+    entry = await run_queue.enqueue(
+        session,
+        run_id="run-tc",
+        workflow_id="wf-1",
+        trace_context={"traceparent": "00-aa-bb-01"},
+    )
+    await session.commit()
+    await session.refresh(entry)
+    assert entry.trace_context == {"traceparent": "00-aa-bb-01"}
+
+
+@pytest.mark.asyncio
+async def test_reenqueue_replaces_trace_context(session) -> None:
+    from app.services import queue as run_queue
+
+    entry = await run_queue.enqueue(
+        session,
+        run_id="run-tc2",
+        workflow_id="wf-1",
+        trace_context={"traceparent": "00-old-old-01"},
+    )
+    entry.status = "failed"  # terminal -> revival path
+    await session.commit()
+    revived = await run_queue.enqueue(
+        session,
+        run_id="run-tc2",
+        workflow_id="wf-1",
+        trace_context={"traceparent": "00-new-new-01"},
+    )
+    await session.commit()
+    assert revived.trace_context == {"traceparent": "00-new-new-01"}

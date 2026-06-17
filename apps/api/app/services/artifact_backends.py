@@ -76,11 +76,13 @@ class ArtifactBackend(Protocol):
     def stats(self) -> dict[str, Any]:
         """Backend-specific telemetry surfaced by ``/ops/queue``."""
 
-    def delete_run(self, run_id: str) -> None:
+    def delete_run(self, run_id: str, org_id: str | None = None) -> None:
         """Best-effort cleanup of any per-run scratch space (e.g. empty dirs).
 
-        Independent of ``delete`` because some backends (S3) have no concept
-        of an empty 'directory' to reclaim.
+        ``org_id`` covers the Phase F namespaced layout
+        ({org_id}/runs/{run_id}); the legacy layout (runs/{run_id}) is always
+        swept too. Independent of ``delete`` because some backends (S3) have
+        no concept of an empty 'directory' to reclaim.
         """
 
     def upload_from_local(self, artifact: Artifact, local_path: Path) -> None:
@@ -193,14 +195,18 @@ class LocalBackend:
             "bytes": total_bytes,
         }
 
-    def delete_run(self, run_id: str) -> None:
-        path = _artifact_base_dir() / "runs" / run_id
-        try:
-            shutil.rmtree(path)
-        except FileNotFoundError:
-            pass
-        except OSError:
-            pass
+    def delete_run(self, run_id: str, org_id: str | None = None) -> None:
+        base = _artifact_base_dir()
+        candidates = [base / "runs" / run_id]
+        if org_id:
+            candidates.append(base / org_id / "runs" / run_id)
+        for path in candidates:
+            try:
+                shutil.rmtree(path)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
 
     def upload_from_local(self, artifact: Artifact, local_path: Path) -> None:
         # Bytes are already on the local FS; nothing to do.

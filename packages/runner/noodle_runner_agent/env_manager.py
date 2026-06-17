@@ -59,12 +59,15 @@ async def build_env(
     python_version: str,
     packages: list[str],
     packages_hash: str,
+    wheel_index_url: str | None = None,
 ) -> Path:
     """Ensure the venv for this env exists; return its python interpreter path.
 
     Cache hit (venv python already present) returns immediately. Cache miss
-    builds with ``uv venv`` + ``uv pip install``. Raises ``RuntimeError`` with
-    the combined uv output on a build failure.
+    builds with ``uv venv`` + ``uv pip install``. The noodle-* packages are not
+    on PyPI, so ``wheel_index_url`` (the API's ``--find-links`` page) is added
+    when provided; their PyPI dependencies still resolve from the default index.
+    Raises ``RuntimeError`` with the combined uv output on a build failure.
     """
     cache_path = env_cache_path(env_id, packages_hash)
     python = _venv_python(cache_path)
@@ -77,9 +80,11 @@ async def build_env(
     if code != 0:
         raise RuntimeError(f"uv venv failed for env {env_id}: {out}")
 
+    find_links = ["--find-links", wheel_index_url] if wheel_index_url else []
     install_args = [
         "uv", "pip", "install",
         "--python", str(python),
+        *find_links,
         "noodle-runtime", "noodle-nodes", "noodle-core",
         *packages,
     ]

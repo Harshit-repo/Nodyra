@@ -56,6 +56,52 @@ async def test_run_executes_the_graph(client: AsyncClient) -> None:
     assert results["t"]["status"] == "success"
 
 
+LOOP_GRAPH = {
+    "nodes": [
+        {"id": "t", "type": "manual_trigger", "params": {"data": [1, 2, 3]},
+         "position": {"x": 0, "y": 0}},
+        {"id": "s", "type": "loop_start", "params": {},
+         "position": {"x": 1, "y": 0}},
+        {"id": "b", "type": "code", "params": {"code": "output = input * 2"},
+         "position": {"x": 2, "y": 0}},
+        {"id": "e", "type": "loop_end", "params": {"loop_start_id": "s"},
+         "position": {"x": 3, "y": 0}},
+    ],
+    "edges": [
+        {"id": "t->s", "source": "t", "source_output": "main",
+         "target": "s", "target_input": "input"},
+        {"id": "s->b", "source": "s", "source_output": "item",
+         "target": "b", "target_input": "input"},
+        {"id": "b->e", "source": "b", "source_output": "main",
+         "target": "e", "target_input": "input"},
+    ],
+}
+
+
+async def test_loop_persists_one_node_run_per_iteration(client: AsyncClient) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "Loop"})).json()["id"]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": LOOP_GRAPH})
+
+    run_id = (
+        await client.post(f"/workflows/{workflow_id}/run", json={})
+    ).json()["run_id"]
+    run = (await client.get(f"/runs/{run_id}")).json()
+    assert run["status"] == "success"
+
+    body_runs = [nr for nr in run["node_runs"] if nr["node_id"] == "b"]
+    assert sorted(nr["iteration_path"] for nr in body_runs) == [[0], [1], [2]]
+
+    end_runs = [nr for nr in run["node_runs"] if nr["node_id"] == "e"]
+    assert len(end_runs) == 1
+    assert end_runs[0]["iteration_path"] is None
+    assert end_runs[0]["output"]["results"] == [2, 4, 6]
+
+    # Non-loop node keeps exactly one run with a null iteration_path.
+    trig_runs = [nr for nr in run["node_runs"] if nr["node_id"] == "t"]
+    assert len(trig_runs) == 1
+    assert trig_runs[0]["iteration_path"] is None
+
+
 async def test_run_records_node_errors(client: AsyncClient) -> None:
     workflow_id = (await client.post("/workflows", json={"name": "Bad"})).json()["id"]
     bad_graph = {
@@ -894,22 +940,225 @@ async def test_approval_decision_requeues_waiting_run(
 
     response = await client.post(
         f"/runs/{run_id}/approvals/{approval['id']}/decision",
-        json={"decision": "approve"},
+        json={"decision": "approve_all"},
     )
     assert response.status_code == 200, response.text
 
     resumed_run = (await client.get(f"/runs/{run_id}")).json()
     assert resumed_run["status"] == "success"
     assert any(call is not None for call in calls)
+    resume_payload = next(call for call in calls if call is not None)
+    resumed_request = AgentActionRequest.model_validate(resume_payload["agent"])
+    assert resumed_request.allow_side_effects is True
 
     timeline = (await client.get(f"/runs/{run_id}/timeline")).json()
     prepared = [
         event for event in timeline["events"] if event["type"] == "agent_resume_prepared"
     ]
     assert prepared
+    assert prepared[0]["data"]["approve_all"] is True
     assert prepared[0]["data"]["cached_node_ids"] == []
     assert prepared[0]["data"]["skipped_cache_nodes"][0]["node_id"] == "supplier"
     assert prepared[0]["data"]["skipped_cache_nodes"][0]["reason"] == "unrestorable_output"
+
+
+async def test_approval_reject_resumes_waiting_run(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rejecting an approval also resumes the run (denied tool flows back to the
+    agent) instead of leaving it stuck in ``waiting``."""
+    import app.services.runner as runner_module
+    from noodle.ai_runtime import AgentActionRequest, AIMessage, ToolCall
+
+    workflow_id = await _workflow_with_graph(client)
+    approval_key = "agent|0|call_pending|send_email"
+    request = AgentActionRequest(
+        tool_calls=[
+            ToolCall(
+                id="call_pending",
+                name="send_email",
+                arguments={"to": "ada@example.com"},
+            )
+        ],
+        messages_so_far=[AIMessage.user("Send the update")],
+        step=0,
+        max_steps=3,
+    )
+    resume_payloads: list[object] = []
+
+    async def fake_execute(graph, registry, **kwargs) -> RunResult:  # noqa: ANN001, ARG001
+        resume = kwargs.get("agent_action_resume")
+        resume_payloads.append(resume)
+        on_event = kwargs["on_event"]
+        if resume:
+            await on_event(
+                {
+                    "type": "node_finished",
+                    "node_id": "agent",
+                    "status": "success",
+                    "outputs": {"main": {"answer": "understood, skipping"}},
+                    "started_at": 3.0,
+                    "finished_at": 4.0,
+                }
+            )
+            return RunResult(status=RunStatus.success)
+
+        await on_event(
+            {
+                "type": "agent_tool_approval_required",
+                "agent_node_id": "agent",
+                "step": 0,
+                "max_steps": 3,
+                "tool_call_id": "call_pending",
+                "tool_name": "send_email",
+                "approval_key": approval_key,
+                "status": "blocked",
+                "message": "Tool 'send_email' requires approval before running.",
+                "arguments": {"to": "ada@example.com"},
+            }
+        )
+        await on_event(
+            {
+                "type": "node_finished",
+                "node_id": "agent",
+                "status": "waiting",
+                "outputs": {},
+                "error": "Tool 'send_email' requires approval before running.",
+                "debug": {
+                    "agent_approval_state": {
+                        "agent_node_id": "agent",
+                        "approval_key": approval_key,
+                        "tool_call_id": "call_pending",
+                        "tool_name": "send_email",
+                        "request": request.model_dump(mode="json"),
+                    }
+                },
+                "started_at": 1.0,
+                "finished_at": 2.0,
+            }
+        )
+        return RunResult(status=RunStatus.waiting)
+
+    monkeypatch.setattr(runner_module, "execute", fake_execute)
+
+    run_id = (
+        await client.post(f"/workflows/{workflow_id}/run", json={})
+    ).json()["run_id"]
+    waiting_run = (await client.get(f"/runs/{run_id}")).json()
+    assert waiting_run["status"] == "waiting"
+
+    approval = (await client.get(f"/runs/{run_id}/approvals")).json()[0]
+    assert approval["status"] == "pending"
+
+    response = await client.post(
+        f"/runs/{run_id}/approvals/{approval['id']}/decision",
+        json={"decision": "reject", "reason": "Not allowed"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "rejected"
+
+    resumed_run = (await client.get(f"/runs/{run_id}")).json()
+    assert resumed_run["status"] == "success"
+
+    # The resume must carry the denied tool call so the engine returns a
+    # denial result to the agent rather than re-prompting for approval.
+    resume = next(payload for payload in resume_payloads if payload)
+    assert resume["agent"].rejected_tool_call_ids == ["call_pending"]
+
+
+async def test_waiting_run_emits_non_terminal_run_waiting(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A run paused for approval must publish a non-terminal ``run_waiting``
+    signal — NOT ``run_finished``. ``run_finished`` is the broker's only stream
+    terminator, so emitting it here would close the client's run WebSocket and
+    strand the run as "waiting" with no way to resume on the same socket."""
+    import app.services.runner as runner_module
+    from noodle.ai_runtime import AgentActionRequest, AIMessage, ToolCall
+
+    workflow_id = await _workflow_with_graph(client)
+    approval_key = "agent|0|call_pending|send_email"
+    request = AgentActionRequest(
+        tool_calls=[
+            ToolCall(
+                id="call_pending",
+                name="send_email",
+                arguments={"to": "ada@example.com"},
+            )
+        ],
+        messages_so_far=[AIMessage.user("Send the update")],
+        step=0,
+        max_steps=3,
+    )
+
+    async def fake_execute(graph, registry, **kwargs) -> RunResult:  # noqa: ANN001, ARG001
+        on_event = kwargs["on_event"]
+        await on_event(
+            {
+                "type": "agent_tool_approval_required",
+                "agent_node_id": "agent",
+                "step": 0,
+                "max_steps": 3,
+                "tool_call_id": "call_pending",
+                "tool_name": "send_email",
+                "approval_key": approval_key,
+                "status": "blocked",
+                "message": "Tool 'send_email' requires approval before running.",
+                "arguments": {"to": "ada@example.com"},
+            }
+        )
+        await on_event(
+            {
+                "type": "node_finished",
+                "node_id": "agent",
+                "status": "waiting",
+                "outputs": {},
+                "error": "Tool 'send_email' requires approval before running.",
+                "debug": {
+                    "agent_approval_state": {
+                        "agent_node_id": "agent",
+                        "approval_key": approval_key,
+                        "tool_call_id": "call_pending",
+                        "tool_name": "send_email",
+                        "request": request.model_dump(mode="json"),
+                    }
+                },
+                "started_at": 1.0,
+                "finished_at": 2.0,
+            }
+        )
+        return RunResult(status=RunStatus.waiting)
+
+    monkeypatch.setattr(runner_module, "execute", fake_execute)
+
+    run_id = (
+        await client.post(f"/workflows/{workflow_id}/run", json={})
+    ).json()["run_id"]
+    assert (await client.get(f"/runs/{run_id}")).json()["status"] == "waiting"
+
+    # Drain the buffered broker events without blocking. A waiting run never
+    # publishes ``run_finished``, so ``subscribe`` would otherwise block after
+    # replaying history — iterate with a short per-event timeout and stop when
+    # the stream goes quiet.
+    streamed: list[dict] = []
+    gen = broker.subscribe(run_id)
+    try:
+        while True:
+            try:
+                event = await asyncio.wait_for(gen.__anext__(), timeout=0.5)
+            except (asyncio.TimeoutError, StopAsyncIteration):
+                break
+            streamed.append(event)
+            if event.get("type") == "run_finished":
+                break
+    finally:
+        await gen.aclose()
+
+    types = [event.get("type") for event in streamed]
+    assert "run_waiting" in types
+    assert "run_finished" not in types
 
 
 async def test_run_timeline_includes_queue_enqueue_event(client: AsyncClient) -> None:
@@ -1266,3 +1515,31 @@ async def test_run_blocked_when_node_package_missing(client: AsyncClient) -> Non
     resp = await client.post(f"/workflows/{wf['id']}/run")
     assert resp.status_code == 400
     assert "duckdb" in resp.json()["detail"].lower()
+
+
+# --- #14: list_runs must not eagerly load node_run details --------------------
+
+
+async def test_list_runs_returns_empty_node_runs(client: AsyncClient) -> None:
+    """GET /workflows/{id}/runs must skip loading per-node output/logs/debug.
+
+    The list view only shows status and time; full node data comes from
+    GET /runs/{id}. Loading heavy blobs for every run in the page is wasteful.
+    """
+    workflow_id = (await client.post("/workflows", json={"name": "ListRunsTest"})).json()["id"]
+    await client.put(f"/workflows/{workflow_id}", json={"graph": GRAPH})
+    run_resp = await client.post(f"/workflows/{workflow_id}/run", json={})
+    assert run_resp.status_code in (200, 202), run_resp.text
+    run_id = run_resp.json()["run_id"]
+
+    list_resp = await client.get(f"/workflows/{workflow_id}/runs")
+    assert list_resp.status_code == 200
+    items = list_resp.json()["items"]
+    assert len(items) >= 1
+    assert items[0]["node_runs"] == [], (
+        "List endpoint must return empty node_runs — full data belongs to GET /runs/{id}"
+    )
+
+    # Single-run endpoint must still return the full per-node breakdown.
+    run_detail = (await client.get(f"/runs/{run_id}")).json()
+    assert len(run_detail["node_runs"]) > 0, "GET /runs/{id} must still return full node_runs"

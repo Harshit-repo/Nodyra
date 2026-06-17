@@ -16,9 +16,12 @@ every node is pure Python.
   metrics, the per-run artifacts surface, deployments (cron/interval +
   default params), code modules (upload-to-nodes), retention prune, and a
   WebSocket channel for live run events.
-- **`apps/worker`** — Celery worker. Optional scale-out scheduler (Beat) +
-  off-API workflow dispatch via HTTP. Gated by `enable_inprocess_scheduler`
-  so the in-process loop and Beat never double-fire.
+- **Dispatch worker** (`python -m app.worker_main`, lives in `apps/api`) —
+  optional standalone execution role (program A1). With `DISPATCH_ROLE=worker`
+  it runs the durable-queue dispatch loop + warm runtime pool and executes
+  local and docker-pool runs; API replicas set `DISPATCH_ROLE=disabled` and
+  only enqueue. Requires Postgres (SKIP LOCKED leasing) + Redis (cross-process
+  run events). Scheduling stays on the API via `scheduler_role=leader`.
 - **`packages/core`** — the engine, node SDK (`@node` decorator, AST-only
   module-function discovery), shared Pydantic models, typed-value
   serialization, and the artifacts runtime helpers. The same engine runs
@@ -49,9 +52,16 @@ function parameter rendered in the inspector. The engine filters kwargs to
 what the function actually accepts before calling, so the virtual `input`
 port is not passed to functions that don't declare it.
 
-The engine (`noodle.engine.execute`) walks the graph in topological order,
-resolving each node's wired inputs from upstream outputs and its config
-parameters from the inspector.
+The engine (`noodle.engine.execute`, a package under
+`packages/core/noodle/engine/` — scheduler, node_exec, loops, agent,
+datasets, validation, metanodes, types — behind a re-exporting facade)
+schedules the graph by **dependency counting**: a node starts the moment all
+of its in-set predecessors complete, with no level barrier holding a fast
+branch hostage to a slow sibling. Loop regions are contracted into their
+`loop_start` node as a single scheduling unit (loop validation guarantees
+single-entry/single-exit, so the region's driver owns its body). Each node's
+wired inputs resolve from upstream outputs and its config parameters from
+the inspector.
 
 **Ordering contract.** Execution order is a function of edges and node
 insertion order in `WorkflowGraph.nodes` only. Canvas position
@@ -77,7 +87,30 @@ It supports:
 - **artifacts** — Code/user-module nodes call `artifacts.write_*` to write
   bytes outside the DB; refs flow through node outputs as small JSON marker
   dicts and the UI renders them as artifact cards;
-- **live events** — `on_event` fires per-node start/finish with timing.
+- **live events** — `on_event` fires per-node start/finish with timing;
+- **process isolation** — `code` nodes run in a `ProcessIsolator` injected
+  by the host via `execute(..., process_isolator=...)`
+  (`noodle.process_isolation.PooledProcessIsolator`: one pool per
+  environment key, eviction keyed off task completion + in-flight counts so
+  a long-running code node's pool is never reaped mid-task). The API runner
+  and runtime server each own one; tests and exported scripts fall back to
+  a lazy module default.
+- **sub-workflows (A3)** — the engine owns calling semantics (cycle
+  detection via an explicit `call_chain`, depth limiting via
+  `max_subworkflow_depth`, inline-child execution, leaf extraction) in
+  `noodle.engine.subworkflows`; hosts inject a `SubworkflowRunner` resolver
+  through `execute(..., subworkflow_runner=..., subworkflow_meta=...)`. The
+  API resolver (`app/services/subworkflows.py`) loads the child graph
+  (draft vs published from the call's `use_published`), creates a child
+  `Run` row (`mode="subworkflow"`, `parent_run_id`, org inherited from the
+  parent), and either spawns a subprocess via `dispatch_subworkflow`
+  (global-cap bypass preserved) or answers with an `InlineSubworkflow`
+  directive when parent and child share an env — the parent's engine then
+  runs the prepared child graph itself, with correct depth/chain meta, so
+  nested workflow calls inside inline children are allowed. The runtime
+  subprocess RPCs calls back to the host over stdio; remote agents broker
+  them over the runner WebSocket; exported scripts resolve them from a
+  bundled `SUBWORKFLOWS` map with no server.
 
 ## Triggers
 

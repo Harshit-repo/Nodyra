@@ -47,6 +47,11 @@ class AgentConfig:
     def artifact_upload_url(self) -> str:
         return f"{self.api_url.rstrip('/')}/runner-pools/artifact-upload"
 
+    @property
+    def wheel_index_url(self) -> str:
+        """``--find-links`` page serving the unpublished noodle-* wheels."""
+        return f"{self.api_url.rstrip('/')}/runner-pools/wheels/"
+
 
 def save_config(cfg: AgentConfig) -> None:
     config_path().write_text(json.dumps(asdict(cfg), indent=2), encoding="utf-8")

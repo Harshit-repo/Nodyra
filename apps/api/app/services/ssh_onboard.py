@@ -77,7 +77,7 @@ def _install_script(req: SSHOnboardRequest, api_url: str, token: str, name: str)
         "set -e\n"
         "PYBIN=$(command -v python3 || command -v python)\n"
         'if [ -z "$PYBIN" ]; then echo "[noodle] no python found" >&2; exit 1; fi\n'
-        '"$PYBIN" -m pip install --user --upgrade noodle-runner\n'
+        f'"$PYBIN" -m pip install --user --upgrade --find-links {q_api}/runner-pools/wheels/ noodle-runner\n'
         f"{register}\n"
         f"echo [noodle] registered runner {q_name}\n"
         f"{start}"
@@ -119,7 +119,7 @@ async def onboard_machine(
 
     script = _install_script(req, api_url, token, name)
     try:
-        async with asyncssh.connect(**conn_kwargs) as conn:
+        async with asyncssh.connect(**conn_kwargs, connect_timeout=30) as conn:
             result = await conn.run(script, check=False)
             log = f"{result.stdout or ''}{result.stderr or ''}".strip()
             if result.exit_status != 0:

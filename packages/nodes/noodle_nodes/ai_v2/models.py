@@ -77,7 +77,7 @@ AZURE_API_VERSIONS = [
     id="ai_chat_model_openai",
     category=AI_CATEGORY,
     role="supplier",
-    icon="ai",
+    icon="brand:openai",
     outputs=["model"],
     output_kinds={"model": "ai_language_model"},
     param_groups={
@@ -163,7 +163,7 @@ def ai_chat_model_openai(
     id="ai_chat_model_anthropic",
     category=AI_CATEGORY,
     role="supplier",
-    icon="ai",
+    icon="brand:anthropic",
     outputs=["model"],
     output_kinds={"model": "ai_language_model"},
     param_groups={
@@ -240,7 +240,7 @@ def ai_chat_model_anthropic(
     id="ai_chat_model_azure",
     category=AI_CATEGORY,
     role="supplier",
-    icon="ai",
+    icon="brand:microsoftazure",
     outputs=["model"],
     output_kinds={"model": "ai_language_model"},
     param_groups={

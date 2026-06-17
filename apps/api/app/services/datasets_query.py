@@ -25,7 +25,8 @@ _FORBIDDEN = re.compile(
     r"\b("
     r"insert|update|delete|drop|create|alter|attach|detach|copy|export|import|"
     r"install|load|pragma|call|set|reset|vacuum|checkpoint|truncate|replace|"
-    r"read_csv|read_json|read_parquet|read_text|read_blob|glob"
+    r"read_csv|read_csv_auto|read_json|read_json_auto|read_parquet|read_ndjson|"
+    r"read_text|read_blob|parquet_scan|csv_scan|glob"
     r")\b",
     re.IGNORECASE,
 )
@@ -92,10 +93,20 @@ def run_dataset_query(artifact: Artifact, sql: str, limit: int) -> dict[str, Any
     conn = duckdb.connect(":memory:")
     try:
         escaped = str(path).replace("'", "''")
+        # Eagerly materialize into an in-memory TABLE (not a lazy view) so the
+        # only external file access happens here, under our control. Then latch
+        # off ALL external access before the user's query runs: this is the real
+        # guard against server-side file reads via DuckDB table functions
+        # (read_csv_auto/parquet_scan/read_ndjson/… — the _FORBIDDEN regex can't
+        # enumerate every alias). enable_external_access is one-way in DuckDB, so
+        # once false the user query cannot touch the filesystem or network.
+        # Trade-off: the dataset is loaded into memory; acceptable for the
+        # inspect-a-dataset use case and bounded by the artifact's own size.
         conn.execute(
-            f"CREATE VIEW dataset AS SELECT * FROM read_parquet('{escaped}')"
+            f"CREATE TABLE dataset AS SELECT * FROM read_parquet('{escaped}')"
         )
         conn.execute("CREATE VIEW input AS SELECT * FROM dataset")
+        conn.execute("SET enable_external_access=false")
         # Wrap to enforce the row cap without trusting a user LIMIT.
         wrapped = f"SELECT * FROM (\n{cleaned}\n) AS _q LIMIT {capped + 1}"
         rel = conn.execute(wrapped)

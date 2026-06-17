@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { api } from "../api";
 import type { DatasetQueryResult } from "../types";
+import { useModalA11y } from "../useModalA11y";
 import type { DatasetRef } from "./datasetValues";
 import { datasetSummary } from "./datasetValues";
 
@@ -22,6 +23,8 @@ export function DatasetSqlModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<DatasetQueryResult | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
   const artifactId = dataset.artifact.artifact_id;
 
@@ -67,12 +70,17 @@ export function DatasetSqlModal({
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="modal modal-wide dataset-sql-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="dataset-sql-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <header className="modal-head">
-          <h2>SQL explorer</h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+          <h2 id="dataset-sql-title">SQL explorer</h2>
+          <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </header>

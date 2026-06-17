@@ -4,10 +4,12 @@ Live status of the components called out in
 [architecture-improvement-plan.md](architecture-improvement-plan.md). Updated as
 tasks land.
 
-> Reconciled against the code on 2026-06-03. Most of Phases 2–6 had shipped well
+> Reconciled against the code on 2026-06-05. Most of Phases 2–6 had shipped well
 > ahead of this doc (durable-queue dispatch, dead-letter, leader election, runner
 > heartbeats, pluggable + S3 artifacts, credential tests, unsafe-node policy);
 > the statuses below now reflect the wired code paths, not the original plan.
+> New sections added for Chat/trigger nodes, API Endpoint node, integration v2
+> nodes, and governance files.
 
 Categories:
 
@@ -81,6 +83,7 @@ SKIP LOCKED` lease path against a real backend (see operational gaps below).
 | Task | Area | Status |
 | --- | --- | --- |
 | 19 | Node picker quality pass (category chips, recents, command-palette mode) | Beta (chips + recents shipped; keyboard palette planned) |
+| 19b | Searchable model dropdown (LoadOptionsField) — replaces native `<datalist>` with keyboard-navigable combobox, auto-fetches provider catalogue | Shipped |
 | 20 | Debug-in-editor (open run snapshot on canvas) | Planned |
 
 ## Operational gaps tracked separately
@@ -96,4 +99,50 @@ outside the 20 tasks above.
 | Queue/lease config surface (lease seconds, backoff, max attempts) | Shipped (`queue_lease_seconds`, `queue_retry_backoff_*`, `queue_default_max_attempts`, etc. in `config.py`) |
 | Backpressure latency measurement in `RUNTIME_MODE=local` | Planned |
 | Secret-handling boundary preserved through Task 5b | Shipped (queue rows store ids/status only; credentials are decrypted at dispatch in `runner._execute_run`, never persisted on `RunQueueEntry`) |
-| License + supply-chain audit | Planned (no `LICENSE` yet) |
+| License + supply-chain audit | Planned (no `LICENSE` yet; AGPL vs BSL undecided) |
+
+## Chat / conversational triggers
+
+| Area | Status |
+| --- | --- |
+| `chat_trigger` node — emits `{chatInput, sessionId}` | Shipped |
+| `run_chat_turn` service — surface-agnostic core; seeds trigger cache, runs workflow, extracts last-node text | Shipped |
+| `POST /workflows/{id}/chat` — in-editor chat endpoint (auth required) | Shipped |
+| In-editor `ChatPanel` — right-docked, animates canvas via run-event WebSocket, threads memory by sessionId | Shipped |
+| Hosted chat page (`/chat/:workflowId`) — dual-auth: login-required mode (Noodle JWT) or secret-link mode (`?token=<uuid>`) | Shipped |
+| `GET/POST /chat/p/{id}` — public chat API; conditional auth based on `require_login` param | Shipped |
+| `ChatTriggerPanel` — inspector section showing shareable URL, "Generate secret link" / "Regenerate" buttons | Shipped |
+| Embeddable JS widget (Phase 3) — JS bundle, CORS widening, theming | Planned |
+| Token streaming | Planned |
+| File uploads in chat | Planned |
+
+## API Endpoint node
+
+| Area | Status |
+| --- | --- |
+| `api_endpoint` trigger node — routes table param, per-route output handles derived from route `output` names | Shipped |
+| Routes table field (`RoutesField`) in inspector — method + sub-path + branch name per row | Shipped |
+| Canvas handle derivation (`deriveApiEndpointOutputs`) — output handles kept in sync with routes param | Shipped |
+
+## Integration v2 nodes
+
+| Area | Status |
+| --- | --- |
+| `OperationSpec` / `OperationParamSpec` provider contract — shared transport, credentials, icons | Shipped |
+| `brand:*` icon support — SimpleIcons CDN with local fallback; larger canvas display (54 px) | Shipped |
+| `tool_side_effecting` flag — read/list operations marked `False` so AI Agent can call them without confirmation | Shipped |
+| Airtable v2 — list records, create record | Shipped |
+| GitHub v2 — get repository | Shipped |
+| Google Sheets v2 — read values, get metadata | Shipped |
+| Microsoft Outlook v2 — list messages, get message, list calendar events | Shipped |
+| Notion v2, Slack v2, Stripe v2 | Shipped |
+
+## Governance / release files
+
+| Area | Status |
+| --- | --- |
+| `SECURITY.md` — trust-boundary callout; single-tenant / trusted-author model documented | Shipped |
+| `CONTRIBUTING.md` — contribution intake process | Shipped |
+| `CONTRIBUTOR_LICENSE_AGREEMENT.md` (v0.1) | Shipped |
+| `.github/PULL_REQUEST_TEMPLATE.md` | Shipped |
+| `LICENSE` file | Planned (blocked on AGPL vs BSL decision and name/trademark resolution) |

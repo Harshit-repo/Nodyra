@@ -18,32 +18,10 @@ spec:
         - name: worker
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["celery", "-A", "worker.celery_app", "worker", "-l", "info"]
+          command: ["python", "-m", "app.worker_main"]
           env:
             {{- include "noodle.env" . | nindent 12 }}
+            - name: DISPATCH_ROLE
+              value: "worker"
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: {{ .Release.Name }}-beat
-  labels:
-    {{- include "noodle.labels" . | nindent 4 }}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: {{ .Release.Name }}-beat
-  template:
-    metadata:
-      labels:
-        app: {{ .Release.Name }}-beat
-    spec:
-      containers:
-        - name: beat
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["celery", "-A", "worker.celery_app", "beat", "-l", "info"]
-          env:
-            {{- include "noodle.env" . | nindent 12 }}

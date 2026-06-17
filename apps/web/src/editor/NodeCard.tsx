@@ -1,17 +1,33 @@
-import { Key, Lock, Warning } from "@phosphor-icons/react";
+import {
+  ArrowClockwise,
+  ArrowsOut,
+  ChatTeardropText,
+  Code,
+  Key,
+  Lock,
+  Play,
+  ToggleLeft,
+  ToggleRight,
+  Warning,
+  X,
+} from "@phosphor-icons/react";
 import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
 
+import { ConfirmDialog } from "../ConfirmDialog";
+
 import { categoryColor } from "../categories";
-import { NodeIcon } from "../NodeIcon";
+import { isBrandIconName, NodeIcon } from "../NodeIcon";
 import { missingFor } from "./missingPackages";
 import { SdkModal } from "./SdkModal";
-import { type NoodleNode, useEditor } from "./store";
+import { isTriggerManifest, type NoodleNode, useEditor } from "./store";
+import { META_BAR_INPUT_ID } from "./store/drillSlice";
+import { useServerPlatform } from "../hooks/useServerPlatform";
 
 const TILE = 72;
 const AGENT_CARD_HEIGHT = 150;
-const TOOLBAR_HIDE_DELAY_MS = 1000;
+const TOOLBAR_HIDE_DELAY_MS = 200;
 
 const AGENT_INPUT_PORTS = [
   { name: "input", label: "Chat Input" },
@@ -34,11 +50,14 @@ function agentPortTop(index: number, count: number): number {
   return (AGENT_CARD_HEIGHT * (index + 1)) / (count + 1);
 }
 
+// Generic data / control ports — same color regardless of which node they belong to
+const DATA_PORT_COLOR = "#94a3b8";
+
 const PORT_KIND_COLOR: Record<string, string> = {
   dataset: "#7c5cff",
-  artifact: "#f59e0b",
-  file: "#f59e0b",
-  control: "#94a3b8",
+  artifact: "#f97316",
+  file: "#34d399",
+  control: DATA_PORT_COLOR,
   ai_language_model: "#6ea8ff",
   ai_embedding_model: "#6ea8ff",
   ai_memory: "#57c98a",
@@ -56,22 +75,46 @@ const AI_PORT_COLOR: Record<AiSemanticPort, string> = {
   memory: "#57c98a",
   tools: "#f6b44b",
 };
-const AI_AGENT_BOTTOM_INPUTS = new Set(["model", "memory", "tools"]);
+const AI_AGENT_BOTTOM_INPUTS = new Set(["memory", "tool"]);
+const AGENT_BOTTOM_PORT_LEFT: Record<string, string> = {
+  memory: "28%",
+  tool: "72%",
+};
 
-function portColor(kind: string | undefined, fallback: string): string {
-  if (!kind || kind === "any") return fallback;
-  return PORT_KIND_COLOR[kind] ?? fallback;
+export function portColor(kind: string | undefined): string {
+  if (!kind || kind === "any" || kind === "main") return DATA_PORT_COLOR;
+  return PORT_KIND_COLOR[kind] ?? DATA_PORT_COLOR;
+}
+
+function resolveOutputKind(
+  spec: { name: string; data_kind?: string } | undefined,
+  params: Record<string, unknown>,
+  paramOutputKinds: Record<string, Record<string, string>> | undefined,
+): string | undefined {
+  if (!spec) return undefined;
+  const rule = paramOutputKinds?.[spec.name];
+  if (rule?.param) {
+    const val = String(params[rule.param] ?? "false");
+    return rule[val] ?? spec.data_kind;
+  }
+  return spec.data_kind;
 }
 
 function aiPortSemantic(
   manifestId: string,
   portName: string,
 ): AiSemanticPort | undefined {
-  if (portName === "model" || portName === "memory" || portName === "tools") {
+  if (portName === "model" || portName === "memory") {
     return portName;
   }
+  if (portName === "tool" || portName === "tools") {
+    return "tools";
+  }
   if (manifestId === "ai_tool" && portName === "main") return "tools";
+  if (manifestId === "ai_http_tool" && portName === "tool") return "tools";
+  if (manifestId === "ai_workflow_tool" && portName === "tool") return "tools";
   if (manifestId === "ai_tool_box" && portName.startsWith("tool_")) return "tools";
+  if (manifestId === "ai_tool_bundle" && portName.startsWith("tool")) return "tools";
   return undefined;
 }
 
@@ -79,10 +122,9 @@ function semanticPortColor(
   manifestId: string,
   name: string,
   kind: string | undefined,
-  fallback: string,
 ): string {
   const semantic = aiPortSemantic(manifestId, name);
-  return semantic ? AI_PORT_COLOR[semantic] : portColor(kind, fallback);
+  return semantic ? AI_PORT_COLOR[semantic] : portColor(kind);
 }
 
 function portHandleClass(
@@ -107,10 +149,13 @@ function portLeft(index: number, count: number): number {
 }
 
 function isAgentBottomInput(manifestId: string, portName: string): boolean {
-  return manifestId === "ai_agent" && AI_AGENT_BOTTOM_INPUTS.has(portName);
+  return (
+    (manifestId === "ai_agent" || manifestId === "ai_agent_v2") &&
+    AI_AGENT_BOTTOM_INPUTS.has(portName)
+  );
 }
 
-function portKindLabel(kind: string | undefined): string {
+export function portKindLabel(kind: string | undefined): string {
   if (kind === "dataset") return "DatasetRef";
   if (kind === "artifact") return "Artifact";
   if (kind === "file") return "File";
@@ -140,6 +185,20 @@ function stop(event: MouseEvent): void {
   event.stopPropagation();
 }
 
+function ErrorCallout({ error }: { error: string }) {
+  const preview = error.length > 52 ? `${error.slice(0, 49)}…` : error;
+  return (
+    <div
+      className="node-error-callout nodrag nopan"
+      tabIndex={0}
+      title={error}
+      aria-label={`Node error: ${error}`}
+    >
+      <span>{preview}</span>
+    </div>
+  );
+}
+
 function isCredentialRef(value: unknown): boolean {
   return (
     Boolean(value) &&
@@ -160,8 +219,13 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const { manifest, disabled, outputsOverride } = data;
   const isWebhook = manifest.id === "webhook_trigger";
   const isAgentV2 = manifest.id === "ai_agent_v2";
+  const hasBrandIcon = isBrandIconName(manifest.icon);
   const color = categoryColor(manifest.category);
   const { inputs } = manifest;
+  const isAgentToolProvider =
+    Boolean(data.toolMode) ||
+    manifest.role === "tool" ||
+    manifest.outputs.some((port) => port.data_kind === "ai_tool");
   // In tool mode the node is invoked by the Agent, not wired from upstream, so
   // it exposes only its `tool` output — hide every incoming port.
   const sideInputs = data.toolMode
@@ -182,12 +246,41 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   useEffect(() => {
     updateNodeInternals(id);
   }, [id, handleSignature, updateNodeInternals]);
-  const runStatus = useEditor((s) => s.runStatus[id]);
-  const runMeta = useEditor((s) => s.runMeta[id]);
+  const runKey = useEditor((s) => s.runKeyFor(id));
+  const runStatus = useEditor((s) => s.runStatus[runKey]);
+  const runMeta = useEditor((s) => s.runMeta[runKey]);
+  const runIteration = useEditor((s) => s.runIterations[runKey]);
+  const runChunk = useEditor((s) => s.runChunks[runKey]);
+  // A "×N" badge on loop-body tiles: live iteration count while the loop runs,
+  // final total once it finishes. Only shown for genuine loops (count > 1).
+  const iterationBadge =
+    runIteration && runIteration.count > 1 ? (
+      <span
+        className="node-iteration-badge nodrag nopan"
+        title={
+          runStatus === "running"
+            ? `Loop iteration ${runIteration.index + 1}`
+            : `Ran ${runIteration.count} loop iterations`
+        }
+      >
+        ×{runIteration.count}
+      </span>
+    ) : null;
+  // Live token preview: incremental output streamed via node_chunk while the
+  // node runs (e.g. an LLM writing its answer). Replaced by the real output on
+  // node_finished. Capped so a long generation can't balloon the tile.
+  const streamPreview =
+    runChunk && runStatus === "running" ? (
+      <div className="node-stream-preview nodrag nopan" title="Streaming…">
+        {runChunk.length > 400 ? `…${runChunk.slice(-400)}` : runChunk}
+      </div>
+    ) : null;
   const running = useEditor((s) => s.running);
+  const agentActive = useEditor((s) => s.agentActive[id]);
   const isPinned = useEditor((s) => Boolean(s.pinned[id]));
   const envPackages = useEditor((s) => s.envPackages);
-  const missingPkgs = missingFor(manifest.requirements ?? [], envPackages);
+  const platform = useServerPlatform();
+  const missingPkgs = missingFor(manifest.requirements ?? [], envPackages, platform ?? undefined);
   const agentModelLabel = useEditor((s) => {
     if (!isAgentV2) return "";
     const modelEdge = s.edges.find(
@@ -223,23 +316,31 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const isChatTrigger = manifest.id === "chat_trigger";
   const runFromNode = useEditor((s) => s.runFromNode);
   const runFromTrigger = useEditor((s) => s.runFromTrigger);
-  const isTrigger = manifest.category === "Triggers";
+  const isTrigger = isTriggerManifest(manifest);
   const devMode = useEditor((s) => s.devMode);
+  const stepRunDisabledReason = useEditor((s) => s.drillStepRunDisabledReason());
+  const isUnavailable = Boolean((data as unknown as { unavailableType?: string }).unavailableType);
   const [sdkModalOpen, setSdkModalOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Read only the structural data needed for BFS — stable identity when
+  // unchanged so the useMemo below doesn't re-run on unrelated state updates.
+  const storeEdges = useEditor((s) => s.edges);
+  const storeNodes = useEditor((s) => s.nodes);
 
   // A non-trigger node may only be run individually when it is wired
-  // (directly or transitively) to a trigger. Otherwise stray action nodes
-  // like Execute Command could fire on their own with no trigger context.
-  const hasTriggerUpstream = useEditor((s) => {
+  // (directly or transitively) to a trigger. BFS is memoized so it only runs
+  // when the graph edges/nodes actually change, not on every store update.
+  const hasTriggerUpstream = useMemo(() => {
     if (isTrigger) return true;
     const bySource = new Map<string, string[]>();
-    for (const e of s.edges) {
+    for (const e of storeEdges) {
       const arr = bySource.get(e.target);
       if (arr) arr.push(e.source);
       else bySource.set(e.target, [e.source]);
     }
-    const catById = new Map(
-      s.nodes.map((n) => [n.id, n.data.manifest.category]),
+    const triggerById = new Map(
+      storeNodes.map((n) => [n.id, isTriggerManifest(n.data.manifest)]),
     );
     const visited = new Set<string>([id]);
     const queue = [id];
@@ -248,21 +349,29 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       for (const prev of bySource.get(cur) ?? []) {
         if (visited.has(prev)) continue;
         visited.add(prev);
-        if (catById.get(prev) === "Triggers") return true;
+        // Inside a metanode the input bar stands in for the root upstream (which
+        // carries the trigger), so anything wired from it is step-runnable.
+        if (prev === META_BAR_INPUT_ID) return true;
+        if (triggerById.get(prev)) return true;
         queue.push(prev);
       }
     }
     return false;
-  });
+  }, [isTrigger, storeEdges, storeNodes, id]);
   const canRunStep = isTrigger || hasTriggerUpstream;
 
   const tileClass = ["node-tile"];
   if (selected) tileClass.push("selected");
   if (disabled) tileClass.push("is-disabled");
   if (isPinned) tileClass.push("is-pinned");
+  if (hasBrandIcon) tileClass.push("has-brand-icon");
   if (hasMissingCredential) tileClass.push("missing-credential");
   if (hasInlineSecret) tileClass.push("inline-secret");
   if (runStatus) tileClass.push(`run-${runStatus}`);
+  if (agentActive) {
+    tileClass.push("agent-active", `agent-active-${agentActive}`);
+    if (isAgentToolProvider) tileClass.push("agent-active-tool");
+  }
   const nodeClass = ["node"];
   if (isAgentV2) nodeClass.push("agent-node");
   if (toolbarVisible) nodeClass.push("is-toolbar-visible");
@@ -303,7 +412,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
     >
       <button
         type="button"
-        title={
+        aria-label={stepRunDisabledReason ?? (
           !canRunStep
             ? "Connect a trigger upstream to run this node"
             : isWebhook
@@ -311,90 +420,111 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
               : isTrigger
                 ? "Run this trigger and its downstream nodes"
                 : "Run step using current upstream data"
-        }
+        )}
+        title={stepRunDisabledReason ?? (
+          !canRunStep
+            ? "Connect a trigger upstream to run this node"
+            : isWebhook
+              ? "Listen for test event"
+              : isTrigger
+                ? "Run this trigger and its downstream nodes"
+                : "Run step using current upstream data"
+        )}
         onClick={(e) => {
           stop(e);
           if (isTrigger) runFromTrigger(id);
           else runFromNode(id);
         }}
-        disabled={running || !canRunStep}
+        disabled={running || !canRunStep || Boolean(stepRunDisabledReason)}
       >
-        ▶
+        <Play size={12} weight="fill" />
       </button>
       <button
         type="button"
-        title={
+        aria-label={stepRunDisabledReason ?? (
           !canRunStep
             ? "Connect a trigger upstream to run this node"
             : isTrigger
               ? "Run this trigger and its downstream nodes"
               : "Run step fresh, recomputing upstream nodes"
-        }
+        )}
+        title={stepRunDisabledReason ?? (
+          !canRunStep
+            ? "Connect a trigger upstream to run this node"
+            : isTrigger
+              ? "Run this trigger and its downstream nodes"
+              : "Run step fresh, recomputing upstream nodes"
+        )}
         onClick={(e) => {
           stop(e);
           if (isTrigger) runFromTrigger(id);
           else runFromNode(id, { reuseUpstream: false });
         }}
-        disabled={running || !canRunStep}
+        disabled={running || !canRunStep || Boolean(stepRunDisabledReason)}
       >
-        ↻
+        <ArrowClockwise size={12} weight="bold" />
       </button>
       <button
         type="button"
+        aria-label="Open details"
         title="Open details"
         onClick={(e) => {
           stop(e);
           openNdv(id);
         }}
       >
-        ⤢
+        <ArrowsOut size={12} weight="bold" />
       </button>
       {isChatTrigger && (
         <button
           type="button"
           className="toolbar-chat"
+          aria-label="Open chat"
           title="Open chat"
           onClick={(e) => {
             stop(e);
             openChat();
           }}
         >
-          💬
+          <ChatTeardropText size={12} weight="bold" />
         </button>
       )}
       <button
         type="button"
         className={`toolbar-disable${disabled ? " is-on" : ""}`}
+        aria-label={disabled ? "Enable node" : "Disable node"}
         title={disabled ? "Enable node" : "Disable node"}
         onClick={(e) => {
           stop(e);
           toggleDisabled(id);
         }}
       >
-        {disabled ? "●" : "◐"}
+        {disabled ? <ToggleLeft size={12} weight="bold" /> : <ToggleRight size={12} weight="bold" />}
       </button>
       <button
         type="button"
         className="toolbar-delete"
+        aria-label="Delete node"
         title="Delete node"
         onClick={(e) => {
           stop(e);
-          deleteNode(id);
+          setConfirmDelete(true);
         }}
       >
-        ×
+        <X size={12} weight="bold" />
       </button>
       {devMode && (
         <button
           type="button"
           className="toolbar-sdk"
+          aria-label="Python SDK snippet"
           title="Python SDK snippet"
           onClick={(e) => {
             stop(e);
             setSdkModalOpen(true);
           }}
         >
-          {"</>"}
+          <Code size={12} weight="bold" />
         </button>
       )}
     </div>
@@ -432,19 +562,20 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
               manifest.id,
               config.name,
               spec.data_kind,
-              "#24d9a5",
             ),
           }
         : null;
     }).filter((item): item is NonNullable<typeof item> => Boolean(item));
+    const agentSideInputs = agentInputs.filter(
+      (item) => !AI_AGENT_BOTTOM_INPUTS.has(item.name),
+    );
+    const agentBottomInputs = agentInputs.filter((item) =>
+      AI_AGENT_BOTTOM_INPUTS.has(item.name),
+    );
     const agentOutputs = outputNames.map((name) => {
       const spec = manifest.outputs.find((port) => port.name === name);
-      const colorForOutput = semanticPortColor(
-        manifest.id,
-        name,
-        spec?.data_kind,
-        "#24d9a5",
-      );
+      const effectiveKind = resolveOutputKind(spec, data.params, manifest.param_output_kinds);
+      const colorForOutput = semanticPortColor(manifest.id, name, effectiveKind);
       return {
         name,
         spec,
@@ -486,7 +617,9 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
           </div>
           <div className="agent-node-title">{manifest.name}</div>
           <div
-            className={`agent-model-pill${agentModelLabel ? "" : " is-empty"}`}
+            className={`agent-model-pill${agentModelLabel ? "" : " is-empty"}${
+              runStatus === "running" ? " is-active" : ""
+            }`}
             title={agentModelLabel || "Connect an AI Chat Model to the model port"}
           >
             <NodeIcon name="ai" size={16} />
@@ -502,22 +635,17 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
               )}
             </span>
           )}
+          {iterationBadge}
           {disabled && <span className="node-disabled-pip">○</span>}
           {credentialBadges}
 
           {runMeta?.error && runStatus === "error" && (
-            <div
-              className="node-error-callout nodrag nopan"
-              title={runMeta.error}
-            >
-              {runMeta.error.length > 52
-                ? runMeta.error.slice(0, 49) + "…"
-                : runMeta.error}
-            </div>
+            <ErrorCallout error={runMeta.error} />
           )}
+          {streamPreview}
 
-          {agentInputs.map((item, i) => {
-            const top = agentPortTop(i, agentInputs.length);
+          {agentSideInputs.map((item, i) => {
+            const top = agentPortTop(i, agentSideInputs.length);
             return (
               <Fragment key={`agent-in-${item.name}`}>
                 <div
@@ -548,6 +676,42 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
                     background: item.color,
                   }}
                 />
+              </Fragment>
+            );
+          })}
+
+          {agentBottomInputs.map((item) => {
+            const left = AGENT_BOTTOM_PORT_LEFT[item.name] ?? "50%";
+            return (
+              <Fragment key={`agent-in-bottom-${item.name}`}>
+                <Handle
+                  type="target"
+                  position={Position.Bottom}
+                  id={item.name}
+                  title={`${item.name}: ${portKindLabel(item.spec.data_kind)}`}
+                  className={`${portHandleClass(
+                    manifest.id,
+                    item.name,
+                    item.spec.data_kind,
+                  ) ?? ""} agent-bottom-handle`.trim()}
+                  style={{
+                    left,
+                    bottom: -17,
+                    color: item.color,
+                    background: item.color,
+                  }}
+                />
+                <div
+                  className={`agent-port-row agent-port-row-bottom agent-port-row-bottom-${item.name}`}
+                  style={
+                    {
+                      left,
+                      "--port-color": item.color,
+                    } as CSSProperties
+                  }
+                >
+                  <span className="agent-port-chip">{item.label}</span>
+                </div>
               </Fragment>
             );
           })}
@@ -599,6 +763,19 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
     );
   }
 
+  if (isUnavailable) {
+    return (
+      <div className="node">
+        <div className="node-tile node-unavailable" title={`Unavailable node type: ${(data as unknown as { unavailableType?: string }).unavailableType}`}>
+          <Warning size={22} weight="bold" />
+          <Handle type="target" position={Position.Left} id="input" />
+          <Handle type="source" position={Position.Right} id="main" />
+        </div>
+        <div className="node-label">{(data as unknown as { unavailableType?: string }).unavailableType}</div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={nodeClass.join(" ")}
@@ -606,108 +783,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       onMouseEnter={showToolbar}
       onMouseLeave={scheduleToolbarHide}
     >
-      <div
-        className="node-toolbar nodrag"
-        onMouseEnter={showToolbar}
-        onMouseLeave={scheduleToolbarHide}
-      >
-        <button
-          type="button"
-          title={
-            !canRunStep
-              ? "Connect a trigger upstream to run this node"
-              : isWebhook
-                ? "Listen for test event"
-                : isTrigger
-                  ? "Run this trigger and its downstream nodes"
-                  : "Run step using current upstream data"
-          }
-          onClick={(e) => {
-            stop(e);
-            if (isTrigger) runFromTrigger(id);
-            else runFromNode(id);
-          }}
-          disabled={running || !canRunStep}
-        >
-          ▶
-        </button>
-        <button
-          type="button"
-          title={
-            !canRunStep
-              ? "Connect a trigger upstream to run this node"
-              : isTrigger
-                ? "Run this trigger and its downstream nodes"
-                : "Run step fresh, recomputing upstream nodes"
-          }
-          onClick={(e) => {
-            stop(e);
-            if (isTrigger) runFromTrigger(id);
-            else runFromNode(id, { reuseUpstream: false });
-          }}
-          disabled={running || !canRunStep}
-        >
-          ↻
-        </button>
-        <button
-          type="button"
-          title="Open details"
-          onClick={(e) => {
-            stop(e);
-            openNdv(id);
-          }}
-        >
-          ⤢
-        </button>
-        {isChatTrigger && (
-          <button
-            type="button"
-            className="toolbar-chat"
-            title="Open chat"
-            onClick={(e) => {
-              stop(e);
-              openChat();
-            }}
-          >
-            💬
-          </button>
-        )}
-        <button
-          type="button"
-          className={`toolbar-disable${disabled ? " is-on" : ""}`}
-          title={disabled ? "Enable node" : "Disable node"}
-          onClick={(e) => {
-            stop(e);
-            toggleDisabled(id);
-          }}
-        >
-          {disabled ? "●" : "◐"}
-        </button>
-        <button
-          type="button"
-          className="toolbar-delete"
-          title="Delete node"
-          onClick={(e) => {
-            stop(e);
-            deleteNode(id);
-          }}
-        >
-          ×
-        </button>
-        {devMode && (
-          <button
-            type="button"
-            className="toolbar-sdk"
-            title="Python SDK snippet"
-            onClick={(e) => {
-              stop(e);
-              setSdkModalOpen(true);
-            }}
-          >
-            {"</>"}
-          </button>
-        )}
-      </div>
+      {toolbar}
 
       {sdkModalOpen && (
         <SdkModal
@@ -722,14 +798,35 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
         onDoubleClick={isChatTrigger ? () => openChat() : undefined}
         title={isChatTrigger ? "Double-click to open chat" : undefined}
       >
-        <NodeIcon name={manifest.icon} size={26} />
+        <NodeIcon name={manifest.icon} size={hasBrandIcon ? 54 : 26} />
 
-        {runStatus && (
+        {agentActive === "running" ? (
+          <span
+            className="node-status status-agent-running"
+            title="In use by agent"
+          >
+            <span className="node-pulse-dot" />
+          </span>
+        ) : runStatus ? (
           <span className={`node-status status-run-${runStatus}`}>
             {runStatus === "running" ? (
               <span className="node-spinner" />
             ) : (
               STATUS_GLYPH[runStatus] ?? ""
+            )}
+          </span>
+        ) : null}
+        {iterationBadge}
+
+        {!runStatus && agentActive && agentActive !== "running" && (
+          <span
+            className={`node-status status-agent-${agentActive}`}
+            title={agentActive === "error" ? "Agent tool failed" : "Used by agent"}
+          >
+            {agentActive === "error" ? (
+              "!"
+            ) : (
+              "✓"
             )}
           </span>
         )}
@@ -754,17 +851,9 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
         </div>
 
         {runMeta?.error && runStatus === "error" && (
-          <div
-            className="node-error-callout nodrag nopan"
-            title={runMeta.error}
-          >
-            {runMeta.error.length > 52
-              ? runMeta.error.slice(0, 49) + "…"
-              : runMeta.error}
-          </div>
+          <ErrorCallout error={runMeta.error} />
         )}
-
-
+        {streamPreview}
 
         {sideInputs.map((port, i) => (
           <Handle
@@ -776,7 +865,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
             className={portHandleClass(manifest.id, port.name, port.data_kind)}
             style={{
               top: portTop(i, sideInputs.length),
-              background: semanticPortColor(manifest.id, port.name, port.data_kind, color),
+              background: semanticPortColor(manifest.id, port.name, port.data_kind),
             }}
           />
         ))}
@@ -791,31 +880,34 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
             className={portHandleClass(manifest.id, port.name, port.data_kind)}
             style={{
               left: portLeft(i, bottomInputs.length),
-              background: semanticPortColor(manifest.id, port.name, port.data_kind, color),
+              background: semanticPortColor(manifest.id, port.name, port.data_kind),
             }}
           />
         ))}
 
         {outputNames.map((name, i) => {
           const spec = manifest.outputs.find((o) => o.name === name);
+          const effectiveKind = resolveOutputKind(spec, data.params, manifest.param_output_kinds);
           const isToolPort = Boolean(data.toolMode) && name === "tool";
           return (
             <Handle
               key={`out-${name}`}
               type="source"
-              position={Position.Right}
+              position={isToolPort ? Position.Top : Position.Right}
               id={name}
-              title={isToolPort ? "tool: AI tool" : `${name}: ${portKindLabel(spec?.data_kind)}`}
+              title={isToolPort ? "tool: AI tool" : `${name}: ${portKindLabel(effectiveKind)}`}
               className={
                 isToolPort
                   ? "handle-ai-tools"
-                  : portHandleClass(manifest.id, name, spec?.data_kind)
+                  : portHandleClass(manifest.id, name, effectiveKind)
               }
               style={{
-                top: portTop(i, outputNames.length),
+                ...(isToolPort
+                  ? { left: "50%", top: -5 }
+                  : { top: portTop(i, outputNames.length) }),
                 background: isToolPort
                   ? PORT_KIND_COLOR.ai_tool
-                  : semanticPortColor(manifest.id, name, spec?.data_kind, color),
+                  : semanticPortColor(manifest.id, name, effectiveKind),
               }}
             />
           );
@@ -823,23 +915,29 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
 
         {outputNames.map((name, i) => {
           const spec = manifest.outputs.find((o) => o.name === name);
+          const effectiveKind = resolveOutputKind(spec, data.params, manifest.param_output_kinds);
           const isToolPort = Boolean(data.toolMode) && name === "tool";
+          const displayName = isToolPort ? "tool" : name;
           const shouldShow =
-            outputNames.length > 1 || spec?.data_kind === "dataset" || isToolPort;
+            !isToolPort &&
+            displayName !== "main" &&
+            (outputNames.length > 1 || effectiveKind === "dataset");
           if (!shouldShow) return null;
           return (
             <span
               key={`tag-${name}`}
-              className={`port-tag${spec?.data_kind === "dataset" ? " port-tag-dataset" : ""}`}
+              className={`port-tag${effectiveKind === "dataset" ? " port-tag-dataset" : ""}`}
               style={{ top: portTop(i, outputNames.length) }}
             >
-              {isToolPort ? "tool" : spec?.data_kind === "dataset" ? `${name} · DatasetRef` : name}
+              {displayName}
             </span>
           );
         })}
       </div>
       <div className="node-label">
-        {manifest.name}
+        {manifest.id === "meta_node"
+          ? String(data.params.name || "Metanode")
+          : data.label || manifest.name}
         {missingPkgs.length > 0 && (
           <span
             className="node-missing-pkg"
@@ -849,7 +947,25 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
             ⚠
           </span>
         )}
+        {(manifest.system_requirements?.length ?? 0) > 0 && (
+          <span
+            className="node-badge node-badge--sysreq"
+            title={`System dependencies required: ${manifest.system_requirements!.map((r) => r.name).join(", ")}`}
+          >
+            ●
+          </span>
+        )}
       </div>
+      {(manifest.id === "loop_start" || manifest.id === "loop_end") && (
+        <div className="node-loop-badge" title="Loop boundary">
+          {loopBadgeText(manifest.id, data.params)}
+        </div>
+      )}
+      {manifest.id === "meta_node" && (
+        <div className="node-meta-badge" title="Metanode (double-click to open)">
+          {metaBadgeText(data.params)}
+        </div>
+      )}
       {runMeta?.durationMs != null && runStatus !== "running" && (
         <div className="node-duration nodrag nopan">
           {runMeta.durationMs < 1000
@@ -857,6 +973,37 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
             : `${(runMeta.durationMs / 1000).toFixed(1)}s`}
         </div>
       )}
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete node?"
+          body={`Remove "${data.label || manifest.name}" and all its connections. This cannot be undone.`}
+          confirmLabel="Delete"
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={() => {
+            setConfirmDelete(false);
+            deleteNode(id);
+          }}
+        />
+      )}
     </div>
   );
+}
+
+export function metaBadgeText(params: Record<string, unknown>): string {
+  const sub = params.subgraph as { nodes?: unknown[] } | undefined;
+  const count = sub?.nodes?.length ?? 0;
+  const exec = String(params.execution ?? "transparent");
+  const mark = exec === "isolated" ? " · isolated" : "";
+  return `▣ ${count} node${count === 1 ? "" : "s"}${mark}`;
+}
+
+export function loopBadgeText(id: string, params: Record<string, unknown>): string {
+  if (id === "loop_end") return "↻ loop end";
+  const mode = String(params.mode ?? "each");
+  const accum = params.accumulate ? " · reduce" : "";
+  let hint = "";
+  if (mode === "batch" || mode === "window") hint = ` ${params.batch_size ?? ""}`;
+  else if (mode === "group") hint = ` ${params.group_key ?? ""}`;
+  else if (mode === "range") hint = ` ${params.count ?? ""}`;
+  return `↻ ${mode}${hint}${accum}`.trimEnd();
 }

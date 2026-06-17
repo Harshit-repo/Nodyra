@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlencode
 
 import httpx
@@ -21,8 +21,10 @@ from app.services.credential_types import CredentialTypeSpec, get_credential_typ
 from app.services.crypto import (
     create_payload_token,
     decode_payload_token,
-    encrypt_credential,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 OAUTH_STATE_TTL_SECONDS = 10 * 60
 OAUTH_REFRESH_SKEW_SECONDS = 60
@@ -311,6 +313,7 @@ def should_refresh_credential_data(data: dict[str, Any]) -> bool:
 async def refresh_stored_credential(
     credential: Credential,
     data: dict[str, Any],
+    session: "AsyncSession",
 ) -> dict[str, str]:
     oauth_type_spec(credential.type)
     refresh_token = str(data.get("refresh_token") or "").strip()
@@ -331,20 +334,25 @@ async def refresh_stored_credential(
         requested_scopes=scopes,
         previous=data,
     )
-    credential.encrypted_data, credential.encrypted_dek = encrypt_credential(updated)
+    from app.services.org_keys import encrypt_credential_for
+
+    credential.encrypted_data, credential.encrypted_dek = await encrypt_credential_for(
+        getattr(credential, "org_id", None), updated, session
+    )
     return updated
 
 
 async def refresh_credential_if_needed(
     credential: Credential,
     data: dict[str, Any],
+    session: "AsyncSession",
 ) -> dict[str, Any]:
     spec = get_credential_type(credential.type)
     if spec is None or spec.auth_method != "oauth2":
         return data
     if not should_refresh_credential_data(data):
         return data
-    return await refresh_stored_credential(credential, data)
+    return await refresh_stored_credential(credential, data, session)
 
 
 def redacted_token_payload(payload: dict[str, Any]) -> str:

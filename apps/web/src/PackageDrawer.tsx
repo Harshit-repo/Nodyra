@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "./api";
+import { useConfirm } from "./ConfirmProvider";
 import {
   canonicalName,
   diffPackages,
@@ -23,6 +24,7 @@ export function PackageDrawer({
   const [busy, setBusy] = useState(false);
   const [pendingImport, setPendingImport] = useState<string[] | null>(null);
   const [removeStale, setRemoveStale] = useState(false);
+  const confirm = useConfirm();
 
   useEffect(() => {
     api
@@ -36,6 +38,11 @@ export function PackageDrawer({
     for (const p of usage) m.set(p.package, p);
     return m;
   }, [usage]);
+
+  const channels = useMemo(
+    () => (env.backend_config?.channels as string[] | undefined) ?? [],
+    [env.backend_config],
+  );
 
   async function commit(packages: string[]) {
     setBusy(true);
@@ -84,9 +91,11 @@ export function PackageDrawer({
   async function removeOne(pkg: string) {
     const used = usageByCanon.get(canonicalName(pkg));
     if (used && used.used_by.length > 0) {
-      const ok = window.confirm(
-        `${pkg} is required by ${used.used_by.length} node(s). Remove anyway?`,
-      );
+      const ok = await confirm({
+        title: `Remove ${pkg}?`,
+        body: `It is required by ${used.used_by.length} node(s). They may fail until it is reinstalled.`,
+        confirmLabel: "Remove",
+      });
       if (!ok) return;
     }
     await commit(env.packages.filter((p) => p !== pkg));
@@ -114,6 +123,24 @@ export function PackageDrawer({
             ×
           </button>
         </header>
+
+        {(env.backend === "conda" || env.backend === "pixi") && (
+          <div className="package-drawer-section">
+            <div className="field-label">Channels</div>
+            <div className="channels-list">
+              {channels.length === 0 && <span className="muted">conda-forge (default)</span>}
+              {channels.map((c) => (
+                <div key={c} className="channel-row">{c}</div>
+              ))}
+            </div>
+            <p className="field-hint muted">
+              Edit channels by recreating the environment.{" "}
+              {env.backend === "pixi" && (
+                <span>Suffix packages with <code>@ pypi</code> to install from PyPI instead of conda.</span>
+              )}
+            </p>
+          </div>
+        )}
 
         <label className="field-label">Add packages</label>
         <div className="env-add">

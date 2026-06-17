@@ -9,7 +9,7 @@ Also hosts the batch-runs endpoint that dispatches a parameter matrix as
 N parallel workflow runs.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import (
     APIRouter,
@@ -18,23 +18,37 @@ from fastapi import (
     Header,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     WebSocket,
     status,
 )
-from sqlalchemy import select
+from fastapi.responses import FileResponse, HTMLResponse
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import SessionLocal, get_session
-from app.models import Artifact, Run, RunBatch, Runner, RunnerPool, Workflow, WorkflowVersion
+from app.models import (
+    Artifact,
+    Run,
+    RunBatch,
+    Runner,
+    RunnerPool,
+    RunQueueEntry,
+    Workflow,
+    WorkflowVersion,
+)
 from app.schemas import (
+    FleetSummary,
     RegistrationTokenRequest,
     RegistrationTokenResponse,
     RunBatchCreate,
     RunBatchInfo,
+    RunnerFleetHealth,
     RunnerInfo,
     RunnerPoolCreate,
+    RunnerPoolHealth,
     RunnerPoolInfo,
     RunnerPoolUpdate,
     RunnerUpdate,
@@ -54,6 +68,163 @@ from app.services.runner import start_run
 from app.services.ssh_onboard import onboard_machine
 
 router = APIRouter(prefix="/runner-pools", tags=["runner-pools"])
+
+
+# ---------------------------------------------------------------------------
+# Wheel index (program A2) — lets a runner on a clean machine install the
+# unpublished noodle-* packages. Public: the wheels are the OSS noodle packages
+# (no secrets) and uv sends no auth header. Exempted in main._AUTH_EXEMPT_PREFIXES.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/wheels", response_class=HTMLResponse, include_in_schema=False)
+@router.get("/wheels/", response_class=HTMLResponse, include_in_schema=False)
+async def runner_wheel_index() -> HTMLResponse:
+    """A ``--find-links`` page the agent points uv at. Built on first hit."""
+    from app.services.wheel_index import ensure_wheels
+
+    wheels = await ensure_wheels()
+    links = "\n".join(f'<a href="{w.name}">{w.name}</a><br>' for w in wheels)
+    return HTMLResponse(
+        f"<!doctype html><html><body>\n{links}\n</body></html>"
+    )
+
+
+@router.get("/wheels/{filename}", include_in_schema=False)
+async def runner_wheel_file(filename: str) -> FileResponse:
+    from app.services.wheel_index import wheels_dir
+
+    # Path-traversal guard: serve only a plain ``*.whl`` basename present in
+    # the cache directory.
+    if "/" in filename or "\\" in filename or not filename.endswith(".whl"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "wheel not found")
+    target = wheels_dir() / filename
+    if target.name != filename or not target.is_file():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "wheel not found")
+    return FileResponse(
+        target, media_type="application/octet-stream", filename=filename
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fleet health (program A6)
+# ---------------------------------------------------------------------------
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+@router.get("/health", response_model=RunnerFleetHealth)
+async def runner_fleet_health(
+    session: AsyncSession = Depends(get_session),
+) -> RunnerFleetHealth:
+    """Live fleet + per-pool health: capacity, queue depth, 24h success, and
+    whether a dispatcher is actually leasing each pool's provider. Powers the
+    Runner Pools health strip and the "no dispatcher reachable" banner."""
+    from app.services.dispatcher_health import live_providers
+
+    now = datetime.now(UTC)
+    pools = (await session.scalars(select(RunnerPool))).all()
+    runners = (await session.scalars(select(Runner))).all()
+    runners_by_pool: dict[str, list[Runner]] = {}
+    for runner in runners:
+        runners_by_pool.setdefault(runner.pool_id, []).append(runner)
+
+    # Queued depth + oldest available per pool (None key = local/in-process).
+    queued_rows = (
+        await session.execute(
+            select(
+                RunQueueEntry.runner_pool_id,
+                func.count().label("n"),
+                func.min(RunQueueEntry.available_at).label("oldest"),
+            )
+            .where(RunQueueEntry.status == "queued")
+            .group_by(RunQueueEntry.runner_pool_id)
+        )
+    ).all()
+    queued_by_pool = {pid: (n, oldest) for pid, n, oldest in queued_rows}
+
+    # 24h success rate per pool.
+    cutoff = now - timedelta(hours=24)
+    run_rows = (
+        await session.execute(
+            select(Run.runner_pool_id, Run.status, func.count().label("n"))
+            .where(Run.finished_at >= cutoff, Run.status.in_(("success", "error")))
+            .group_by(Run.runner_pool_id, Run.status)
+        )
+    ).all()
+    runs_by_pool: dict[str, dict[str, int]] = {}
+    for pid, run_status, n in run_rows:
+        runs_by_pool.setdefault(pid, {})[run_status] = n
+
+    in_flight = (
+        await session.scalar(
+            select(func.count()).select_from(Run).where(Run.status == "running")
+        )
+    ) or 0
+    live = await live_providers()
+
+    pool_healths: list[RunnerPoolHealth] = []
+    runners_total = 0
+    runners_online = 0
+    for pool in pools:
+        prunners = runners_by_pool.get(pool.id, [])
+        runners_total += len(prunners)
+        online = sum(1 for r in prunners if r.status in ("online", "busy"))
+        runners_online += online
+        cap_used = sum(r.current_runs for r in prunners)
+        cap_total = sum(r.max_concurrent_runs for r in prunners) or (
+            pool.max_concurrent_runs
+        )
+        qn, oldest = queued_by_pool.get(pool.id, (0, None))
+        oldest_aware = _as_utc(oldest)
+        oldest_secs = (
+            (now - oldest_aware).total_seconds() if oldest_aware else None
+        )
+        stats = runs_by_pool.get(pool.id, {})
+        succeeded = stats.get("success", 0)
+        finished = succeeded + stats.get("error", 0)
+        pool_healths.append(
+            RunnerPoolHealth(
+                pool_id=pool.id,
+                provider=pool.provider,
+                queue_depth=qn,
+                oldest_queued_seconds=oldest_secs,
+                capacity_used=cap_used,
+                capacity_total=cap_total,
+                online_count=online,
+                runner_count=len(prunners),
+                success_24h=(succeeded / finished) if finished else None,
+                dispatcher_reachable=pool.provider in live,
+            )
+        )
+
+    total_queue = sum(n for n, _ in queued_by_pool.values())
+    stuck = sorted(
+        {
+            h.provider
+            for h in pool_healths
+            if h.queue_depth > 0 and not h.dispatcher_reachable
+        }
+    )
+    # Local (no-pool) entries stuck when no dispatcher leases "local".
+    if queued_by_pool.get(None, (0, None))[0] > 0 and "local" not in live:
+        stuck = sorted({*stuck, "local"})
+
+    return RunnerFleetHealth(
+        fleet=FleetSummary(
+            runners_online=runners_online,
+            runners_total=runners_total,
+            queue_depth=total_queue,
+            in_flight=in_flight,
+            providers_dispatchable=sorted(live),
+            providers_stuck=stuck,
+        ),
+        pools=pool_healths,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -97,13 +268,19 @@ async def list_runner_pools(
     session: AsyncSession = Depends(get_session),
 ) -> list[RunnerPoolInfo]:
     pools = (await session.scalars(select(RunnerPool).order_by(RunnerPool.created_at))).all()
-    result = []
-    for pool in pools:
-        runners = (
-            await session.scalars(select(Runner).where(Runner.pool_id == pool.id))
-        ).all()
-        result.append(_pool_info(pool, list(runners)))
-    return result
+    if not pools:
+        return []
+    # Batch-load all runners in one query instead of N+1.
+    pool_ids = [p.id for p in pools]
+    runners = (
+        await session.scalars(
+            select(Runner).where(Runner.pool_id.in_(pool_ids))
+        )
+    ).all()
+    by_pool: dict[str, list[Runner]] = {}
+    for r in runners:
+        by_pool.setdefault(r.pool_id, []).append(r)
+    return [_pool_info(p, by_pool.get(p.id, [])) for p in pools]
 
 
 @router.post(
@@ -116,6 +293,9 @@ async def create_runner_pool(
     body: RunnerPoolCreate,
     session: AsyncSession = Depends(get_session),
 ) -> RunnerPoolInfo:
+    from app.services.licensing import enforce_resource_cap
+    await enforce_resource_cap(session, "runners")
+
     pool = RunnerPool(
         name=body.name,
         provider=body.provider,
@@ -264,17 +444,21 @@ async def update_runner(
 )
 async def create_registration_token(
     pool_id: str,
+    request: Request,
     body: RegistrationTokenRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> RegistrationTokenResponse:
-    """Generate a one-time registration token for a new agent runner.
+    """Generate a registration token for a new agent runner.
 
     The optional body lets the operator capture machine details (name, max
     concurrent runs, free-form capability labels) up-front so the placeholder
     row is already populated when the agent connects.
 
-    The agent uses this token to connect to /ws/runners/{runner_id} and
-    authenticate. On first connect, the API hashes and stores the token.
+    The agent uses this token to connect to /ws/runners/{runner_id} and to
+    upload artifacts. The token is a *reusable* runner credential valid for its
+    TTL (24h) — not single-use — because an SSH-onboarded agent reuses the same
+    token across restarts. It is bound to one runner (``sub`` = runner id) and is
+    revocable: deleting the runner row invalidates the token everywhere (RP-1).
     """
     pool = await session.get(RunnerPool, pool_id)
     if pool is None:
@@ -300,8 +484,14 @@ async def create_registration_token(
     expires_at = datetime.fromtimestamp(
         datetime.now(UTC).timestamp() + ttl, tz=UTC
     )
+    # Prefer the operator-configured public URL; fall back to the URL this
+    # request came in on (correct in single-host setups). The web origin is
+    # never used — a runner must reach the API directly, not the SPA.
+    api_url = (settings.public_api_url or "").rstrip("/") or str(
+        request.base_url
+    ).rstrip("/")
     return RegistrationTokenResponse(
-        token=token, runner_id=runner.id, expires_at=expires_at
+        token=token, runner_id=runner.id, expires_at=expires_at, api_url=api_url
     )
 
 
@@ -452,10 +642,53 @@ async def upload_artifact(
     if payload is None or payload.get("kind") != "runner_registration":
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid runner token")
 
+    # RP-1: deleting a runner row revokes its registration token everywhere. The
+    # WebSocket path already rejects unknown runners; mirror that here so a
+    # leaked/rotated token can be revoked immediately (by deleting the runner)
+    # instead of staying valid until its 24h expiry.
+    # Runner auth uses runner-registration tokens, not X-Org-Id — query
+    # org-blind so the lookup works regardless of the request's org context.
+    runner = await session.get(
+        Runner, payload.get("sub"),
+        execution_options={"skip_org_filter": True},
+    )
+    if runner is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Runner has been revoked")
+
     try:
         path = _artifact_path(storage_key)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    # RP-2: bind the upload to the run's assigned runner. Once a run has been
+    # dispatched to a specific agent (remote_dispatch sets ``run.runner_id``),
+    # only that runner's token may write its artifacts — a different connected
+    # runner with a valid registration token must not be able to inject
+    # artifacts into someone else's run. Runs not yet assigned have
+    # ``runner_id is None`` (assignment happens before execution, so artifacts
+    # always arrive after) and are not bound here.
+    # Runner auth is the gate here, not the request org context (runners send
+    # no X-Org-Id) — look the run up org-blind or non-default orgs would 404.
+    run = await session.scalar(
+        select(Run).where(Run.id == run_id).execution_options(skip_org_filter=True)
+    )
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
+    if run.runner_id is not None and run.runner_id != payload.get("sub"):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Runner is not assigned to this run"
+        )
+    # Phase F: a runner may only write inside its run's org namespace — a
+    # compromised runner token must not plant bytes under another tenant's
+    # prefix. Legacy unprefixed keys are rejected too once MT is on; the
+    # runner protocol ships artifact_key_prefix with every assignment.
+    if settings.multi_tenancy_enabled and run.org_id:
+        if not storage_key.startswith(f"{run.org_id}/"):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Artifact storage key must be namespaced under the run's "
+                "organization.",
+            )
 
     body = await data.read()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -467,6 +700,11 @@ async def upload_artifact(
             Artifact(
                 id=artifact_id,
                 run_id=run_id,
+                # Runner uploads authenticate with a runner token and send no
+                # X-Org-Id, so the before_flush stamp hook would file this under
+                # the default org. Stamp the run's org explicitly so the artifact
+                # is visible to its owning tenant.
+                org_id=run.org_id,
                 node_id=node_id,
                 name=name,
                 kind=kind,
@@ -526,6 +764,12 @@ async def create_batch_run(
     trigger_id = trigger.id if hasattr(trigger, "id") else trigger["id"]
 
     runner_pool_id = body.runner_pool_id or workflow.default_runner_pool_id
+    # X4 write-time check: a dedicated_pool org cannot point batch runs at a
+    # foreign or non-container pool (the dispatch gate would refuse anyway;
+    # this fails the whole batch up front with a clear error).
+    from app.services.isolation import validate_pool_assignment
+
+    await validate_pool_assignment(session, workflow.org_id, runner_pool_id)
 
     batch = RunBatch(
         workflow_id=workflow_id,

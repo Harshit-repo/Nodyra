@@ -8,8 +8,8 @@ venv/
 .ruff_cache/
 .mypy_cache/
 
-# uv
-uv.lock
+# uv: the lockfile IS committed for reproducible builds (Docker runs
+# `uv sync --locked`). Do not ignore it.
 
 # Node
 node_modules/
@@ -20,6 +20,11 @@ dist/
 .env
 .env.local
 *.local
+
+# License signing — NEVER commit the private key or the internal licensing guide.
+.secrets/
+*license*private*.pem
+docs/licensing-internal.md
 
 # Editor / OS
 .idea/
@@ -35,3 +40,27 @@ data/
 *.db
 *.log
 .superpowers/
+
+# Bundled tool binaries (fetched at setup, not committed)
+apps/api/tools/*.exe
+
+# Playwright e2e artifacts
+apps/web/test-results/
+apps/web/playwright-report/
+
+# Ad-hoc dev screenshots / Claude Code screen captures (not project assets)
+.claude-screens/
+/bc-combined.png
+/editor-runner-placement.png
+/editor-runner-root.png
+/env-modal-polish.png
+/ui-after-login.png
+/ui-ai-runs.png
+/ui-error-run.png
+/ui-executions.png
+/ui-home.png
+/ui-runs.png
+/ui-workflow-editor.png
+
+# Playwright MCP session artifacts
+.playwright-mcp/

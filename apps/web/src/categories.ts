@@ -1,5 +1,6 @@
 export const CATEGORY_COLORS: Record<string, string> = {
   Triggers: "#4c9eff",
+  API: "#2f9bff",
   Logic: "#b48bff",
   AI: "#24c78e",
   Data: "#37c8a8",
@@ -15,6 +16,7 @@ export function categoryColor(category: string): string {
 
 export const CATEGORY_ORDER = [
   "Triggers",
+  "API",
   "Logic",
   "AI",
   "Data",

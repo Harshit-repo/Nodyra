@@ -13,6 +13,8 @@ from noodle.sdk import node
 from noodle_nodes.http_security import assert_public_http_url
 
 AI_CATEGORY = "AI"
+MAX_AI_DOCUMENT_CHARS = 1_000_000
+MAX_AI_DOCUMENT_BYTES = 4_000_000
 
 
 def _metadata(value: Any) -> dict[str, Any]:
@@ -26,6 +28,15 @@ def _metadata(value: Any) -> dict[str, Any]:
         if isinstance(loaded, dict):
             return {str(k): v for k, v in loaded.items()}
     return {}
+
+
+def _limit_document_text(text: str, *, label: str) -> str:
+    if len(text) > MAX_AI_DOCUMENT_CHARS:
+        raise ValueError(
+            f"{label}: document has {len(text)} chars; "
+            f"limit is {MAX_AI_DOCUMENT_CHARS}"
+        )
+    return text
 
 
 class TextDocumentLoaderAdapter(DocumentLoaderAdapter):
@@ -45,10 +56,11 @@ class TextDocumentLoaderAdapter(DocumentLoaderAdapter):
     def load(self) -> list[Document]:
         if not self._text:
             return []
+        text = _limit_document_text(self._text, label="text document loader")
         return [
             Document(
                 id=self._document_id,
-                text=self._text,
+                text=text,
                 metadata={**self._metadata, "source": self._document_id},
             )
         ]
@@ -74,7 +86,16 @@ class FileDocumentLoaderAdapter(DocumentLoaderAdapter):
         path = Path(self._path).expanduser()
         if not path.exists() or not path.is_file():
             raise ValueError(f"file document loader: file not found: {self._path}")
-        text = path.read_text(encoding=self._encoding, errors="replace")
+        size = path.stat().st_size
+        if size > MAX_AI_DOCUMENT_BYTES:
+            raise ValueError(
+                f"file document loader: file is {size} bytes; "
+                f"limit is {MAX_AI_DOCUMENT_BYTES}"
+            )
+        text = _limit_document_text(
+            path.read_text(encoding=self._encoding, errors="replace"),
+            label="file document loader",
+        )
         return [
             Document(
                 id=str(path),
@@ -115,10 +136,11 @@ class UrlDocumentLoaderAdapter(DocumentLoaderAdapter):
                 f"url document loader: HTTP {response.status_code}: "
                 f"{response.text[:500]}"
             )
+        text = _limit_document_text(response.text, label="url document loader")
         return [
             Document(
                 id=self._url,
-                text=response.text,
+                text=text,
                 metadata={
                     **self._metadata,
                     "source": self._url,

@@ -16,14 +16,56 @@ Requires: noodle-core and noodle-nodes (plus your environment packages).
 
 import noodle_nodes  # noqa: F401 - registers the built-in nodes
 from noodle.engine import run
+from noodle.engine.subworkflows import InlineSubworkflow, SubworkflowMeta
 from noodle.models import WorkflowGraph
 from noodle.sdk import registry
 
 GRAPH = __GRAPH__
 
+# Sub-workflows referenced by execute_workflow / map_* nodes, bundled at
+# export time and resolved locally — no Noodle server required.
+SUBWORKFLOWS = __SUBWORKFLOWS__
+
+ROOT_ID = __ROOT_ID__
+
+_TRIGGER_TYPES = (
+    "manual_trigger", "webhook_trigger", "api_endpoint",
+    "schedule_trigger", "chat_trigger",
+)
+
+
+def _seed_trigger(graph, value):
+    for node in graph.get("nodes", []):
+        node_type = str(node.get("type") or "")
+        if node_type in _TRIGGER_TYPES or node_type.endswith("_trigger"):
+            return {node["id"]: {"main": value if value is not None else {}}}
+    return None
+
+
+async def _run_subworkflow(call):
+    graph = SUBWORKFLOWS.get(call.workflow_id)
+    if graph is None:
+        raise RuntimeError(
+            f"sub-workflow '{call.workflow_id}' is not bundled in this export"
+        )
+    return InlineSubworkflow(
+        graph=graph,
+        cache=_seed_trigger(graph, call.parameters),
+        targets=None,
+        sources=tuple(
+            str(e.get("source")) for e in graph.get("edges", [])
+        ),
+    )
+
 
 def main() -> None:
-    result = run(WorkflowGraph.model_validate(GRAPH), registry)
+    meta = SubworkflowMeta(call_chain=frozenset({ROOT_ID} if ROOT_ID else ()))
+    result = run(
+        WorkflowGraph.model_validate(GRAPH),
+        registry,
+        subworkflow_runner=_run_subworkflow,
+        subworkflow_meta=meta,
+    )
     print(f"workflow finished: {result.status}")
     for node_id, node in result.nodes.items():
         print(f"  {node_id}: {node.status}")
@@ -61,12 +103,29 @@ def slugify(name: str) -> str:
     return slug or "workflow"
 
 
-def workflow_to_script(graph: dict, name: str) -> str:
-    """Render a workflow graph as a standalone Python script."""
+def workflow_to_script(
+    graph: dict,
+    name: str,
+    *,
+    subworkflows: dict[str, dict] | None = None,
+    root_id: str | None = None,
+) -> str:
+    """Render a workflow graph as a standalone Python script.
+
+    ``subworkflows`` maps workflow id → graph for every workflow reachable
+    through execute_workflow / map_* params; they run locally via the
+    engine's inline-subworkflow directive. ``root_id`` seeds the call chain
+    so a bundled child calling back into the root is caught as a cycle.
+    """
+    # JSON graphs double as Python literals only when bool/null-free at the
+    # top level — graphs are dict/str/num shaped, matching the pre-A3
+    # template. ROOT_ID uses repr (json "null" is not Python).
     return (
         _SCRIPT_TEMPLATE.replace("__NAME__", name)
         .replace("__SLUG__", slugify(name))
         .replace("__GRAPH__", json.dumps(graph, indent=2))
+        .replace("__SUBWORKFLOWS__", json.dumps(subworkflows or {}, indent=2))
+        .replace("__ROOT_ID__", repr(root_id))
     )
 
 
@@ -76,11 +135,15 @@ def docker_bundle(
     *,
     python_version: str = "3.12",
     packages: list[str] | None = None,
+    subworkflows: dict[str, dict] | None = None,
+    root_id: str | None = None,
 ) -> dict[str, str]:
     """Render the file set needed to build and run the workflow as an image."""
     requirements = ["noodle-core", "noodle-nodes", *(packages or [])]
     return {
-        "workflow.py": workflow_to_script(graph, name),
+        "workflow.py": workflow_to_script(
+            graph, name, subworkflows=subworkflows, root_id=root_id
+        ),
         "requirements.txt": "\n".join(requirements) + "\n",
         "Dockerfile": _DOCKERFILE_TEMPLATE.replace("__PYVER__", python_version),
         "README.md": _README_TEMPLATE.replace("__NAME__", name).replace(

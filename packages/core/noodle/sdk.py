@@ -24,7 +24,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, get_args, get_origin, get_type_hints
 
-from noodle.models import CredentialSpec, NodeManifest, ParamSpec, PortSpec
+from noodle.models import CredentialSpec, NodeManifest, ParamSpec, PortSpec, SystemRequirement
 
 _TYPE_MAP: dict[Any, str] = {
     str: "string",
@@ -233,9 +233,11 @@ def _build_manifest(
     icon: str | None,
     input_kinds: dict[str, str] | None = None,
     output_kinds: dict[str, str] | None = None,
+    param_output_kinds: dict[str, dict[str, str]] | None = None,
     usable_as_tool: bool | None = None,
     tool_side_effecting: bool = True,
     requirements: list[str] | None = None,
+    system_requirements: list[dict] | None = None,
 ) -> NodeManifest:
     hints = get_type_hints(func)
     signature = inspect.signature(func)
@@ -300,7 +302,11 @@ def _build_manifest(
             PortSpec(name=o, data_kind=out_kinds.get(o, "any"))
             for o in outputs
         ],
+        param_output_kinds=dict(param_output_kinds or {}),
         requirements=list(requirements or []),
+        system_requirements=[
+            SystemRequirement.model_validate(sr) for sr in (system_requirements or [])
+        ],
     )
 
 
@@ -464,6 +470,7 @@ def _decorated_node_from_ast(
     outputs = list(kwargs.get("outputs") or ["main"])
     input_kinds = kwargs.get("input_kinds") or {}
     output_kinds = kwargs.get("output_kinds") or {}
+    param_output_kinds = dict(kwargs.get("param_output_kinds") or {})
     raw_param_meta = kwargs.get("params") or {}
     if not isinstance(raw_param_meta, dict):
         raw_param_meta = {}
@@ -529,6 +536,7 @@ def _decorated_node_from_ast(
         outputs=[
             PortSpec(name=o, data_kind=output_kinds.get(o, "any")) for o in outputs
         ],
+        param_output_kinds=param_output_kinds,
     )
     raw_wires = kwargs.get("wires") or {}
     wires = (
@@ -664,6 +672,21 @@ def register_module_functions(
     This executes uploaded Python. Do not call it from API preview or palette
     manifest endpoints; use ``discover_module_function_manifests`` there.
     """
+    import ast as _ast
+
+    from noodle.expr import _CodeValidator
+
+    try:
+        tree = _ast.parse(source, mode="exec")
+    except SyntaxError as exc:
+        raise ValueError(f"SyntaxError in module code: {exc}") from exc
+
+    validator = _CodeValidator()
+    try:
+        validator.visit(tree)
+    except ValueError as exc:
+        raise ValueError(f"Unsafe module code: {exc}") from exc
+
     module_globals: dict[str, Any] = {
         "__name__": f"user_module_{module_id}",
         "__builtins__": __builtins__,
@@ -809,11 +832,13 @@ def node(
     outputs: list[str] | None = None,
     input_kinds: dict[str, str] | None = None,
     output_kinds: dict[str, str] | None = None,
+    param_output_kinds: dict[str, dict[str, str]] | None = None,
     icon: str | None = None,
     wires: dict[str, str] | None = None,
     usable_as_tool: bool | None = None,
     tool_side_effecting: bool = True,
     requirements: list[str] | None = None,
+    system_requirements: list[dict] | None = None,
     registry: NodeRegistry = registry,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Register a function as a Noodle node.
@@ -855,9 +880,11 @@ def node(
             icon=icon,
             input_kinds=input_kinds,
             output_kinds=output_kinds,
+            param_output_kinds=param_output_kinds,
             usable_as_tool=usable_as_tool,
             tool_side_effecting=tool_side_effecting,
             requirements=requirements,
+            system_requirements=system_requirements,
         )
         param_names, has_var_kw = _signature_info(func)
         node_def = NodeDef(

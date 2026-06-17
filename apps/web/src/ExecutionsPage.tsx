@@ -1,21 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 
 import {
-  api,
+  errorMessage,
   type QueueStats,
-  type RunApprovalInfo,
-  type RunStreamHandle,
   type RuntimeModeStatus,
   type RunTimeline,
   subscribeToRunEvents,
 } from "./api";
 import { HomeHeader } from "./HomeHeader";
+import {
+  queryKeys,
+  useAllRuns,
+  useQueueStats,
+  useRetryRunMutation,
+  useRerunRunMutation,
+  useRun,
+  useRuntimeMode,
+  useRunTimeline,
+  useWorkflows,
+} from "./queries";
+import { RunApprovalsPanel } from "./RunApprovalsPanel";
 import type {
   NodeRunResult,
-  RunInfo,
-  RunListItem,
-  WorkflowSummary,
 } from "./types";
 
 function relativeTime(iso: string): string {
@@ -47,30 +55,16 @@ function formatAge(seconds: number | null): string {
 }
 
 function OpsDashboard() {
-  const [runtime, setRuntime] = useState<RuntimeModeStatus | null>(null);
-  const [queue, setQueue] = useState<QueueStats | null>(null);
-  const [err, setErr] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    async function tick() {
-      try {
-        const [r, q] = await Promise.all([api.runtimeMode(), api.queueStats()]);
-        if (cancelled) return;
-        setRuntime(r);
-        setQueue(q);
-        setErr("");
-      } catch (e) {
-        if (!cancelled) setErr(String(e));
-      }
-    }
-    tick();
-    const t = window.setInterval(tick, 5000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(t);
-    };
-  }, []);
+  const runtimeQuery = useRuntimeMode({ refetchInterval: 5000 });
+  const queueQuery = useQueueStats({ refetchInterval: 5000 });
+  const runtime: RuntimeModeStatus | null = runtimeQuery.data ?? null;
+  const queue: QueueStats | null = queueQuery.data ?? null;
+  const err =
+    runtimeQuery.isError && !runtimeQuery.data
+      ? errorMessage(runtimeQuery.error)
+      : queueQuery.isError && !queueQuery.data
+      ? errorMessage(queueQuery.error)
+      : "";
 
   if (err && !runtime && !queue) {
     return <p className="error-text">Ops: {err}</p>;
@@ -123,6 +117,37 @@ function OpsDashboard() {
             {queue.leased} leased · {queue.running} running
           </div>
         </div>
+        {queue.by_org && Object.keys(queue.by_org).length > 0 && (
+          <div className="ops-card">
+            <div className="ops-card-label">By organization</div>
+            <div className="ops-card-value small">
+              {Object.keys(queue.by_org).length} active
+            </div>
+            <div className="ops-card-sub">
+              {Object.entries(queue.by_org)
+                .slice(0, 4)
+                .map(([orgId, counts]) => {
+                  const parked = counts.quota_parked ?? 0;
+                  const active = (counts.leased ?? 0) + (counts.running ?? 0);
+                  return (
+                    <span
+                      key={orgId}
+                      title={
+                        parked
+                          ? `${parked} runs parked by this org's concurrency quota`
+                          : undefined
+                      }
+                      style={{ marginRight: 8 }}
+                    >
+                      {orgId}: {active} active
+                      {counts.queued ? ` · ${counts.queued} queued` : ""}
+                      {parked ? ` · ⚠ ${parked} at quota` : ""}
+                    </span>
+                  );
+                })}
+            </div>
+          </div>
+        )}
         <div className="ops-card">
           <div className="ops-card-label">Runtime</div>
           <div className="ops-card-value small">
@@ -159,17 +184,12 @@ function OpsDashboard() {
 }
 
 function RunTimelinePanel({ runId }: { runId: string }) {
-  const [timeline, setTimeline] = useState<RunTimeline | null>(null);
-  const [err, setErr] = useState("");
-
-  useEffect(() => {
-    setTimeline(null);
-    setErr("");
-    api
-      .runTimeline(runId)
-      .then(setTimeline)
-      .catch((e) => setErr(String(e)));
-  }, [runId]);
+  const timelineQuery = useRunTimeline(runId);
+  const timeline: RunTimeline | null = timelineQuery.data ?? null;
+  const err =
+    timelineQuery.isError && !timelineQuery.data
+      ? errorMessage(timelineQuery.error)
+      : "";
 
   if (err) return <p className="error-text">Timeline: {err}</p>;
   if (!timeline) return <p className="muted">Loading timeline…</p>;
@@ -301,120 +321,6 @@ function formatGuardrailTimelineSummary(
   return parts.join(" · ");
 }
 
-function RunApprovalsPanel({
-  runId,
-  runStatus,
-  onChanged,
-}: {
-  runId: string;
-  runStatus: string;
-  onChanged?: () => void;
-}) {
-  const [approvals, setApprovals] = useState<RunApprovalInfo[]>([]);
-  const [error, setError] = useState("");
-  const [pendingId, setPendingId] = useState<string | null>(null);
-
-  async function refresh(): Promise<void> {
-    try {
-      const rows = await api.runApprovals(runId);
-      setApprovals(rows);
-      setError("");
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
-  useEffect(() => {
-    void refresh();
-    if (runStatus !== "running" && runStatus !== "waiting") return;
-    const timer = window.setInterval(() => void refresh(), 2500);
-    return () => window.clearInterval(timer);
-  }, [runId, runStatus]);
-
-  async function decide(
-    approvalId: string,
-    decision: "approve" | "reject",
-  ): Promise<void> {
-    setPendingId(approvalId);
-    try {
-      const updated = await api.decideRunApproval(runId, approvalId, decision);
-      setApprovals((rows) =>
-        rows.map((row) => (row.id === updated.id ? updated : row)),
-      );
-      onChanged?.();
-      setError("");
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setPendingId(null);
-    }
-  }
-
-  if (approvals.length === 0 && !error) return null;
-
-  return (
-    <section className="exec-approvals">
-      <div className="exec-approvals-head">
-        <h3>Tool approvals</h3>
-        {approvals.some((row) => row.status === "pending") && (
-          <span className="run-pill status-run-running">pending</span>
-        )}
-      </div>
-      {error && <p className="error-text">{error}</p>}
-      {approvals.map((approval) => (
-        <article
-          key={approval.id}
-          className={`exec-approval status-approval-${approval.status}`}
-        >
-          <div className="exec-approval-main">
-            <div>
-              <div className="exec-approval-tool">{approval.tool_name}</div>
-              <div className="exec-approval-meta">
-                {approval.agent_node_id || approval.node_id || "agent"} · step{" "}
-                {approval.step}
-              </div>
-            </div>
-            <span className={`run-pill status-run-${approval.status}`}>
-              {approval.status}
-            </span>
-          </div>
-          {approval.message && (
-            <div className="exec-approval-message">{approval.message}</div>
-          )}
-          {Object.keys(approval.arguments || {}).length > 0 && (
-            <details className="exec-approval-args">
-              <summary>Arguments</summary>
-              <pre className="data-json">
-                {JSON.stringify(approval.arguments, null, 2)}
-              </pre>
-            </details>
-          )}
-          {approval.status === "pending" && (
-            <div className="exec-approval-actions">
-              <button
-                type="button"
-                className="btn btn-sm"
-                disabled={pendingId === approval.id}
-                onClick={() => void decide(approval.id, "approve")}
-              >
-                Approve
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm btn-ghost"
-                disabled={pendingId === approval.id}
-                onClick={() => void decide(approval.id, "reject")}
-              >
-                Reject
-              </button>
-            </div>
-          )}
-        </article>
-      ))}
-    </section>
-  );
-}
-
 type RunTimelineEvent = RunTimeline["events"][number];
 
 export function ExecutionsPage() {
@@ -424,52 +330,23 @@ export function ExecutionsPage() {
   const statusFilter = params.get("status") || "";
   const triggerType = params.get("trigger_type") || "";
 
-  const [runs, setRuns] = useState<RunListItem[] | null>(null);
-  const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    api
-      .listWorkflows()
-      .then(setWorkflows)
-      .catch(() => {
-        /* non-fatal */
-      });
-  }, []);
-
-  useEffect(() => {
-    setRuns(null);
-    api
-      .listAllRuns({
-        workflow_id: workflowId || undefined,
-        status: statusFilter || undefined,
-        trigger_type: triggerType || undefined,
-      })
-      .then(setRuns)
-      .catch((err) => setError(String(err)));
-  }, [workflowId, statusFilter, triggerType]);
-
-  // Poll while any in-flight run exists, so the list reflects fresh statuses.
-  const hasRunning = useMemo(
-    () => runs?.some((r) => r.status === "running") ?? false,
-    [runs],
+  const runFilters = useMemo(
+    () => ({
+      workflow_id: workflowId || undefined,
+      status: statusFilter || undefined,
+      trigger_type: triggerType || undefined,
+    }),
+    [workflowId, statusFilter, triggerType],
   );
-  useEffect(() => {
-    if (!hasRunning) return;
-    const timer = window.setInterval(() => {
-      api
-        .listAllRuns({
-          workflow_id: workflowId || undefined,
-          status: statusFilter || undefined,
-          trigger_type: triggerType || undefined,
-        })
-        .then(setRuns)
-        .catch(() => {
-          /* keep last state on transient failures */
-        });
-    }, 3000);
-    return () => window.clearInterval(timer);
-  }, [hasRunning, workflowId, statusFilter, triggerType]);
+  const workflowsQuery = useWorkflows();
+  const runsQuery = useAllRuns(runFilters, {
+    refetchInterval: (query) =>
+      query.state.data?.some((run) => run.status === "running") ? 3000 : false,
+  });
+  const workflows = workflowsQuery.data ?? [];
+  const runs = runsQuery.data ?? null;
+  const error =
+    runsQuery.isError && !runsQuery.data ? errorMessage(runsQuery.error) : "";
 
   function setFilter(key: string, value: string): void {
     const next = new URLSearchParams(params);
@@ -546,7 +423,33 @@ export function ExecutionsPage() {
         </div>
 
         {error && <p className="error-text">{error}</p>}
-        {!runs && !error && <p className="muted">Loading…</p>}
+        {!runs && !error && (
+          <div className="exec-table-wrap" aria-label="Loading runs">
+            <table className="exec-table">
+              <tbody>
+                {Array.from({ length: 8 }).map((_, index) => (
+                  <tr className="skeleton-row" key={index}>
+                    <td>
+                      <span className="skeleton-line" />
+                    </td>
+                    <td>
+                      <span className="skeleton-line tiny" />
+                    </td>
+                    <td>
+                      <span className="skeleton-line short" />
+                    </td>
+                    <td>
+                      <span className="skeleton-line short" />
+                    </td>
+                    <td>
+                      <span className="skeleton-line tiny" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
         {runs && runs.length === 0 && (
           <p className="muted">No runs match these filters yet.</p>
         )}
@@ -572,7 +475,10 @@ export function ExecutionsPage() {
                       onClick={() => selectRun(r.id)}
                     >
                       <td>
-                        <span className="exec-wf-name">
+                        <span
+                          className="exec-wf-name"
+                          title={r.workflow_name ?? undefined}
+                        >
                           {r.workflow_name ?? "(deleted workflow)"}
                         </span>
                         <span className="exec-wf-version">
@@ -618,34 +524,31 @@ function RunDetailPanel({
   onClose: () => void;
   onJump: (id: string) => void;
 }) {
-  const [run, setRun] = useState<RunInfo | null>(null);
-  const [error, setError] = useState("");
+  const queryClient = useQueryClient();
+  const runQuery = useRun(runId);
+  const run = runQuery.data ?? null;
+  const [actionError, setActionError] = useState("");
   const [actionPending, setActionPending] = useState<"rerun" | "retry" | null>(
     null,
   );
-  const wsRef = useRef<RunStreamHandle | null>(null);
-
-  function refreshRun(): void {
-    api
-      .getRun(runId)
-      .then(setRun)
-      .catch((err) => setError(String(err)));
-  }
+  const rerunMutation = useRerunRunMutation();
+  const retryMutation = useRetryRunMutation();
+  const error =
+    actionError ||
+    (runQuery.isError && !runQuery.data ? errorMessage(runQuery.error) : "");
 
   useEffect(() => {
-    setRun(null);
-    setError("");
     setActionPending(null);
-    refreshRun();
+    setActionError("");
   }, [runId]);
 
   async function rerun(): Promise<void> {
     setActionPending("rerun");
     try {
-      const { run_id } = await api.rerunRun(runId);
+      const { run_id } = await rerunMutation.mutateAsync(runId);
       onJump(run_id);
     } catch (e) {
-      setError(String(e));
+      setActionError(errorMessage(e));
     } finally {
       setActionPending(null);
     }
@@ -654,10 +557,10 @@ function RunDetailPanel({
   async function retry(): Promise<void> {
     setActionPending("retry");
     try {
-      const { run_id } = await api.retryRun(runId);
+      const { run_id } = await retryMutation.mutateAsync(runId);
       onJump(run_id);
     } catch (e) {
-      setError(String(e));
+      setActionError(errorMessage(e));
     } finally {
       setActionPending(null);
     }
@@ -670,20 +573,20 @@ function RunDetailPanel({
     if (!run || run.status !== "running") return;
     const handle = subscribeToRunEvents(runId, {
       onMessage: () => {
-        api
-          .getRun(runId)
-          .then(setRun)
-          .catch(() => {
-            /* keep current state */
-          });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.run(runId) });
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.runTimeline(runId),
+        });
       },
     });
-    wsRef.current = handle;
     return () => {
       handle.close();
-      wsRef.current = null;
     };
-  }, [runId, run?.status]);
+  }, [queryClient, runId, run?.status]);
+
+  function refreshRun(): void {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.run(runId) });
+  }
 
   return (
     <aside className="exec-detail">
@@ -735,6 +638,7 @@ function RunDetailPanel({
             type="button"
             className="btn btn-sm btn-ghost"
             onClick={onClose}
+            aria-label="Close"
           >
             ✕
           </button>
@@ -742,7 +646,17 @@ function RunDetailPanel({
       </header>
 
       {error && <p className="error-text">{error}</p>}
-      {!run && !error && <p className="muted">Loading…</p>}
+      {!run && !error && (
+        <div className="exec-nodes" aria-label="Loading run">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div className="exec-node skeleton-row" key={index}>
+              <div className="exec-node-head">
+                <span className="skeleton-line short" />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {run && (
         <RunApprovalsPanel
@@ -757,7 +671,16 @@ function RunDetailPanel({
           {run.node_runs.length === 0 ? (
             <p className="muted">No node runs recorded yet.</p>
           ) : (
-            run.node_runs.map((n) => <NodeRunRow key={n.node_id} node={n} />)
+            run.node_runs.map((n, i) => (
+              <NodeRunRow
+                key={
+                  n.iteration_path && n.iteration_path.length > 0
+                    ? `${n.node_id}#${n.iteration_path.join(".")}`
+                    : `${n.node_id}#${i}`
+                }
+                node={n}
+              />
+            ))
           )}
         </div>
       )}
@@ -780,6 +703,13 @@ function NodeRunRow({ node }: { node: NodeRunResult }) {
       <header className="exec-node-head" onClick={() => setOpen(!open)}>
         <span className="exec-node-toggle">{open ? "▾" : "▸"}</span>
         <span className="exec-node-id">{node.node_id}</span>
+        {node.iteration_path && node.iteration_path.length > 0 && (
+          <span className="exec-node-iteration" title="Loop iteration">
+            {node.iteration_path.length === 1
+              ? `iter ${node.iteration_path[0]}`
+              : `iter [${node.iteration_path.join(", ")}]`}
+          </span>
+        )}
         <span className={`run-pill status-run-${node.status}`}>
           {node.status}
         </span>

@@ -147,18 +147,21 @@ class S3Backend:
             "endpoint": settings.artifact_s3_endpoint or None,
         }
 
-    def delete_run(self, run_id: str) -> None:
-        prefix = f"runs/{run_id}/"
+    def delete_run(self, run_id: str, org_id: str | None = None) -> None:
+        prefixes = [f"runs/{run_id}/"]
+        if org_id:
+            prefixes.append(f"{org_id}/runs/{run_id}/")
         try:
             paginator = self.client.get_paginator("list_objects_v2")
-            for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
-                contents = page.get("Contents") or []
-                if not contents:
-                    continue
-                keys = [{"Key": item["Key"]} for item in contents]
-                self.client.delete_objects(
-                    Bucket=self.bucket, Delete={"Objects": keys, "Quiet": True}
-                )
+            for prefix in prefixes:
+                for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+                    contents = page.get("Contents") or []
+                    if not contents:
+                        continue
+                    keys = [{"Key": item["Key"]} for item in contents]
+                    self.client.delete_objects(
+                        Bucket=self.bucket, Delete={"Objects": keys, "Quiet": True}
+                    )
         except Exception:  # noqa: BLE001
             log.exception("S3 delete_run failed for %s", run_id)
 

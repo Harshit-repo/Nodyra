@@ -27,6 +27,69 @@ _ALIASES = (
     ("$now", "_now"),
     ("$fromAI", "_from_ai"),
 )
+_ALIAS_MAP = dict(_ALIASES)
+
+# A Python string literal (with optional prefix) OR a ``$alias`` token. We must
+# rewrite aliases to legal identifiers without touching their occurrences inside
+# string literals — a naive ``str.replace`` corrupted any literal that merely
+# *contained* an alias substring (H3). f-strings are the deliberate exception:
+# their ``{...}`` fields are real code, so aliases there are still rewritten.
+_ALIAS_REWRITE_RE = re.compile(
+    r"""
+    (?P<str>
+        (?P<prefix>[rRbBfFuU]{0,3})
+        ( \"\"\"(?:\\.|(?!\"\"\").)*\"\"\"
+        | '''(?:\\.|(?!''').)*'''
+        | "(?:\\.|[^"\\])*"
+        | '(?:\\.|[^'\\])*'
+        )
+    )
+    | (?P<alias>\$[A-Za-z_][A-Za-z0-9_]*)
+    """,
+    re.DOTALL | re.VERBOSE,
+)
+
+
+def _rewrite_aliases(code: str) -> str:
+    """Replace ``$alias`` tokens with their legal-identifier targets, leaving
+    occurrences inside ordinary string literals untouched (f-string fields are
+    still rewritten so interpolated aliases keep working)."""
+
+    def _sub(match: re.Match[str]) -> str:
+        literal = match.group("str")
+        if literal is not None:
+            prefix = (match.group("prefix") or "").lower()
+            if "f" in prefix:
+                # f-string: rewrite aliases ONLY inside its ``{...}`` expression
+                # fields, never the literal text. A blanket replace would corrupt
+                # text that merely contains an alias substring, e.g.
+                # ``f"price is $now: {x}"`` would turn the words ``$now`` in the
+                # output into ``_now``.
+                return _rewrite_fstring_fields(literal)
+            return literal
+        alias = match.group("alias")
+        return _ALIAS_MAP.get(alias, alias)
+
+    return _ALIAS_REWRITE_RE.sub(_sub, code)
+
+
+# ``{{`` / ``}}`` are escaped braces (literal text); ``{...}`` (no nested brace)
+# is a real replacement field whose contents are code.
+_FSTRING_FIELD_RE = re.compile(r"\{\{|\}\}|\{[^{}]*\}")
+
+
+def _rewrite_fstring_fields(literal: str) -> str:
+    """Rewrite ``$alias`` tokens inside an f-string's ``{...}`` fields only."""
+
+    def _sub_field(match: re.Match[str]) -> str:
+        segment = match.group(0)
+        if segment in ("{{", "}}"):
+            return segment  # escaped brace — literal text, not a field
+        for alias, target in _ALIASES:
+            segment = segment.replace(alias, target)
+        return segment
+
+    return _FSTRING_FIELD_RE.sub(_sub_field, literal)
 
 _SAFE_BUILTINS: dict[str, Any] = {
     "True": True,
@@ -86,14 +149,24 @@ _BLOCKED_NAMES = frozenset({
 
 
 class _ExprValidator(ast.NodeVisitor):
-    """Walk AST and reject any disallowed node type or dangerous name."""
+    """Walk AST and reject any disallowed node type or dangerous name.
 
-    def visit(self, node: ast.AST) -> None:
+    SECURITY (EXPR-1): the node-type allowlist must run via ``generic_visit``,
+    NOT by overriding ``visit``. Overriding ``visit`` to do the check + call
+    ``generic_visit`` bypasses ``NodeVisitor``'s name-based dispatch, so
+    ``visit_Name``/``visit_Attribute`` never fire and the ``_BLOCKED_NAMES``
+    guard becomes dead code — letting ``x.__class__.__bases__[0].__subclasses__()``
+    and ``__import__`` slip through (full sandbox escape). Putting the type check
+    in ``generic_visit`` (which the default ``visit`` always reaches) keeps both
+    the type allowlist AND the blocked-name dispatch active.
+    """
+
+    def generic_visit(self, node: ast.AST) -> None:
         if type(node) not in _ALLOWED_EXPR_NODES:
             raise ValueError(
                 f"Expression contains disallowed construct: {type(node).__name__}"
             )
-        self.generic_visit(node)
+        super().generic_visit(node)
 
     def visit_Name(self, node: ast.Name) -> None:
         if node.id in _BLOCKED_NAMES:
@@ -332,9 +405,7 @@ def from_ai_binding(
 
 
 def _eval_one(expression: str, context: dict[str, Any]) -> Any:
-    code = expression
-    for alias, target in _ALIASES:
-        code = code.replace(alias, target)
+    code = _rewrite_aliases(expression)
     try:
         tree = ast.parse(code, mode="eval")
     except SyntaxError as exc:

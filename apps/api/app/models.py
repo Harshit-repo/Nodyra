@@ -1,12 +1,13 @@
 """SQLAlchemy ORM models."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -28,12 +29,123 @@ def _uuid() -> str:
     return uuid.uuid4().hex
 
 
+class Organization(Base):
+    """A tenant. Until multi-tenancy is enabled there is exactly one row
+    (id/slug "default") and every tenant-owned table points at it."""
+
+    __tablename__ = "organizations"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    slug: Mapped[str] = mapped_column(String(80), unique=True, index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    # X4 execution isolation: "shared" (default) runs on the host warm pool —
+    # Tier-1 hygiene only, trusted authors. "dedicated_pool" refuses any run
+    # that doesn't resolve to this org's own docker/kubernetes runner pool
+    # (container-per-run), the Tier-2 boundary for untrusted authors.
+    execution_isolation: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="shared", server_default="shared"
+    )
+    # Phase E: this org's KEK (data-encryption-key wrapper), itself wrapped by
+    # the master KEK or an external KMS. NULL until the org-KEK migration runs.
+    wrapped_org_kek: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class Membership(Base):
+    """A user's role within one organization. Replaces the global ``User.role``
+    once multi-tenancy is enabled (a user can hold different roles in
+    different orgs); ``User.role`` remains the fallback while the flag is off."""
+
+    __tablename__ = "memberships"
+    __table_args__ = (
+        UniqueConstraint("org_id", "user_id", name="uq_membership_org_user"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default="viewer")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class OrgSettings(Base):
+    """Per-org quota overrides (multi-tenancy Phase C).
+
+    NULL inherits the instance default (``SystemSetting`` singleton /
+    ``config.settings``); 0 means unlimited — matching the existing
+    ``run_retention_days`` convention. No ``org_id`` *column* name clash
+    with the tenancy filter: the PK itself is the org, and the filter only
+    keys off attributes named ``org_id``, so this table is intentionally
+    org-scoped too.
+    """
+
+    __tablename__ = "org_settings"
+
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True
+    )
+    max_concurrent_runs: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    executions_per_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_map_width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_loop_iterations: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_inflight_subworkflows: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    storage_quota_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class RunMeter(Base):
+    """Per-org, per-UTC-day usage rollup (multi-tenancy Phase C3).
+
+    ``runs`` increments at admission (start_run) so executions/day is a hard
+    daily ceiling; ``compute_seconds`` and ``node_runs`` accumulate at run
+    completion — the latter is the loop-amplification meter (a 10k-iteration
+    loop is one run but ~10k node_runs rows). Billing/abuse detection reads
+    this table; one row per (org, day) keeps it tiny.
+    """
+
+    __tablename__ = "run_meters"
+    __table_args__ = (
+        UniqueConstraint("org_id", "day", name="uq_run_meters_org_day"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    compute_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    node_runs: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Environment(Base):
     """A Python environment: the global one or a user-created custom venv."""
 
     __tablename__ = "environments"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     is_global: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     python_version: Mapped[str] = mapped_column(String(16), default="3.12", nullable=False)
@@ -54,6 +166,8 @@ class Environment(Base):
     worker_rss_estimate_bytes: Mapped[int | None] = mapped_column(
         BigInteger, nullable=True
     )
+    backend: Mapped[str] = mapped_column(String(20), default="venv", nullable=False)
+    backend_config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -75,6 +189,12 @@ class RunnerPool(Base):
     __tablename__ = "runner_pools"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     provider: Mapped[str] = mapped_column(String(20), nullable=False, default="agent")
     provider_config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
@@ -104,6 +224,10 @@ class Runner(Base):
     __tablename__ = "runners"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True, nullable=False, server_default="default",
+    )
     pool_id: Mapped[str] = mapped_column(
         ForeignKey("runner_pools.id", ondelete="CASCADE"), index=True, nullable=False
     )
@@ -142,6 +266,12 @@ class RunBatch(Base):
     __tablename__ = "run_batches"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     workflow_id: Mapped[str] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"), index=True, nullable=False
     )
@@ -165,10 +295,19 @@ class Workflow(Base):
     __tablename__ = "workflows"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     environment_id: Mapped[str | None] = mapped_column(
-        ForeignKey("environments.id"), nullable=True
+        # ALM-2: SET NULL so deleting an environment leaves the workflow on the
+        # default env (the runner already treats a NULL env_id as the default)
+        # rather than blocking the delete or orphaning a dead reference.
+        ForeignKey("environments.id", ondelete="SET NULL"), nullable=True
     )
     default_runner_pool_id: Mapped[str | None] = mapped_column(
         String(32), nullable=True
@@ -191,6 +330,12 @@ class Workflow(Base):
     run_timeout_seconds: Mapped[float | None] = mapped_column(
         Float, nullable=True
     )
+    mcp_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=false()
+    )
+    mcp_tool_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    mcp_description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    mcp_parameters_schema: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -219,6 +364,12 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    # C1: revocation cutoff (float epoch seconds). Session tokens whose ``iat``
+    # predates this instant are rejected, invalidating every session minted
+    # before a logout-all / admin lockout. NULL means "no sessions revoked".
+    sessions_valid_after: Mapped[float | None] = mapped_column(
+        Float, nullable=True, default=None
+    )
 
 
 class Credential(Base):
@@ -227,6 +378,12 @@ class Credential(Base):
     __tablename__ = "credentials"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     type: Mapped[str] = mapped_column(String(40), nullable=False, default="generic")
     scope: Mapped[str] = mapped_column(String(20), nullable=False, default="global")
@@ -254,6 +411,9 @@ class Credential(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
+    def __repr__(self) -> str:
+        return f"<Credential id={self.id!r} name={self.name!r} type={self.type!r}>"
+
 
 class AuditEvent(Base):
     """A record of a mutating action, for the activity log."""
@@ -261,6 +421,12 @@ class AuditEvent(Base):
     __tablename__ = "audit_events"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     action: Mapped[str] = mapped_column(String(40), nullable=False)
     target_type: Mapped[str] = mapped_column(String(40), nullable=False)
     target_id: Mapped[str] = mapped_column(String(120), nullable=False, default="")
@@ -283,6 +449,12 @@ class PinnedData(Base):
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     workflow_id: Mapped[str] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"),
         index=True,
@@ -304,6 +476,12 @@ class Run(Base):
     __tablename__ = "runs"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     workflow_id: Mapped[str] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"), index=True, nullable=False
     )
@@ -315,6 +493,11 @@ class Run(Base):
         ForeignKey("deployments.id", ondelete="SET NULL"), nullable=True, index=True
     )
     triggered_by_error_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # A3: set when this run is a sub-workflow child spawned by another run's
+    # execute_workflow / map_* node. Children carry mode="subworkflow".
+    parent_run_id: Mapped[str | None] = mapped_column(
         ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True
     )
     runner_pool_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -376,6 +559,9 @@ class NodeRun(Base):
     started_at: Mapped[float | None] = mapped_column(Float, nullable=True)
     finished_at: Mapped[float | None] = mapped_column(Float, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Loop iteration coordinates (outermost first), or NULL for non-loop nodes.
+    # A looped body node produces one NodeRun per iteration_path.
+    iteration_path: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     run: Mapped[Run] = relationship(back_populates="node_runs")
 
@@ -454,10 +640,14 @@ class Artifact(Base):
     __tablename__ = "artifacts"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    run_id: Mapped[str] = mapped_column(
-        ForeignKey("runs.id", ondelete="CASCADE"), index=True, nullable=False
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True, nullable=False, server_default="default",
     )
-    node_id: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
+    run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    node_id: Mapped[str | None] = mapped_column(String(120), index=True, nullable=True)
     name: Mapped[str] = mapped_column(String(240), nullable=False)
     kind: Mapped[str] = mapped_column(String(40), default="binary", nullable=False)
     content_type: Mapped[str] = mapped_column(
@@ -493,6 +683,12 @@ class CodeModule(Base):
     __tablename__ = "code_modules"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     scope: Mapped[str] = mapped_column(String(20), nullable=False, default="workflow")
     workflow_id: Mapped[str | None] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"), nullable=True, index=True
@@ -530,6 +726,12 @@ class Deployment(Base):
     __tablename__ = "deployments"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     workflow_id: Mapped[str] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"), index=True, nullable=False
     )
@@ -546,8 +748,11 @@ class Deployment(Base):
         JSON, default=dict, nullable=False
     )
     active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # DB-1: SET NULL so deleting an environment doesn't error on a referencing
+    # deployment (the runner treats a NULL env_id as the global/default env),
+    # matching workflows.environment_id and the rest of the FK policy.
     environment_id: Mapped[str | None] = mapped_column(
-        ForeignKey("environments.id"), nullable=True
+        ForeignKey("environments.id", ondelete="SET NULL"), nullable=True
     )
     workflow_version_id: Mapped[str | None] = mapped_column(
         ForeignKey("workflow_versions.id", ondelete="SET NULL"),
@@ -576,6 +781,12 @@ class ProviderTriggerSubscription(Base):
     __tablename__ = "provider_trigger_subscriptions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     workflow_id: Mapped[str] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"), index=True, nullable=False
     )
@@ -632,6 +843,12 @@ class ScheduleState(Base):
     workflow_id: Mapped[str] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"), primary_key=True
     )
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     last_fired: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
@@ -643,6 +860,12 @@ class WorkflowVersion(Base):
     __tablename__ = "workflow_versions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     workflow_id: Mapped[str] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"), index=True, nullable=False
     )
@@ -688,6 +911,9 @@ class SystemSetting(Base):
     worker_rss_soft_budget_bytes: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0
     )
+    # Signed Ed25519 license key (see app/services/licensing.py). NULL → resolve
+    # from settings.license_key / env, else Community edition.
+    license_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -713,6 +939,12 @@ class RunQueueEntry(Base):
     __tablename__ = "run_queue"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
     run_id: Mapped[str] = mapped_column(
         ForeignKey("runs.id", ondelete="CASCADE"), unique=True, nullable=False
     )
@@ -745,6 +977,10 @@ class RunQueueEntry(Base):
     # "targets": [node_id, ...]}``. ``_execute_queued_entry`` merges this onto the
     # pinned cache and uses ``targets`` instead of the trigger-derived ones.
     replay_seed: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # W3C trace-context carrier injected at enqueue (program A5) so the worker
+    # that leases this entry can parent its spans on the enqueueing request's
+    # trace. None whenever tracing is disabled.
+    trace_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -769,4 +1005,8 @@ class RunQueueEntry(Base):
             "available_at",
         ),
         Index("ix_run_queue_status_lease_expires", "status", "lease_expires_at"),
+        # Org-fair leasing (C2): backs both the per-org candidate select
+        # (org_id = ? AND status = 'queued' AND available_at <= ?) and the
+        # grouped eligibility/in-flight scans.
+        Index("ix_run_queue_org_lease", "org_id", "status", "available_at"),
     )

@@ -1,0 +1,6 @@
+# Keep lockfiles and shell scripts LF so cross-platform checkouts (esp. the
+# Linux Docker build running `uv sync --locked`) and `uv lock --check` stay
+# stable regardless of the committer's OS / core.autocrlf setting.
+uv.lock text eol=lf
+*.lock text eol=lf
+*.sh text eol=lf

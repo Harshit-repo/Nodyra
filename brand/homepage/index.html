@@ -198,6 +198,48 @@
   .foot-links{display:flex;gap:20px}
   .foot-links a:hover{color:var(--accent)}
 
+  /* ---- platform capability grid ---- */
+  .caps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:46px}
+  @media(max-width:880px){.caps{grid-template-columns:1fr}}
+  .cap{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius);padding:24px;
+    position:relative;overflow:hidden;transition:border-color 140ms ease,transform 140ms ease,background 140ms ease}
+  .cap:hover{border-color:var(--accent-deep);background:var(--surface-2);transform:translateY(-3px)}
+  .cap .tag{font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;
+    padding:3px 8px;border-radius:999px;border:1px solid var(--line);color:var(--ink-3);float:right}
+  .cap .tag.pro{color:var(--amber);border-color:rgba(255,212,121,0.4);background:rgba(255,212,121,0.06)}
+  .cap .tag.ent{color:var(--accent-2);border-color:rgba(76,158,255,0.4);background:var(--accent-glow)}
+  .cap .tag.soon{color:var(--ink-2)}
+  .cap h3{font-size:18px;font-weight:700;margin-bottom:8px}
+  .cap p{font-size:14px;color:var(--ink-2)}
+
+  /* ---- pricing ---- */
+  .tiers{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:48px;align-items:stretch}
+  @media(max-width:880px){.tiers{grid-template-columns:1fr;max-width:440px;margin-inline:auto}}
+  .tier{display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line-2);
+    border-radius:var(--radius);padding:30px 26px;position:relative;overflow:hidden;
+    transition:border-color 140ms ease,transform 140ms ease}
+  .tier:hover{border-color:var(--accent-deep);transform:translateY(-3px)}
+  .tier.feature{border-color:var(--accent-deep);background:var(--surface-2);
+    box-shadow:0 22px 60px -28px rgba(76,158,255,0.5)}
+  .tier.feature::before{content:"Most popular";position:absolute;top:16px;right:-34px;transform:rotate(45deg);
+    background:linear-gradient(180deg,var(--accent-2),var(--accent));color:#06101e;font-family:var(--font-mono);
+    font-size:10px;font-weight:600;letter-spacing:0.06em;padding:4px 40px}
+  .tier .tname{font-family:var(--font-display);font-size:21px;font-weight:800;letter-spacing:-0.02em}
+  .tier .tdesc{font-size:13px;color:var(--ink-3);margin-top:6px;min-height:34px}
+  .tier .price{margin:20px 0 4px;display:flex;align-items:baseline;gap:6px}
+  .tier .price .amt{font-family:var(--font-display);font-size:42px;font-weight:800;letter-spacing:-0.03em}
+  .tier .price .per{font-size:13px;color:var(--ink-3)}
+  .tier .price-note{font-size:12px;color:var(--ink-3);min-height:18px}
+  .tier ul{list-style:none;margin:22px 0;display:flex;flex-direction:column;gap:11px;flex:1}
+  .tier li{font-size:13.5px;color:var(--ink-2);display:flex;align-items:flex-start;gap:9px;line-height:1.45}
+  .tier li svg{flex:0 0 auto;margin-top:2px}
+  .tier li.soon{color:var(--ink-3)}
+  .tier li .badge{font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.05em;text-transform:uppercase;
+    color:var(--amber);border:1px solid rgba(255,212,121,0.35);border-radius:999px;padding:1px 6px;margin-left:4px}
+  .tier .btn{width:100%;justify-content:center;margin-top:auto}
+  .price-foot{text-align:center;margin-top:28px;font-size:13px;color:var(--ink-3)}
+  .price-foot b{color:var(--ink-2)}
+
   .reveal{opacity:0;transform:translateY(26px);transition:opacity .7s ease,transform .7s cubic-bezier(.2,.7,.2,1)}
   .reveal.in{opacity:1;transform:none}
 </style>
@@ -218,8 +260,9 @@
     <div class="nav-links">
       <a href="#why">Why Noodle</a>
       <a href="#code">Real Python</a>
+      <a href="#platform">Platform</a>
       <a href="#enterprise">Enterprise</a>
-      <a href="#integrations">Integrations</a>
+      <a href="#pricing">Pricing</a>
       <a href="#selfhost">Self-host</a>
     </div>
     <div class="nav-cta">
@@ -233,7 +276,7 @@
 <header class="hero">
   <div class="wrap hero-grid">
     <div>
-      <div class="pill rise d1"><span class="dot"></span> v1 · self-hostable · no telemetry</div>
+      <div class="pill rise d1"><span class="dot"></span> v1 · self-hostable · AI-native · no telemetry</div>
       <h1 class="display rise d2">Workflow automation that speaks <span class="grad">Python</span>.
         <svg class="underline" viewBox="0 0 240 14" fill="none"><path d="M3 8 C 62 -2, 94 14, 146 7 C 188 1, 214 9, 237 5" stroke="var(--accent)" stroke-width="4" stroke-linecap="round"/></svg>
       </h1>
@@ -242,7 +285,7 @@
         <a href="#selfhost" class="btn btn-primary">⌘ Spin it up locally</a>
         <a href="#" class="btn btn-ghost">View on GitHub ↗</a>
       </div>
-      <p class="hero-note rise d5">Runs on <b>your</b> infra. FastAPI · PostgreSQL · React Flow · Celery. One <span class="mono">docker compose up</span> away.</p>
+      <p class="hero-note rise d5">Runs on <b>your</b> infra. FastAPI · PostgreSQL · Redis · React Flow · a durable run queue. One <span class="mono">docker compose up</span> away.</p>
     </div>
 
     <div class="demo rise d3">
@@ -324,6 +367,23 @@
   </div>
 </section>
 
+<!-- PLATFORM -->
+<section id="platform">
+  <div class="wrap">
+    <div class="reveal"><div class="eyebrow">More than a canvas</div>
+      <h2>A full automation platform — AI-native, and inspectable end to end.</h2>
+      <p class="section-lede">The same Python-first core now ships with an AI/ML node suite, a Model Context Protocol bridge, one-click code export, and a hardened production runtime.</p></div>
+    <div class="caps">
+      <div class="cap reveal"><h3>AI &amp; ML node suite</h3><p>LLM calls, RAG (loaders, splitters, vector stores, retrievers), agents &amp; tools, evals, fine-tuning, synthetic data, and statistical analysis — first-class nodes, not glue scripts.</p></div>
+      <div class="cap reveal"><h3>MCP — both directions</h3><p>Expose any workflow as a <span class="mono">Model Context Protocol</span> tool for Claude &amp; other agents, and consume external MCP servers as nodes inside your graphs.</p></div>
+      <div class="cap reveal"><h3>Code-first export</h3><p>Export any workflow to a standalone, runnable Python script — sub-workflows, credentials seams and all. Your automation is never trapped in our format.</p></div>
+      <div class="cap reveal"><span class="tag pro">Pro</span><h3>Sandboxed execution</h3><p>Run untrusted code in isolated, capability-tiered containers (runc → gVisor → Kata) with a warm pool keyed per environment. Off by default, one setting to require it.</p></div>
+      <div class="cap reveal"><span class="tag pro">Pro</span><h3>Observability</h3><p>OpenTelemetry tracing across the engine, queue, and node runs — wire Noodle into the same dashboards you already use for everything else.</p></div>
+      <div class="cap reveal"><span class="tag pro">Pro</span><h3>Remote runners &amp; deployments</h3><p>Durable run queue, remote runner pools (Docker / Kubernetes / agent), and version-pinned deployments fired by cron, webhook, or event.</p></div>
+    </div>
+  </div>
+</section>
+
 <!-- ENTERPRISE -->
 <section id="enterprise">
   <div class="wrap"><div class="band reveal">
@@ -337,6 +397,7 @@
       <div class="ctl"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 12a8 8 0 018-8M20 12a8 8 0 01-8 8" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/><path d="M12 4l3 2-3 2M12 20l-3-2 3-2" fill="var(--accent)"/></svg> Retry from failed node</div>
       <div class="ctl"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="4" y="6" width="16" height="12" rx="2" stroke="var(--accent)" stroke-width="2"/><path d="M8 11h8" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/></svg> Retention, output caps &amp; redaction</div>
     </div>
+    <p class="section-lede" style="margin-top:32px;font-size:15px">Single sign-on, audit-log export, external KMS, and <b style="color:var(--ink)">multi-tenant organizations</b> are landing in the Enterprise edition — <span class="mono" style="color:var(--amber)">coming soon</span>.</p>
   </div></div>
 </section>
 
@@ -351,8 +412,72 @@
       <span class="chip">Anthropic</span><span class="chip">Stripe</span><span class="chip">Notion</span>
       <span class="chip">GitHub</span><span class="chip">Google Sheets</span><span class="chip">Airtable</span>
       <span class="chip">SMTP</span><span class="chip">HTTP</span><span class="chip">DuckDB SQL</span>
+      <span class="chip">pgvector</span><span class="chip">Qdrant</span><span class="chip">MCP servers</span>
       <span class="chip more">+ write your own in 5 lines of Python →</span>
     </div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section id="pricing">
+  <div class="wrap">
+    <div class="reveal"><div class="eyebrow">Simple, honest pricing</div>
+      <h2>Free forever to self-host. Pay only to operate at scale.</h2>
+      <p class="section-lede">Open-core, like n8n and GitLab. The full product is yours to run; paid tiers raise the ceilings and unlock the production &amp; enterprise surface. Flat per-instance — <em>never</em> per-seat surprise bills.</p></div>
+    <div class="tiers reveal">
+
+      <!-- COMMUNITY -->
+      <div class="tier">
+        <div class="tname">Community</div>
+        <div class="tdesc">For personal projects and small teams getting started.</div>
+        <div class="price"><span class="amt">$0</span><span class="per">/ forever</span></div>
+        <div class="price-note">Self-hosted · no telemetry · no signup</div>
+        <ul>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--ok)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Every Python node &amp; the full canvas</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--ok)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> AI/ML nodes, MCP &amp; code export</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--ok)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> 3 environments · 1 runner · 2 seats</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--ok)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Up to 3 active deployments</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--ok)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Encrypted vault · RBAC · audit log</li>
+        </ul>
+        <a href="#selfhost" class="btn">Self-host free</a>
+      </div>
+
+      <!-- PRO -->
+      <div class="tier feature">
+        <div class="tname">Pro</div>
+        <div class="tdesc">For teams running real automation in production.</div>
+        <div class="price"><span class="amt">$49</span><span class="per">/ month</span></div>
+        <div class="price-note">Flat, per instance · or $490/yr</div>
+        <ul>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Everything in Community, plus:</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> <b style="color:var(--ink)">Sandboxed execution</b> (isolated containers)</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> <b style="color:var(--ink)">OpenTelemetry</b> observability</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> <b style="color:var(--ink)">Git-backed</b> workflow versioning</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> 10 environments · 5 runners · 10 seats</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Unlimited deployments · email support</li>
+        </ul>
+        <a href="mailto:sharma.har97@gmail.com?subject=Noodle%20Pro%20waitlist" class="btn btn-primary">Join the Pro waitlist</a>
+      </div>
+
+      <!-- ENTERPRISE -->
+      <div class="tier">
+        <div class="tname">Enterprise</div>
+        <div class="tdesc">For organizations with scale, security &amp; compliance needs.</div>
+        <div class="price"><span class="amt">Custom</span></div>
+        <div class="price-note">Talk to us · perpetual or annual</div>
+        <ul>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Everything in Pro, plus:</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Unlimited environments, runners &amp; seats</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> SSO/SAML · audit export · external KMS</li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Dedicated runner pools · advanced RBAC</li>
+          <li class="soon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="var(--ink-3)" stroke-width="2"/><path d="M12 8v4l3 2" stroke="var(--ink-3)" stroke-width="2" stroke-linecap="round"/></svg> Multi-tenant organizations <span class="badge">soon</span></li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4 10-10" stroke="var(--accent-2)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Priority support &amp; SLA</li>
+        </ul>
+        <a href="mailto:sharma.har97@gmail.com?subject=Noodle%20Enterprise" class="btn">Contact sales</a>
+      </div>
+
+    </div>
+    <p class="price-foot reveal">All paid features are <b>license-gated, verified offline</b> — no phone-home, air-gap friendly. An expired license soft-downgrades to Community; <b>your workflows never stop running</b>.</p>
   </div>
 </section>
 
@@ -365,7 +490,7 @@
     <div class="terminal">
       <div class="bar"><i style="background:#f0747a"></i><i style="background:#ffd479"></i><i style="background:#57c98a"></i><span>~/noodle</span></div>
 <pre><span class="prompt">$</span> docker compose -f deploy/docker-compose.yml up --build -d
-<span style="color:var(--ink-3)">  ✓ api · worker · beat · postgres · redis · minio · web</span>
+<span style="color:var(--ink-3)">  ✓ api · worker · postgres · redis · minio · web</span>
 <span class="prompt">$</span> open http://localhost:5173
 <span style="color:var(--ok)">  ● ready — first account becomes owner</span></pre>
     </div>
@@ -391,7 +516,7 @@
       <svg width="22" height="22" viewBox="0 0 32 32" fill="none"><path d="M5 21 C 9 9, 13.5 9, 16 16 S 23 23, 27 11" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"/><circle cx="5" cy="21" r="3.6" fill="var(--accent)"/><circle cx="27" cy="11" r="3.6" fill="var(--accent-2)"/></svg>
       <span class="brand-name" style="font-size:18px">Noodle</span>
     </div>
-    <div class="foot-links"><a href="#">GitHub</a><a href="#">Docs</a><a href="#">Architecture</a><a href="#">Community</a></div>
+    <div class="foot-links"><a href="#">GitHub</a><a href="#pricing">Pricing</a><a href="#">Docs</a><a href="#">Community</a></div>
     <div class="mono">Self-hostable · Python-native · © 2026</div>
   </div>
 </footer>

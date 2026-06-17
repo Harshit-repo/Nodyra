@@ -5,9 +5,28 @@ export function canonicalName(spec: string): string {
   return name.replace(/[-_.]+/g, "-").toLowerCase();
 }
 
-export function missingFor(requirements: string[], installed: string[]): string[] {
+export function evaluateMarker(marker: string, platform: string): boolean {
+  const eq = marker.match(/sys_platform\s*==\s*['"]([^'"]+)['"]/);
+  if (eq) return platform === eq[1];
+  const ne = marker.match(/sys_platform\s*!=\s*['"]([^'"]+)['"]/);
+  if (ne) return platform !== ne[1];
+  return true; // unknown marker: safe fallback
+}
+
+export function missingFor(
+  requirements: string[],
+  installed: string[],
+  platform?: string,
+): string[] {
   const have = new Set(installed.filter((p) => p.trim()).map(canonicalName));
-  return requirements.filter((r) => !have.has(canonicalName(r)));
+  return requirements.filter((r) => {
+    const semicolonIdx = r.indexOf(";");
+    if (semicolonIdx !== -1 && platform) {
+      const marker = r.slice(semicolonIdx + 1).trim();
+      if (!evaluateMarker(marker, platform)) return false;
+    }
+    return !have.has(canonicalName(r));
+  });
 }
 
 export function parseRequirementsTxt(text: string): string[] {

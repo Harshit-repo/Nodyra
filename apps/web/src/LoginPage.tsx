@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { api, setToken, setUser } from "./api";
+import { api, setUser } from "./api";
 import { Logo } from "./Logo";
 import type { UserInfo } from "./types";
 
@@ -45,7 +45,11 @@ export function LoginPage({
               email: email.trim(),
               password,
             });
-      setToken(result.token);
+      // FE-1: do NOT persist the bearer token in localStorage. /auth/login sets
+      // an httpOnly ``noodle_session`` cookie (plus the readable ``noodle_csrf``
+      // double-submit cookie), which the client uses automatically — the session
+      // credential is never reachable by JavaScript, so an XSS can't exfiltrate
+      // it. We keep only the (non-secret) user profile for UI state.
       setUser(result.user);
       onSignedIn(result.user);
     } catch (err) {

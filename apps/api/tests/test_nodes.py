@@ -11,31 +11,39 @@ async def test_list_nodes_returns_manifests(client: AsyncClient) -> None:
         "if",
         "code",
         "http_request",
-        "google_sheets_read_v2",
-        "google_sheets_append_v2",
+        "google_sheets",
+        "slack",
         "github_get_repo_v2",
         "github_create_issue_v2",
-        "slack_send_message_v2",
+        "github_put_file_contents_v2",
         "stripe_create_customer_v2",
+        "stripe_create_subscription_v2",
         "airtable_list_records_v2",
         "airtable_create_record_v2",
+        "airtable_batch_update_records_v2",
         "notion_create_page_v2",
+        "notion_search_v2",
+        "outlook_get_message_attachment_v2",
     } <= ids
 
     if_manifest = next(m for m in manifests if m["id"] == "if")
     assert [o["name"] for o in if_manifest["outputs"]] == ["true", "false"]
 
-    sheets = next(m for m in manifests if m["id"] == "google_sheets_append_v2")
+    sheets = next(m for m in manifests if m["id"] == "google_sheets")
     params = {param["name"]: param for param in sheets["params"]}
     assert params["credentials"]["credential"]["type"] == "google_sheets_oauth2"
     assert params["credentials"]["required_scopes"] == [
         "https://www.googleapis.com/auth/spreadsheets"
     ]
+    # Consolidated node carries the resource → operation descriptor.
+    assert sheets["integration"] is not None
+    resources = {r["id"] for r in sheets["integration"]["resources"]}
+    assert {"values", "spreadsheet", "sheet", "row"} <= resources
 
     legacy_sheets = next(m for m in manifests if m["id"] == "google_sheets_append")
     assert legacy_sheets["hidden"] is True
     assert legacy_sheets["deprecated"] is True
-    assert legacy_sheets["replacement_id"] == "google_sheets_append_v2"
+    assert legacy_sheets["replacement_id"] == "google_sheets"
 
     legacy_github = next(m for m in manifests if m["id"] == "github_create_issue")
     assert legacy_github["hidden"] is True
@@ -45,7 +53,7 @@ async def test_list_nodes_returns_manifests(client: AsyncClient) -> None:
     legacy_slack = next(m for m in manifests if m["id"] == "slack_send_message")
     assert legacy_slack["hidden"] is True
     assert legacy_slack["deprecated"] is True
-    assert legacy_slack["replacement_id"] == "slack_send_message_v2"
+    assert legacy_slack["replacement_id"] == "slack"
 
     legacy_stripe = next(m for m in manifests if m["id"] == "stripe_create_customer")
     assert legacy_stripe["hidden"] is True
@@ -68,18 +76,40 @@ async def test_list_nodes_returns_manifests(client: AsyncClient) -> None:
     assert legacy_agent["replacement_id"] == "ai_agent_v2"
 
 
+async def test_list_nodes_filters_api_category(client: AsyncClient) -> None:
+    resp = await client.get("/nodes?category=API")
+    assert resp.status_code == 200
+    manifests = resp.json()
+    ids = {m["id"] for m in manifests}
+    assert {
+        "respond_to_webhook",
+        "http_request",
+        "graphql_request",
+        "jwt",
+    } <= ids
+    assert "webhook_trigger" not in ids
+    assert "api_endpoint" not in ids
+    assert {m["category"] for m in manifests} == {"API"}
+
+    trigger_resp = await client.get("/nodes?category=Triggers")
+    assert trigger_resp.status_code == 200
+    triggers = trigger_resp.json()
+    trigger_ids = {m["id"] for m in triggers}
+    assert {"webhook_trigger", "api_endpoint"} <= trigger_ids
+    assert next(m for m in triggers if m["id"] == "api_endpoint")["role"] == "trigger"
+
+
 async def test_generated_node_source_endpoint_uses_stored_source(
     client: AsyncClient,
 ) -> None:
-    resp = await client.get("/nodes/google_sheets_append_v2/source")
+    resp = await client.get("/nodes/google_sheets/source")
     assert resp.status_code == 200
     source = resp.json()
 
     assert source["kind"] == "builtin"
     assert source["editable"] is False
-    assert "def google_sheets_append_v2(" in source["source"]
-    assert "execute_registered_operation" in source["source"]
-    assert "google_sheets.values.append" in source["source"]
+    assert "def google_sheets(" in source["source"]
+    assert "execute_integration_operation" in source["source"]
     assert source["fork_source"] == source["source"]
 
 

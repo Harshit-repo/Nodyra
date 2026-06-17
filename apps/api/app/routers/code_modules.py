@@ -7,9 +7,13 @@ module source in the runner/runtime environment.
 """
 
 import ast
+import asyncio
+import shutil
+import subprocess
 import sys
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -94,11 +98,16 @@ def _missing_in_env(imports: list[str], env: Environment | None) -> list[str]:
         missing.append(pip_name)
     return missing
 
+
 router = APIRouter(prefix="/code-modules", tags=["code-modules"])
 
 
 async def _load(session: AsyncSession, module_id: str) -> CodeModule:
-    module = await session.get(CodeModule, module_id)
+    # populate_existing=True forces a real SELECT so the org-filter hook fires
+    # even when the row is already in the session identity map — same
+    # cross-tenant defence as credentials._load (R-1/R-11). CodeModule is
+    # org-scoped and the GET/preview routes have no extra permission gate.
+    module = await session.get(CodeModule, module_id, populate_existing=True)
     if module is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Code module not found")
     return module
@@ -128,10 +137,7 @@ async def list_code_modules(
             or_(
                 CodeModule.scope == "global",
                 CodeModule.workflow_id == visible_to_workflow,
-                (
-                    (CodeModule.scope == "environment")
-                    & (CodeModule.environment_id == env_id)
-                )
+                ((CodeModule.scope == "environment") & (CodeModule.environment_id == env_id))
                 if env_id
                 else CodeModule.id.is_(None),
             )
@@ -171,18 +177,21 @@ async def create_code_module(
         include_undecorated=body.include_undecorated,
     )
     session.add(module)
-    await log_audit(session, "create", "code_module", detail=body.name,
-                    actor_id=actor.id if actor else None,
-                    actor_email=actor.email if actor else None)
+    await log_audit(
+        session,
+        "create",
+        "code_module",
+        detail=body.name,
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
+    )
     await session.commit()
     await session.refresh(module)
     return module
 
 
 @router.get("/{module_id}", response_model=CodeModuleInfo)
-async def get_code_module(
-    module_id: str, session: AsyncSession = Depends(get_session)
-):
+async def get_code_module(module_id: str, session: AsyncSession = Depends(get_session)):
     return await _load(session, module_id)
 
 
@@ -219,9 +228,15 @@ async def delete_code_module(
     actor: User | None = Depends(optional_current_user),
 ):
     module = await _load(session, module_id)
-    await log_audit(session, "delete", "code_module", module.id, module.name,
-                    actor_id=actor.id if actor else None,
-                    actor_email=actor.email if actor else None)
+    await log_audit(
+        session,
+        "delete",
+        "code_module",
+        module.id,
+        module.name,
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
+    )
     await session.delete(module)
     await session.commit()
 
@@ -290,9 +305,7 @@ def _preview_payload(
 
 
 @router.get("/{module_id}/preview", response_model=CodeModuleFunctionPreview)
-async def preview_code_module(
-    module_id: str, session: AsyncSession = Depends(get_session)
-):
+async def preview_code_module(module_id: str, session: AsyncSession = Depends(get_session)):
     module = await _load(session, module_id)
     env = await _workflow_environment(session, module.workflow_id)
     return _preview_payload(
@@ -307,9 +320,7 @@ async def preview_code_module(
     "/{module_id}/starter-graph",
     dependencies=[Depends(require_permission("code_module:write"))],
 )
-async def starter_graph(
-    module_id: str, session: AsyncSession = Depends(get_session)
-) -> dict:
+async def starter_graph(module_id: str, session: AsyncSession = Depends(get_session)) -> dict:
     """Generate an AST-aware starter graph from the module's source.
 
     Walks ``<var> = <call>`` chains and infers edges from variable flow,
@@ -329,6 +340,189 @@ async def starter_graph(
         raise HTTPException(400, f"Syntax error: {exc}") from exc
 
 
+class CodeFormatRequest(BaseModel):
+    code: str
+
+
+class CodeFormatResult(BaseModel):
+    code: str
+    changed: bool
+    error: str | None = None
+
+
+async def _ruff_format(source: str) -> tuple[str, str | None]:
+    """Format Python with ``ruff format`` (stdin → stdout).
+
+    Runs in a thread so the synchronous ``subprocess.run`` never blocks the
+    event loop. Degrades gracefully: if ruff isn't installed or errors, the
+    original source is returned with an ``error`` so callers can no-op rather
+    than block a save.
+    """
+    loop = asyncio.get_running_loop()
+    ruff_bin = shutil.which("ruff")
+    cmd = [ruff_bin, "format", "-"] if ruff_bin else [sys.executable, "-m", "ruff", "format", "-"]
+
+    def _run() -> tuple[str, str | None]:
+        try:
+            proc = subprocess.run(
+                cmd,
+                input=source,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            return source, f"formatter unavailable: {exc}"
+        if proc.returncode != 0:
+            return source, (proc.stderr.strip() or "formatting failed")
+        return proc.stdout, None
+
+    return await loop.run_in_executor(None, _run)
+
+
+@router.post(
+    "/format",
+    response_model=CodeFormatResult,
+    dependencies=[Depends(require_permission("code_module:write"))],
+)
+async def format_code(body: CodeFormatRequest) -> CodeFormatResult:
+    """Format a Python snippet with ruff. Stateless — formats text only and
+    never executes the code. Returns the original source unchanged on any
+    syntax/formatter error so 'format on save' can safely fall through.
+    """
+    source = body.code or ""
+    if not source.strip():
+        return CodeFormatResult(code=source, changed=False, error=None)
+    try:
+        ast.parse(source)
+    except SyntaxError as exc:
+        return CodeFormatResult(code=source, changed=False, error=f"line {exc.lineno}: {exc.msg}")
+    formatted, err = await _ruff_format(source)
+    if err is not None:
+        return CodeFormatResult(code=source, changed=False, error=err)
+    return CodeFormatResult(code=formatted, changed=formatted != source, error=None)
+
+
+class CodeLintRequest(BaseModel):
+    code: str
+
+
+class LintDiagnostic(BaseModel):
+    line: int
+    column: int
+    code: str | None = None
+    message: str
+    severity: str = "warning"  # "error" | "warning"
+
+
+class CodeLintResult(BaseModel):
+    diagnostics: list[LintDiagnostic]
+    # null when ruff produced diagnostics; set when only the syntax fallback ran
+    # (e.g. ruff unavailable) so the UI can decide how loudly to surface gaps.
+    linter: str  # "ruff" | "syntax" | "none"
+
+
+async def _ruff_check(source: str) -> tuple[list[LintDiagnostic], str]:
+    """Lint Python with ``ruff check`` (stdin → JSON).
+
+    Runs in a thread so the synchronous ``subprocess.run`` never blocks the
+    event loop. Returns ``(diagnostics, linter)``. Degrades to an ast-based
+    syntax check when ruff is unavailable so the editor still flags hard
+    errors. Never executes the code.
+    """
+    import json
+
+    loop = asyncio.get_running_loop()
+    ruff_bin = shutil.which("ruff")
+    cmd = ([ruff_bin] if ruff_bin else [sys.executable, "-m", "ruff"]) + [
+        "check",
+        "--output-format=json",
+        "--stdin-filename=code.py",
+        "-",
+    ]
+
+    def _run() -> tuple[list[LintDiagnostic], str]:
+        try:
+            proc = subprocess.run(
+                cmd,
+                input=source,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return _syntax_only(source), "syntax"
+
+        out = proc.stdout.strip()
+        if not out:
+            return ([], "ruff") if proc.returncode in (0, 1) else (_syntax_only(source), "syntax")
+        try:
+            raw = json.loads(out)
+        except json.JSONDecodeError:
+            return _syntax_only(source), "syntax"
+
+        diags: list[LintDiagnostic] = []
+        for item in raw:
+            loc = item.get("location") or {}
+            code = item.get("code")
+            diags.append(
+                LintDiagnostic(
+                    line=int(loc.get("row", 1)),
+                    column=int(loc.get("column", 1)),
+                    code=code,
+                    message=item.get("message", ""),
+                    severity="error" if _is_error_code(code) else "warning",
+                )
+            )
+        return diags, "ruff"
+
+    return await loop.run_in_executor(None, _run)
+
+
+def _is_error_code(code: str | None) -> bool:
+    """Syntax/parse failures are surfaced as errors; lint findings as warnings.
+
+    Ruff reports parse failures as ``invalid-syntax`` (newer) or ``E999``
+    (older), and ``None`` for unkeyed parse panics — all are hard errors.
+    """
+    if not code:
+        return True
+    return code in ("E999", "invalid-syntax") or code.startswith("E9")
+
+
+def _syntax_only(source: str) -> list[LintDiagnostic]:
+    try:
+        ast.parse(source)
+    except SyntaxError as exc:
+        return [
+            LintDiagnostic(
+                line=exc.lineno or 1,
+                column=(exc.offset or 1),
+                code="E999",
+                message=exc.msg or "syntax error",
+                severity="error",
+            )
+        ]
+    return []
+
+
+@router.post(
+    "/lint",
+    response_model=CodeLintResult,
+    dependencies=[Depends(require_permission("code_module:write"))],
+)
+async def lint_code(body: CodeLintRequest) -> CodeLintResult:
+    """Lint a Python snippet with ruff (or an ast syntax check as fallback).
+
+    Stateless and never executes the code. Empty input yields no diagnostics.
+    """
+    source = body.code or ""
+    if not source.strip():
+        return CodeLintResult(diagnostics=[], linter="none")
+    diags, linter = await _ruff_check(source)
+    return CodeLintResult(diagnostics=diags, linter=linter)
+
+
 @router.get("/manifests/workflow/{workflow_id}", response_model=list[NodeManifest])
 async def workflow_custom_node_manifests(
     workflow_id: str, session: AsyncSession = Depends(get_session)
@@ -344,10 +538,7 @@ async def workflow_custom_node_manifests(
         or_(
             CodeModule.scope == "global",
             CodeModule.workflow_id == workflow_id,
-            (
-                (CodeModule.scope == "environment")
-                & (CodeModule.environment_id == env_id)
-            )
+            ((CodeModule.scope == "environment") & (CodeModule.environment_id == env_id))
             if env_id
             else CodeModule.id.is_(None),
         )

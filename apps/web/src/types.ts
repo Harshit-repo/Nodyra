@@ -65,6 +65,15 @@ export interface PortSpec {
   data_kind?: PortDataKind;
 }
 
+export interface SystemRequirement {
+  name: string;
+  apt?: string;
+  brew?: string;
+  windows?: string;
+  dockerfile_hint?: string;
+  note?: string;
+}
+
 export interface NodeManifest {
   id: string;
   name: string;
@@ -80,7 +89,29 @@ export interface NodeManifest {
   inputs: PortSpec[];
   params: ParamSpec[];
   outputs: PortSpec[];
+  param_output_kinds?: Record<string, Record<string, string>>;
   requirements?: string[];
+  system_requirements?: SystemRequirement[];
+  // Present only on consolidated integration nodes (Google Sheets, Slack, …):
+  // drives the editor's Resource → Operation selector.
+  integration?: IntegrationManifest | null;
+}
+
+export interface IntegrationOperationManifest {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface IntegrationResourceManifest {
+  id: string;
+  name: string;
+  operations: IntegrationOperationManifest[];
+}
+
+export interface IntegrationManifest {
+  provider: string;
+  resources: IntegrationResourceManifest[];
 }
 
 export interface PackageUsageEntry {
@@ -116,6 +147,7 @@ export interface GraphNode {
   tool_mode?: boolean;
   tool_name?: string | null;
   tool_description?: string;
+  label?: string;
 }
 
 export interface GraphEdge {
@@ -192,9 +224,14 @@ export interface WorkflowDetail {
   published_version: number;
   has_unpublished_changes: boolean;
   environment_id: string | null;
+  default_runner_pool_id?: string | null;
   error_workflow_id?: string | null;
   error_alerts?: Record<string, unknown>;
   run_timeout_seconds?: number | null;
+  mcp_enabled?: boolean;
+  mcp_tool_name?: string | null;
+  mcp_description?: string | null;
+  mcp_parameters_schema?: Record<string, unknown> | null;
   provider_trigger_counts?: ProviderTriggerStatusCounts;
   graph: WorkflowGraph;
   created_at: string;
@@ -223,6 +260,8 @@ export interface Environment {
   runner_pool_id: string | null;
   runner_pool_name: string | null;
   worker_rss_estimate_bytes: number | null;
+  backend: string;
+  backend_config: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -249,6 +288,7 @@ export interface NodeRunResult {
   started_at?: number | null;
   finished_at?: number | null;
   duration_ms?: number | null;
+  iteration_path?: number[] | null;
 }
 
 export interface NodeVariableInfo {
@@ -397,6 +437,14 @@ export interface CodeModuleFunctionPreview {
   environment_name: string | null;
 }
 
+export interface LintDiagnostic {
+  line: number;
+  column: number;
+  code: string | null;
+  message: string;
+  severity: "error" | "warning";
+}
+
 export interface RunListItem {
   id: string;
   workflow_id: string;
@@ -424,6 +472,29 @@ export interface RunEvent {
   started_at?: number | null;
   finished_at?: number | null;
   duration_ms?: number | null;
+  // Agent tool-call events (flat fields emitted by the engine) used to light up
+  // the agent's connected model / memory / tool sub-nodes live on the canvas.
+  agent_node_id?: string;
+  tool_name?: string;
+  tool_call_id?: string;
+  tool_calls?: Array<{
+    id?: string;
+    name?: string;
+    tool_call_id?: string;
+    tool_name?: string;
+  }>;
+  step?: number;
+  // Present on node_started / node_finished events emitted from inside a loop
+  // body: the nested iteration index path (outer-to-inner). Lets the canvas
+  // show per-node iteration progress instead of flickering once per iteration.
+  iteration_path?: number[] | null;
+  // node_chunk events: an incremental output fragment (e.g. an LLM token)
+  // streamed while the node is still running, plus its stream channel.
+  delta?: string;
+  channel?: string;
+  // node_chunk reset: a retry signals the client to discard the failed
+  // attempt's streamed text before the new attempt streams.
+  reset?: boolean;
 }
 
 export interface Credential {
@@ -503,6 +574,8 @@ export interface AiWorkflowDraftRequest {
   failed_node_id?: string | null;
   error?: string | null;
   fix_strategy?: AiFixStrategy;
+  planner_provider?: string | null;
+  planner_model?: string | null;
 }
 
 export interface AiWorkflowDraftResponse {
@@ -550,7 +623,56 @@ export interface AuthState {
   auth_required: boolean;
   signed_in: boolean;
   registration_open: boolean;
+  multi_tenancy: boolean;
+  edition?: string;
+  entitlements?: string[];
+  limits?: Record<string, number>;
+  license_notice?: string | null;
   user: UserInfo | null;
+}
+
+export interface LicenseInfo {
+  edition: string;
+  customer: string | null;
+  expires_at: number | null;
+  entitlements: string[];
+  limits: Record<string, number>;
+  notice: string | null;
+}
+
+export interface OrgInfo {
+  id: string;
+  name: string;
+  slug: string;
+  status: string;
+  /** The signed-in user's role within this org. */
+  role: string | null;
+}
+
+export interface OrgMemberInfo {
+  user_id: string;
+  email: string;
+  name: string;
+  role: string;
+}
+
+export interface OrgSettingsInfo {
+  org_id: string;
+  max_concurrent_runs: number;
+  executions_per_day: number;
+  max_map_width: number;
+  max_loop_iterations: number;
+  max_inflight_subworkflows: number;
+  storage_quota_bytes: number;
+  /** Field names whose value is an org override (vs inherited default). */
+  overridden: string[];
+}
+
+export interface OrgUsageDay {
+  day: string;
+  runs: number;
+  compute_seconds: number;
+  node_runs: number;
 }
 
 export interface RunnerPoolInfo {
@@ -579,10 +701,39 @@ export interface RunnerInfo {
   updated_at: string;
 }
 
+export interface RunnerPoolHealth {
+  pool_id: string;
+  provider: string;
+  queue_depth: number;
+  oldest_queued_seconds: number | null;
+  capacity_used: number;
+  capacity_total: number;
+  online_count: number;
+  runner_count: number;
+  success_24h: number | null;
+  dispatcher_reachable: boolean;
+}
+
+export interface FleetSummary {
+  runners_online: number;
+  runners_total: number;
+  queue_depth: number;
+  in_flight: number;
+  providers_dispatchable: string[];
+  providers_stuck: string[];
+}
+
+export interface RunnerFleetHealth {
+  fleet: FleetSummary;
+  pools: RunnerPoolHealth[];
+}
+
 export interface RegistrationTokenResponse {
   token: string;
   runner_id: string;
   expires_at: string;
+  /** URL the runner should dial back to (from the API, not the SPA origin). */
+  api_url: string;
 }
 
 export interface RunBatchInfo {
@@ -604,4 +755,12 @@ export interface ChatTurnResponse {
   reply: string;
   session_id: string;
   status: "success" | "error" | "timeout";
+}
+
+export interface ChatPublicConfig {
+  workflow_id: string;
+  title: string;
+  placeholder: string;
+  initial_message: string;
+  require_login: boolean;
 }

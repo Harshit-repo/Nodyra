@@ -20,6 +20,7 @@ import requests
 from noodle.artifacts import write_bytes
 from noodle.sdk import node
 from noodle_nodes._creds import cred_multi, cred_single
+from noodle_nodes.http_security import assert_public_http_url
 
 _HTTP_TIMEOUT = 60  # AI calls can be slow; pad past the default 30 s
 
@@ -34,6 +35,17 @@ def _expect_ok(response: requests.Response, service: str) -> dict:
         return response.json()
     except ValueError:
         return {"text": response.text}
+
+
+def _pinecone_url(index_host: str, path: str) -> str:
+    host = str(index_host or "").strip()
+    if not host:
+        raise ValueError("pinecone: index_host is required")
+    if "://" in host or any(ch in host for ch in "/?#@"):
+        raise ValueError("pinecone: index_host must be a hostname, not a URL")
+    url = f"https://{host}{path}"
+    assert_public_http_url(url, context="pinecone")
+    return url
 
 
 # ============================================================================
@@ -490,7 +502,7 @@ def pinecone_upsert(
     if metadata:
         vector["metadata"] = metadata
     response = requests.post(
-        f"https://{index_host}/vectors/upsert",
+        _pinecone_url(index_host, "/vectors/upsert"),
         headers={"Api-Key": api_key, "Content-Type": "application/json"},
         json={"vectors": [vector], "namespace": namespace or "default"},
         timeout=_HTTP_TIMEOUT,
@@ -568,7 +580,7 @@ def pinecone_query(
     if not isinstance(vector, list) or not vector:
         raise ValueError("pinecone_query: vector must be a non-empty array")
     response = requests.post(
-        f"https://{index_host}/query",
+        _pinecone_url(index_host, "/query"),
         headers={"Api-Key": api_key, "Content-Type": "application/json"},
         json={
             "vector": vector,

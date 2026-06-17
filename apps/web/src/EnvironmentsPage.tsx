@@ -1,10 +1,34 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { api, runnerPoolsApi } from "./api";
+import { errorMessage } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { HomeHeader } from "./HomeHeader";
 import { PackageDrawer } from "./PackageDrawer";
-import type { Environment, RunnerPoolInfo, SystemSettings } from "./types";
+import {
+  useCreateEnvironmentMutation,
+  useDeleteEnvironmentMutation,
+  useEnvironments,
+  useRebuildEnvironmentMutation,
+  useRunnerPools,
+  useSystemSettings,
+  useUpdateEnvironmentMutation,
+} from "./queries";
+import { RunnerPoolSelect } from "./RunnerPoolSelect";
+import { useEntitlements } from "./entitlements";
+import { useToast } from "./ToastProvider";
+import { useModalA11y } from "./useModalA11y";
+import type { Environment, RunnerPoolInfo } from "./types";
+
+const BACKEND_BADGE: Record<string, { label: string; color: string }> = {
+  venv:   { label: "venv",   color: "#22c55e" },
+  conda:  { label: "conda",  color: "#3b82f6" },
+  pixi:   { label: "pixi",   color: "#14b8a6" },
+  docker: { label: "docker", color: "#a855f7" },
+};
+
+type BackendTab = "venv" | "conda" | "pixi";
+
+const BUILD_POLL_TIMEOUT_MS = 20 * 60 * 1000;
 
 const DESCRIPTION_HELP =
   "Optional notes for your team — what this environment is for, who owns it, gotchas. Shown in the env card.";
@@ -21,37 +45,43 @@ const SPAWN_HELP =
 const RUNNER_POOL_HELP =
   "Where workflows using this environment execute. Local (in-process) runs on the API host. Bind a remote runner pool to offload execution to registered agent/Docker/Kubernetes runners. A deployment or workflow-level pool override still takes precedence.";
 
-function PoolSelect({
-  pools,
-  value,
-  onChange,
-}: {
-  pools: RunnerPoolInfo[];
-  value: string | null;
-  onChange: (v: string | null) => void;
-}) {
-  return (
-    <>
-      <label className="field-label">
-        Execution target <InfoTip text={RUNNER_POOL_HELP} />
-      </label>
-      <select
-        className="field-input"
-        value={value ?? ""}
-        onChange={(e) => onChange(e.target.value || null)}
-      >
-        <option value="">Local (in-process)</option>
-        {pools.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name} ({p.provider} · {p.online_count}/{p.runner_count} online)
-          </option>
-        ))}
-      </select>
-    </>
-  );
-}
 
 type PoolMode = "fixed" | "elastic" | "spawn";
+
+function LogIcon({ envName, log }: { envName: string; log: string }) {
+  const [show, setShow] = useState(false);
+  const tail = log.split("\n").slice(-14).join("\n");
+
+  function download() {
+    const blob = new Blob([log], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${envName.replace(/[^a-z0-9_-]/gi, "_")}-build.log`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <span
+      className="env-log-icon"
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
+    >
+      <button type="button" className="env-log-btn" onClick={download} title="Click to download full log">
+        ≡
+      </button>
+      {show && (
+        <div className="env-log-tooltip">
+          <pre>{tail}</pre>
+          <p className="env-log-tooltip-hint">Click to download full log</p>
+        </div>
+      )}
+    </span>
+  );
+}
 
 function InfoTip({ text }: { text: string }) {
   return (
@@ -78,6 +108,14 @@ function formatBytes(value: number | null | undefined): string {
     i += 1;
   }
   return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
+}
+
+function scrollToEnvironment(envId: string): void {
+  const el = document.getElementById(`env-card-${envId}`);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  el.classList.add("env-card--flash");
+  window.setTimeout(() => el.classList.remove("env-card--flash"), 1800);
 }
 
 function PoolModeFields({
@@ -267,6 +305,8 @@ function CreateEnvModal({
   pools: RunnerPoolInfo[];
 }) {
   const [name, setName] = useState("");
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
   const [python, setPython] = useState("3.12");
   const [description, setDescription] = useState("");
   const [poolId, setPoolId] = useState<string | null>(null);
@@ -277,6 +317,10 @@ function CreateEnvModal({
   const [spawnMax, setSpawnMax] = useState(4);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [backendTab, setBackendTab] = useState<BackendTab>("venv");
+  const [channelInput, setChannelInput] = useState("conda-forge");
+  const [indexUrlInput, setIndexUrlInput] = useState("");
+  const createEnvironment = useCreateEnvironmentMutation();
 
   async function submit() {
     if (!name.trim() || busy) return;
@@ -284,11 +328,21 @@ function CreateEnvModal({
     setError("");
     try {
       const pool = packPool(mode, fixedSize, elasticMin, elasticMax, spawnMax);
-      await api.createEnvironment({
+      const channelList = channelInput.split(",").map((c) => c.trim()).filter(Boolean);
+      const indexUrlList = indexUrlInput.split(",").map((u) => u.trim()).filter(Boolean);
+      const backend_config =
+        backendTab === "conda" || backendTab === "pixi"
+          ? { channels: channelList }
+          : backendTab === "venv" && indexUrlList.length > 0
+          ? { index_urls: indexUrlList }
+          : {};
+      await createEnvironment.mutateAsync({
         name: name.trim(),
         python_version: python,
         description: description.trim(),
         runner_pool_id: poolId,
+        backend: backendTab,
+        backend_config,
         ...pool,
       });
       onCreated();
@@ -300,9 +354,30 @@ function CreateEnvModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>New environment</h2>
-        <p className="muted">A custom Python venv your workflows can run in.</p>
+      <div
+        className="modal"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-env-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id="create-env-title">New environment</h2>
+
+        <div className="backend-tabs">
+          {(["venv", "conda", "pixi"] as BackendTab[]).map((b) => (
+            <button
+              key={b}
+              type="button"
+              className={`backend-tab${backendTab === b ? " backend-tab--active" : ""}`}
+              onClick={() => setBackendTab(b)}
+            >
+              {b === "venv" ? "uv + venv" : b}
+            </button>
+          ))}
+        </div>
+        <div className="backend-coming-soon">Docker backend coming soon</div>
 
         <label className="field-label">Name</label>
         <input
@@ -336,7 +411,45 @@ function CreateEnvModal({
           onChange={(e) => setDescription(e.target.value)}
         />
 
-        <PoolSelect pools={pools} value={poolId} onChange={setPoolId} />
+        {(backendTab === "conda" || backendTab === "pixi") && (
+          <>
+            <label className="field-label">
+              Channels <span className="muted">(comma-separated)</span>
+            </label>
+            <input
+              className="field-input"
+              placeholder="conda-forge, defaults"
+              value={channelInput}
+              onChange={(e) => setChannelInput(e.target.value)}
+            />
+            {backendTab === "pixi" && (
+              <p className="field-hint muted">
+                Suffix packages with <code>@ pypi</code> to install from PyPI.
+              </p>
+            )}
+          </>
+        )}
+
+        {backendTab === "venv" && (
+          <>
+            <label className="field-label">
+              Extra index URLs <span className="muted">(comma-separated, optional)</span>
+            </label>
+            <input
+              className="field-input"
+              placeholder="https://download.pytorch.org/whl/cu121"
+              value={indexUrlInput}
+              onChange={(e) => setIndexUrlInput(e.target.value)}
+            />
+          </>
+        )}
+
+        <RunnerPoolSelect
+          pools={pools}
+          value={poolId}
+          onChange={setPoolId}
+          label={<>Execution target <InfoTip text={RUNNER_POOL_HELP} /></>}
+        />
 
         <PoolModeFields
           mode={mode}
@@ -388,6 +501,8 @@ function EditEnvModal({
   pools: RunnerPoolInfo[];
 }) {
   const initialMode = modeFor(env);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
   const [name, setName] = useState(env.name);
   const [description, setDescription] = useState(env.description || "");
   const [poolId, setPoolId] = useState<string | null>(env.runner_pool_id);
@@ -408,6 +523,7 @@ function EditEnvModal({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const updateEnvironment = useUpdateEnvironmentMutation();
 
   async function save() {
     if (busy) return;
@@ -415,12 +531,15 @@ function EditEnvModal({
     setError("");
     try {
       const pool = packPool(mode, fixedSize, elasticMin, elasticMax, spawnMax);
-      await api.updateEnvironment(env.id, {
-        name: name.trim(),
-        description: description.trim(),
-        runner_pool_id: poolId,
-        runner_pool_set: true,
-        ...pool,
+      await updateEnvironment.mutateAsync({
+        id: env.id,
+        body: {
+          name: name.trim(),
+          description: description.trim(),
+          runner_pool_id: poolId,
+          runner_pool_set: true,
+          ...pool,
+        },
       });
       onSaved();
     } catch (err) {
@@ -431,8 +550,16 @@ function EditEnvModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Edit environment</h2>
+      <div
+        className="modal"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-env-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id="edit-env-title">Edit environment</h2>
         <label className="field-label">Name</label>
         <input
           className="field-input"
@@ -449,7 +576,12 @@ function EditEnvModal({
           onChange={(e) => setDescription(e.target.value)}
         />
 
-        <PoolSelect pools={pools} value={poolId} onChange={setPoolId} />
+        <RunnerPoolSelect
+          pools={pools}
+          value={poolId}
+          onChange={setPoolId}
+          label={<>Execution target <InfoTip text={RUNNER_POOL_HELP} /></>}
+        />
 
         <PoolModeFields
           mode={mode}
@@ -514,6 +646,8 @@ function EnvCard({
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const rebuildEnvironment = useRebuildEnvironmentMutation();
+  const deleteEnvironment = useDeleteEnvironmentMutation();
   const effectiveWorkers = env.effective_pool_max || env.runner_pool_size || 1;
   const maxRam =
     env.worker_rss_estimate_bytes && env.worker_rss_estimate_bytes > 0
@@ -521,14 +655,14 @@ function EnvCard({
       : null;
 
   async function rebuild() {
-    await api.rebuildEnvironment(env.id);
+    await rebuildEnvironment.mutateAsync(env.id);
     onChanged();
   }
 
   async function del() {
     setDeleteBusy(true);
     try {
-      await api.deleteEnvironment(env.id);
+      await deleteEnvironment.mutateAsync(env.id);
       setConfirmDelete(false);
       onChanged();
     } finally {
@@ -537,13 +671,24 @@ function EnvCard({
   }
 
   return (
-    <article className="env-card">
+    <article className="env-card" id={`env-card-${env.id}`} tabIndex={-1}>
       <div className="env-card-head">
         <div className="env-title">
           <h3>{env.name}</h3>
           {env.is_global && <span className="env-global">global</span>}
+          {(() => {
+            const b = BACKEND_BADGE[env.backend] ?? { label: env.backend, color: "#6b7280" };
+            return (
+              <span className="env-backend-badge" style={{ background: b.color }}>
+                {b.label}
+              </span>
+            );
+          })()}
         </div>
-        <span className={`env-status status-${env.status}`}>{env.status}</span>
+        <div className="env-card-head-right">
+          {env.status_detail && <LogIcon envName={env.name} log={env.status_detail} />}
+          <span className={`env-status status-${env.status}`}>{env.status.toUpperCase()}</span>
+        </div>
       </div>
       <div className="env-meta">
         Python {env.python_version} · {poolLabel(env)} ·{" "}
@@ -577,10 +722,6 @@ function EnvCard({
         </div>
       </div>
       {env.description && <p className="env-description">{env.description}</p>}
-
-      {env.status_detail && (env.status === "error" || env.status === "building") && (
-        <pre className="env-log">{env.status_detail}</pre>
-      )}
 
       <div className="env-actions">
         <button className="btn btn-sm btn-primary" onClick={() => setShowPackages(true)}>
@@ -636,44 +777,96 @@ function EnvCard({
 }
 
 export function EnvironmentsPage() {
-  const [environments, setEnvironments] = useState<Environment[] | null>(null);
-  const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(
-    null,
-  );
-  const [pools, setPools] = useState<RunnerPoolInfo[]>([]);
-  const [error, setError] = useState("");
   const [modal, setModal] = useState(false);
+  const { notify } = useToast();
+  const ent = useEntitlements();
+  // Track previous statuses to fire toasts on transitions
+  const prevStatuses = useRef<Record<string, string>>({});
+  const buildPollStarted = useRef<Record<string, number>>({});
+  const buildPollTimedOut = useRef<Set<string>>(new Set());
+  const environmentsQuery = useEnvironments({
+    refetchInterval: (query) => {
+      const building =
+        query.state.data?.filter(
+          (env) => env.status === "pending" || env.status === "building",
+        ) ?? [];
+      if (building.length === 0) return false;
+      return building.every((env) => buildPollTimedOut.current.has(env.id))
+        ? false
+        : 2500;
+    },
+  });
+  const poolsQuery = useRunnerPools();
+  const settingsQuery = useSystemSettings();
+  const environments = environmentsQuery.data ?? null;
+  const systemSettings = settingsQuery.data ?? null;
+  const pools = poolsQuery.data ?? [];
+  const error =
+    environmentsQuery.isError && !environmentsQuery.data
+      ? errorMessage(environmentsQuery.error)
+      : "";
 
-  function load() {
-    api
-      .listEnvironments()
-      .then(setEnvironments)
-      .catch((err) => setError(String(err)));
+  function refreshEnvironments() {
+    void environmentsQuery.refetch();
   }
 
-  useEffect(load, []);
+  // Fire toasts when env build status transitions.
   useEffect(() => {
-    runnerPoolsApi
-      .list()
-      .then(setPools)
-      .catch(() => {
-        // Runner pools are optional context; absence just means local-only.
-      });
-  }, []);
-  useEffect(() => {
-    api.getSystemSettings().then(setSystemSettings).catch(() => {
-      // Workspace settings are best-effort context; missing is fine.
-    });
-  }, []);
+    if (!environments) return;
+    const prev = prevStatuses.current;
+    for (const env of environments) {
+      const was = prev[env.id];
+      const is = env.status;
+      const wasBuilding = was === "pending" || was === "building";
+      const isBuilding = is === "pending" || is === "building";
+      if ((!was || was === "ready" || was === "error") && isBuilding) {
+        notify(`Building ${env.name}…`, "info", {
+          label: "View logs",
+          onClick: () => scrollToEnvironment(env.id),
+        });
+      } else if (wasBuilding && is === "ready") {
+        notify(`${env.name} is ready.`, "success");
+      } else if (wasBuilding && is === "error") {
+        notify(`${env.name} failed to build — check the logs.`, "error", {
+          label: "View logs",
+          onClick: () => scrollToEnvironment(env.id),
+        });
+      }
+      prev[env.id] = is;
+    }
+  }, [environments, notify]);
 
   // Poll while any environment is still building.
   useEffect(() => {
-    if (!environments?.some((e) => e.status === "pending" || e.status === "building")) {
+    const building = environments?.filter((e) => e.status === "pending" || e.status === "building") ?? [];
+    if (building.length === 0) {
+      buildPollStarted.current = {};
+      buildPollTimedOut.current.clear();
       return;
     }
-    const timer = window.setTimeout(load, 2500);
-    return () => window.clearTimeout(timer);
-  }, [environments]);
+
+    const now = Date.now();
+    const activeIds = new Set(building.map((env) => env.id));
+    for (const id of Object.keys(buildPollStarted.current)) {
+      if (!activeIds.has(id)) {
+        delete buildPollStarted.current[id];
+        buildPollTimedOut.current.delete(id);
+      }
+    }
+    for (const env of building) {
+      buildPollStarted.current[env.id] ??= now;
+      if (
+        now - buildPollStarted.current[env.id] > BUILD_POLL_TIMEOUT_MS &&
+        !buildPollTimedOut.current.has(env.id)
+      ) {
+        buildPollTimedOut.current.add(env.id);
+        notify(`${env.name} is still building after 20 minutes.`, "error", {
+          label: "View logs",
+          onClick: () => scrollToEnvironment(env.id),
+        });
+      }
+    }
+  }, [environments, notify]);
 
   const workspaceCap = systemSettings?.max_concurrent_runs ?? null;
   const rssSoftBudget = systemSettings?.worker_rss_soft_budget_bytes ?? 0;
@@ -700,7 +893,16 @@ export function EnvironmentsPage() {
               <span className="home-count">{environments.length}</span>
             )}
           </h1>
-          <button className="btn btn-primary" onClick={() => setModal(true)}>
+          <button
+            className="btn btn-primary"
+            onClick={() => setModal(true)}
+            disabled={ent.atLimit("environments", environments?.length ?? 0)}
+            title={
+              ent.atLimit("environments", environments?.length ?? 0)
+                ? `Environment limit reached on the ${ent.edition} edition — upgrade to add more.`
+                : undefined
+            }
+          >
             New environment
           </button>
         </div>
@@ -744,7 +946,7 @@ export function EnvironmentsPage() {
                 <EnvCard
                   key={env.id}
                   env={env}
-                  onChanged={load}
+                  onChanged={refreshEnvironments}
                   workspaceCap={workspaceCap}
                   rssSoftBudget={rssSoftBudget}
                   pools={pools}
@@ -760,7 +962,7 @@ export function EnvironmentsPage() {
           onClose={() => setModal(false)}
           onCreated={() => {
             setModal(false);
-            load();
+            refreshEnvironments();
           }}
           workspaceCap={workspaceCap}
           rssSoftBudget={rssSoftBudget}

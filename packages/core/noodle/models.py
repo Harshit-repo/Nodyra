@@ -32,6 +32,17 @@ class CredentialSpec(BaseModel):
     test_service: str | None = None
 
 
+class SystemRequirement(BaseModel):
+    """An OS-level dependency a node needs (e.g. ghostscript, libzbar)."""
+
+    name: str
+    apt: str = ""
+    brew: str = ""
+    windows: str = ""
+    dockerfile_hint: str = ""
+    note: str = ""
+
+
 class ParamSpec(BaseModel):
     """A configurable node parameter, edited in the inspector (not wired)."""
 
@@ -109,6 +120,35 @@ class PortSpec(BaseModel):
     data_kind: PortDataKind = PortDataKind.any
 
 
+class IntegrationOperationManifest(BaseModel):
+    """One selectable operation within an integration resource (e.g. "Append")."""
+
+    id: str
+    name: str
+    description: str = ""
+
+
+class IntegrationResourceManifest(BaseModel):
+    """A resource grouping of operations within an integration (e.g. "Values")."""
+
+    id: str
+    name: str
+    operations: list[IntegrationOperationManifest] = Field(default_factory=list)
+
+
+class IntegrationManifest(BaseModel):
+    """Resource → operation map for a consolidated integration node.
+
+    Present only on the single node generated per integration provider (Google
+    Sheets, Slack, ...). The editor reads it to render the two-level
+    Resource/Operation selector; the rest of the params reshape via each
+    ParamSpec's ``display_when`` once a resource+operation is chosen.
+    """
+
+    provider: str
+    resources: list[IntegrationResourceManifest] = Field(default_factory=list)
+
+
 class NodeManifest(BaseModel):
     """Describes a node type. Generated from the decorated function's signature."""
 
@@ -127,7 +167,14 @@ class NodeManifest(BaseModel):
     inputs: list[PortSpec] = Field(default_factory=list)
     params: list[ParamSpec] = Field(default_factory=list)
     outputs: list[PortSpec] = Field(default_factory=list)
+    # Maps output port name → {param_name, param_value_str → data_kind}.
+    # Example: {"main": {"param": "output_as_dataset", "true": "dataset", "false": "any"}}
+    param_output_kinds: dict[str, dict[str, str]] = Field(default_factory=dict)
     requirements: list[str] = Field(default_factory=list)
+    system_requirements: list[SystemRequirement] = Field(default_factory=list)
+    # Set only on consolidated integration nodes: drives the editor's
+    # Resource/Operation selector. None for ordinary nodes.
+    integration: IntegrationManifest | None = None
 
 
 class Position(BaseModel):

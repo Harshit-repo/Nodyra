@@ -13,7 +13,11 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-      - run: uv sync --all-packages
+      # Guard the committed lockfile: fail if uv.lock has drifted from the
+      # pyproject files. Without this the Docker build (uv sync --locked) can
+      # break on a clean clone while CI's plain `uv sync` silently passes.
+      - run: uv lock --check
+      - run: uv sync --locked --all-packages
       - run: uv run ruff check .
       # --timeout guards against a hung test wedging the whole run (see the
       # event-broker fix); 300s is generous for the subprocess-spawning tests.
@@ -62,6 +66,33 @@ jobs:
           python-version: "3.12"
       - run: uv sync --all-packages
 
+      # Authoritative schema-drift check: the migrations must produce a schema
+      # that matches the ORM models on Postgres. SQLite can't reflect FKs /
+      # constraints reliably, so this is the source of truth (it caught ALM-1
+      # nullable drift and ALM-2 missing FK constraints + index). Runs against a
+      # dedicated DB so it never collides with the pytest test database.
+      - name: Alembic migration drift check (Postgres, required)
+        working-directory: apps/api
+        env:
+          DATABASE_URL: postgresql+asyncpg://noodle:noodle@localhost:5432/noodle_alembic
+        run: |
+          uv run python - <<'PY'
+          import asyncio, asyncpg
+          async def main():
+              conn = await asyncpg.connect(
+                  host="localhost", user="noodle", password="noodle", database="noodle"
+              )
+              try:
+                  await conn.execute("CREATE DATABASE noodle_alembic")
+              except asyncpg.DuplicateDatabaseError:
+                  pass
+              finally:
+                  await conn.close()
+          asyncio.run(main())
+          PY
+          uv run alembic upgrade head
+          uv run alembic check
+
       # REQUIRED — verified green on Postgres. Gates the lane.
       #   * test_run_queue: the durable queue incl. the Postgres-only
       #     SKIP LOCKED lease path (the crown jewel that SQLite can't cover).
@@ -82,6 +113,37 @@ jobs:
         run: >-
           uv run pytest --timeout=300 --timeout-method=thread apps/api/tests
 
+  # Security lane: dependency CVE audit, static security linting, and a scoped
+  # type check of the security-critical modules. pip-audit/bandit start as
+  # advisory so they surface findings without blocking merges; flip
+  # continue-on-error off once each backlog is clear.
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --all-packages
+      - name: pip-audit — dependency CVEs (advisory)
+        continue-on-error: true
+        run: uvx pip-audit
+      - name: bandit — static security lint (advisory)
+        continue-on-error: true
+        run: >-
+          uvx bandit -ll -r
+          apps/api/app
+          packages/core/noodle
+          packages/nodes/noodle_nodes
+      - name: mypy — security-critical modules (advisory)
+        continue-on-error: true
+        run: >-
+          uvx mypy --ignore-missing-imports --follow-imports=skip
+          apps/api/app/services/crypto.py
+          apps/api/app/services/rate_limit.py
+          apps/api/app/logging.py
+          apps/api/app/security.py
+
   web:
     runs-on: ubuntu-latest
     defaults:
@@ -95,3 +157,33 @@ jobs:
       - run: npm install
       - run: npm run typecheck
       - run: npm run build
+
+  # Critical-path browser smoke: first-user setup -> workflow authoring ->
+  # run-and-observe, against a real API (fresh SQLite DB, in-process broker).
+  # The e2e launcher (apps/web/e2e/start-api.mjs) migrates then boots uvicorn
+  # from the repo-root .venv that `uv sync` creates.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+        working-directory: apps/web
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+      - run: npm run test:e2e
+        working-directory: apps/web
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+          retention-days: 7

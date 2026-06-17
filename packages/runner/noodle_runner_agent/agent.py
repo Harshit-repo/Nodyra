@@ -96,8 +96,14 @@ class RunnerAgent:
                 else:
                     fut.set_result(msg.get("result"))
 
-    async def _broker_subworkflow(self, run_id: str, workflow_id: str, input_value: Any) -> Any:
-        """Ask the API to run a sub-workflow and return its result."""
+    async def _broker_subworkflow(self, run_id: str, payload: dict) -> Any:
+        """Ask the API to run a sub-workflow and return its result.
+
+        ``payload`` is the full SubworkflowCall payload from the runtime
+        (workflow_id, input, use_published, parent_run_id, depth,
+        call_chain) — forwarded verbatim so cycle/depth context survives
+        the WS hop (A3).
+        """
         callback_id = uuid.uuid4().hex
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         self._pending_calls[callback_id] = fut
@@ -105,8 +111,7 @@ class RunnerAgent:
             "type": "call_workflow",
             "run_id": run_id,
             "callback_id": callback_id,
-            "workflow_id": workflow_id,
-            "input": input_value,
+            **payload,
         })
         try:
             return await fut
@@ -130,6 +135,7 @@ class RunnerAgent:
                     str(env.get("python_version") or "3.12"),
                     list(env.get("packages") or []),
                     packages_hash,
+                    wheel_index_url=self._cfg.wheel_index_url,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.exception("env build failed run_id=%s", run_id)
@@ -148,8 +154,8 @@ class RunnerAgent:
                     "type": "run_event", "run_id": run_id, "event": event,
                 })
 
-            async def broker(workflow_id: str, input_value: Any) -> Any:
-                return await self._broker_subworkflow(run_id, workflow_id, input_value)
+            async def broker(payload: dict) -> Any:
+                return await self._broker_subworkflow(run_id, payload)
 
             status = "error"
             try:
@@ -166,6 +172,9 @@ class RunnerAgent:
                     call_workflow=broker,
                     pause_on_approval=bool(msg.get("pause_on_approval")),
                     agent_action_resume=msg.get("agent_action_resume") or {},
+                    artifact_key_prefix=str(msg.get("artifact_key_prefix") or ""),
+                    org_limits=msg.get("org_limits") or {},
+                    subworkflow_meta=msg.get("subworkflow_meta") or {},
                 )
             except asyncio.CancelledError:
                 logger.info("run %s cancelled", run_id)
@@ -211,6 +220,15 @@ def _cmd_start(args: argparse.Namespace) -> None:
         raise SystemExit(
             "No config found. Run 'noodle-runner register ...' first."
         )
+    # uv emits box-drawing characters (╰─▶) in its resolver output; on a
+    # Windows console defaulting to cp1252 that crashes the logging StreamHandler
+    # with UnicodeEncodeError mid-build, burying the real env-build error. Make
+    # both streams UTF-8 tolerant before installing the handler.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):  # pragma: no cover - non-TextIO
+            pass
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",

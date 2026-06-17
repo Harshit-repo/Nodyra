@@ -1,0 +1,99 @@
+Noodle Enterprise Edition License
+
+Version 1.0
+
+Copyright (c) 2026-present Harshit Sharma and the Noodle contributors
+("Licensor"). All rights reserved.
+
+## 1. Scope
+
+This license governs the "Enterprise Software": the portions of the Noodle
+repository that implement licensing/enforcement and the paid Enterprise and Pro
+features. This includes, without limitation:
+
+  - the license verification, gating, and key-minting code, including
+    apps/api/app/services/licensing.py and apps/api/tools/mint_license.py;
+  - multi-tenancy / organizations, single sign-on (SSO/SAML/OIDC), SCIM
+    provisioning, audit-log export, external secrets/KMS integration,
+    dedicated runner pools, advanced RBAC, and any successor features; and
+  - any file that carries a "Noodle Enterprise" notice or resides under an
+    `ee/` directory.
+
+The Enterprise Software is provided in source form for transparency and ease of
+deployment. It is NOT open source and is NOT licensed under the Noodle
+Sustainable Use License (LICENSE) or any other open-source or free-software
+license. The rest of the repository is licensed under LICENSE.
+
+## 2. Grant of rights
+
+Subject to your compliance with this license and your payment of the applicable
+fees, the Licensor grants you a non-exclusive, non-transferable,
+non-sublicensable, revocable license to use the Enterprise Software, and to
+enable the corresponding features, ONLY:
+
+  (a) for the edition and term covered by a valid license key issued to you by
+      the Licensor; and
+  (b) within the resource limits encoded in that license key; and
+  (c) for your own internal business purposes.
+
+When you do not hold a valid, current license key, you have no right to use,
+enable, or benefit from the Enterprise Software, and any feature it gates must
+remain disabled.
+
+## 3. Restrictions
+
+You may NOT, in whole or in part:
+
+  (a) use, enable, or access any Enterprise feature without a valid license key
+      that grants that feature for the period of use;
+  (b) move, change, disable, defeat, circumvent, bypass, or otherwise interfere
+      with any license-key check, signature verification, expiry, or resource
+      limit in the software; or modify, recompile, fork, or distribute the
+      software in a way that causes a gated feature to operate without a valid
+      key;
+  (c) remove, alter, or obscure any copyright, license, or proprietary notice;
+  (d) sublicense, sell, rent, lease, distribute, or otherwise provide the
+      Enterprise Software to any third party, or provide it as a hosted or
+      managed service;
+  (e) use the Enterprise Software to develop a competing product, or extract
+      its private signing keys.
+
+Any of the above is both a breach of this license and an infringement of the
+Licensor's copyright.
+
+## 4. Ownership
+
+The Enterprise Software is licensed, not sold. The Licensor retains all right,
+title, and interest in and to the Enterprise Software, including all
+intellectual property rights.
+
+## 5. Term and termination
+
+This license is effective for the term of your license key and terminates
+automatically if you breach it or upon expiry of the key. On termination you
+must cease all use of the Enterprise features. Sections 3, 4, 6, and 7 survive
+termination.
+
+## 6. No warranty
+
+The Enterprise Software is provided "AS IS", without warranty of any kind,
+express or implied, including warranties of merchantability, fitness for a
+particular purpose, and non-infringement.
+
+## 7. Limitation of liability
+
+To the maximum extent permitted by law, the Licensor will not be liable for any
+indirect, incidental, special, consequential, or punitive damages, or any loss
+of profits or revenue, arising out of or related to this license or the
+Enterprise Software.
+
+## 8. Contact
+
+For commercial licensing, pricing, or questions: sharma.har97@gmail.com
+
+----------------------------------------------------------------------------
+NOTE FOR THE LICENSOR: have an attorney review this before publishing. This is
+a starting point, not legal advice. Keep the list in Section 1 in sync with the
+files you actually gate (and consider moving them under an `ee/` directory so
+the boundary is unambiguous).
+----------------------------------------------------------------------------

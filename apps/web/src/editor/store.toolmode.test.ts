@@ -14,11 +14,57 @@ function param(name: string, def: unknown): ParamSpec {
   };
 }
 
-function manifest(id: string): NodeManifest {
+function manifest(
+  id: string,
+  params: ParamSpec[] = [param("url", "https://default"), param("method", "GET")],
+): NodeManifest {
   return {
     id, name: id, category: "Core", version: "1", description: "", icon: null,
     inputs: [port("input")], outputs: [port("main")],
-    params: [param("url", "https://default"), param("method", "GET")],
+    params,
+  };
+}
+
+function aiMemoryManifest(): NodeManifest {
+  return {
+    id: "ai_buffer_memory",
+    name: "AI Buffer Memory",
+    category: "AI",
+    version: "1",
+    description: "",
+    icon: null,
+    inputs: [],
+    outputs: [port("memory", "ai_memory")],
+    params: [],
+  };
+}
+
+function aiAgentManifest(): NodeManifest {
+  return {
+    id: "ai_agent_v2",
+    name: "Agent",
+    category: "AI",
+    version: "1",
+    description: "",
+    icon: null,
+    inputs: [port("memory", "ai_memory"), port("tool", "ai_tool")],
+    outputs: [port("main", "main")],
+    params: [],
+  };
+}
+
+function aiToolManifest(): NodeManifest {
+  return {
+    id: "ai_http_tool",
+    name: "AI HTTP Tool",
+    category: "AI",
+    version: "1",
+    description: "",
+    icon: null,
+    role: "tool",
+    inputs: [],
+    outputs: [port("tool", "ai_tool")],
+    params: [],
   };
 }
 
@@ -62,6 +108,157 @@ describe("store tool-mode round-trip", () => {
     const node = useEditor.getState().toGraph().nodes[0];
     expect(node.tool_mode).toBe(true);
     expect(node.tool_name).toBe("fetch");
+  });
+
+  it("enabling tool mode seeds blank core params as From-AI arguments", () => {
+    useEditor.getState().setManifests([
+      manifest("execute_command", [param("command", ""), param("method", "GET")]),
+    ]);
+    useEditor.getState().loadGraph({
+      ...GRAPH,
+      nodes: [
+        {
+          ...GRAPH.nodes[0],
+          type: "execute_command",
+          disabled: true,
+          tool_mode: false,
+          params: { command: "", method: "GET" },
+        },
+      ],
+    });
+
+    useEditor.getState().updateNodeSettings("n1", { toolMode: true });
+
+    const node = useEditor.getState().toGraph().nodes[0];
+    expect(node.params.command).toContain("$fromAI('command'");
+    expect(node.params.method).toBe("GET");
+    expect(node.disabled).toBe(false);
+  });
+
+  it("connecting a disabled AI supplier to an Agent AI port re-enables it", () => {
+    useEditor.getState().setManifests([aiMemoryManifest(), aiAgentManifest()]);
+    useEditor.getState().loadGraph({
+      nodes: [
+        {
+          ...GRAPH.nodes[0],
+          id: "memory",
+          type: "ai_buffer_memory",
+          disabled: true,
+          tool_mode: false,
+          params: {},
+        },
+        {
+          ...GRAPH.nodes[0],
+          id: "agent",
+          type: "ai_agent_v2",
+          disabled: false,
+          tool_mode: false,
+          params: {},
+        },
+      ],
+      edges: [],
+    });
+
+    const result = useEditor.getState().onConnect({
+      source: "memory",
+      sourceHandle: "memory",
+      target: "agent",
+      targetHandle: "memory",
+    });
+
+    expect(result.ok).toBe(true);
+    const memoryNode = useEditor.getState().toGraph().nodes.find((node) => node.id === "memory");
+    expect(memoryNode?.disabled).toBe(false);
+  });
+
+  it("allows multiple tools to connect to an Agent tool port", () => {
+    useEditor.getState().setManifests([aiToolManifest(), aiAgentManifest()]);
+    useEditor.getState().loadGraph({
+      nodes: [
+        {
+          ...GRAPH.nodes[0],
+          id: "toolA",
+          type: "ai_http_tool",
+          disabled: false,
+          tool_mode: false,
+          params: {},
+        },
+        {
+          ...GRAPH.nodes[0],
+          id: "toolB",
+          type: "ai_http_tool",
+          disabled: false,
+          tool_mode: false,
+          params: {},
+        },
+        {
+          ...GRAPH.nodes[0],
+          id: "agent",
+          type: "ai_agent_v2",
+          disabled: false,
+          tool_mode: false,
+          params: {},
+        },
+      ],
+      edges: [],
+    });
+
+    expect(useEditor.getState().onConnect({
+      source: "toolA",
+      sourceHandle: "tool",
+      target: "agent",
+      targetHandle: "tool",
+    }).ok).toBe(true);
+    expect(useEditor.getState().onConnect({
+      source: "toolB",
+      sourceHandle: "tool",
+      target: "agent",
+      targetHandle: "tool",
+    }).ok).toBe(true);
+
+    const edges = useEditor.getState().toGraph().edges.filter(
+      (edge) => edge.target === "agent" && edge.target_input === "tool",
+    );
+    expect(edges.map((edge) => edge.source).sort()).toEqual(["toolA", "toolB"]);
+  });
+
+  it("self-heals existing disabled Agent AI dependencies", () => {
+    useEditor.getState().setManifests([aiMemoryManifest(), aiAgentManifest()]);
+    useEditor.getState().loadGraph({
+      nodes: [
+        {
+          ...GRAPH.nodes[0],
+          id: "memory",
+          type: "ai_buffer_memory",
+          disabled: true,
+          tool_mode: false,
+          params: {},
+        },
+        {
+          ...GRAPH.nodes[0],
+          id: "agent",
+          type: "ai_agent_v2",
+          disabled: false,
+          tool_mode: false,
+          params: {},
+        },
+      ],
+      edges: [
+        {
+          id: "memory-agent",
+          source: "memory",
+          source_output: "memory",
+          target: "agent",
+          target_input: "memory",
+        },
+      ],
+    });
+
+    const changed = useEditor.getState().autoEnableAgentDependencies();
+
+    expect(changed).toBe(1);
+    const memoryNode = useEditor.getState().toGraph().nodes.find((node) => node.id === "memory");
+    expect(memoryNode?.disabled).toBe(false);
   });
 
   it("toggling tool mode OFF reverts From-AI params to their defaults", () => {

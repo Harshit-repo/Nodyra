@@ -1,13 +1,14 @@
 # Deployment
 
-> **⚠️ Trust boundary — read before exposing Noodle.** Workflow Code nodes and
-> uploaded code modules run **arbitrary Python in the worker process on the
-> Noodle host**. Deploy Noodle for **single-tenant, trusted authors** only:
-> put it behind authentication, restrict edit/deploy access to people you trust
-> to run code on the host, and never offer it as a multi-tenant builder to
-> untrusted users. Multi-tenant isolation (containers / gVisor / Firecracker per
-> run) is a planned capability of the remote-runner seam, not something the warm
-> local pools provide today. See [SECURITY.md](../SECURITY.md).
+> **⚠️ Trust boundary — read before exposing Noodle.** With the default
+> `EXECUTION_SANDBOX=off`, workflow Code nodes and uploaded code modules run
+> **arbitrary Python in the worker process on the Noodle host** — deploy for
+> **single-tenant, trusted authors** only: put it behind authentication and
+> restrict edit/deploy access to people you trust to run code on the host.
+> To serve untrusted authors, enable [sandboxed
+> execution](#sandboxed-execution) (per-run hardened containers, gVisor where
+> available); multi-tenancy refuses to start without it. See
+> [SECURITY.md](../SECURITY.md).
 
 ## Local development
 
@@ -31,9 +32,27 @@ compose Postgres URL.
 ## docker-compose
 
 `deploy/docker-compose.yml` brings up the full stack — Postgres, Redis, the
-API (running migrations on startup), the web dev server, and optionally the
-Celery worker + Beat for scale-out scheduling. Open <http://localhost:5173>
-after the API is healthy.
+API as a control plane (running migrations on startup, `DISPATCH_ROLE=disabled`,
+leader-elected scheduler), a dispatch worker (`DISPATCH_ROLE=worker`, executes
+runs), and the web dev server. Open <http://localhost:5173> after the API is
+healthy.
+
+### Execution topology (`DISPATCH_ROLE`)
+
+| Role | Process | Leases queue entries | Needs |
+|------|---------|----------------------|-------|
+| `inline` (default) | API | all (local + agent + docker + kubernetes) | SQLite or Postgres |
+| `disabled` | API | none — enqueues only | Postgres + Redis |
+| `worker` | `python -m app.worker_main` | local + docker | Postgres + Redis |
+
+Recommended production shape: N API replicas with `DISPATCH_ROLE=disabled` +
+`SCHEDULER_ROLE=leader`, M workers, one shared Postgres + Redis. Caveat:
+agent/kubernetes runner pools need their WebSocket-terminating API replica to
+dispatch them — keep one replica with `DISPATCH_ROLE=inline` if you use those
+pools. Workers drain gracefully on SIGTERM (stop leasing, wait
+`QUEUE_DISPATCH_SHUTDOWN_TIMEOUT_SECONDS`, then cancel); a worker lost
+mid-run is recovered by lease expiry, which requeues the entry and resets the
+run for another worker.
 
 ## Kubernetes (Helm)
 
@@ -44,8 +63,8 @@ helm install noodle deploy/helm/noodle \
   --set secret.key=$(openssl rand -hex 32)
 ```
 
-The chart deploys the API, web, worker, and a Beat replica. Postgres and
-Redis are expected to be installed separately. Enable the bundled Ingress
+The chart deploys the API (control plane), web, and the dispatch worker.
+Postgres and Redis are expected to be installed separately. Enable the bundled Ingress
 with `--set ingress.enabled=true` — it routes `/api` and `/ws` to the API
 and everything else to the web app.
 
@@ -68,7 +87,7 @@ source of truth.
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
-| `ENABLE_INPROCESS_SCHEDULER` | `true` | DB-backed cron loop runs inside the API process. Disable when running Celery Beat to avoid double-fire. |
+| `ENABLE_INPROCESS_SCHEDULER` | `true` | DB-backed cron loop runs inside the API process. Set `SCHEDULER_ROLE=leader` on multi-replica deployments so one replica owns it. |
 | `APP_TIMEZONE` | OS-detected | Fallback timezone for schedules without their own `tz`. |
 
 ### Retention & limits
@@ -175,6 +194,26 @@ Migration policy:
 - `GET /runs` (paginated, filterable) and the **Executions** page in the UI
   show every run across the system with per-node logs, timing, and outputs.
 
+### Distributed tracing (OpenTelemetry)
+
+Off by default. To enable, set on every API replica **and** worker:
+
+    OTEL_ENABLED=true
+    OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318/v1/traces   # OTLP/HTTP
+
+Each run produces one trace: `run.enqueue` (API, child of the HTTP request
+span) → `run.lease` (the worker that picked the entry up) → `run.execute` →
+one `node.execute` span per node with `noodle.node_id`, `noodle.node_type`,
+`noodle.status`, `noodle.org_id`, and `noodle.iteration_path` attributes.
+Node spans carry the engine's real start/finish timestamps, including for
+nodes executed inside runtime subprocesses — the subprocesses themselves
+need no OTel dependencies. Trace context crosses the API→worker boundary on
+the durable queue row (`run_queue.trace_context`), so split topologies get
+the same single connected trace. FastAPI requests and SQLAlchemy queries are
+auto-instrumented in the API process. When disabled, no SDK objects exist
+and every hook is a single boolean check. `/ops/runtime-mode` reports
+`otel_enabled` so you can confirm what a replica is actually running.
+
 ## Security checklist
 
 - Set `SECRET_KEY` to a strong random value. It encrypts credentials and
@@ -189,3 +228,154 @@ Migration policy:
 - `ARTIFACTS_DIR` should be on persistent storage (PVC or host volume) so
   downloads survive restarts. If you set a retention policy, files for
   pruned runs are deleted automatically.
+- **Multi-tenancy (`MULTI_TENANCY_ENABLED=true`): the API must connect to
+  Postgres as a non-superuser role without `BYPASSRLS`.** Postgres superusers
+  skip row-level security entirely, which voids the tenant-isolation backstop
+  (see migration `0042_rls` and `tests/test_tenancy_isolation_pg.py`). The
+  docker-compose default user is a superuser — fine for single-tenant, not
+  for multi-tenant. Create a dedicated app role and grant table privileges
+  instead.
+
+## Editions & licensing
+
+Noodle ships in three editions. With **no license key the instance is
+Community** and behaves exactly as an unlicensed self-hosted install, subject to
+the Community resource caps below.
+
+| Capability | Community | Pro | Enterprise |
+|---|---|---|---|
+| Environments | 3 | 10 | unlimited |
+| Runner pools | 1 | 5 | unlimited |
+| Active deployments | 3 | unlimited | unlimited |
+| Seats (users) | 2 | 10 | unlimited |
+| All nodes, MCP server, webhooks, scheduling | ✅ | ✅ | ✅ |
+| Sandboxed execution (`EXECUTION_SANDBOX`) | — | ✅ | ✅ |
+| Observability (`OTEL_ENABLED`) | — | ✅ | ✅ |
+| Multi-tenancy / organizations | — | — | ✅ |
+| SSO / SAML / SCIM, audit logs, org-KEK/KMS | — | — | ✅ |
+
+`unlimited` is represented internally as `0` (the same convention as the
+per-org quota overrides).
+
+### Applying a license
+
+A license is a signed key verified **offline** (no phone-home). Provide it either
+way — the env var wins when both are set:
+
+- **Env var:** `NOODLE_LICENSE_KEY=<key>`.
+- **UI:** *Settings → License* (admin only), which persists the key to
+  `system_settings` (`PUT /system-settings/license`).
+
+`GET /system-settings/license` returns the active edition, customer, expiry, and
+limits; `DELETE /system-settings/license` reverts to Community.
+
+### Capability reconciliation at startup
+
+Capability flags are reconciled against the license when the app boots: a flag
+set without the matching entitlement is **forced off with a logged warning**
+rather than failing to start. For example, `MULTI_TENANCY_ENABLED=true` on a
+Community instance boots single-tenant and logs `licensing: multi_tenancy_enabled
+requires the Enterprise edition; disabled`. The same applies to
+`EXECUTION_SANDBOX` and `OTEL_ENABLED` (Pro or higher). So enabling multi-tenancy
+(next section) additionally requires an Enterprise license.
+
+### Expiry
+
+An expired key **gracefully downgrades to Community** — running workflows and
+data are never touched. Creation of resources already over the Community cap is
+blocked (HTTP `402`) until the license is renewed; existing resources keep
+working.
+
+### Minting keys (vendor)
+
+Keys are signed offline with `apps/api/tools/mint_license.py`. Generate the
+keypair once (`python -m tools.mint_license keygen`), paste the public half into
+`_BAKED_PUBLIC_KEY_PEM` in `app/services/licensing.py`, and keep the private key
+secret. Mint per-customer keys with `… sign --tier pro --customer "Acme" --days
+365`.
+
+## Enabling multi-tenancy
+
+Multi-tenancy ships dormant: with `MULTI_TENANCY_ENABLED=false` (default)
+behaviour is identical to single-tenant Noodle. To enable:
+
+1. Run on **Postgres** (RLS is the DB-enforced isolation backstop; SQLite has
+   none) with a **non-superuser app role** — see the security checklist above.
+2. Apply migrations (`alembic upgrade head`); existing data lands in the
+   `default` organization and every user keeps their role there.
+3. Set `MULTI_TENANCY_ENABLED=true` and `AUTH_REQUIRED=true` (anonymous
+   requests can only ever reach the default org).
+4. Users create organizations from the org switcher in the header; the
+   creator becomes that org's owner and gets an org-scoped default
+   environment. Members, roles, quotas, and usage live under
+   **Manage organization**.
+5. Set `EXECUTION_SANDBOX=required` on every process that executes runs
+   (the worker, or the API when `DISPATCH_ROLE=inline`) — startup refuses
+   unsafe combinations otherwise. See "Sandboxed execution" below for setup.
+   `SANDBOX_POLICY_STRICT=false` disables that check for deployments where
+   every tenant is trusted (e.g. internal departments); only then does the
+   pre-sandbox trust model apply: orgs with untrusted authors must use
+   `dedicated_pool` with their own docker/kubernetes runner pool.
+6. Per-org quotas (concurrent runs, executions/day, map/loop caps, etc.) are
+   owner-editable per org; instance defaults come from Settings. The
+   ops dashboard's queue card shows per-org backpressure, including runs
+   parked by an org's concurrency quota.
+
+## Sandboxed execution
+
+With `EXECUTION_SANDBOX` enabled, the execution plane runs each workflow in a
+disposable hardened container instead of a subprocess: caps dropped,
+`no-new-privileges`, read-only rootfs (tmpfs `/tmp`), non-root user, memory/
+CPU/pids ceilings, and a dedicated bridge network. Containers are warm-pooled
+per `(organization, environment)` — never reused across orgs — and recycled
+after `SANDBOX_MAX_RUNS_PER_CONTAINER` runs or `SANDBOX_WARM_TTL_SECONDS`
+idle.
+
+Modes (`EXECUTION_SANDBOX`):
+
+- `off` (default) — subprocess runner, single-tenant behaviour unchanged.
+- `auto` — use the sandbox when a Docker daemon is reachable, else log a
+  warning and fall back to the subprocess runner.
+- `required` — refuse to start without a working sandbox. **Enforced at
+  startup when `MULTI_TENANCY_ENABLED=true`** (escape hatch:
+  `SANDBOX_POLICY_STRICT=false`, trusted tenants only).
+
+Container runtime (`SANDBOX_RUNTIME`): `auto` probes the daemon and picks the
+strongest available runtime — `kata` (microVM) > `runsc` (gVisor) > `runc`.
+Set it explicitly to fail fast when a specific runtime is mandatory.
+
+| Host | Runtime you get | Isolation |
+| --- | --- | --- |
+| Docker Desktop (Windows/macOS) | `runc` | container + the Desktop VM boundary |
+| Linux / WSL2, gVisor installed | `runsc` | user-space kernel (syscall interception) |
+| Linux with Kata containers | `kata` | per-container microVM |
+
+gVisor install (Linux/WSL2): follow
+<https://gvisor.dev/docs/user_guide/install/>, add `runsc` to
+`/etc/docker/daemon.json` runtimes, restart dockerd. `docker info` should
+list `runsc` under Runtimes.
+
+docker-compose: uncomment the `EXECUTION_SANDBOX`/`SANDBOX_RUNTIME` env vars
+and the `/var/run/docker.sock` volume on the **worker** service. The socket
+grants the worker root-equivalent control of the host daemon — acceptable
+precisely because tenant code no longer executes inside the worker; runs
+execute in the hardened sibling containers it spawns on the host daemon
+(images stay host-local, no registry needed).
+
+Resource ceilings (per run container, overridable per deployment):
+`SANDBOX_MEM_LIMIT` (default `1g`), `SANDBOX_CPU_LIMIT` (`1.0`),
+`SANDBOX_PIDS_LIMIT` (`256`), `SANDBOX_TMPFS_SIZE` (`256m`). The security
+floor (cap-drop, no-new-privileges, read-only rootfs, non-root) is not
+overridable. Warm-pool sizing: `SANDBOX_WARM_PER_KEY` (`1`),
+`SANDBOX_WARM_TOTAL` (`8`).
+
+Network: run containers attach to the `SANDBOX_NETWORK` bridge
+(`noodle-sandbox`, created on demand). They get outbound internet (HTTP
+nodes need it) but sit isolated from the compose service network. Stricter
+egress (blocking cloud metadata endpoints, allow-listing destinations) is
+operator-supplied: point `SANDBOX_NETWORK` at a network you manage with
+firewall rules.
+
+Kubernetes: the DooD socket mount does not translate; the planned K8s path
+is a Job per run with `runtimeClassName: gvisor` — a follow-up slice. Until
+then, run the worker on a node/VM with Docker for sandboxed execution.

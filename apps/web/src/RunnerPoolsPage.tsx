@@ -1,14 +1,52 @@
-import { useCallback, useEffect, useState } from "react";
+import { useRef, useState } from "react";
 
-import { api, runnerPoolsApi } from "./api";
+import { useConfirm } from "./ConfirmProvider";
+import { useEntitlements } from "./entitlements";
 import { HomeHeader } from "./HomeHeader";
 import { useCan } from "./permissions";
+import {
+  useCreateRunnerPoolMutation,
+  useCreateRunnerRegistrationTokenMutation,
+  useDeleteRunnerMutation,
+  useDeleteRunnerPoolMutation,
+  useEnvironments,
+  useRunnerFleetHealth,
+  useRunnerPoolRunners,
+  useRunnerPools,
+  useSshOnboardRunnerMutation,
+  useUpdateRunnerMutation,
+  useUpdateRunnerPoolMutation,
+} from "./queries";
+import { useModalA11y } from "./useModalA11y";
 import type {
-  Environment,
   RegistrationTokenResponse,
+  RunnerFleetHealth,
   RunnerInfo,
+  RunnerPoolHealth,
   RunnerPoolInfo,
 } from "./types";
+
+/** Relative "Ns/Nm/Nh ago" for runner last-seen + queue age. */
+function relAgo(iso: string | null): string {
+  if (!iso) return "never";
+  const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 0) return "just now";
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+function relSecs(secs: number | null | undefined): string {
+  if (secs == null) return "—";
+  if (secs < 60) return `${Math.round(secs)}s`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ${Math.round(secs % 60)}s`;
+  const hours = Math.floor(mins / 60);
+  return `${hours}h ${mins % 60}m`;
+}
 
 type Config = Record<string, unknown>;
 
@@ -342,6 +380,10 @@ function PoolDialog({
   const [config, setConfig] = useState<Config>(pool?.provider_config ?? {});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const createPool = useCreateRunnerPoolMutation();
+  const updatePool = useUpdateRunnerPoolMutation();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
   const handleSave = async () => {
     if (!name.trim()) return;
@@ -349,13 +391,16 @@ function PoolDialog({
     setError(null);
     try {
       if (editing) {
-        await runnerPoolsApi.update(pool!.id, {
-          name: name.trim(),
-          max_concurrent_runs: maxConcurrent,
-          provider_config: cleanConfig(config),
+        await updatePool.mutateAsync({
+          poolId: pool!.id,
+          body: {
+            name: name.trim(),
+            max_concurrent_runs: maxConcurrent,
+            provider_config: cleanConfig(config),
+          },
         });
       } else {
-        await runnerPoolsApi.create({
+        await createPool.mutateAsync({
           name: name.trim(),
           provider,
           max_concurrent_runs: maxConcurrent,
@@ -372,10 +417,18 @@ function PoolDialog({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal modal-wide"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pool-dialog-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="modal-head">
-          <h2>{editing ? `Edit ${pool!.name}` : "New runner pool"}</h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+          <h2 id="pool-dialog-title">{editing ? `Edit ${pool!.name}` : "New runner pool"}</h2>
+          <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </header>
@@ -468,6 +521,9 @@ function SSHOnboardDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [log, setLog] = useState<string | null>(null);
+  const sshOnboard = useSshOnboardRunnerMutation();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
   const submit = async () => {
     if (!host.trim() || !username.trim()) return;
@@ -475,19 +531,22 @@ function SSHOnboardDialog({
     setError(null);
     try {
       const labels = parseLabels(labelsText);
-      const res = await runnerPoolsApi.sshOnboard(poolId, {
-        host: host.trim(),
-        port: Number(port) || 22,
-        username: username.trim(),
-        auth_method: authMethod,
-        password: authMethod === "password" ? password : undefined,
-        private_key: authMethod === "key" ? privateKey : undefined,
-        passphrase: authMethod === "key" ? passphrase || undefined : undefined,
-        api_url: apiUrl.trim() || undefined,
-        use_systemd: useSystemd,
-        name: name.trim() || undefined,
-        max_concurrent_runs: Number(maxConcurrent) || 1,
-        capabilities: Object.keys(labels).length ? labels : undefined,
+      const res = await sshOnboard.mutateAsync({
+        poolId,
+        body: {
+          host: host.trim(),
+          port: Number(port) || 22,
+          username: username.trim(),
+          auth_method: authMethod,
+          password: authMethod === "password" ? password : undefined,
+          private_key: authMethod === "key" ? privateKey : undefined,
+          passphrase: authMethod === "key" ? passphrase || undefined : undefined,
+          api_url: apiUrl.trim() || undefined,
+          use_systemd: useSystemd,
+          name: name.trim() || undefined,
+          max_concurrent_runs: Number(maxConcurrent) || 1,
+          capabilities: Object.keys(labels).length ? labels : undefined,
+        },
       });
       setLog(res.install_log || "Onboarded.");
       onDone();
@@ -500,10 +559,18 @@ function SSHOnboardDialog({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal modal-wide"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ssh-onboard-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="modal-head">
-          <h2>Onboard a machine over SSH</h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+          <h2 id="ssh-onboard-title">Onboard a machine over SSH</h2>
+          <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </header>
@@ -620,16 +687,22 @@ function AddMachineDialog({
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState<RegistrationTokenResponse | null>(null);
   const [copied, setCopied] = useState(false);
+  const createToken = useCreateRunnerRegistrationTokenMutation();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
   const submit = async () => {
     setBusy(true);
     setError(null);
     try {
       const labels = parseLabels(labelsText);
-      const res = await runnerPoolsApi.createRegistrationToken(poolId, {
-        name: name.trim() || undefined,
-        max_concurrent_runs: Number(maxConcurrent) || 1,
-        capabilities: Object.keys(labels).length ? labels : undefined,
+      const res = await createToken.mutateAsync({
+        poolId,
+        body: {
+          name: name.trim() || undefined,
+          max_concurrent_runs: Number(maxConcurrent) || 1,
+          capabilities: Object.keys(labels).length ? labels : undefined,
+        },
       });
       setToken(res);
       onDone();
@@ -641,10 +714,10 @@ function AddMachineDialog({
   };
 
   const installCmd = token
-    ? `pip install noodle-runner
-noodle-runner register \\
-  --api-url ${window.location.origin} \\
-  --token ${token.token} \\
+    ? `pip install --find-links ${token.api_url}/runner-pools/wheels/ noodle-runner
+noodle-runner register \
+  --api-url ${token.api_url} \
+  --token ${token.token} \
   --name ${name.trim() || "my-runner"}
 noodle-runner start`
     : "";
@@ -661,10 +734,18 @@ noodle-runner start`
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal modal-wide"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-machine-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="modal-head">
-          <h2>Add a machine to this pool</h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+          <h2 id="add-machine-title">Add a machine to this pool</h2>
+          <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </header>
@@ -739,16 +820,23 @@ function EditRunnerDialog({
   const [labelsText, setLabelsText] = useState(labelsToText(runner.capabilities));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const updateRunner = useUpdateRunnerMutation();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
   const submit = async () => {
     if (!name.trim()) return;
     setBusy(true);
     setError(null);
     try {
-      await runnerPoolsApi.updateRunner(poolId, runner.id, {
-        name: name.trim(),
-        max_concurrent_runs: Number(maxConcurrent) || 1,
-        capabilities: parseLabels(labelsText),
+      await updateRunner.mutateAsync({
+        poolId,
+        runnerId: runner.id,
+        body: {
+          name: name.trim(),
+          max_concurrent_runs: Number(maxConcurrent) || 1,
+          capabilities: parseLabels(labelsText),
+        },
       });
       onSaved();
     } catch (e) {
@@ -760,10 +848,18 @@ function EditRunnerDialog({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal modal-wide"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-runner-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="modal-head">
-          <h2>Edit {runner.name}</h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+          <h2 id="edit-runner-title">Edit {runner.name}</h2>
+          <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </header>
@@ -795,42 +891,100 @@ function EditRunnerDialog({
   );
 }
 
+function HealthStrip({
+  pool,
+  health,
+}: {
+  pool: RunnerPoolInfo;
+  health?: RunnerPoolHealth;
+}) {
+  const capUsed = health?.capacity_used ?? 0;
+  const capTotal = health?.capacity_total ?? pool.max_concurrent_runs;
+  const pct = capTotal > 0 ? Math.min(100, (capUsed / capTotal) * 100) : 0;
+  const queue = health?.queue_depth ?? 0;
+  const success = health?.success_24h ?? null;
+  const reachable = health?.dispatcher_reachable ?? true;
+  const queueStuck = queue > 0 && !reachable;
+  return (
+    <div className="pool-health">
+      <div className="phc">
+        <span className="phc-k">Capacity used</span>
+        <span className="phc-v">
+          {capUsed} <small>/ {capTotal} slots</small>
+        </span>
+        <div className="hbar">
+          <i style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+      <div className="phc">
+        <span className="phc-k">Queue (this pool)</span>
+        <span className={`phc-v${queueStuck ? " phc-warn" : ""}`}>
+          {queue} <small>{queueStuck ? "stuck" : "waiting"}</small>
+        </span>
+        {queue > 0 && (
+          <span className="phc-sub">
+            oldest {relSecs(health?.oldest_queued_seconds)}
+          </span>
+        )}
+      </div>
+      <div className="phc">
+        <span className="phc-k">Success (24h)</span>
+        <span className="phc-v">
+          {success == null ? "—" : `${Math.round(success * 100)}%`}
+        </span>
+      </div>
+      <div className="phc">
+        <span className="phc-k">Dispatcher</span>
+        <span className={`phc-v ${reachable ? "phc-ok" : "phc-warn"}`}>
+          {reachable ? "● reachable" : "● none"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function PoolCard({
   pool,
+  health,
   onChanged,
   canWrite,
   boundEnvs,
 }: {
   pool: RunnerPoolInfo;
+  health?: RunnerPoolHealth;
   onChanged: () => void;
   canWrite: boolean;
   boundEnvs: string[];
 }) {
-  const [runners, setRunners] = useState<RunnerInfo[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [sshOpen, setSshOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editingRunner, setEditingRunner] = useState<RunnerInfo | null>(null);
-
-  const loadRunners = useCallback(async () => {
-    try {
-      setRunners(await runnerPoolsApi.listRunners(pool.id));
-    } catch {
-      /* ignore */
-    }
-  }, [pool.id]);
-
-  useEffect(() => {
-    if (expanded) void loadRunners();
-  }, [expanded, loadRunners]);
+  const confirm = useConfirm();
+  const deletePool = useDeleteRunnerPoolMutation();
+  const deleteRunner = useDeleteRunnerMutation();
+  const runnersQuery = useRunnerPoolRunners(pool.id, {
+    enabled: expanded,
+    refetchInterval: expanded ? 5000 : undefined,
+  });
+  const runners = runnersQuery.data ?? [];
 
   const summary = poolConfigSummary(pool);
-  const pillClass =
-    pool.online_count > 0 ? "status-run-success" : "status-run-skipped";
+  const reachable = health?.dispatcher_reachable ?? true;
+  const showDispatcherBanner =
+    health != null &&
+    !reachable &&
+    (pool.online_count > 0 || (health.queue_depth ?? 0) > 0);
+  const stuck = (health?.queue_depth ?? 0) > 0 && !reachable;
+  const pillClass = stuck
+    ? "status-run-error"
+    : pool.online_count > 0
+      ? "status-run-success"
+      : "status-run-skipped";
   const pillText =
     pool.runner_count > 0
-      ? `${pool.online_count}/${pool.runner_count} online`
+      ? `${pool.online_count}/${pool.runner_count} online${stuck ? " · stuck" : ""}`
       : "no runners";
 
   return (
@@ -839,10 +993,11 @@ function PoolCard({
         <div className="pool-main">
           <div className="pool-name">
             {pool.name}
+            <span className="pool-provider-badge">{pool.provider}</span>
             <span className={`run-pill ${pillClass}`}>{pillText}</span>
           </div>
           <div className="pool-meta">
-            {pool.provider} · max {pool.max_concurrent_runs} concurrent
+            max {pool.max_concurrent_runs} concurrent
             {summary && <> · {summary}</>}
           </div>
           <div className="pool-meta">
@@ -856,13 +1011,15 @@ function PoolCard({
           </div>
         </div>
         <div className="pool-actions">
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost"
-            onClick={() => setExpanded((v) => !v)}
-          >
-            {expanded ? "Hide" : "Runners"}
-          </button>
+          {pool.provider === "agent" && (
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              onClick={() => setExpanded((v) => !v)}
+            >
+              {expanded ? "Hide" : "Runners"}
+            </button>
+          )}
           {canWrite && (
             <button
               type="button"
@@ -877,13 +1034,12 @@ function PoolCard({
               type="button"
               className="btn btn-sm btn-ghost"
               onClick={async () => {
-                if (
-                  !confirm(
-                    "Delete this runner pool and all its registered runners?",
-                  )
-                )
-                  return;
-                await runnerPoolsApi.delete(pool.id);
+                const ok = await confirm({
+                  title: "Delete runner pool?",
+                  body: "This pool and all its registered runners will be removed.",
+                });
+                if (!ok) return;
+                await deletePool.mutateAsync(pool.id);
                 onChanged();
               }}
             >
@@ -893,65 +1049,113 @@ function PoolCard({
         </div>
       </div>
 
-      {expanded && (
+      {showDispatcherBanner && (
+        <div className="pool-banner" role="alert">
+          <span className="status-dot offline" />
+          <span>
+            <strong>No dispatcher reachable for {pool.provider} pools.</strong>{" "}
+            Runners are connected but nothing is leasing their runs
+            {(health?.queue_depth ?? 0) > 0
+              ? ` — ${health?.queue_depth} run${health?.queue_depth === 1 ? "" : "s"} queued and won't start`
+              : ""}
+            . Run the API replica with <code>DISPATCH_ROLE=control</code>.
+          </span>
+        </div>
+      )}
+
+      <HealthStrip pool={pool} health={health} />
+
+      {expanded && pool.provider === "agent" && (
         <div className="pool-body">
           {runners.length === 0 && (
             <p className="muted">No runners registered yet.</p>
           )}
-          {runners.map((r) => {
-            const labels = Object.entries(r.capabilities || {});
-            return (
-              <div key={r.id} className="runner-row">
-                <span>
-                  <span className={`status-dot ${r.status}`} />
-                  {r.name}
-                </span>
-                <span className="runner-row-meta">
-                  {r.current_runs}/{r.max_concurrent_runs} runs ·{" "}
-                  {r.cached_env_ids.length} envs ·{" "}
-                  {r.last_seen_at
-                    ? new Date(r.last_seen_at).toLocaleString()
-                    : "never seen"}
-                  {labels.length > 0 && (
-                    <>
-                      {" · "}
-                      {labels.map(([k, v]) => (
-                        <span key={k} className="runner-label-pill">
-                          {k}={String(v)}
-                        </span>
-                      ))}
-                    </>
-                  )}
-                  {canWrite && (
-                    <>
-                      {" "}
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-ghost"
-                        onClick={() => setEditingRunner(r)}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-ghost"
-                        onClick={async () => {
-                          if (!confirm(`Remove runner "${r.name}"?`)) return;
-                          await runnerPoolsApi.deleteRunner(pool.id, r.id);
-                          await loadRunners();
-                          onChanged();
-                        }}
-                      >
-                        Remove
-                      </button>
-                    </>
-                  )}
-                </span>
+          {runners.length > 0 && (
+            <div className="runner-table">
+              <div className="runner-thead">
+                <span>Runner</span>
+                <span>Labels</span>
+                <span>Capacity</span>
+                <span>Cached envs</span>
+                <span />
               </div>
-            );
-          })}
+              {runners.map((r) => {
+                const labels = Object.entries(r.capabilities || {});
+                const capPct =
+                  r.max_concurrent_runs > 0
+                    ? (r.current_runs / r.max_concurrent_runs) * 100
+                    : 0;
+                return (
+                  <div key={r.id} className="runner-trow">
+                    <span className="rt-name">
+                      <span className={`status-dot ${r.status}`} />
+                      {r.name}
+                      <span className="muted rt-seen">
+                        · {relAgo(r.last_seen_at)}
+                      </span>
+                    </span>
+                    <span className="rt-labels">
+                      {labels.length === 0 ? (
+                        <span className="muted">no labels</span>
+                      ) : (
+                        labels.map(([k, v]) => (
+                          <span key={k} className="runner-label-pill">
+                            {k}={String(v)}
+                          </span>
+                        ))
+                      )}
+                    </span>
+                    <span className="rt-cap">
+                      <span className="cap-bar">
+                        <i style={{ width: `${Math.min(100, capPct)}%` }} />
+                      </span>
+                      <span className="muted">
+                        {r.current_runs}/{r.max_concurrent_runs}
+                      </span>
+                    </span>
+                    <span className="muted">
+                      {r.cached_env_ids.length} env
+                      {r.cached_env_ids.length === 1 ? "" : "s"}
+                    </span>
+                    <span className="rt-act">
+                      {canWrite && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-ghost"
+                          onClick={() => setEditingRunner(r)}
+                        >
+                          Edit
+                        </button>
+                      )}
+                      {canWrite && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-ghost"
+                          onClick={async () => {
+                            const ok = await confirm({
+                              title: "Remove runner?",
+                              body: `“${r.name}” will be removed from this pool.`,
+                              confirmLabel: "Remove",
+                            });
+                            if (!ok) return;
+                            await deleteRunner.mutateAsync({
+                              poolId: pool.id,
+                              runnerId: r.id,
+                            });
+                            onChanged();
+                          }}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
-          {canWrite && pool.provider === "agent" && (
+          {canWrite && (
             <div className="pool-onboard-actions">
               <button
                 type="button"
@@ -969,13 +1173,15 @@ function PoolCard({
               </button>
             </div>
           )}
-          {pool.provider !== "agent" && (
-            <p className="muted">
-              {pool.provider === "docker"
-                ? "Docker pools have no registered runners — the API drives containers directly."
-                : "Kubernetes pools spawn a single-run pod per run — no persistent runners."}
-            </p>
-          )}
+        </div>
+      )}
+      {expanded && pool.provider !== "agent" && (
+        <div className="pool-body">
+          <p className="muted">
+            {pool.provider === "docker"
+              ? "Docker pools have no registered runners — the API drives containers directly."
+              : "Kubernetes pools spawn a single-run pod per run — no persistent runners."}
+          </p>
         </div>
       )}
 
@@ -995,7 +1201,7 @@ function PoolCard({
           poolId={pool.id}
           onClose={() => setSshOpen(false)}
           onDone={() => {
-            void loadRunners();
+            void runnersQuery.refetch();
             onChanged();
           }}
         />
@@ -1006,7 +1212,7 @@ function PoolCard({
           poolId={pool.id}
           onClose={() => setAddOpen(false)}
           onDone={() => {
-            void loadRunners();
+            void runnersQuery.refetch();
             onChanged();
           }}
         />
@@ -1019,7 +1225,7 @@ function PoolCard({
           onClose={() => setEditingRunner(null)}
           onSaved={() => {
             setEditingRunner(null);
-            void loadRunners();
+            void runnersQuery.refetch();
           }}
         />
       )}
@@ -1027,29 +1233,68 @@ function PoolCard({
   );
 }
 
+function FleetBar({ health }: { health: RunnerFleetHealth }) {
+  const f = health.fleet;
+  const degraded = f.providers_stuck.length > 0;
+  return (
+    <div className="fleet-bar">
+      <div className="fleet-stat">
+        <span className="fleet-k">Runners online</span>
+        <span className="fleet-v">
+          <span className="status-dot online" />
+          {f.runners_online}
+          <small>/ {f.runners_total} registered</small>
+        </span>
+      </div>
+      <div className="fleet-stat">
+        <span className="fleet-k">Queue depth</span>
+        <span className="fleet-v">{f.queue_depth}</span>
+      </div>
+      <div className="fleet-stat">
+        <span className="fleet-k">In-flight runs</span>
+        <span className="fleet-v">{f.in_flight}</span>
+      </div>
+      <div className="fleet-stat">
+        <span className="fleet-k">Dispatchers</span>
+        <span className={`fleet-v ${degraded ? "fleet-warn" : ""}`}>
+          <span className={`status-dot ${degraded ? "offline" : "online"}`} />
+          {f.providers_dispatchable.length}
+          <small>
+            {degraded
+              ? `${f.providers_stuck.join(", ")} stuck`
+              : "all providers served"}
+          </small>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function RunnerPoolsPage() {
-  const [pools, setPools] = useState<RunnerPoolInfo[] | null>(null);
-  const [environments, setEnvironments] = useState<Environment[]>([]);
   const [creating, setCreating] = useState(false);
-  const [error, setError] = useState("");
   const canWrite = useCan("runner_pool:write");
+  const ent = useEntitlements();
+  const poolsQuery = useRunnerPools({ refetchInterval: 5000 });
+  const healthQuery = useRunnerFleetHealth({ refetchInterval: 5000 });
+  const environmentsQuery = useEnvironments();
+  const pools = poolsQuery.data ?? null;
+  const environments = environmentsQuery.data ?? [];
+  const health = healthQuery.data ?? null;
+  const healthByPool = (health?.pools ?? []).reduce<
+    Record<string, RunnerPoolHealth>
+  >((acc, h) => {
+    acc[h.pool_id] = h;
+    return acc;
+  }, {});
+  const error =
+    poolsQuery.isError && !poolsQuery.data
+      ? poolsQuery.error.message
+      : "";
 
-  const load = useCallback(async () => {
-    try {
-      setPools(await runnerPoolsApi.list());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-    try {
-      setEnvironments(await api.listEnvironments());
-    } catch {
-      /* environments are optional context for binding display */
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  function refreshPools(): void {
+    void poolsQuery.refetch();
+    void healthQuery.refetch();
+  }
 
   const envsByPool = environments.reduce<Record<string, string[]>>(
     (acc, env) => {
@@ -1075,14 +1320,35 @@ export function RunnerPoolsPage() {
               type="button"
               className="btn"
               onClick={() => setCreating(true)}
+              disabled={ent.atLimit("runners", pools?.length ?? 0)}
+              title={
+                ent.atLimit("runners", pools?.length ?? 0)
+                  ? `Runner limit reached on the ${ent.edition} edition — upgrade to add more.`
+                  : undefined
+              }
             >
               + New pool
             </button>
           )}
         </div>
 
+        {health && pools && pools.length > 0 && <FleetBar health={health} />}
+
         {error && <p className="error-text">{error}</p>}
-        {!pools && !error && <p className="muted">Loading…</p>}
+        {!pools && !error && (
+          <div className="pool-list" aria-label="Loading runner pools">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div className="pool-card skeleton-card" key={index}>
+                <div className="pool-head">
+                  <div className="pool-main">
+                    <span className="skeleton-line short" />
+                    <span className="skeleton-line" />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {pools && pools.length === 0 && (
           <div className="empty-state">
@@ -1110,8 +1376,9 @@ export function RunnerPoolsPage() {
               <PoolCard
                 key={pool.id}
                 pool={pool}
+                health={healthByPool[pool.id]}
                 canWrite={canWrite}
-                onChanged={() => void load()}
+                onChanged={refreshPools}
                 boundEnvs={envsByPool[pool.id] ?? []}
               />
             ))}
@@ -1123,7 +1390,7 @@ export function RunnerPoolsPage() {
             onClose={() => setCreating(false)}
             onSaved={() => {
               setCreating(false);
-              void load();
+              refreshPools();
             }}
           />
         )}

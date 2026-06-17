@@ -481,3 +481,56 @@ def test_node_decorator_requirements_default_empty():
         return input
 
     assert reg.get("light_x").manifest.requirements == []
+
+
+# ---------------------------------------------------------------------------
+# Security: module code AST validation
+# ---------------------------------------------------------------------------
+
+
+def test_register_module_rejects_exec_call() -> None:
+    """Module code using the blocked name 'exec' is rejected before running."""
+    reg = NodeRegistry()
+    source = "result = exec('import os')"
+    with pytest.raises(ValueError, match="[Uu]nsafe"):
+        register_module_functions("sec_mod1", source, reg)
+
+
+def test_register_module_rejects_eval_call() -> None:
+    """Module code using the blocked name 'eval' is rejected before running."""
+    reg = NodeRegistry()
+    # 'eval' here is inside a string literal being validated by the sandbox —
+    # it is NOT executed by this test; the test asserts that the sandbox blocks it.
+    source = "x = eval('1+1')"
+    with pytest.raises(ValueError, match="[Uu]nsafe"):
+        register_module_functions("sec_mod2", source, reg)
+
+
+def test_register_module_rejects_class_definitions() -> None:
+    """ClassDef is blocked in module code (same rule as code node)."""
+    reg = NodeRegistry()
+    source = "class Escape:\n    pass\n\ndef my_func(x):\n    return x\n"
+    with pytest.raises(ValueError, match="[Uu]nsafe"):
+        register_module_functions("sec_mod3", source, reg)
+
+
+def test_register_module_rejects_dunder_builtins_access() -> None:
+    """Accessing __builtins__ by name in module code is blocked."""
+    reg = NodeRegistry()
+    source = "b = __builtins__\n\ndef fn(x):\n    return x\n"
+    with pytest.raises(ValueError, match="[Uu]nsafe"):
+        register_module_functions("sec_mod4", source, reg)
+
+
+def test_register_module_allows_safe_code() -> None:
+    """Well-formed module code without blocked constructs registers normally."""
+    reg = NodeRegistry()
+    source = (
+        "import json\n"
+        "\n"
+        "def transform(data: dict) -> dict:\n"
+        "    return json.loads(json.dumps(data))\n"
+    )
+    registered, skipped = register_module_functions("sec_mod5", source, reg)
+    assert "transform" in registered
+    assert not skipped

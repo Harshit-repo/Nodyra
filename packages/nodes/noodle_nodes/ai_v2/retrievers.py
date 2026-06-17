@@ -18,6 +18,11 @@ from noodle.ai_runtime import (
 from noodle.sdk import node
 
 AI_CATEGORY = "AI"
+MAX_RETRIEVER_TOP_K = 100
+
+
+def _top_k(value: int) -> int:
+    return max(1, min(MAX_RETRIEVER_TOP_K, int(value or 5)))
 
 
 def _as_text(value: Any) -> str:
@@ -69,7 +74,7 @@ class VectorStoreRetrieverAdapter(RetrieverAdapter):
     ) -> None:
         self._model = model
         self._store = store
-        self._top_k = max(1, int(top_k or 5))
+        self._top_k = _top_k(top_k)
         self._timeout = int(timeout_seconds or 60)
 
     def retrieve(self, query: str, *, top_k: int = 5) -> list[RetrievedDocument]:
@@ -87,7 +92,7 @@ class VectorStoreRetrieverAdapter(RetrieverAdapter):
             return []
         return self._store.query(
             vector=response.embeddings[0],
-            top_k=top_k or self._top_k,
+            top_k=_top_k(top_k or self._top_k),
         )
 
     def as_config(self) -> dict[str, Any]:
@@ -136,7 +141,7 @@ def ai_vector_retriever_v2(
     return VectorStoreRetrieverAdapter(
         model=model,
         store=store,
-        top_k=max(1, int(top_k or 5)),
+        top_k=_top_k(top_k),
         timeout_seconds=int(timeout_seconds or 60),
     )
 
@@ -173,7 +178,7 @@ def ai_retrieve_documents(
     if not isinstance(retriever, RetrieverAdapter):
         raise ValueError("ai_retrieve_documents: connect an AI Retriever")
     q = _query_text(input, query)
-    documents = retriever.retrieve(q, top_k=max(1, int(top_k or 5)))
+    documents = retriever.retrieve(q, top_k=_top_k(top_k))
     return {"query": q, "documents": _docs_json(documents), "count": len(documents)}
 
 
@@ -240,7 +245,7 @@ def ai_rag_chain(
     q = _query_text(input, question)
     if not q:
         raise ValueError("ai_rag_chain: question is required")
-    docs = retriever.retrieve(q, top_k=max(1, int(top_k or 5)))
+    docs = retriever.retrieve(q, top_k=_top_k(top_k))
     budget = max(1000, min(100000, int(max_context_chars or 12000)))
     context_parts: list[str] = []
     used = 0

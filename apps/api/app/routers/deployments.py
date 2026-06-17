@@ -62,6 +62,23 @@ def _enforce_unsafe_node_policy(
     )
 
 
+def _validate_deployable(version: WorkflowVersion) -> None:
+    """Reject deploying a version whose graph can't run (empty / no trigger).
+
+    Without this the only symptom is a 400 at every fire — a scheduled
+    deployment would fail silently on its interval forever. Checked at
+    create/activate/run-now so the operator finds out immediately.
+    """
+    graph = version.graph or {}
+    nodes = graph.get("nodes") or []
+    if not nodes or first_trigger_node(graph) is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "This workflow version has no trigger node, so the deployment "
+            "can't run. Add a trigger and republish before deploying.",
+        )
+
+
 async def _load(session: AsyncSession, deployment_id: str) -> Deployment:
     deployment = await session.get(Deployment, deployment_id)
     if deployment is None:
@@ -113,6 +130,7 @@ async def _info(
         default_parameters=deployment.default_parameters,
         active=deployment.active,
         environment_id=deployment.environment_id,
+        runner_pool_id=deployment.runner_pool_id,
         workflow_version_id=deployment.workflow_version_id,
         workflow_version=workflow_version,
         error_workflow_id=deployment.error_workflow_id,
@@ -171,13 +189,20 @@ async def create_deployment(
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
     version = await _version_for_deployment(session, workflow, body.workflow_version_id)
-    if body.error_workflow_id is not None and await session.get(
-        Workflow, body.error_workflow_id
+    if body.error_workflow_id is not None and await session.scalar(
+        select(Workflow).where(Workflow.id == body.error_workflow_id)
     ) is None:
+        # Filtered select (not session.get) so the ORM org-filter hook fires:
+        # a cross-org error_workflow_id resolves to None here and is rejected.
+        # Otherwise org-A could point its error handler at org-B's workflow and
+        # (with the run_as_system error dispatch) leak its failure payload (R-2).
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Error workflow not found")
 
     if body.active:
+        _validate_deployable(version)
         _enforce_unsafe_node_policy(version, approved=body.approve_unsafe_nodes)
+        from app.services.licensing import enforce_resource_cap
+        await enforce_resource_cap(session, "deployments")
 
     deployment = Deployment(
         workflow_id=body.workflow_id,
@@ -189,6 +214,7 @@ async def create_deployment(
         default_parameters=body.default_parameters,
         active=body.active,
         environment_id=body.environment_id,
+        runner_pool_id=body.runner_pool_id,
         workflow_version_id=version.id,
         error_workflow_id=body.error_workflow_id,
         error_alerts=body.error_alerts,
@@ -234,6 +260,9 @@ async def update_deployment(
         deployment.default_parameters = body.default_parameters
     if body.environment_id is not None:
         deployment.environment_id = body.environment_id
+    if body.runner_pool_id is not None:
+        deployment.runner_pool_id = body.runner_pool_id
+    version_changed = False
     if body.workflow_version_id is not None:
         workflow = await session.scalar(
             select(Workflow)
@@ -245,28 +274,39 @@ async def update_deployment(
         version = await _version_for_deployment(
             session, workflow, body.workflow_version_id
         )
+        version_changed = deployment.workflow_version_id != version.id
         deployment.workflow_version_id = version.id
+    becoming_active = bool(body.active) and not deployment.active
+    if becoming_active:
+        from app.services.licensing import enforce_resource_cap
+        await enforce_resource_cap(session, "deployments")
     if body.active is not None:
-        # When flipping from inactive → active we must re-evaluate the
-        # unsafe-node policy against the version that *will* run after the
-        # commit (post any workflow_version_id update above).
-        if body.active and not deployment.active:
-            workflow = await session.scalar(
-                select(Workflow)
-                .where(Workflow.id == deployment.workflow_id)
-                .options(selectinload(Workflow.versions))
-            )
-            if workflow is None:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
-            version = await _version_for_deployment(
-                session, workflow, deployment.workflow_version_id
-            )
-            _enforce_unsafe_node_policy(
-                version, approved=body.approve_unsafe_nodes
-            )
         deployment.active = body.active
+
+    # DEP-1: re-evaluate the unsafe-node policy whenever an ACTIVE deployment's
+    # effective version could start running risky nodes — i.e. on
+    # inactive → active OR when the running version is repointed while already
+    # active. Without the latter, an operator could bypass the activation gate by
+    # changing an active deployment's ``workflow_version_id`` to a risky version.
+    if deployment.active and (becoming_active or version_changed):
+        workflow = await session.scalar(
+            select(Workflow)
+            .where(Workflow.id == deployment.workflow_id)
+            .options(selectinload(Workflow.versions))
+        )
+        if workflow is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
+        version = await _version_for_deployment(
+            session, workflow, deployment.workflow_version_id
+        )
+        _validate_deployable(version)
+        _enforce_unsafe_node_policy(version, approved=body.approve_unsafe_nodes)
     if body.error_workflow_id is not None:
-        if await session.get(Workflow, body.error_workflow_id) is None:
+        # Filtered select (not session.get) so a cross-org error_workflow_id is
+        # rejected by the ORM org-filter hook (R-2).
+        if await session.scalar(
+            select(Workflow).where(Workflow.id == body.error_workflow_id)
+        ) is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Error workflow not found")
         deployment.error_workflow_id = body.error_workflow_id
     if body.error_alerts is not None:
@@ -316,6 +356,7 @@ async def run_deployment(
     version = await _version_for_deployment(
         session, workflow, deployment.workflow_version_id
     )
+    _validate_deployable(version)
     graph = version.graph or {"nodes": [], "edges": []}
     chosen = first_trigger_node(graph)
     trigger_id = (
@@ -368,6 +409,7 @@ async def list_deployment_runs(
             workflow_version_id=run.workflow_version_id,
             deployment_id=run.deployment_id,
             triggered_by_error_run_id=run.triggered_by_error_run_id,
+            parent_run_id=run.parent_run_id,
             mode=run.mode,
             status=run.status,
             trigger_type=run.trigger_type,

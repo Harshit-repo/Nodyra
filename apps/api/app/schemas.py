@@ -1,6 +1,6 @@
 """Pydantic request/response schemas for the API."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
@@ -31,6 +31,10 @@ class WorkflowUpdate(BaseModel):
     # Per-workflow wall-clock cap (seconds) for a run. None leaves it unset
     # (falls back to the server default); 0 disables the cap for this workflow.
     run_timeout_seconds: float | None = Field(default=None, ge=0)
+    mcp_enabled: bool | None = None
+    mcp_tool_name: str | None = None
+    mcp_description: str | None = None
+    mcp_parameters_schema: dict | None = None
 
 
 class ProviderTriggerStatusCounts(BaseModel):
@@ -90,10 +94,15 @@ class WorkflowDetail(BaseModel):
     published_version: int
     has_unpublished_changes: bool
     environment_id: str | None
+    default_runner_pool_id: str | None = None
     error_workflow_id: str | None = None
     error_alerts: dict[str, Any] = Field(default_factory=dict)
     allow_concurrent: bool = True
     run_timeout_seconds: float | None = None
+    mcp_enabled: bool = False
+    mcp_tool_name: str | None = None
+    mcp_description: str | None = None
+    mcp_parameters_schema: dict | None = None
     provider_trigger_counts: ProviderTriggerStatusCounts = Field(
         default_factory=ProviderTriggerStatusCounts
     )
@@ -129,6 +138,8 @@ class EnvironmentCreate(BaseModel):
     runner_pool_size: int = Field(default=1, ge=0, le=32)
     runner_pool_max: int | None = Field(default=None, ge=1, le=64)
     runner_pool_id: str | None = None
+    backend: str = "venv"
+    backend_config: dict = Field(default_factory=dict)
 
 
 class EnvironmentUpdate(BaseModel):
@@ -139,6 +150,7 @@ class EnvironmentUpdate(BaseModel):
     # Sentinel-free: send null to unbind, omit to leave unchanged.
     runner_pool_id: str | None = Field(default=None)
     runner_pool_set: bool = Field(default=False)
+    backend_config: dict | None = None
 
 
 class PackageRequest(BaseModel):
@@ -182,6 +194,8 @@ class EnvironmentInfo(BaseModel):
     runner_pool_id: str | None = None
     runner_pool_name: str | None = None
     worker_rss_estimate_bytes: int | None = None
+    backend: str = "venv"
+    backend_config: dict = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
 
@@ -269,6 +283,7 @@ class NodeRunInfo(BaseModel):
     started_at: float | None = None
     finished_at: float | None = None
     duration_ms: int | None = None
+    iteration_path: list[int] | None = None
 
     @model_validator(mode="after")
     def _redact_storage_internals(self) -> "NodeRunInfo":
@@ -291,6 +306,7 @@ class RunListItem(BaseModel):
     workflow_version_id: str | None = None
     deployment_id: str | None = None
     triggered_by_error_run_id: str | None = None
+    parent_run_id: str | None = None
     runner_pool_id: str | None = None
     runner_id: str | None = None
     batch_id: str | None = None
@@ -311,6 +327,7 @@ class RunInfo(BaseModel):
     workflow_version_id: str | None = None
     deployment_id: str | None = None
     triggered_by_error_run_id: str | None = None
+    parent_run_id: str | None = None
     runner_pool_id: str | None = None
     runner_id: str | None = None
     batch_id: str | None = None
@@ -324,8 +341,8 @@ class RunInfo(BaseModel):
 
 class ArtifactInfo(BaseModel):
     id: str
-    run_id: str
-    node_id: str
+    run_id: str | None = None
+    node_id: str | None = None
     name: str
     kind: str
     content_type: str
@@ -486,6 +503,79 @@ class UserAdminInfo(UserInfo):
     created_at: datetime
 
 
+class OrgCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    slug: str = Field(default="", max_length=80)
+
+
+class OrgUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    # "shared" | "dedicated_pool" — owner-only (see routers/orgs.update_org).
+    execution_isolation: str | None = Field(default=None, max_length=20)
+
+
+class OrgInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    slug: str
+    status: str
+    # The requesting user's role within this org (None when not applicable).
+    role: str | None = None
+
+
+class OrgMemberAdd(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    role: str = Field(default="viewer", max_length=20)
+
+
+class OrgMemberUpdate(BaseModel):
+    role: str = Field(max_length=20)
+
+
+class OrgMemberInfo(BaseModel):
+    user_id: str
+    email: str
+    name: str = ""
+    role: str
+
+
+class OrgSettingsUpdate(BaseModel):
+    """Per-org quota overrides. Omitted/None fields are left unchanged;
+    send -1 to clear an override back to 'inherit instance default'."""
+
+    max_concurrent_runs: int | None = Field(default=None, ge=-1)
+    executions_per_day: int | None = Field(default=None, ge=-1)
+    max_map_width: int | None = Field(default=None, ge=-1)
+    max_loop_iterations: int | None = Field(default=None, ge=-1)
+    max_inflight_subworkflows: int | None = Field(default=None, ge=-1)
+    storage_quota_bytes: int | None = Field(default=None, ge=-1)
+
+
+class OrgUsageDay(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    day: date
+    runs: int
+    compute_seconds: float
+    node_runs: int
+
+
+class OrgSettingsInfo(BaseModel):
+    """Effective limits (override or inherited). ``overridden`` lists which
+    fields come from the org row rather than instance defaults."""
+
+    org_id: str
+    max_concurrent_runs: int
+    executions_per_day: int
+    max_map_width: int
+    max_loop_iterations: int
+    max_inflight_subworkflows: int
+    storage_quota_bytes: int
+    overridden: list[str] = []
+
+
 class RegisterRequest(BaseModel):
     name: str = Field(default="", max_length=160)
     company: str = Field(default="", max_length=160)
@@ -515,11 +605,33 @@ class TokenResponse(BaseModel):
     user: UserInfo
 
 
+class WsTicketResponse(BaseModel):
+    ticket: str
+
+
 class AuthRequiredResponse(BaseModel):
     auth_required: bool
     signed_in: bool
     registration_open: bool
+    multi_tenancy: bool = False
+    edition: str = "community"
+    entitlements: list[str] = Field(default_factory=list)
+    limits: dict[str, int] = Field(default_factory=dict)
+    license_notice: str | None = None
     user: UserInfo | None = None
+
+
+class LicenseInfo(BaseModel):
+    edition: str
+    customer: str | None = None
+    expires_at: int | None = None
+    entitlements: list[str]
+    limits: dict[str, int]
+    notice: str | None = None
+
+
+class LicenseApply(BaseModel):
+    license_key: str = Field(min_length=1)
 
 
 class DeploymentCreate(BaseModel):
@@ -689,6 +801,38 @@ class RunnerInfo(BaseModel):
     updated_at: datetime
 
 
+class RunnerPoolHealth(BaseModel):
+    """Live health for one pool (program A6) — feeds the pool card's health
+    strip and the "no dispatcher reachable" banner."""
+
+    pool_id: str
+    provider: str
+    queue_depth: int
+    oldest_queued_seconds: float | None
+    capacity_used: int
+    capacity_total: int
+    online_count: int
+    runner_count: int
+    success_24h: float | None  # 0..1 over runs finished in the last 24h
+    dispatcher_reachable: bool
+
+
+class FleetSummary(BaseModel):
+    runners_online: int
+    runners_total: int
+    queue_depth: int
+    in_flight: int
+    # Providers a dispatcher is leasing right now, and providers that have
+    # queued runs but nothing dispatching them (the degraded state).
+    providers_dispatchable: list[str]
+    providers_stuck: list[str]
+
+
+class RunnerFleetHealth(BaseModel):
+    fleet: FleetSummary
+    pools: list[RunnerPoolHealth]
+
+
 class RegistrationTokenRequest(BaseModel):
     """Optional machine details captured when minting a token.
 
@@ -705,6 +849,10 @@ class RegistrationTokenResponse(BaseModel):
     token: str
     runner_id: str
     expires_at: datetime
+    # The URL a runner should dial back to. Derived from PUBLIC_API_URL when set,
+    # otherwise the request's own base URL — never the web origin, which is wrong
+    # for any split web/API deployment. The install snippet uses this verbatim.
+    api_url: str
 
 
 class RunnerUpdate(BaseModel):
@@ -779,6 +927,11 @@ class AiWorkflowDraftRequest(BaseModel):
     failed_node_id: str | None = None
     error: str | None = Field(default=None, max_length=8000)
     fix_strategy: str = Field(default="minimal", pattern="^(minimal|replacement)$")
+    # Optional planner overrides used by the app-wide assistant so the operator
+    # can pick which BYOK provider/model builds the draft. ``None`` keeps the
+    # server's existing env/credential auto-resolution.
+    planner_provider: str | None = Field(default=None, max_length=40)
+    planner_model: str | None = Field(default=None, max_length=120)
 
 
 class AiWorkflowDraftResponse(BaseModel):
@@ -808,6 +961,7 @@ class RuntimeModeStatus(BaseModel):
     artifact_backend: str
     runner_providers: list[str]
     allow_insecure: bool
+    otel_enabled: bool
     warnings: list[str]
 
 
@@ -828,6 +982,9 @@ class QueueStats(BaseModel):
     dead_lettered: int = 0
     cancelled: int = 0
     oldest_queued_age_seconds: float | None = None
+    # Multi-tenancy (C6): per-org active counts; "quota_parked" counts queued
+    # entries held back by the org's concurrency cap. None when MT is off.
+    by_org: dict[str, dict[str, int]] | None = None
 
 
 class DrainRequest(BaseModel):
@@ -908,7 +1065,7 @@ class RunApprovalInfo(BaseModel):
 
 
 class RunApprovalDecisionRequest(BaseModel):
-    decision: Literal["approve", "reject"]
+    decision: Literal["approve", "reject", "approve_all"]
     reason: str | None = Field(default=None, max_length=4000)
     resolved_by: str | None = Field(default=None, max_length=120)
 
@@ -969,3 +1126,23 @@ class ChatTurnResponse(BaseModel):
     reply: str
     session_id: str
     status: str
+
+
+class ChatStreamStart(BaseModel):
+    """Returned when a chat turn is started but not yet awaited.
+
+    The caller subscribes to ``/ws/runs/{run_id}`` to stream the agent's live
+    tool calls and node progress, then fetches the final reply once the run
+    reaches a terminal state.
+    """
+
+    run_id: str | None
+    session_id: str
+
+
+class ChatPublicConfig(BaseModel):
+    workflow_id: str
+    title: str
+    placeholder: str
+    initial_message: str
+    require_login: bool = True

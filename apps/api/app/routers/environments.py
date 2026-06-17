@@ -18,7 +18,8 @@ from app.schemas import (
 )
 from app.security import optional_current_user, require_permission
 from app.services.audit import log_audit
-from app.services.venv import build_environment
+from app.services.backends import build_environment
+from app.tenancy import active_org_id
 from noodle.packages import canonical_package_name
 from noodle.sdk import registry as node_registry
 
@@ -56,6 +57,8 @@ def _to_info(env: Environment, pool_name: str | None = None) -> EnvironmentInfo:
         runner_pool_id=env.runner_pool_id,
         runner_pool_name=pool_name,
         worker_rss_estimate_bytes=env.worker_rss_estimate_bytes,
+        backend=env.backend,
+        backend_config=dict(env.backend_config or {}),
         created_at=env.created_at,
         updated_at=env.updated_at,
     )
@@ -125,6 +128,13 @@ async def create_environment(
 ):
     _validate_pool(body.runner_pool_size, body.runner_pool_max)
     await _validate_pool_ref(session, body.runner_pool_id)
+    from app.services.isolation import validate_pool_assignment
+
+    await validate_pool_assignment(session, active_org_id(), body.runner_pool_id)
+
+    from app.services.licensing import enforce_resource_cap
+    await enforce_resource_cap(session, "environments")
+
     env = Environment(
         name=body.name,
         python_version=body.python_version,
@@ -133,6 +143,8 @@ async def create_environment(
         runner_pool_size=body.runner_pool_size,
         runner_pool_max=body.runner_pool_max,
         runner_pool_id=body.runner_pool_id,
+        backend=body.backend,
+        backend_config=body.backend_config,
         status="pending",
     )
     session.add(env)
@@ -153,6 +165,7 @@ async def create_environment(
 async def update_environment(
     env_id: str,
     body: EnvironmentUpdate,
+    background: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
     actor: User | None = Depends(optional_current_user),
 ):
@@ -175,13 +188,81 @@ async def update_environment(
         env.runner_pool_max = body.runner_pool_max
     if body.runner_pool_set or "runner_pool_id" in sent:
         await _validate_pool_ref(session, body.runner_pool_id)
+        from app.services.isolation import validate_pool_assignment
+
+        await validate_pool_assignment(session, env.org_id, body.runner_pool_id)
         env.runner_pool_id = body.runner_pool_id
+    needs_rebuild = False
+    if body.backend_config is not None:
+        env.backend_config = body.backend_config
+        needs_rebuild = True
     await log_audit(session, "update", "environment", env.id, env.name,
                     actor_id=actor.id if actor else None,
                     actor_email=actor.email if actor else None)
     await session.commit()
     await session.refresh(env)
+    if needs_rebuild:
+        env.status = "pending"
+        await session.commit()
+        background.add_task(build_environment, env.id)
     return _to_info(env, await _pool_name(session, env.runner_pool_id))
+
+
+@router.get("/backends")
+async def list_backends() -> dict:
+    """Return server platform and available backends.
+
+    conda and pixi are always available — their binaries auto-download on first use.
+    Only Docker is greyed out when the daemon is unreachable.
+    The ``platform`` field is used by the frontend PEP 508 marker evaluator.
+    """
+    import shutil
+    import sys
+
+    from app.services.backends.tools import TOOLS_DIR
+
+    def _tool_version(name: str) -> str | None:
+        suffix = ".exe" if sys.platform == "win32" else ""
+        binary = TOOLS_DIR / f"{name}{suffix}"
+        if binary.exists():
+            return f"{name} (managed)"
+        system = shutil.which(name)
+        if system:
+            return f"{name} (system)"
+        return None
+
+    uv_path = shutil.which("uv")
+    micromamba_version = _tool_version("micromamba") or (
+        "mamba (system)" if shutil.which("mamba") else
+        "conda (system)" if shutil.which("conda") else
+        None
+    )
+    pixi_version = _tool_version("pixi")
+    docker_available = shutil.which("docker") is not None
+
+    return {
+        "platform": sys.platform,
+        "venv": {
+            "available": uv_path is not None,
+            "version": None,
+            "managed": False,
+        },
+        "conda": {
+            "available": True,
+            "version": micromamba_version,
+            "managed": micromamba_version is not None and "managed" in (micromamba_version or ""),
+        },
+        "pixi": {
+            "available": True,
+            "version": pixi_version,
+            "managed": pixi_version is not None and "managed" in (pixi_version or ""),
+        },
+        "docker": {
+            "available": docker_available,
+            "version": None,
+            "managed": False,
+        },
+    }
 
 
 @router.get("/{env_id}", response_model=EnvironmentInfo)

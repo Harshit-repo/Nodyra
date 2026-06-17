@@ -22,7 +22,9 @@ from pathlib import Path
 from typing import Any
 
 EventCallback = Callable[[dict], Awaitable[None]]
-CallWorkflow = Callable[[str, Any], Awaitable[Any]]
+# The broker receives the whole call payload (A3: workflow_id, input,
+# use_published, parent_run_id, depth, call_chain) — not (workflow_id, input).
+CallWorkflow = Callable[[dict], Awaitable[Any]]
 
 
 async def run_workflow_subprocess(
@@ -38,6 +40,9 @@ async def run_workflow_subprocess(
     call_workflow: CallWorkflow | None = None,
     pause_on_approval: bool = False,
     agent_action_resume: dict | None = None,
+    artifact_key_prefix: str = "",
+    org_limits: dict | None = None,
+    subworkflow_meta: dict | None = None,
 ) -> str:
     """Spawn ``noodle_runtime``, run the workflow, return the status string."""
     proc = await asyncio.create_subprocess_exec(
@@ -65,9 +70,10 @@ async def run_workflow_subprocess(
         try:
             if call_workflow is None:
                 raise RuntimeError("no sub-workflow broker on this runner")
-            result = await call_workflow(
-                event.get("workflow_id", ""), event.get("input")
-            )
+            payload = {
+                k: v for k, v in event.items() if k not in ("type", "callback_id")
+            }
+            result = await call_workflow(payload)
             await write_msg({
                 "type": "call_workflow_response",
                 "callback_id": callback_id,
@@ -90,6 +96,9 @@ async def run_workflow_subprocess(
         "workflow_modules": workflow_modules,
         "pause_on_approval": pause_on_approval,
         "agent_action_resume": agent_action_resume or {},
+        "subworkflow_meta": subworkflow_meta or {},
+        "artifact_key_prefix": artifact_key_prefix,
+        "org_limits": org_limits or {},
     }
     if artifacts_upload_url:
         run_msg["artifacts_upload_url"] = artifacts_upload_url

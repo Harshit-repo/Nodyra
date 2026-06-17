@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NDV fields & dropdowns — polish</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --bg:#090b10;--surface:#10141c;--surface-2:#161b25;--surface-3:#1f2632;
+  --line:#242c3a;--line-2:#1a2029;--ink:#e9eef6;--ink-2:#98a4ba;--ink-3:#8a93a6;
+  --accent:#4c9eff;--accent-2:#79b6ff;--accent-deep:#1f4f8f;--accent-glow:rgba(76,158,255,.18);
+  --radius:11px;--radius-sm:7px;
+  --font-display:"Bricolage Grotesque",sans-serif;--font-sans:"Hanken Grotesk",sans-serif;--font-mono:"IBM Plex Mono",monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-sans);-webkit-font-smoothing:antialiased;padding:40px}
+.wrap{max-width:980px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:26px}
+.col h2{font-family:var(--font-display);font-size:14px;letter-spacing:.02em;margin:0 0 4px;color:var(--ink)}
+.col .sub{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);margin:0 0 16px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
+.field-block{margin-bottom:16px}
+.field-block:last-child{margin-bottom:0}
+.field-label{display:flex;align-items:baseline;gap:7px;margin-bottom:5px}
+.field-name{font-family:var(--font-mono);font-size:12.5px;color:var(--ink);font-weight:500}
+.field-type{font-family:var(--font-mono);font-size:10px;color:var(--ink-3)}
+.field-req{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--accent);margin-left:auto}
+.state{font-family:var(--font-mono);font-size:9.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.08em;margin-left:auto}
+
+/* base field-input (verbatim from index.css) */
+.field-input{width:100%;font-family:var(--font-sans);font-size:13px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:var(--radius-sm);padding:8px 10px;outline:none;transition:border-color 120ms,box-shadow 120ms}
+.field-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.field-invalid,.field-invalid:focus{border-color:#e5664f;box-shadow:0 0 0 3px rgba(229,102,79,.18)}
+
+/* expression field (verbatim) */
+.field-input-expr{font-family:var(--font-mono);font-size:12px;color:#c4b5fd;background:rgba(124,58,237,.07);border-color:rgba(139,92,246,.4)}
+
+/* fx toggle (verbatim) */
+.input-row{position:relative}
+.input-row .field-input{padding-right:34px}
+.fx-toggle{position:absolute;top:50%;right:4px;transform:translateY(-50%);display:inline-flex;align-items:center;justify-content:center;width:26px;height:22px;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--ink-3);font-family:var(--font-mono);font-size:12px;font-weight:700;font-style:italic;cursor:pointer}
+.fx-toggle-on{color:#fff;background:#7c3aed;border-color:rgba(139,92,246,.9);box-shadow:0 0 8px rgba(139,92,246,.5)}
+
+/* native (BEFORE) select — appearance left to the OS */
+select.native{appearance:auto;-webkit-appearance:auto;background-image:none;padding-right:10px}
+
+/* ====== THE SHIPPED POLISH (verbatim from editor.css) ====== */
+.ndv-middle-body .field-input:hover,
+.credential-form-grid .field-input:hover{border-color:color-mix(in srgb,var(--accent) 30%,var(--line))}
+select.field-input{appearance:none;-webkit-appearance:none;padding-right:30px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%238a93a6' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;background-size:12px;cursor:pointer}
+select.field-input:hover{border-color:color-mix(in srgb,var(--accent) 30%,var(--line))}
+.fx-toggle:hover{background:rgba(124,58,237,.14);color:#c4b5fd}
+
+/* --- static-state helpers so :hover/:focus are visible in a screenshot --- */
+.show-hover{border-color:color-mix(in srgb,var(--accent) 30%,var(--line))!important}
+.show-focus{border-color:var(--accent)!important;box-shadow:0 0 0 3px var(--accent-glow)!important}
+.fx-toggle.show-hover{background:rgba(124,58,237,.14)!important;color:#c4b5fd!important;border-color:transparent!important}
+
+/* open-menu mock (the real credential picker / custom menus) */
+.menu{margin-top:6px;background:var(--surface-2);border:1px solid var(--line-2);border-radius:8px;padding:4px;box-shadow:0 8px 28px rgba(0,0,0,.5)}
+.menu .opt{display:block;width:100%;text-align:left;border:none;background:transparent;color:var(--ink);font-size:13px;font-family:inherit;padding:7px 10px;border-radius:5px;cursor:pointer}
+.menu .opt.sel{background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent-2)}
+.menu .opt:not(.sel):hover{background:rgba(255,255,255,.06)}
+.cap{font-family:var(--font-mono);font-size:10px;color:var(--ink-3);letter-spacing:.06em;text-transform:uppercase;margin:22px 0 10px}
+.cap:first-child{margin-top:0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- BEFORE -->
+  <div class="col">
+    <h2>Before</h2>
+    <p class="sub">native arrows · flat states</p>
+    <div class="panel">
+      <p class="cap">Dropdown</p>
+      <div class="field-block">
+        <div class="field-label"><span class="field-name">method</span><span class="field-type">enum</span></div>
+        <select class="field-input native"><option>GET</option><option>POST</option></select>
+      </div>
+
+      <p class="cap">Text field</p>
+      <div class="field-block">
+        <div class="field-label"><span class="field-name">url</span><span class="field-type">string</span></div>
+        <input class="field-input" value="https://api.example.com/v1/items" />
+      </div>
+      <div class="field-block">
+        <div class="field-label"><span class="field-name">url</span><span class="state">focus</span></div>
+        <input class="field-input show-focus" value="https://api.example.com/v1/items" />
+      </div>
+
+      <p class="cap">Expression + fx</p>
+      <div class="field-block">
+        <div class="field-label"><span class="field-name">prompt</span></div>
+        <div class="input-row">
+          <input class="field-input field-input-expr" value="{{ $json.prompt }}" />
+          <button class="fx-toggle fx-toggle-on">fx</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- AFTER -->
+  <div class="col">
+    <h2>After — polished</h2>
+    <p class="sub">custom chevron · accent hover/focus</p>
+    <div class="panel ndv-middle-body">
+      <p class="cap">Dropdown — default · hover · focus</p>
+      <div class="field-block">
+        <div class="field-label"><span class="field-name">method</span><span class="field-type">enum</span></div>
+        <select class="field-input"><option>GET</option><option>POST</option></select>
+      </div>
+      <div class="field-block">
+        <div class="field-label"><span class="field-name">method</span><span class="state">hover</span></div>
+        <select class="field-input show-hover"><option>GET</option></select>
+      </div>
+      <div class="field-block">
+        <div class="field-label"><span class="field-name">method</span><span class="state">focus / open</span></div>
+        <select class="field-input show-focus"><option>POST</option></select>
+        <div class="menu">
+          <button class="opt">GET</button>
+          <button class="opt sel">POST</button>
+          <button class="opt">PUT</button>
+          <button class="opt">DELETE</button>
+        </div>
+      </div>
+
+      <p class="cap">Text field — default · hover · focus</p>
+      <div class="field-block">
+        <input class="field-input" value="https://api.example.com/v1/items" />
+      </div>
+      <div class="field-block">
+        <div class="field-label"><span class="field-name">url</span><span class="state">hover</span></div>
+        <input class="field-input show-hover" value="https://api.example.com/v1/items" />
+      </div>
+      <div class="field-block">
+        <div class="field-label"><span class="field-name">url</span><span class="state">focus</span></div>
+        <input class="field-input show-focus" value="https://api.example.com/v1/items" />
+      </div>
+
+      <p class="cap">Expression + fx (active)</p>
+      <div class="field-block">
+        <div class="input-row">
+          <input class="field-input field-input-expr" value="{{ $json.prompt }}" />
+          <button class="fx-toggle fx-toggle-on">fx</button>
+        </div>
+      </div>
+
+      <p class="cap">Invalid</p>
+      <div class="field-block">
+        <input class="field-input field-invalid" value='{ "bad": json, }' />
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

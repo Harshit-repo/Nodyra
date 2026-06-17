@@ -1,15 +1,24 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { DotsThreeVertical, Rows, SquaresFour } from "@phosphor-icons/react";
 
-import { api } from "./api";
+import { api, errorMessage } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { HomeHeader } from "./HomeHeader";
 import { Logo } from "./Logo";
+import {
+  useCreateWorkflowMutation,
+  useCredentials,
+  useDeleteWorkflowMutation,
+  useDeployments,
+  useEnvironments,
+  useUpdateWorkflowMutation,
+  useWorkflowProviderTriggers,
+  useWorkflows,
+} from "./queries";
 import { useToast } from "./ToastProvider";
+import { useModalA11y } from "./useModalA11y";
 import type {
-  Credential,
-  Deployment,
-  Environment,
   ProviderTriggerStatusCounts,
   ProviderTriggerSubscription,
   WorkflowSummary,
@@ -96,17 +105,20 @@ function CreateModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const { notify } = useToast();
+  const createWorkflow = useCreateWorkflowMutation();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
   async function submit() {
     if (busy) return;
     setBusy(true);
     setError("");
     try {
-      const created = await api.createWorkflow(name.trim() || "Untitled workflow");
       const template = TEMPLATES.find((item) => item.id === templateId);
-      if (template?.graph) {
-        await api.updateWorkflow(created.id, { graph: template.graph() });
-      }
+      const created = await createWorkflow.mutateAsync({
+        name: name.trim() || "Untitled workflow",
+        graph: template?.graph?.(),
+      });
       notify(
         template?.id === "blank" ? "Workflow created." : "Template created.",
         "success",
@@ -122,9 +134,11 @@ function CreateModal({
     <div className="modal-overlay" onClick={onClose}>
       <div
         className="modal"
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="new-workflow-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (e.key === "Escape") onClose();
@@ -179,11 +193,6 @@ function CreateModal({
 }
 
 export function WorkflowsPage() {
-  const [workflows, setWorkflows] = useState<WorkflowSummary[] | null>(null);
-  const [deployments, setDeployments] = useState<Deployment[] | null>(null);
-  const [credentials, setCredentials] = useState<Credential[] | null>(null);
-  const [environments, setEnvironments] = useState<Environment[] | null>(null);
-  const [error, setError] = useState("");
   const [modal, setModal] = useState(false);
   const [modalTemplateId, setModalTemplateId] = useState("blank");
   const [query, setQuery] = useState("");
@@ -191,36 +200,48 @@ export function WorkflowsPage() {
   const [sort, setSort] = useState("updated");
   const [pendingDelete, setPendingDelete] = useState<WorkflowSummary | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [pendingRename, setPendingRename] = useState<WorkflowSummary | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"grid" | "list">(() => {
+    return (localStorage.getItem("noodle-wf-view") as "grid" | "list") ?? "grid";
+  });
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const [providerModalWorkflow, setProviderModalWorkflow] =
     useState<WorkflowSummary | null>(null);
-  const [providerRows, setProviderRows] =
-    useState<ProviderTriggerSubscription[] | null>(null);
-  const [providerError, setProviderError] = useState("");
   const navigate = useNavigate();
   const { notify } = useToast();
+  const deleteWorkflow = useDeleteWorkflowMutation();
+  const updateWorkflow = useUpdateWorkflowMutation();
+  const duplicateWorkflow = useCreateWorkflowMutation();
 
-  function load() {
-    setError("");
-    api
-      .listWorkflows()
-      .then(setWorkflows)
-      .catch((err) => setError(String(err)));
-    void Promise.allSettled([
-      api.listDeployments(),
-      api.listCredentials(),
-      api.listEnvironments(),
-    ]).then(([deploymentResult, credentialResult, environmentResult]) => {
-      if (deploymentResult.status === "fulfilled") {
-        setDeployments(deploymentResult.value);
-      }
-      if (credentialResult.status === "fulfilled") {
-        setCredentials(credentialResult.value);
-      }
-      if (environmentResult.status === "fulfilled") {
-        setEnvironments(environmentResult.value);
-      }
-    });
-  }
+  const workflowsQuery = useWorkflows({
+    refetchInterval: (query) =>
+      query.state.data?.some((wf) => wf.last_run_status === "running")
+        ? 3000
+        : false,
+  });
+  const deploymentsQuery = useDeployments();
+  const credentialsQuery = useCredentials();
+  const environmentsQuery = useEnvironments();
+  const providerTriggersQuery = useWorkflowProviderTriggers(
+    providerModalWorkflow?.id ?? null,
+    { enabled: providerModalWorkflow !== null },
+  );
+  const workflows = workflowsQuery.data ?? null;
+  const deployments = deploymentsQuery.data ?? null;
+  const credentials = credentialsQuery.data ?? null;
+  const environments = environmentsQuery.data ?? null;
+  const error =
+    workflowsQuery.isError && !workflowsQuery.data
+      ? errorMessage(workflowsQuery.error)
+      : "";
+  const providerRows = providerTriggersQuery.data ?? null;
+  const providerError =
+    providerTriggersQuery.isError && !providerTriggersQuery.data
+      ? errorMessage(providerTriggersQuery.error)
+      : "";
 
   function openCreate(templateId = "blank"): void {
     setModalTemplateId(templateId);
@@ -233,21 +254,64 @@ export function WorkflowsPage() {
     setSort("updated");
   }
 
-  useEffect(load, []);
-
   async function remove(id: string) {
     setDeleteBusy(true);
     try {
-      await api.deleteWorkflow(id);
+      await deleteWorkflow.mutateAsync(id);
       notify("Workflow deleted.", "success");
       setPendingDelete(null);
-      load();
     } catch (err) {
-      setError(String(err));
-      notify("Could not delete workflow.", "error");
+      notify(`Could not delete workflow. ${errorMessage(err)}`, "error");
     } finally {
       setDeleteBusy(false);
     }
+  }
+
+  async function duplicate(wf: WorkflowSummary): Promise<void> {
+    setOpenMenuId(null);
+    try {
+      const detail = await api.getWorkflow(wf.id);
+      await duplicateWorkflow.mutateAsync({
+        name: `Copy of ${wf.name}`,
+        graph: detail.graph,
+      });
+      notify(`"${wf.name}" duplicated.`, "success");
+    } catch {
+      notify("Could not duplicate workflow.", "error");
+    }
+  }
+
+  async function commitRename(): Promise<void> {
+    if (!pendingRename || renameBusy) return;
+    setRenameBusy(true);
+    try {
+      await updateWorkflow.mutateAsync({
+        id: pendingRename.id,
+        patch: { name: renameName.trim() || pendingRename.name },
+      });
+      notify("Workflow renamed.", "success");
+      setPendingRename(null);
+    } catch {
+      notify("Could not rename workflow.", "error");
+    } finally {
+      setRenameBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!openMenuId) return;
+    function handleOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpenMenuId(null);
+      }
+    }
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [openMenuId]);
+
+  function setView(mode: "grid" | "list"): void {
+    setViewMode(mode);
+    localStorage.setItem("noodle-wf-view", mode);
   }
 
   async function openProviderStatus(
@@ -256,20 +320,22 @@ export function WorkflowsPage() {
   ): Promise<void> {
     event.stopPropagation();
     setProviderModalWorkflow(wf);
-    setProviderRows(null);
-    setProviderError("");
-    try {
-      setProviderRows(await api.listWorkflowProviderTriggers(wf.id));
-    } catch (err) {
-      setProviderError(String(err));
-    }
   }
 
   function closeProviderStatus(): void {
     setProviderModalWorkflow(null);
-    setProviderRows(null);
-    setProviderError("");
   }
+
+  // Inline dialogs in this always-mounted page: activate modal a11y only while
+  // each is open (Esc, focus trap + return, dialog ARIA).
+  const renameDialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(renameDialogRef, () => setPendingRename(null), {
+    enabled: pendingRename !== null,
+  });
+  const providerDialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(providerDialogRef, closeProviderStatus, {
+    enabled: providerModalWorkflow !== null,
+  });
 
   const visible = useMemo(() => {
     const rows = workflows ?? [];
@@ -282,6 +348,7 @@ export function WorkflowsPage() {
         if (statusFilter === "inactive" && wf.active) return false;
         if (statusFilter === "draft" && !wf.has_unpublished_changes) return false;
         if (statusFilter === "failed" && wf.last_run_status !== "error") return false;
+        if (statusFilter === "running" && wf.last_run_status !== "running") return false;
         if (statusFilter === "provider_error" && counts.error === 0) return false;
         return true;
       })
@@ -343,23 +410,48 @@ export function WorkflowsPage() {
 
         {workflows && workflows.length > 0 && (
           <div className="dashboard-grid" aria-label="Operational summary">
-            <button type="button" onClick={() => setStatusFilter("active")}>
+            <button
+              type="button"
+              className={statusFilter === "active" ? "is-selected" : ""}
+              aria-pressed={statusFilter === "active"}
+              onClick={() => setStatusFilter("active")}
+            >
               <strong>{stats.active}</strong>
               <span>Active</span>
             </button>
-            <button type="button" onClick={() => setStatusFilter("draft")}>
+            <button
+              type="button"
+              className={statusFilter === "draft" ? "is-selected" : ""}
+              aria-pressed={statusFilter === "draft"}
+              onClick={() => setStatusFilter("draft")}
+            >
               <strong>{stats.drafts}</strong>
               <span>Drafts</span>
             </button>
-            <button type="button" onClick={() => setStatusFilter("failed")}>
+            <button
+              type="button"
+              className={statusFilter === "failed" ? "is-selected" : ""}
+              aria-pressed={statusFilter === "failed"}
+              onClick={() => setStatusFilter("failed")}
+            >
               <strong>{stats.failed}</strong>
               <span>Failed runs</span>
             </button>
-            <button type="button" onClick={() => setStatusFilter("provider_error")}>
+            <button
+              type="button"
+              className={statusFilter === "provider_error" ? "is-selected" : ""}
+              aria-pressed={statusFilter === "provider_error"}
+              onClick={() => setStatusFilter("provider_error")}
+            >
               <strong>{stats.providerErrors}</strong>
               <span>Trigger errors</span>
             </button>
-            <button type="button" onClick={() => setStatusFilter("all")}>
+            <button
+              type="button"
+              className={statusFilter === "running" ? "is-selected" : ""}
+              aria-pressed={statusFilter === "running"}
+              onClick={() => setStatusFilter("running")}
+            >
               <strong>{stats.running}</strong>
               <span>Running runs</span>
             </button>
@@ -383,12 +475,33 @@ export function WorkflowsPage() {
         )}
 
         <div className="home-filters">
-          <input
-            className="field-input"
-            placeholder="Search workflows..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
+          <div className="home-search-row">
+            <input
+              className="field-input"
+              aria-label="Search workflows"
+              placeholder="Search workflows..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <div className="wf-view-toggle" role="group" aria-label="View mode">
+              <button
+                type="button"
+                title="Card view"
+                className={viewMode === "grid" ? "active" : ""}
+                onClick={() => setView("grid")}
+              >
+                <SquaresFour size={13} weight={viewMode === "grid" ? "fill" : "regular"} />
+              </button>
+              <button
+                type="button"
+                title="List view"
+                className={viewMode === "list" ? "active" : ""}
+                onClick={() => setView("list")}
+              >
+                <Rows size={13} weight={viewMode === "list" ? "fill" : "regular"} />
+              </button>
+            </div>
+          </div>
           <select
             className="field-input"
             value={statusFilter}
@@ -399,6 +512,7 @@ export function WorkflowsPage() {
             <option value="inactive">Inactive</option>
             <option value="draft">Draft changes</option>
             <option value="failed">Failed recently</option>
+            <option value="running">Running</option>
             <option value="provider_error">Trigger errors</option>
           </select>
           <select
@@ -455,27 +569,29 @@ export function WorkflowsPage() {
         )}
 
         {workflows && workflows.length > 0 && (
-          <div className="wf-grid">
+          <div className={viewMode === "list" ? "wf-list" : "wf-grid"}>
             {visible.map((wf) => {
               const hookBadge = providerStatusBadge(providerCounts(wf));
+              const menuOpen = openMenuId === wf.id;
               return (
                 <article
                   key={wf.id}
-                  className="wf-card"
+                  className={`wf-card${viewMode === "list" ? " wf-card--row" : ""}`}
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`Open workflow: ${wf.name}`}
                   onClick={() => navigate(`/workflows/${wf.id}`)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      navigate(`/workflows/${wf.id}`);
+                    }
+                  }}
                 >
                   <div className="wf-card-top">
                     <span className={`wf-status ${wf.active ? "on" : "off"}`}>
                       {wf.active ? "active" : "inactive"}
                     </span>
-                    {wf.has_unpublished_changes && (
-                      <span className="wf-status draft">draft changes</span>
-                    )}
-                    {wf.last_run_status && (
-                      <span className={`wf-status run-${wf.last_run_status}`}>
-                        last {wf.last_run_status}
-                      </span>
-                    )}
                     {hookBadge && (
                       <button
                         type="button"
@@ -486,18 +602,8 @@ export function WorkflowsPage() {
                         {hookBadge.label}
                       </button>
                     )}
-                    <button
-                      className="wf-delete"
-                      title="Delete workflow"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setPendingDelete(wf);
-                      }}
-                    >
-                      ×
-                    </button>
                   </div>
-                  <h3 className="wf-name">{wf.name}</h3>
+                  <h3 className="wf-name" title={wf.name}>{wf.name}</h3>
                   <div className="wf-meta">
                     <span>
                       {wf.node_count} node{wf.node_count === 1 ? "" : "s"}
@@ -508,12 +614,85 @@ export function WorkflowsPage() {
                     <span>published v{wf.published_version}</span>
                     <span className="dot-sep" />
                     <span>{relativeTime(wf.updated_at)}</span>
+                    {wf.has_unpublished_changes && (
+                      <>
+                        <span className="dot-sep" />
+                        <span className="wf-meta-draft">draft</span>
+                      </>
+                    )}
+                    {wf.last_run_status && (
+                      <>
+                        <span className="dot-sep" />
+                        <span className={`wf-meta-run wf-meta-run-${wf.last_run_status}`}>
+                          {wf.last_run_status}
+                        </span>
+                      </>
+                    )}
                   </div>
                   {wf.last_run_started_at && (
                     <div className="wf-meta wf-run-meta">
                       Last run {relativeTime(wf.last_run_started_at)}
                     </div>
                   )}
+                  <div
+                    className="wf-menu-wrap"
+                    ref={menuOpen ? menuRef : null}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      className="wf-menu-btn"
+                      title="More options"
+                      aria-label="More options"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenMenuId(menuOpen ? null : wf.id);
+                      }}
+                    >
+                      <DotsThreeVertical size={16} weight="bold" />
+                    </button>
+                    {menuOpen && (
+                      <div className="wf-menu" role="menu">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => navigate(`/workflows/${wf.id}`)}
+                        >
+                          Open
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setOpenMenuId(null);
+                            setPendingRename(wf);
+                            setRenameName(wf.name);
+                          }}
+                        >
+                          Rename
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => void duplicate(wf)}
+                        >
+                          Duplicate
+                        </button>
+                        <div className="wf-menu-sep" />
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="danger"
+                          onClick={() => {
+                            setOpenMenuId(null);
+                            setPendingDelete(wf);
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </article>
               );
             })}
@@ -546,13 +725,49 @@ export function WorkflowsPage() {
           onConfirm={() => void remove(pendingDelete.id)}
         />
       )}
+      {pendingRename && (
+        <div className="modal-overlay" onClick={() => setPendingRename(null)}>
+          <div
+            className="modal"
+            ref={renameDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rename-workflow-title"
+            tabIndex={-1}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="rename-workflow-title">Rename workflow</h2>
+            <input
+              className="field-input"
+              autoFocus
+              value={renameName}
+              onChange={(e) => setRenameName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void commitRename()}
+            />
+            <div className="modal-actions">
+              <button className="btn btn-ghost" onClick={() => setPendingRename(null)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => void commitRename()}
+                disabled={renameBusy}
+              >
+                {renameBusy ? "Saving…" : "Rename"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {providerModalWorkflow && (
         <div className="modal-overlay" onClick={closeProviderStatus}>
           <div
             className="modal provider-trigger-modal"
+            ref={providerDialogRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="provider-trigger-title"
+            tabIndex={-1}
             onClick={(e) => e.stopPropagation()}
           >
             <h2 id="provider-trigger-title">Provider triggers</h2>

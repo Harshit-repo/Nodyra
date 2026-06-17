@@ -154,6 +154,18 @@ def test_xml_parse_handles_attributes() -> None:
     }
 
 
+def test_xml_parse_rejects_unsafe_entities() -> None:
+    payload = """\
+<?xml version="1.0"?>
+<!DOCTYPE root [
+  <!ENTITY secret SYSTEM "file:///etc/passwd">
+]>
+<root>&secret;</root>
+"""
+    with pytest.raises(ValueError, match="unsafe XML"):
+        xml_parse(text=payload)
+
+
 # --- YAML -------------------------------------------------------------------
 
 

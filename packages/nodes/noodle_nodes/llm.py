@@ -11,18 +11,19 @@ import asyncio
 import base64
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 from urllib.parse import urlencode
 
 import requests
 
 from noodle.artifacts import is_artifact_ref, read_text, write_bytes
-from noodle.context import workflow_caller
+from noodle.context import emit_chunk, node_emitter, workflow_caller
 from noodle.datasets import is_dataset_ref
 from noodle.sdk import node
 from noodle_nodes._creds import cred_multi, cred_single
 from noodle_nodes.datasets import materialize_dataset, records_to_dataset
+from noodle_nodes.http_security import assert_public_http_url
 
 AI_CATEGORY = "AI"
 DEFAULT_TIMEOUT = 75
@@ -144,6 +145,17 @@ def _with_chat_completions(base_url: str) -> str:
     if base.endswith("/chat/completions"):
         return base
     return f"{base}/chat/completions"
+
+
+def _hosted_https_url(host: str, path: str, *, context: str) -> str:
+    host = str(host or "").strip()
+    if not host:
+        raise ValueError(f"{context}: host is required")
+    if "://" in host or any(ch in host for ch in "/?#@"):
+        raise ValueError(f"{context}: host must be a hostname, not a URL")
+    url = f"https://{host}{path}"
+    assert_public_http_url(url, context=context)
+    return url
 
 
 def _provider_creds(credentials: dict | None) -> dict[str, str]:
@@ -346,6 +358,164 @@ def _normalize_anthropic(body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _sse_data(line: Any) -> str | None:
+    """Return the ``data:`` payload of one SSE line, or None for non-data lines."""
+    text = line.decode("utf-8") if isinstance(line, (bytes, bytearray)) else str(line)
+    text = text.strip()
+    if not text or not text.startswith("data:"):
+        return None
+    return text[len("data:") :].strip()
+
+
+def _assemble_openai_stream(lines: Iterable[Any], emit: Callable[[str], None]) -> dict[str, Any]:
+    """Consume an OpenAI-format streaming chat completion.
+
+    Emits each text delta via ``emit`` as it arrives and returns the same
+    normalized envelope shape as :func:`_normalize_openai`, with streamed tool
+    calls reassembled from their per-index argument fragments.
+    """
+    parts: list[str] = []
+    tool_calls: dict[int, dict[str, Any]] = {}
+    finish_reason: str | None = None
+    usage: dict[str, Any] = {}
+    model: str | None = None
+    for line in lines:
+        data = _sse_data(line)
+        if data is None:
+            continue
+        if data == "[DONE]":
+            break
+        try:
+            obj = json.loads(data)
+        except ValueError:
+            continue
+        model = obj.get("model") or model
+        if isinstance(obj.get("usage"), dict):
+            usage = obj["usage"]
+        for choice in obj.get("choices") or []:
+            delta = choice.get("delta") or {}
+            piece = delta.get("content")
+            if piece:
+                parts.append(piece)
+                emit(piece)
+            for raw_tc in delta.get("tool_calls") or []:
+                idx = int(raw_tc.get("index") or 0)
+                slot = tool_calls.setdefault(
+                    idx,
+                    {"id": None, "type": "function",
+                     "function": {"name": "", "arguments": ""}},
+                )
+                if raw_tc.get("id"):
+                    slot["id"] = raw_tc["id"]
+                fn = raw_tc.get("function") or {}
+                if fn.get("name"):
+                    slot["function"]["name"] += fn["name"]
+                if fn.get("arguments"):
+                    slot["function"]["arguments"] += fn["arguments"]
+            if choice.get("finish_reason"):
+                finish_reason = choice["finish_reason"]
+    text = "".join(parts)
+    ordered_tools = [tool_calls[i] for i in sorted(tool_calls)]
+    message: dict[str, Any] = {"role": "assistant", "content": text}
+    if ordered_tools:
+        message["tool_calls"] = ordered_tools
+    return {
+        "text": text,
+        "message": message,
+        "tool_calls": ordered_tools,
+        "usage": usage,
+        "model": model,
+        "finish_reason": finish_reason,
+    }
+
+
+def _assemble_anthropic_stream(lines: Iterable[Any], emit: Callable[[str], None]) -> dict[str, Any]:
+    """Consume an Anthropic-format streaming message, emitting text deltas, and
+    return the same normalized envelope shape as :func:`_normalize_anthropic`."""
+    parts: list[str] = []
+    finish_reason: str | None = None
+    usage: dict[str, Any] = {}
+    model: str | None = None
+    for line in lines:
+        data = _sse_data(line)
+        if data is None or data == "[DONE]":
+            continue
+        try:
+            obj = json.loads(data)
+        except ValueError:
+            continue
+        event_type = obj.get("type")
+        if event_type == "message_start":
+            message = obj.get("message") or {}
+            model = message.get("model") or model
+            if isinstance(message.get("usage"), dict):
+                usage = {**usage, **message["usage"]}
+        elif event_type == "content_block_delta":
+            delta = obj.get("delta") or {}
+            if delta.get("type") == "text_delta" and delta.get("text"):
+                parts.append(delta["text"])
+                emit(delta["text"])
+        elif event_type == "message_delta":
+            delta = obj.get("delta") or {}
+            if delta.get("stop_reason"):
+                finish_reason = delta["stop_reason"]
+            if isinstance(obj.get("usage"), dict):
+                usage = {**usage, **obj["usage"]}
+    text = "".join(parts)
+    return {
+        "text": text,
+        "message": {"role": "assistant", "content": [{"type": "text", "text": text}]},
+        "tool_calls": [],
+        "usage": usage,
+        "model": model,
+        "finish_reason": finish_reason,
+    }
+
+
+def _post_stream(
+    url: str,
+    *,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    timeout: int,
+    service: str,
+    assemble: Callable[[Iterable[Any], Callable[[str], None]], dict[str, Any]],
+) -> dict[str, Any]:
+    """POST a streaming chat request and assemble the normalized envelope.
+
+    Mirrors :func:`_expect_json`'s error surfacing for non-2xx responses before
+    consuming the event stream. Text deltas are forwarded live via
+    ``noodle.emit_chunk`` so the editor canvas shows tokens as they're produced.
+    """
+    response = requests.post(
+        url,
+        headers=headers,
+        json={**payload, "stream": True},
+        timeout=timeout,
+        stream=True,
+    )
+    try:
+        status = int(getattr(response, "status_code", 200) or 200)
+        if status >= 400:
+            try:
+                detail: Any = response.json()
+            except Exception:  # noqa: BLE001 - fall back to raw body
+                detail = getattr(response, "text", "")
+            raise ValueError(f"{service} request failed ({status}): {detail}")
+        return assemble(response.iter_lines(decode_unicode=True), emit_chunk)
+    finally:
+        # Release the connection even when assembly stops early at ``[DONE]``.
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+
+
+def _streaming_enabled(response_format: str) -> bool:
+    """Stream only when a live consumer is listening and the response is plain
+    text — JSON / structured responses are parsed whole, not token-by-token."""
+    return node_emitter.get() is not None and response_format == "text"
+
+
 def _call_llm(
     *,
     provider: str,
@@ -361,6 +531,8 @@ def _call_llm(
     creds = _provider_creds(credentials)
     provider_key = _effective_provider(provider, creds)
     timeout = max(1, min(300, int(timeout_seconds or DEFAULT_TIMEOUT)))
+    streaming = _streaming_enabled(response_format)
+    body: Any = None  # raw provider body; stays None on the streaming path
 
     if provider_key == "anthropic":
         api_key = creds.get("api_key", "")
@@ -375,20 +547,32 @@ def _call_llm(
         }
         if system:
             payload["system"] = system
-        body = _expect_json(
-            requests.post(
-                (creds.get("base_url") or "https://api.anthropic.com/v1/messages"),
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": creds.get("anthropic_version", "2023-06-01"),
-                    "Content-Type": "application/json",
-                },
-                json=payload,
+        anthropic_url = creds.get("base_url") or "https://api.anthropic.com/v1/messages"
+        anthropic_headers = {
+            "x-api-key": api_key,
+            "anthropic-version": creds.get("anthropic_version", "2023-06-01"),
+            "Content-Type": "application/json",
+        }
+        if streaming:
+            out = _post_stream(
+                anthropic_url,
+                headers=anthropic_headers,
+                payload=payload,
                 timeout=timeout,
-            ),
-            "anthropic",
-        )
-        out = _normalize_anthropic(body)
+                service="anthropic",
+                assemble=_assemble_anthropic_stream,
+            )
+        else:
+            body = _expect_json(
+                requests.post(
+                    anthropic_url,
+                    headers=anthropic_headers,
+                    json=payload,
+                    timeout=timeout,
+                ),
+                "anthropic",
+            )
+            out = _normalize_anthropic(body)
     elif provider_key == "azure_openai":
         api_key = creds.get("api_key", "")
         endpoint = (creds.get("azure_endpoint") or creds.get("base_url") or "").rstrip("/")
@@ -411,16 +595,22 @@ def _call_llm(
             response_format=response_format,
             include_model=False,
         )
-        body = _expect_json(
-            requests.post(
+        azure_headers = {"api-key": api_key, "Content-Type": "application/json"}
+        if streaming:
+            out = _post_stream(
                 url,
-                headers={"api-key": api_key, "Content-Type": "application/json"},
-                json=payload,
+                headers=azure_headers,
+                payload=payload,
                 timeout=timeout,
-            ),
-            "azure_openai",
-        )
-        out = _normalize_openai(body)
+                service="azure_openai",
+                assemble=_assemble_openai_stream,
+            )
+        else:
+            body = _expect_json(
+                requests.post(url, headers=azure_headers, json=payload, timeout=timeout),
+                "azure_openai",
+            )
+            out = _normalize_openai(body)
     else:
         if provider_key == "ollama":
             base_url = creds.get("base_url") or "http://localhost:11434/v1"
@@ -458,16 +648,22 @@ def _call_llm(
             max_tokens=max_tokens,
             response_format=response_format,
         )
-        body = _expect_json(
-            requests.post(
-                _with_chat_completions(base_url),
+        chat_url = _with_chat_completions(base_url)
+        if streaming:
+            out = _post_stream(
+                chat_url,
                 headers=headers,
-                json=payload,
+                payload=payload,
                 timeout=timeout,
-            ),
-            provider_key,
-        )
-        out = _normalize_openai(body)
+                service=provider_key,
+                assemble=_assemble_openai_stream,
+            )
+        else:
+            body = _expect_json(
+                requests.post(chat_url, headers=headers, json=payload, timeout=timeout),
+                provider_key,
+            )
+            out = _normalize_openai(body)
 
     out["provider"] = provider_key
     if include_raw:
@@ -683,6 +879,7 @@ async def _execute_tool(tool: dict[str, Any], arguments: dict[str, Any]) -> Any:
         url = str(tool.get("url") or "")
         if not url:
             raise ValueError(f"tool {tool.get('name')}: url is required")
+        assert_public_http_url(url, context=f"tool:{tool.get('name')}")
         kwargs: dict[str, Any] = {"timeout": 45}
         if method in {"POST", "PUT", "PATCH", "DELETE"}:
             kwargs["json"] = arguments
@@ -1278,7 +1475,7 @@ def ai_vector_retriever(
         raise ValueError("ai_vector_retriever: Pinecone api_key and index_host are required")
     body = _expect_json(
         requests.post(
-            f"https://{index_host}/query",
+            _hosted_https_url(index_host, "/query", context="pinecone"),
             headers={"Api-Key": api_key, "Content-Type": "application/json"},
             json={
                 "vector": embeddings[0],

@@ -1,0 +1,55 @@
+:root {
+  --editor-toolbar-height: 53px;
+  --editor-space-2xs: 5px;
+  --editor-space-xs: 6px;
+  --editor-space-sm: 8px;
+  --editor-space-md: 14px;
+  --editor-space-lg: 16px;
+  --editor-radius-control: 6px;
+  --editor-radius-tight: 5px;
+  --editor-radius-pill: 999px;
+  --editor-z-dropdown: 20;
+  --editor-z-panel: 40;
+  --editor-danger-bg: rgba(229, 102, 79, 0.12);
+  --editor-danger-border: rgba(229, 102, 79, 0.2);
+  --editor-danger-text: #ef8d6f;
+  --editor-warning-bg: rgba(255, 212, 121, 0.1);
+  --editor-warning-border: rgba(255, 212, 121, 0.22);
+  --editor-warning-text: #ffd479;
+  --editor-info-bg: rgba(102, 178, 255, 0.1);
+  --editor-info-border: rgba(102, 178, 255, 0.22);
+
+  /* Semantic aliases used in inline styles — map to editor palette values
+     so components resolve correctly instead of falling back to the raw
+     default (e.g. "red") when these vars were previously undefined. */
+  --color-danger: var(--editor-danger-text);
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-surface-alt: #1e1e1e;
+  --color-text: #d4d4d4;
+
+  /* Expression field colors — theme-aware */
+  --expr-bg: rgba(124, 58, 237, 0.07);
+  --expr-border: rgba(139, 92, 246, 0.4);
+  --expr-border-focus: rgba(139, 92, 246, 0.85);
+  --expr-glow: rgba(139, 92, 246, 0.18);
+  --expr-text: #c4b5fd;
+
+  /* Run status colors — theme-aware */
+  --color-run-success: #8fd06f;
+  --color-run-error: #f0747a;
+  --color-run-running: var(--accent);
+  --color-run-skipped: var(--ink-3);
+  --color-run-cancelled: #b59bff;
+  --color-run-bg-success: rgba(87, 201, 138, 0.12);
+  --color-run-bg-error: rgba(240, 116, 122, 0.12);
+  --color-run-border-success: rgba(87, 201, 138, 0.6);
+  --color-run-border-error: rgba(240, 116, 122, 0.7);
+
+  /* Badge colors */
+  --badge-accent: #818cf8;
+  --badge-loop: #b45309;
+  --badge-draft: #e0a83e;
+
+  /* Webhook */
+  --webhook-glow: rgba(102, 178, 255, 0.12);
+}

@@ -9,6 +9,7 @@ type information for known safe Python types without using pickle.
 from __future__ import annotations
 
 import base64
+import io
 import json
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -393,17 +394,40 @@ def _cap_dataset_ref(value: dict[str, Any], cap: int) -> dict[str, Any]:
     return capped
 
 
+class _CountingSink:
+    """File-like sink that counts bytes written without allocating the string."""
+
+    __slots__ = ("length",)
+
+    def __init__(self) -> None:
+        self.length = 0
+
+    def write(self, chunk: str) -> None:
+        self.length += len(chunk)
+
+
+def _approx_json_length(value: Any) -> int:
+    sink = _CountingSink()
+    json.dump(value, sink, default=str, ensure_ascii=False)  # type: ignore[arg-type]
+    return sink.length
+
+
 def truncate_serialized_value(value: Any, cap: int) -> Any:
     """Bound a JSON-compatible value while keeping typed envelopes readable."""
     if cap <= 0 or value is None:
         return value
     try:
-        encoded = json.dumps(value, default=str, ensure_ascii=False)
+        approx = _approx_json_length(value)
     except (TypeError, ValueError):
         return value
-    if len(encoded) <= cap:
+    if approx <= cap:
         return value
 
+    # Value is over cap.  Avoid materialising the full encoded string in memory
+    # — for a 50 MB node output that would allocate 50 MB just to read length
+    # and 1 024 bytes.  Instead:
+    #   - size_bytes comes from `approx` (already counted without allocation)
+    #   - preview comes from streaming the encoder into a small buffer
     if is_typed_envelope(value):
         capped = _cap_typed_envelope(value, cap)
         if _encoded_size(capped) <= max(cap, 512):
@@ -414,8 +438,19 @@ def truncate_serialized_value(value: Any, cap: int) -> Any:
         if _encoded_size(capped) <= max(cap, 1024):
             return capped
 
+    try:
+        buf = io.StringIO()
+        enc = json.JSONEncoder(default=str, ensure_ascii=False)
+        for chunk in enc.iterencode(value):
+            buf.write(chunk)
+            if buf.tell() >= 1024:
+                break
+        preview = buf.getvalue()[:1024]
+    except (TypeError, ValueError):
+        preview = ""
+
     return {
         "_truncated": True,
-        "size_bytes": len(encoded),
-        "preview": encoded[:1024],
+        "size_bytes": approx,
+        "preview": preview,
     }

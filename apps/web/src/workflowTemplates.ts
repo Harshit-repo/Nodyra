@@ -258,8 +258,10 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         ),
         node(
           "slack",
-          "slack_send_message_v2",
+          "slack",
           {
+            resource: "message",
+            operation: "send",
             credentials: "",
             channel: "",
             text: "New webhook event: {{ $json }}",

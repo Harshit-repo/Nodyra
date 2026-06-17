@@ -99,11 +99,27 @@ def _expect_json(response: requests.Response, service: str) -> dict[str, Any]:
     return body
 
 
+def _content_text(content: Any) -> str:
+    """Message ``content`` as plain text. Providers behind OpenRouter may
+    return a list of typed parts instead of a string; join the text parts."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                parts.append(part["text"])
+        return "".join(parts)
+    return "" if content is None else str(content)
+
+
 def _normalize_response(body: dict[str, Any], provider: str) -> ChatResponse:
     choices = body.get("choices") if isinstance(body.get("choices"), list) else []
     first = choices[0] if choices and isinstance(choices[0], dict) else {}
     message = first.get("message") if isinstance(first.get("message"), dict) else {}
-    text = str(message.get("content") or "")
+    text = _content_text(message.get("content"))
 
     raw_tool_calls = message.get("tool_calls") or []
     tool_calls: list[ToolCall] = []

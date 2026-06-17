@@ -73,7 +73,7 @@ def _as_records(value: Any) -> list[dict[str, Any]]:
         else:
             return [value]
     if isinstance(value, list):
-        return [r for r in value if isinstance(r, dict)]
+        return [r for r in value if isinstance(r, dict)][:_CHART_CAP]
     return []
 
 

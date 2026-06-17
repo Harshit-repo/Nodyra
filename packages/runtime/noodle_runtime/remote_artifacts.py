@@ -29,9 +29,16 @@ class RemoteArtifactStore(LocalArtifactStore):
         max_bytes: int = 0,
         max_count: int = 0,
         base_dir: str | Path | None = None,
+        key_prefix: str = "",
     ) -> None:
         local_base = base_dir or Path(tempfile.gettempdir()) / "noodle-runner-artifacts"
-        super().__init__(local_base, run_id, max_bytes=max_bytes, max_count=max_count)
+        super().__init__(
+            local_base,
+            run_id,
+            max_bytes=max_bytes,
+            max_count=max_count,
+            key_prefix=key_prefix,
+        )
         self._upload_url = upload_url
         self._runner_token = runner_token
 

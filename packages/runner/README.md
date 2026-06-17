@@ -11,7 +11,11 @@ cancellation and brokered sub-workflow calls.
 ## Install
 
 ```bash
+# Published release:
 pip install noodle-runner
+
+# Self-hosted instance (wheel served from the API's internal index):
+pip install --find-links https://noodle.example.com/runner-pools/wheels/ noodle-runner
 ```
 
 ## Usage

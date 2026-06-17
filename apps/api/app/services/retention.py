@@ -15,15 +15,22 @@ clear at the call site.
 """
 
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from app.config import settings
 from app.db import SessionLocal
 from app.models import NodeRun, Run, RunApproval, RunEvent
 from app.services.artifacts import delete_artifacts_for_run_ids
 from app.services.live_settings import get_live_settings
+
+logger = logging.getLogger(__name__)
+
+# Maximum IDs fetched and deleted per prune tick to avoid loading millions of
+# UUIDs into a Python list and risking a DB timeout on the bulk DELETE.
+_PRUNE_BATCH_SIZE = 10_000
 
 
 async def prune_old_runs(now: datetime | None = None) -> tuple[int, int]:
@@ -44,38 +51,58 @@ async def prune_old_runs(now: datetime | None = None) -> tuple[int, int]:
 
     live = await get_live_settings()
     async with SessionLocal() as session:
+        # Never prune runs that are still actively executing — only terminal states.
+        _terminal = Run.status.in_(("success", "error", "cancelled"))
+
         days = max(0, live.run_retention_days)
         if days > 0:
             cutoff = now - timedelta(days=days)
-            ids = list(
-                (
-                    await session.scalars(
-                        select(Run.id).where(Run.started_at < cutoff)
-                    )
-                ).all()
-            )
-            aged_out = await _delete_runs(session, ids)
-
-        keep = max(0, live.run_retention_max_per_workflow)
-        if keep > 0:
-            workflow_ids = (
-                await session.scalars(select(Run.workflow_id).distinct())
-            ).all()
-            for workflow_id in workflow_ids:
-                # Find the runs to discard: every row beyond the most recent
-                # ``keep`` for this workflow. OFFSET on a sorted SELECT works
-                # uniformly across SQLite + Postgres.
-                old_ids = list(
+            # Fetch and delete in batches to avoid loading millions of UUIDs
+            # into memory at once and risking a DB timeout on a huge IN clause.
+            while True:
+                ids = list(
                     (
                         await session.scalars(
                             select(Run.id)
-                            .where(Run.workflow_id == workflow_id)
-                            .order_by(Run.started_at.desc())
-                            .offset(keep)
+                            .where(Run.started_at < cutoff, _terminal)
+                            .limit(_PRUNE_BATCH_SIZE)
                         )
                     ).all()
                 )
+                if not ids:
+                    break
+                aged_out += await _delete_runs(session, ids)
+                await session.commit()
+
+        keep = max(0, live.run_retention_max_per_workflow)
+        if keep > 0:
+            # One query using a window function: rank each terminal run within
+            # its workflow newest-first; delete rows ranked beyond `keep`.
+            # Avoids one SELECT per workflow (N+1) when many workflows exist.
+            rn = func.row_number().over(
+                partition_by=Run.workflow_id,
+                order_by=Run.started_at.desc(),
+            ).label("rn")
+            subq = (
+                select(Run.id.label("id"), rn)
+                .where(_terminal)
+                .subquery()
+            )
+            # Process in batches to cap peak memory usage.
+            while True:
+                old_ids = list(
+                    (
+                        await session.scalars(
+                            select(subq.c.id)
+                            .where(subq.c.rn > keep)
+                            .limit(_PRUNE_BATCH_SIZE)
+                        )
+                    ).all()
+                )
+                if not old_ids:
+                    break
                 capped_out += await _delete_runs(session, old_ids)
+                await session.commit()
 
         await session.commit()
 
@@ -88,6 +115,6 @@ async def retention_loop() -> None:
     while True:
         try:
             await prune_old_runs()
-        except Exception:  # noqa: BLE001 - a bad row must not kill the loop
-            pass
+        except Exception:
+            logger.exception("retention tick failed")
         await asyncio.sleep(interval)

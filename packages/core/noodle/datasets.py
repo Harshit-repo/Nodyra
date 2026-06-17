@@ -114,7 +114,7 @@ def reserve_artifact_path(
     artifact_id = uuid.uuid4().hex
     node_id = sanitize_name(current_node_id.get() or "unknown")
     safe_name = sanitize_name(name)
-    storage_key = f"runs/{store.run_id}/{node_id}/{artifact_id}-{safe_name}"
+    storage_key = store._storage_key(artifact_id, node_id, safe_name)  # noqa: SLF001
     path = store._path_for_key(storage_key)  # noqa: SLF001 - internal helper
     path.parent.mkdir(parents=True, exist_ok=True)
     partial: dict[str, Any] = {
@@ -190,6 +190,31 @@ def register_materializer(fn: _Materializer) -> None:
     """Register the DuckDB-backed row materializer (called by noodle_nodes)."""
     global _materializer
     _materializer = fn
+
+
+_DatasetWriter = Callable[..., dict[str, Any]]
+_dataset_writer: _DatasetWriter | None = None
+
+
+def register_dataset_writer(fn: _DatasetWriter) -> None:
+    """Register the DuckDB-backed records->DatasetRef writer (called by noodle_nodes)."""
+    global _dataset_writer
+    _dataset_writer = fn
+
+
+def dataset_from_records(
+    records: list[dict[str, Any]], *, name: str = "loop_output.parquet"
+) -> dict[str, Any]:
+    """Write a list of dicts to a DatasetRef using the registered writer.
+
+    Raises if no writer has been registered (i.e. the nodes package was never
+    imported).
+    """
+    if _dataset_writer is None:
+        raise RuntimeError(
+            "no dataset writer registered; import noodle_nodes.datasets"
+        )
+    return _dataset_writer(records, name=name)
 
 
 def materialize_dataset_rows(

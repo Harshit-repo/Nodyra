@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+import re
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
@@ -38,6 +40,11 @@ router = APIRouter(prefix="/workflows", tags=["workflows"])
 
 EMPTY_GRAPH: dict = {"nodes": [], "edges": []}
 
+# Structural node types the engine resolves directly (inlined/expanded at plan
+# time) rather than dispatching through a registry manifest. They never appear
+# in ``node_registry.manifests()`` but are valid in a persisted graph.
+STRUCTURAL_NODE_TYPES: frozenset[str] = frozenset({"meta_node"})
+
 
 def _validate_node_types(graph: dict | WorkflowGraph) -> None:
     """422 with a list of unknown node types — guards against typos that
@@ -45,14 +52,21 @@ def _validate_node_types(graph: dict | WorkflowGraph) -> None:
 
     Skips user-defined code-module types (``user:{id}:{fn}``) since those
     are registered dynamically when the workflow runs, not in the global
-    registry visible here.
+    registry visible here. Also skips structural types that the engine
+    handles directly rather than via a registry manifest (e.g. ``meta_node``,
+    which is inlined/expanded at plan time).
     """
     nodes = graph.nodes if isinstance(graph, WorkflowGraph) else graph.get("nodes", [])
     known = {m.id for m in node_registry.manifests()}
     unknown: set[str] = set()
     for n in nodes:
         t = n.type if hasattr(n, "type") else n.get("type")
-        if not t or t in known or t.startswith("user:"):
+        if (
+            not t
+            or t in known
+            or t in STRUCTURAL_NODE_TYPES
+            or t.startswith("user:")
+        ):
             continue
         unknown.add(t)
     if unknown:
@@ -228,6 +242,10 @@ async def _detail(session: AsyncSession, workflow: Workflow) -> WorkflowDetail:
         error_alerts=workflow.error_alerts or {},
         allow_concurrent=workflow.allow_concurrent,
         run_timeout_seconds=workflow.run_timeout_seconds,
+        mcp_enabled=workflow.mcp_enabled,
+        mcp_tool_name=workflow.mcp_tool_name,
+        mcp_description=workflow.mcp_description,
+        mcp_parameters_schema=workflow.mcp_parameters_schema,
         provider_trigger_counts=counts.get(
             workflow.id,
             ProviderTriggerStatusCounts(),
@@ -240,10 +258,12 @@ async def _detail(session: AsyncSession, workflow: Workflow) -> WorkflowDetail:
 
 @router.get("", response_model=PageResponse[WorkflowSummary])
 async def list_workflows(
+    response: Response,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
 ):
+    response.headers["Cache-Control"] = "no-store"
     count = await session.scalar(select(func.count()).select_from(Workflow))
     result = await session.scalars(
         select(Workflow)
@@ -358,7 +378,11 @@ async def update_workflow(
                 status.HTTP_400_BAD_REQUEST,
                 "A workflow cannot use itself as its error workflow.",
             )
-        if await session.get(Workflow, body.error_workflow_id) is None:
+        # Filtered select (not session.get) so a cross-org error_workflow_id is
+        # rejected by the ORM org-filter hook (R-2).
+        if await session.scalar(
+            select(Workflow).where(Workflow.id == body.error_workflow_id)
+        ) is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Error workflow not found")
         workflow.error_workflow_id = body.error_workflow_id
     if body.error_alerts is not None:
@@ -367,6 +391,20 @@ async def update_workflow(
         workflow.allow_concurrent = body.allow_concurrent
     if body.run_timeout_seconds is not None:
         workflow.run_timeout_seconds = body.run_timeout_seconds
+    if body.mcp_enabled is not None:
+        workflow.mcp_enabled = body.mcp_enabled
+    if body.mcp_tool_name is not None:
+        name_value = body.mcp_tool_name.strip()
+        if name_value and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name_value):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "mcp_tool_name must match [A-Za-z0-9_-]{1,64}.",
+            )
+        workflow.mcp_tool_name = name_value or None
+    if body.mcp_description is not None:
+        workflow.mcp_description = body.mcp_description.strip() or None
+    if body.mcp_parameters_schema is not None:
+        workflow.mcp_parameters_schema = body.mcp_parameters_schema
     if body.graph is not None:
         _validate_node_types(body.graph)
         workflow.draft_graph = body.graph.model_dump()
@@ -449,6 +487,10 @@ async def publish_workflow(
     )
     workflow.versions.append(version)
     workflow.published_version = next_version
+    # Publishing a release takes it live: triggers run in production until the
+    # author explicitly pauses it (Active toggle / Unpublish). Without this a
+    # freshly published workflow stays active=false with no way to go live.
+    workflow.active = True
     await session.flush()
 
     updated_deployments = 0

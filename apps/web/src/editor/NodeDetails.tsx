@@ -1,26 +1,137 @@
-import { useEffect, useRef, useState } from "react";
+import { Info, MagnifyingGlass, Plus, WarningCircle, X } from "@phosphor-icons/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { api } from "../api";
+import { api, errorMessage, uploadArtifact } from "../api";
 import { categoryColor } from "../categories";
 import {
   LLM_PROVIDER_VARIANTS,
   getLlmVariant,
   visibleCredentialFields,
 } from "../llmProviders";
-import { NodeIcon } from "../NodeIcon";
+import {
+  CredentialFieldInput,
+  LLM_FIELD_DEFS,
+  mergedCredentialPresets,
+  type CredentialPreset,
+  type CredentialScope,
+} from "../credentialPresets";
+import { isBrandIconName, NodeIcon } from "../NodeIcon";
+import { useCredentialTypes } from "../queries";
+import { useModalA11y } from "../useModalA11y";
 import { useToast } from "../ToastProvider";
 import type {
   Credential,
-  CredentialParamSpec,
+  LintDiagnostic,
   NodeManifest,
   NodeSource,
   ParamSpec,
 } from "../types";
 import { DataPanel } from "./DataPanel";
+import { VariablePickerPopover } from "./VariablePickerPopover";
 import { TimezoneSelect } from "./fields/TimezoneSelect";
 import { fromAiExpr, isFromAiExpr, paramArgType } from "./toolParam";
 import { missingFor } from "./missingPackages";
 import { useEditor } from "./store";
+import { useServerPlatform } from "../hooks/useServerPlatform";
+import { credentialMatchesParam } from "./node-details/credentials";
+import { getUpstreamNodes } from "./node-details/upstreamFields";
+import {
+  computeCodeSuggestions,
+  getIdentPrefix,
+  tokenizePython,
+} from "./node-details/pythonHighlight";
+import {
+  buildLoadOptionsParams,
+  matchesDisplayWhen,
+} from "./node-details/displayRules";
+import {
+  computeSuggestions,
+  EXPR_RE,
+  EXPR_RE_GLOBAL,
+  type ExprContext,
+  formatResultText,
+  getTokenBeforeCursor,
+  type PreviewPart,
+  type ResultView,
+} from "./node-details/expressions";
+import { formatParamLabel, isSecretField } from "./node-details/labels";
+import { mergeOptions } from "./node-details/options";
+import {
+  PackageInstallPanel,
+  SystemRequirementsPanel,
+} from "./node-details/PackageInstallPanel";
+import { ResourceOperationSelector } from "./node-details/ResourceOperationSelector";
+import {
+  WEBHOOK_AUTH_TYPE_OPTIONS,
+  webhookCredentialSpec,
+  webhookHiddenParam,
+  webhookParamLabel,
+} from "./node-details/webhookRules";
+
+export { credentialMatchesParam } from "./node-details/credentials";
+export {
+  applyResourceOperation,
+  buildLoadOptionsParams,
+  matchesDisplayWhen,
+} from "./node-details/displayRules";
+export { computeSuggestions, type ExprContext } from "./node-details/expressions";
+export { formatParamLabel } from "./node-details/labels";
+export { mergeOptions } from "./node-details/options";
+export { ResourceOperationSelector } from "./node-details/ResourceOperationSelector";
+export {
+  groupActiveByValue,
+  paramGroup,
+  WEBHOOK_AUTH_TYPE_OPTIONS,
+  webhookCredentialSpec,
+  webhookHiddenParam,
+  webhookParamLabel,
+} from "./node-details/webhookRules";
+
+const PACKAGE_INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
+const PACKAGE_INSTALL_POLL_MS = 2000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+/**
+ * Re-seed a field's local editing buffer when the upstream `value` changes
+ * *externally* — undo/redo, an applied AI fix, or a pin restore — without
+ * clobbering the user's in-progress typing. Fields like `JsonField` /
+ * `KeyValueField` / `RoutesField` keep local state (parsed text, row arrays)
+ * seeded once at mount; `ParamField` is keyed by `node.id:spec.name` so a
+ * node *switch* remounts them, but a value change to the *same* mounted node
+ * would otherwise leave the buffer stale (FE-11).
+ *
+ * `apply` runs only when the new value differs from what this field last saw
+ * AND the field isn't currently focused (so a value update caused by the
+ * field's own `onChange` while typing is absorbed, never reapplied).
+ */
+function useExternalValueSync(
+  value: unknown,
+  isFocused: () => boolean,
+  apply: () => void,
+): void {
+  const serialized = JSON.stringify(value ?? null);
+  const lastSeen = useRef(serialized);
+  useEffect(() => {
+    if (serialized === lastSeen.current) return;
+    lastSeen.current = serialized;
+    if (isFocused()) return;
+    apply();
+    // `apply`/`isFocused` are recreated each render; `serialized` is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serialized]);
+}
+
+function formatPinnedAt(value: string | null): string {
+  if (!value) return "time unknown";
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return value;
+  }
+}
 
 interface CredentialRef {
   __noodle_credential__: true;
@@ -42,63 +153,6 @@ function makeCredentialRef(id: string, key: string): CredentialRef {
   return { __noodle_credential__: true, id, key };
 }
 
-// Catch-all credential types accepted by any picker regardless of declared type.
-const GENERIC_CRED_TYPES = ["generic", "apiKey", "oauth2"];
-
-/** Decide whether a stored credential is eligible for a node param's picker.
- *
- *  A credential qualifies when its type lines up with the param's declared
- *  credential type (or it is a generic catch-all) AND it carries the field(s)
- *  the node will read.
- *
- *  Multi-field credentials — the single "Credentials" picker, `key === "*"` —
- *  legitimately store only a *subset* of the declared fields: an Ollama
- *  `llm_provider` credential has no `api_key`, a non-Azure one has no
- *  `azure_endpoint`, and so on. Requiring every declared field hides every
- *  partially-filled credential and surfaces it as "⚠ Missing", so a multi-field
- *  credential matches when it carries *at least one* declared field. */
-export function credentialMatchesParam(
-  cred: Pick<Credential, "type" | "keys">,
-  meta: CredentialParamSpec | null | undefined,
-  targetKey: string,
-): boolean {
-  if (
-    meta?.type &&
-    cred.type !== meta.type &&
-    !GENERIC_CRED_TYPES.includes(cred.type)
-  ) {
-    return false;
-  }
-  if (meta?.multi) {
-    const fields = meta.fields?.length ? meta.fields : [meta.key];
-    return fields.some((field) => cred.keys.includes(field));
-  }
-  return cred.keys.includes(targetKey);
-}
-
-/** Query params for a dynamic-options fetch: the selected credential's id plus
- *  any provider/base_url/workflow context the loader uses, skipping empties. */
-export function buildLoadOptionsParams(
-  credential: { id: string } | null,
-  params: Record<string, unknown>,
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (credential?.id) out.credential_id = credential.id;
-  for (const key of ["provider", "base_url", "workflow_id"]) {
-    const value = params[key];
-    if (typeof value === "string" && value.trim()) out[key] = value.trim();
-  }
-  return out;
-}
-
-/** Combine fetched options with the current free-text value so a typed,
- *  unlisted value is never lost and never duplicated. */
-export function mergeOptions(fetched: string[], current: string): string[] {
-  const list = [...fetched];
-  if (current && !list.includes(current)) list.unshift(current);
-  return list;
-}
-
 function credentialScopeLabel(cred: Credential): string {
   if (cred.scope === "workflow" && cred.workflow_id) {
     return `workflow ${cred.workflow_id.slice(0, 8)}`;
@@ -112,6 +166,40 @@ function credentialScopeLabel(cred: Credential): string {
   return cred.scope;
 }
 
+function credentialTypeLabel(type: string): string {
+  return CRED_TYPE_LABELS[type] ?? formatParamLabel(type);
+}
+
+function credentialFieldLabel(field: string): string {
+  return CRED_FIELD_LABELS[field] ?? formatParamLabel(field);
+}
+
+function credentialFieldSummary(cred: Credential): string {
+  if (cred.keys.length === 0) return "No stored fields";
+  const visible = cred.keys.slice(0, 3).map(credentialFieldLabel).join(", ");
+  const extra = cred.keys.length > 3 ? ` +${cred.keys.length - 3}` : "";
+  return `${visible}${extra}`;
+}
+
+function credentialMatchesSearch(cred: Credential, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  return [
+    cred.name,
+    cred.type,
+    credentialTypeLabel(cred.type),
+    cred.description,
+    cred.scope,
+    credentialScopeLabel(cred),
+    ...cred.keys,
+    ...cred.keys.map(credentialFieldLabel),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+    .includes(needle);
+}
+
 function JsonField({
   value,
   onChange,
@@ -123,9 +211,19 @@ function JsonField({
     value === null || value === undefined ? "" : JSON.stringify(value, null, 2),
   );
   const [invalid, setInvalid] = useState(false);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  useExternalValueSync(
+    value,
+    () => document.activeElement === taRef.current,
+    () => {
+      setText(value === null || value === undefined ? "" : JSON.stringify(value, null, 2));
+      setInvalid(false);
+    },
+  );
 
   return (
     <textarea
+      ref={taRef}
       className={`field-input field-json${invalid ? " field-invalid" : ""}`}
       value={text}
       spellCheck={false}
@@ -198,6 +296,17 @@ function KeyValueField({
     value === null || value === undefined ? "" : JSON.stringify(value, null, 2),
   );
   const [invalid, setInvalid] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  // Resync from an external value change (undo/redo, AI fix) — FE-11.
+  useExternalValueSync(
+    value,
+    () => Boolean(wrapRef.current?.contains(document.activeElement)),
+    () => {
+      setRows(rowsFromValue(value));
+      setJsonText(value === null || value === undefined ? "" : JSON.stringify(value, null, 2));
+      setInvalid(false);
+    },
+  );
 
   function commitRows(next: KvRow[]): void {
     setRows(next);
@@ -232,7 +341,7 @@ function KeyValueField({
   }
 
   return (
-    <div className="kv-field">
+    <div className="kv-field" ref={wrapRef}>
       <div className="kv-toolbar">
         <button
           type="button"
@@ -540,37 +649,12 @@ const CRED_TYPE_LABELS: Record<string, string> = {
   mysql: "MySQL Account",
 };
 
-// Acronyms preserved in uppercase when auto-titling snake_case param names.
-const PARAM_LABEL_ACRONYMS = new Set([
-  "http", "https", "url", "uri", "id", "aws", "api", "sms", "ip", "ips",
-  "json", "xml", "os", "csv", "jwt", "oauth", "oauth2", "sql", "cors",
-  "tls", "ssl", "ssh", "tcp", "udp", "dns", "ai", "ldap", "smtp", "ftp",
-  "sftp", "gcs", "s3", "rss", "uuid", "md5", "sha", "html", "css", "rgb",
-  "cli", "io", "cdn", "cpu", "ram", "gpu", "rgb",
-]);
-
-export function formatParamLabel(name: string): string {
-  if (!name) return "";
-  return name
-    .split(/[_\s]+/)
-    .filter(Boolean)
-    .map((word) => {
-      const lower = word.toLowerCase();
-      if (PARAM_LABEL_ACRONYMS.has(lower)) return lower.toUpperCase();
-      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-    })
-    .join(" ");
-}
-
-function isSecretField(name: string): boolean {
-  return /password|secret|key|token|private|uri|url|connection/i.test(name);
-}
-
 function CredentialCreateModal({
   credType,
   fields,
   typeLabel,
   workflowId,
+  credentialContext,
   onClose,
   onCreated,
 }: {
@@ -578,12 +662,62 @@ function CredentialCreateModal({
   fields: string[];
   typeLabel: string;
   workflowId: string | null;
+  credentialContext?: Record<string, unknown>;
   onClose: () => void;
-  onCreated: (id: string, key: string, credential: Credential) => void;
+  onCreated: (id: string, key: string, credential: Credential | null) => void;
 }) {
   const displayLabel = CRED_TYPE_LABELS[credType] ?? typeLabel;
   const isLlm = credType === "llm_provider";
+  const credentialTypesQuery = useCredentialTypes();
+  const credentialTypes = credentialTypesQuery.data ?? null;
+
+  // The credential ref key is dictated by the node, independent of which preset
+  // fields render: multi-field pickers store ``*``; single-field pickers store
+  // the one field name the node reads.
+  const refKey = fields.length > 1 ? "*" : (fields[0] ?? credType);
+
+  // Fallback preset built from the node's declared fields, used when no
+  // built-in or backend preset matches this credential type.
+  const fallbackPreset = useMemo<CredentialPreset>(
+    () => ({
+      id: credType,
+      type: credType,
+      label: displayLabel,
+      group: "",
+      summary: "",
+      description: displayLabel,
+      fields: fields.map((f) => ({
+        key: f,
+        label: credentialFieldLabel(f),
+        kind: isSecretField(f) ? "password" : "text",
+      })),
+    }),
+    [credType, displayLabel, fields],
+  );
+
+  // Prefer the shared preset (rich placeholders/help/field kinds and OAuth
+  // detection) so the NDV form matches the credentials page for this type.
+  const preset = useMemo<CredentialPreset>(() => {
+    const merged = mergedCredentialPresets(credentialTypes);
+    const found = merged.find((p) => p.type === credType);
+    if (!found) return fallbackPreset;
+    // A matched preset with no fields (e.g. the "generic" catch-all) must not
+    // hide the fields the node actually declares — keep the node's fields
+    // unless this is an OAuth type whose form is driven by the connect flow.
+    if (found.fields.length === 0 && found.authMethod !== "oauth2" && fields.length > 0) {
+      return { ...found, fields: fallbackPreset.fields };
+    }
+    return found;
+  }, [credentialTypes, credType, fallbackPreset, fields.length]);
+
+  const isOAuth = preset.authMethod === "oauth2";
+
   const [name, setName] = useState(displayLabel);
+  const [scope, setScope] = useState<CredentialScope>(
+    workflowId ? "workflow" : "global",
+  );
+  const [environmentId, setEnvironmentId] = useState("");
+  const [runnerPoolId, setRunnerPoolId] = useState("");
   const [fieldValues, setFieldValues] = useState<Record<string, string>>(() => {
     const init = Object.fromEntries(fields.map((f) => [f, ""]));
     if (isLlm) {
@@ -592,21 +726,65 @@ function CredentialCreateModal({
     }
     return init;
   });
-  const [scope, setScope] = useState<"workflow" | "global">(
-    workflowId ? "workflow" : "global",
-  );
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState("");
+  const [oauthStarted, setOauthStarted] = useState("");
+  const oauthPopupRef = useRef<Window | null>(null);
   const { notify } = useToast();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onClose);
 
-  const refKey = fields.length > 1 ? "*" : (fields[0] ?? credType);
   const variant = isLlm ? getLlmVariant(fieldValues.provider) : null;
   // The set of credential fields actually rendered (provider-aware for LLM).
   const renderedFields = isLlm
     ? visibleCredentialFields(fieldValues.provider, showAdvanced)
-    : fields;
+    : preset.fields.map((f) => f.key);
+
+  // Seed default values for preset fields that arrive after the first render
+  // (e.g. backend-only credential types loaded asynchronously) without
+  // clobbering anything the user has already typed.
+  useEffect(() => {
+    if (isLlm) return;
+    setFieldValues((cur) => {
+      let changed = false;
+      const next = { ...cur };
+      for (const field of preset.fields) {
+        if (!(field.key in next)) {
+          next[field.key] = field.defaultValue ?? "";
+          changed = true;
+        }
+      }
+      return changed ? next : cur;
+    });
+  }, [preset, isLlm]);
+
+  // Auto-select the credential created by the OAuth popup flow.
+  useEffect(() => {
+    if (!isOAuth) return;
+    function handleMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) return;
+      if (!event.data || typeof event.data !== "object") return;
+      const { type, message: msg, credentialId } = event.data as {
+        type?: string;
+        message?: string;
+        credentialId?: string;
+      };
+      if (type === "noodle_oauth_success") {
+        setOauthStarted("");
+        oauthPopupRef.current = null;
+        notify("Credential connected.", "success");
+        if (credentialId) onCreated(credentialId, refKey, null);
+      } else if (type === "noodle_oauth_error") {
+        setOauthStarted("");
+        oauthPopupRef.current = null;
+        setError(msg ?? "OAuth failed.");
+      }
+    }
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [isOAuth, notify, onCreated, refKey]);
 
   function setField(key: string, value: string): void {
     setFieldValues((cur) => ({ ...cur, [key]: value }));
@@ -622,32 +800,85 @@ function CredentialCreateModal({
     setShowAdvanced(false);
   }
 
-  function collectData(): Record<string, string> {
+  function validateScopeInputs(): boolean {
+    if (scope === "environment" && !environmentId.trim()) {
+      setError("Enter Environment ID.");
+      return false;
+    }
+    if (scope === "runner_pool" && !runnerPoolId.trim()) {
+      setError("Enter Runner pool ID.");
+      return false;
+    }
+    return true;
+  }
+
+  /** Build the credential data dict. Returns null and sets an inline error when
+   *  a required field is missing. */
+  function collectData(): Record<string, string> | null {
     const data: Record<string, string> = {};
-    if (isLlm && fieldValues.provider) data.provider = fieldValues.provider;
-    for (const f of renderedFields) {
-      if (fieldValues[f]?.trim()) data[f] = fieldValues[f].trim();
+    if (isLlm) {
+      data.provider = fieldValues.provider || "openai";
+      if (variant?.apiKey === "required" && !fieldValues.api_key?.trim()) {
+        setError("Enter API key.");
+        return null;
+      }
+      // Persist only the chosen provider's fields (advanced included if filled).
+      for (const key of visibleCredentialFields(fieldValues.provider, true)) {
+        if (fieldValues[key]?.trim()) data[key] = fieldValues[key].trim();
+      }
+      return data;
+    }
+    for (const field of preset.fields) {
+      const value = fieldValues[field.key] ?? "";
+      if (field.required && !value.trim()) {
+        setError(`Enter ${field.label}.`);
+        return null;
+      }
+      if (value.trim() || field.defaultValue !== undefined) {
+        data[field.key] = value.trim();
+      }
+    }
+    if (credType === "google_sheets" && !data.api_key && !data.access_token) {
+      setError("Enter either API key or OAuth access token.");
+      return null;
     }
     return data;
+  }
+
+  function scopeIds() {
+    return {
+      workflow_id: scope === "workflow" ? workflowId : null,
+      environment_id: scope === "environment" ? environmentId.trim() : null,
+      runner_pool_id: scope === "runner_pool" ? runnerPoolId.trim() : null,
+    };
   }
 
   async function handleCreate(): Promise<void> {
     if (!name.trim() || busy) return;
     setBusy(true);
     setError("");
+    const data = collectData();
+    if (data === null) {
+      setBusy(false);
+      return;
+    }
+    if (!validateScopeInputs()) {
+      setBusy(false);
+      return;
+    }
     try {
       const created = await api.createCredential({
         name: name.trim(),
         type: credType,
         scope,
-        workflow_id: scope === "workflow" ? workflowId : null,
+        ...scopeIds(),
         description: displayLabel,
-        data: collectData(),
+        data,
       });
       notify("Credential created.", "success");
       onCreated(created.id, refKey, created);
     } catch (err) {
-      setError(String(err));
+      setError(errorMessage(err));
       setBusy(false);
     }
   }
@@ -656,11 +887,16 @@ function CredentialCreateModal({
     if (testing) return;
     setTesting(true);
     setError("");
+    const data = collectData();
+    if (data === null) {
+      setTesting(false);
+      return;
+    }
     try {
       const result = await api.testCredentialDraft({
         type: credType,
-        data: collectData(),
-        context: {},
+        data,
+        context: credentialContext ?? {},
       });
       notify(
         result.ok ? "Credential connected." : result.message,
@@ -668,10 +904,48 @@ function CredentialCreateModal({
       );
       if (!result.ok) setError(result.message);
     } catch (err) {
-      setError(String(err));
-      notify(String(err), "error");
+      // Inside the credential modal/field → inline error (toast would duplicate).
+      setError(errorMessage(err));
     } finally {
       setTesting(false);
+    }
+  }
+
+  async function startOAuth(): Promise<void> {
+    if (!name.trim() || busy || !isOAuth) return;
+    setBusy(true);
+    setError("");
+    setOauthStarted("");
+    if (!validateScopeInputs()) {
+      setBusy(false);
+      return;
+    }
+    try {
+      const started = await api.startCredentialOAuth({
+        credential_type: credType,
+        name: name.trim(),
+        scope,
+        ...scopeIds(),
+        description: displayLabel,
+        scopes: preset.defaultScopes ?? [],
+      });
+      const popup = window.open(
+        started.authorization_url,
+        "noodle_oauth",
+        "width=600,height=720,resizable=yes,scrollbars=yes",
+      );
+      if (!popup) {
+        window.location.assign(started.authorization_url);
+        return;
+      }
+      oauthPopupRef.current = popup;
+      setOauthStarted(
+        "Complete authorization in the popup window. This page will update automatically.",
+      );
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -679,78 +953,165 @@ function CredentialCreateModal({
     <div className="modal-overlay" onClick={onClose}>
       <div
         className="modal cred-quick-modal"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cred-quick-modal-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="cred-quick-modal-head">
+        <div className="credential-modal-head cred-quick-modal-head">
           <div>
-            <h2>New credential</h2>
-            <p className="muted">{displayLabel}</p>
+            <h2 id="cred-quick-modal-title">New credential</h2>
+            <p className="muted">
+              Create a {displayLabel} credential for this node.
+            </p>
           </div>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm cred-quick-close"
-            onClick={onClose}
-            aria-label="Close"
-          >
-            ✕
-          </button>
+          <div className="cred-quick-head-actions">
+            <span className="cred-type">{credType}</span>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm cred-quick-close"
+              onClick={onClose}
+              aria-label="Close"
+            >
+              <X size={14} weight="bold" />
+            </button>
+          </div>
         </div>
 
-        <label className="credential-form-field">
-          <span>Name</span>
-          <input
-            className="field-input"
-            placeholder="My credential"
-            value={name}
-            autoFocus
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void handleCreate();
-              if (e.key === "Escape") onClose();
-            }}
-          />
-        </label>
+        <div className="cred-quick-summary">
+          <div>
+            <span>Type</span>
+            <strong>{displayLabel}</strong>
+          </div>
+          <div>
+            <span>Fields</span>
+            <strong>
+              {renderedFields.length > 0
+                ? renderedFields.map(credentialFieldLabel).join(", ")
+                : "Custom credential"}
+            </strong>
+          </div>
+        </div>
 
-        {isLlm && (
+        <div className="credential-form-grid cred-quick-grid">
           <label className="credential-form-field">
-            <span>Provider</span>
-            <select
-              className="field-input"
-              value={fieldValues.provider}
-              onChange={(e) => onProviderChange(e.target.value)}
-            >
-              {LLM_PROVIDER_VARIANTS.map((v) => (
-                <option key={v.value} value={v.value}>
-                  {v.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-
-        {renderedFields.map((field) => (
-          <label key={field} className="credential-form-field">
-            <span>
-              {CRED_FIELD_LABELS[field] ?? field}
-              {isLlm &&
-              field === "api_key" &&
-              variant?.apiKey === "required"
-                ? " *"
-                : ""}
-            </span>
+            <span>Name *</span>
             <input
               className="field-input"
-              type={isSecretField(field) ? "password" : "text"}
-              placeholder={CRED_FIELD_LABELS[field] ?? field}
-              value={fieldValues[field] ?? ""}
-              onChange={(e) => setField(field, e.target.value)}
+              placeholder="My credential"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") void handleCreate();
+                if (e.key === "Enter" && !isOAuth) void handleCreate();
                 if (e.key === "Escape") onClose();
               }}
             />
           </label>
-        ))}
+
+          <label className="credential-form-field">
+            <span>Scope</span>
+            <select
+              className="field-input"
+              value={scope}
+              onChange={(e) => setScope(e.target.value as CredentialScope)}
+            >
+              <option value="global">Global</option>
+              <option value="environment">Environment</option>
+              {workflowId && <option value="workflow">This workflow</option>}
+              <option value="runner_pool">Runner pool</option>
+            </select>
+          </label>
+        </div>
+
+        {scope === "environment" && (
+          <label className="credential-form-field cred-quick-scope-id">
+            <span>Environment ID *</span>
+            <input
+              className="field-input"
+              placeholder="Environment ID"
+              value={environmentId}
+              onChange={(e) => setEnvironmentId(e.target.value)}
+            />
+          </label>
+        )}
+        {scope === "runner_pool" && (
+          <label className="credential-form-field cred-quick-scope-id">
+            <span>Runner pool ID *</span>
+            <input
+              className="field-input"
+              placeholder="Runner pool ID"
+              value={runnerPoolId}
+              onChange={(e) => setRunnerPoolId(e.target.value)}
+            />
+          </label>
+        )}
+
+        {isOAuth && (
+          <div className="credential-oauth-panel">
+            <div>
+              <h3>Provider authorization</h3>
+              <p>
+                {preset.defaultScopes?.length
+                  ? preset.defaultScopes.join(" ")
+                  : "OAuth scopes configured by the provider."}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => void startOAuth()}
+              disabled={busy || !name.trim()}
+            >
+              {busy ? "Opening…" : "Connect OAuth"}
+            </button>
+            {oauthStarted && <small>{oauthStarted}</small>}
+          </div>
+        )}
+
+        <div className="credential-form-grid cred-quick-grid">
+          {isLlm && (
+            <label className="credential-form-field">
+              <span>Provider</span>
+              <select
+                className="field-input"
+                value={fieldValues.provider}
+                onChange={(e) => onProviderChange(e.target.value)}
+              >
+                {LLM_PROVIDER_VARIANTS.map((v) => (
+                  <option key={v.value} value={v.value}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          {isLlm
+            ? renderedFields.map((key) => {
+                const def = LLM_FIELD_DEFS[key];
+                if (!def) return null;
+                const required =
+                  key === "api_key" && variant?.apiKey === "required";
+                return (
+                  <CredentialFieldInput
+                    key={key}
+                    field={{ ...def, required }}
+                    value={fieldValues[key] ?? ""}
+                    onChange={(next) => setField(key, next)}
+                  />
+                );
+              })
+            : preset.fields.map((field) => (
+                <CredentialFieldInput
+                  key={field.key}
+                  field={field}
+                  value={fieldValues[field.key] ?? ""}
+                  onChange={(next) => setField(field.key, next)}
+                />
+              ))}
+        </div>
 
         {isLlm &&
           variant !== null &&
@@ -765,26 +1126,10 @@ function CredentialCreateModal({
             </button>
           )}
 
-        {workflowId && (
-          <div className="cred-quick-scope">
-            <label>
-              <input
-                type="radio"
-                checked={scope === "workflow"}
-                onChange={() => setScope("workflow")}
-              />
-              This workflow only
-            </label>
-            <label>
-              <input
-                type="radio"
-                checked={scope === "global"}
-                onChange={() => setScope("global")}
-              />
-              Global (all workflows)
-            </label>
-          </div>
-        )}
+        <div className="credential-security-note">
+          Secret values are encrypted at rest and are not returned by the API
+          after creation.
+        </div>
 
         {error && <p className="error-text">{error}</p>}
 
@@ -796,21 +1141,23 @@ function CredentialCreateModal({
           >
             Cancel
           </button>
+          {!isOAuth && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              disabled={testing}
+              onClick={() => void handleTest()}
+            >
+              {testing ? "Testing…" : "Test connection"}
+            </button>
+          )}
           <button
             type="button"
-            className="btn btn-ghost btn-sm"
-            disabled={testing}
-            onClick={() => void handleTest()}
-          >
-            {testing ? "Testing…" : "Test connection"}
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm"
+            className="btn btn-primary btn-sm"
             disabled={busy || !name.trim()}
             onClick={() => void handleCreate()}
           >
-            {busy ? "Creating…" : "Create credential"}
+            {busy ? "Creating…" : isOAuth ? "Save manual" : "Create credential"}
           </button>
         </div>
       </div>
@@ -839,9 +1186,12 @@ function CredentialParamField({
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [credentialQuery, setCredentialQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState("");
+  const pickerRef = useRef<HTMLDivElement>(null);
   const { notify } = useToast();
 
   function load(): void {
@@ -852,17 +1202,41 @@ function CredentialParamField({
         setCredentials(items);
         setError("");
       })
-      .catch((err) => setError(String(err)))
+      .catch((err) => setError(errorMessage(err)))
       .finally(() => setLoading(false));
   }
 
   useEffect(load, []);
 
+  useEffect(() => {
+    if (!pickerOpen) return;
+    function closeOnOutside(event: MouseEvent): void {
+      if (
+        event.target instanceof Node &&
+        pickerRef.current &&
+        !pickerRef.current.contains(event.target)
+      ) {
+        setPickerOpen(false);
+      }
+    }
+    function closeOnEscape(event: KeyboardEvent): void {
+      if (event.key === "Escape") setPickerOpen(false);
+    }
+    document.addEventListener("mousedown", closeOnOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [pickerOpen]);
+
   const matching = credentials.filter((cred) =>
     credentialMatchesParam(cred, meta, targetKey),
   );
+  const visibleMatching = matching.filter((cred) =>
+    credentialMatchesSearch(cred, credentialQuery),
+  );
 
-  const selectedValue = selected ? `${selected.id}:${selected.key}` : "";
   const selectedCredential = selected
     ? credentials.find((cred) => cred.id === selected.id)
     : undefined;
@@ -901,12 +1275,11 @@ function CredentialParamField({
       notify("Moved to credential store.", "success");
       load();
     } catch (err) {
-      setError(String(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
   }
-
   async function testSelectedCredential(): Promise<void> {
     if (!selected) return;
     setTesting(true);
@@ -922,62 +1295,166 @@ function CredentialParamField({
       );
       if (!result.ok) setError(result.message);
     } catch (err) {
-      setError(String(err));
-      notify(String(err), "error");
+      // Inside the credential modal/field → inline error (toast would duplicate).
+      setError(errorMessage(err));
     } finally {
       setTesting(false);
     }
   }
 
+  function selectCredential(cred: Credential): void {
+    onChange(makeCredentialRef(cred.id, targetKey));
+    setPickerOpen(false);
+    setCredentialQuery("");
+    setError("");
+  }
+
+  function openCreateModal(): void {
+    setPickerOpen(false);
+    setModalOpen(true);
+    setError("");
+  }
+
+  const pickerTitle = loading
+    ? "Loading credentials..."
+    : selectedCredential
+      ? selectedCredential.name
+      : selectedMissing && selected
+        ? `Missing credential ${selected.id.slice(0, 8)}`
+        : "Select credential";
+  const pickerMeta = loading
+    ? "Fetching saved credentials"
+    : selectedCredential
+      ? `${credentialTypeLabel(selectedCredential.type)} · ${credentialScopeLabel(
+          selectedCredential,
+        )} · ${credentialFieldSummary(selectedCredential)}`
+      : matching.length === 0
+        ? `No saved ${credentialTypeLabel(meta?.type ?? spec.name)} credentials yet`
+        : `${matching.length} matching credential${matching.length === 1 ? "" : "s"}`;
+
   return (
     <div className="credential-param">
-      <div className="credential-select-row">
-        <select
-          className="field-input"
-          value={selectedValue}
-          disabled={loading}
-          onChange={(e) => {
-            const val = e.target.value;
-            if (!val) { onChange(""); return; }
-            const colonIdx = val.indexOf(":");
-            const id = val.slice(0, colonIdx);
-            const key = val.slice(colonIdx + 1);
-            onChange(id && key ? makeCredentialRef(id, key) : "");
-          }}
-        >
-          <option value="">
-            {loading
-              ? "Loading…"
-              : matching.length === 0
-                ? "No matching credentials — add one →"
-                : "— Select credential —"}
-          </option>
-          {selectedMissing && selected && (
-            <option value={selectedValue}>
-              ⚠ Missing: {selected.id.slice(0, 8)}
-            </option>
-          )}
-          {matching.map((cred) => (
-            <option
-              key={`${cred.id}:${targetKey}`}
-              value={`${cred.id}:${targetKey}`}
-            >
-              {cred.name}
-              {cred.scope !== "global"
-                ? ` · ${credentialScopeLabel(cred)}`
-                : ""}
-            </option>
-          ))}
-        </select>
+      <div className="credential-select-row" ref={pickerRef}>
+        <div className="credential-picker">
+          <button
+            type="button"
+            className={`credential-picker-trigger${
+              selectedCredential ? " has-selection" : ""
+            }${selectedMissing ? " is-warning" : ""}`}
+            disabled={loading}
+            aria-haspopup="listbox"
+            aria-expanded={pickerOpen}
+            onClick={() => setPickerOpen((open) => !open)}
+          >
+            <span className="credential-picker-main">
+              <span className="credential-picker-title">{pickerTitle}</span>
+              <span className="credential-picker-meta">{pickerMeta}</span>
+            </span>
+            <span className="credential-picker-caret" aria-hidden="true">
+              ▾
+            </span>
+          </button>
 
-        <button
-          type="button"
-          className="btn btn-sm btn-ghost cred-add-btn"
-          title="Add new credential"
-          onClick={() => setModalOpen(true)}
-        >
-          +
-        </button>
+          {pickerOpen && (
+            <div className="credential-picker-menu">
+              <label className="credential-picker-search">
+                <MagnifyingGlass size={14} aria-hidden="true" />
+                <input
+                  autoFocus
+                  placeholder="Search credentials"
+                  value={credentialQuery}
+                  onChange={(e) => setCredentialQuery(e.target.value)}
+                />
+              </label>
+
+              <div className="credential-picker-list" role="listbox">
+                {visibleMatching.length > 0 ? (
+                  visibleMatching.map((cred) => {
+                    const isSelected = selected?.id === cred.id;
+                    return (
+                      <button
+                        type="button"
+                        className={`credential-picker-option${
+                          isSelected ? " is-selected" : ""
+                        }`}
+                        key={`${cred.id}:${targetKey}`}
+                        role="option"
+                        aria-selected={isSelected}
+                        onClick={() => selectCredential(cred)}
+                      >
+                        <span className="credential-picker-option-head">
+                          <strong>{cred.name}</strong>
+                          <span>{credentialScopeLabel(cred)}</span>
+                        </span>
+                        <span className="credential-picker-option-meta">
+                          {credentialTypeLabel(cred.type)} ·{" "}
+                          {credentialFieldSummary(cred)}
+                        </span>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="credential-picker-empty">
+                    <strong>
+                      {matching.length === 0
+                        ? "No matching credentials"
+                        : "No search results"}
+                    </strong>
+                    <span>
+                      {matching.length === 0
+                        ? `Create a ${credentialTypeLabel(
+                            meta?.type ?? spec.name,
+                          )} credential for this node.`
+                        : "Try a different name, type, scope, or field."}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="credential-picker-foot">
+                {selected && (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    onClick={() => {
+                      onChange("");
+                      setPickerOpen(false);
+                    }}
+                  >
+                    Clear selection
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary"
+                  onClick={openCreateModal}
+                >
+                  <Plus size={13} weight="bold" />
+                  New credential
+                </button>
+                <a
+                  className="credentials-tab-link"
+                  href="/credentials"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Manage credentials
+                </a>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {!pickerOpen && (
+          <button
+            type="button"
+            className="btn btn-sm btn-primary cred-add-btn"
+            onClick={openCreateModal}
+          >
+            <Plus size={13} weight="bold" />
+            New
+          </button>
+        )}
 
         {selected && (
           <button
@@ -991,8 +1468,19 @@ function CredentialParamField({
         )}
       </div>
 
+      {selectedMissing && selected && (
+        <div className="credential-inline-warning">
+          <WarningCircle size={15} weight="fill" />
+          <span>
+            The selected credential is unavailable or no longer contains the
+            field this node needs.
+          </span>
+        </div>
+      )}
+
       {inlineValue && !selected && (
         <div className="credential-inline-warning">
+          <WarningCircle size={15} weight="fill" />
           <span>Inline secret in workflow — move to credential store.</span>
           <button
             type="button"
@@ -1016,6 +1504,7 @@ function CredentialParamField({
 
       {missingScopes.length > 0 && (
         <div className="credential-inline-warning">
+          <WarningCircle size={15} weight="fill" />
           <span>Missing OAuth scopes: {missingScopes.join(", ")}</span>
         </div>
       )}
@@ -1026,12 +1515,17 @@ function CredentialParamField({
           fields={fields}
           typeLabel={meta.label || spec.name}
           workflowId={workflowId}
+          credentialContext={credentialContext}
           onClose={() => setModalOpen(false)}
           onCreated={(id, key, created) => {
-            setCredentials((items) => [
-              created,
-              ...items.filter((item) => item.id !== created.id),
-            ]);
+            // Manual create returns the new credential; OAuth connect returns
+            // null (only the id), so we rely on load() to refetch the list.
+            if (created) {
+              setCredentials((items) => [
+                created,
+                ...items.filter((item) => item.id !== created.id),
+              ]);
+            }
             onChange(makeCredentialRef(id, key));
             setModalOpen(false);
             load();
@@ -1042,85 +1536,10 @@ function CredentialParamField({
   );
 }
 
-export interface ExprContext {
-  json?: unknown;
-  inputs?: Record<string, unknown>;
-  nodes?: Record<string, unknown>;
-}
-
-const EXPR_RE = /\{\{[\s\S]+?\}\}/;
-const EXPR_RE_GLOBAL = /\{\{[\s\S]+?\}\}/g;
-
-function formatResultText(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "object") return JSON.stringify(value, null, 2);
-  return String(value);
-}
-
-type PreviewPart =
-  | { kind: "text"; value: string }
-  | { kind: "expr"; raw: string; value: unknown }
-  | { kind: "error"; raw: string; error: string };
-
-type ResultView = "text" | "html";
-
 /** Textarea that paints `{{ }}` blocks in accent green using the
  *  mirror-overlay technique: a styled <div> renders the highlighted text under
  *  a transparent <textarea> that handles caret + editing. Scroll position stays
  *  in sync. */
-// ---------------------------------------------------------------------------
-// Expression autocomplete helpers
-// ---------------------------------------------------------------------------
-
-function getTokenBeforeCursor(value: string, cursorPos: number): string {
-  const before = value.slice(0, cursorPos);
-  // Grab the last contiguous token that starts with $
-  const m = before.match(/\$[\w.\["\]]*$/);
-  return m ? m[0] : "";
-}
-
-export function computeSuggestions(
-  value: string,
-  cursorPos: number,
-  ctx?: ExprContext,
-): string[] {
-  const token = getTokenBeforeCursor(value, cursorPos);
-  if (!token) return [];
-
-  const results: string[] = [];
-
-  if (token.startsWith("$json.")) {
-    const prefix = token.slice("$json.".length);
-    const keys =
-      ctx?.json && typeof ctx.json === "object" && ctx.json !== null
-        ? Object.keys(ctx.json as Record<string, unknown>)
-        : [];
-    for (const k of keys) {
-      if (k.startsWith(prefix)) results.push(`$json.${k}`);
-    }
-  } else if (token.startsWith("$json")) {
-    results.push("$json.");
-    const keys =
-      ctx?.json && typeof ctx.json === "object" && ctx.json !== null
-        ? Object.keys(ctx.json as Record<string, unknown>)
-        : [];
-    for (const k of keys) results.push(`$json.${k}`);
-  } else if (token.startsWith("$node")) {
-    const nodeIds = Object.keys(ctx?.nodes ?? {});
-    for (const id of nodeIds) results.push(`$node["${id}"].`);
-  } else if (token.startsWith("$env")) {
-    results.push("$env.KEY");
-  } else if (token.startsWith("$run")) {
-    results.push("$run.id", "$run.status", "$run.startedAt");
-  } else if (token.startsWith("$")) {
-    results.push('$json.', '$node["', "$env.", "$run.");
-  }
-
-  return results.slice(0, 10);
-}
-
-// ---------------------------------------------------------------------------
 
 function HighlightedTextarea({
   value,
@@ -1134,6 +1553,9 @@ function HighlightedTextarea({
   onDragOver,
   onKeyDown,
   taRef: taRefProp,
+  language,
+  lineNumbers = false,
+  lint = false,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -1146,10 +1568,153 @@ function HighlightedTextarea({
   onDragOver?: React.DragEventHandler<HTMLTextAreaElement>;
   onKeyDown?: React.KeyboardEventHandler<HTMLTextAreaElement>;
   taRef?: React.RefObject<HTMLTextAreaElement>;
+  /** Enable Python token colouring + Tab-to-indent in the highlight mirror. */
+  language?: "python";
+  /** Render a scroll-synced line-number gutter (code mode). */
+  lineNumbers?: boolean;
+  /** Debounced ruff lint with gutter markers + a diagnostics strip (code). */
+  lint?: boolean;
 }) {
   const taRefInternal = useRef<HTMLTextAreaElement>(null);
   const taRef = taRefProp ?? taRefInternal;
   const mirrorRef = useRef<HTMLDivElement>(null);
+  const gutterRef = useRef<HTMLDivElement>(null);
+
+  const codeMode = language === "python";
+  // Caret offset + scroll, tracked so the active-line band and the autocomplete
+  // popover can be positioned without re-measuring the DOM each render.
+  const [caret, setCaret] = useState(0);
+  const [scroll, setScroll] = useState({ top: 0, left: 0 });
+  // Editor font metrics, measured once: line-height/padding from computed style,
+  // char width from a canvas (monospace ⇒ uniform advance).
+  const [metrics, setMetrics] = useState<{
+    lh: number;
+    pt: number;
+    pl: number;
+    cw: number;
+  } | null>(null);
+  // A2 autocomplete state.
+  const [acItems, setAcItems] = useState<string[]>([]);
+  const [acSel, setAcSel] = useState(0);
+  const [acOpen, setAcOpen] = useState(false);
+  // A3 lint diagnostics.
+  const [diags, setDiags] = useState<LintDiagnostic[]>([]);
+
+  useEffect(() => {
+    const ta = taRef.current;
+    if (!ta || !codeMode) return;
+    const cs = getComputedStyle(ta);
+    let cw = 7.8;
+    try {
+      const ctx = document.createElement("canvas").getContext("2d");
+      if (ctx) {
+        ctx.font = `${cs.fontSize} ${cs.fontFamily}`;
+        cw = ctx.measureText("M").width || cw;
+      }
+    } catch {
+      /* canvas unavailable — fall back to the estimate */
+    }
+    setMetrics({
+      lh: parseFloat(cs.lineHeight) || 19.5,
+      pt: parseFloat(cs.paddingTop) || 10,
+      pl: parseFloat(cs.paddingLeft) || 12,
+      cw,
+    });
+    // taRef is a stable ref; codeMode is the only meaningful trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codeMode]);
+
+  // A3: debounced lint via ruff (backend). Empty/non-code editors stay quiet.
+  useEffect(() => {
+    if (!lint || !codeMode || !value.trim()) {
+      setDiags([]);
+      return;
+    }
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      api
+        .lintCode(value)
+        .then((res) => {
+          if (!cancelled) setDiags(res.diagnostics);
+        })
+        .catch(() => {
+          /* lint is best-effort — never block editing */
+        });
+    }, 500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [value, lint, codeMode]);
+
+  const caretLine = codeMode
+    ? value.slice(0, caret).split("\n").length - 1
+    : 0;
+  const caretCol = codeMode
+    ? caret - (value.lastIndexOf("\n", caret - 1) + 1)
+    : 0;
+
+  // Worst severity per 1-based line, for gutter markers.
+  const diagByLine = new Map<number, LintDiagnostic>();
+  for (const d of diags) {
+    const ex = diagByLine.get(d.line);
+    if (!ex || (ex.severity !== "error" && d.severity === "error")) {
+      diagByLine.set(d.line, d);
+    }
+  }
+
+  const updateCaret = () => {
+    const ta = taRef.current;
+    if (ta) setCaret(ta.selectionStart ?? 0);
+  };
+
+  const refreshAc = (pos: number, val: string) => {
+    if (!codeMode) return;
+    const prefix = getIdentPrefix(val, pos);
+    if (prefix.length < 1) {
+      setAcOpen(false);
+      setAcItems([]);
+      return;
+    }
+    const items = computeCodeSuggestions(val, pos);
+    setAcItems(items);
+    setAcSel(0);
+    setAcOpen(items.length > 0);
+  };
+
+  const acceptAc = (word: string) => {
+    const ta = taRef.current;
+    const pos = ta?.selectionStart ?? caret;
+    const prefix = getIdentPrefix(value, pos);
+    const start = pos - prefix.length;
+    const next = value.slice(0, start) + word + value.slice(pos);
+    onChange(next);
+    setAcOpen(false);
+    const c = start + word.length;
+    requestAnimationFrame(() => {
+      const el = taRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(c, c);
+        setCaret(c);
+      }
+    });
+  };
+
+  const jumpToLine = (line: number) => {
+    const ta = taRef.current;
+    if (!ta || !metrics) return;
+    const lines = value.split("\n");
+    let pos = 0;
+    for (let i = 0; i < line - 1 && i < lines.length; i++) {
+      pos += lines[i].length + 1;
+    }
+    ta.focus();
+    ta.setSelectionRange(pos, pos);
+    setCaret(pos);
+    ta.scrollTop = Math.max(0, (line - 1) * metrics.lh - metrics.lh * 3);
+    syncScroll();
+  };
 
   const segments = (() => {
     const out: Array<{ text: string; expr: boolean }> = [];
@@ -1169,31 +1734,127 @@ function HighlightedTextarea({
     return out;
   })();
 
-  const syncScroll = () => {
-    const ta = taRef.current;
-    const m = mirrorRef.current;
-    if (!ta || !m) return;
-    m.scrollTop = ta.scrollTop;
-    m.scrollLeft = ta.scrollLeft;
+  // Render one segment: {{ }} expressions win; otherwise Python-colour the run
+  // when a language is set, else emit it plain. Every character is preserved so
+  // the mirror stays aligned with the caret.
+  const renderSegment = (s: { text: string; expr: boolean }, key: number) => {
+    if (s.expr) {
+      return (
+        <span key={key} className="hl-ta-expr">
+          {s.text}
+        </span>
+      );
+    }
+    if (language === "python") {
+      return (
+        <span key={key}>
+          {tokenizePython(s.text).map((t, j) =>
+            t.cls ? (
+              <span key={j} className={`hl-py-${t.cls}`}>
+                {t.text}
+              </span>
+            ) : (
+              <span key={j}>{t.text}</span>
+            ),
+          )}
+        </span>
+      );
+    }
+    return <span key={key}>{s.text}</span>;
   };
 
+  const lineCount = lineNumbers ? value.split("\n").length : 0;
+
+  const syncScroll = () => {
+    const ta = taRef.current;
+    if (mirrorRef.current && ta) {
+      mirrorRef.current.scrollTop = ta.scrollTop;
+      mirrorRef.current.scrollLeft = ta.scrollLeft;
+    }
+    if (gutterRef.current && ta) {
+      gutterRef.current.scrollTop = ta.scrollTop;
+    }
+    if (ta && codeMode) setScroll({ top: ta.scrollTop, left: ta.scrollLeft });
+  };
+
+  // Tab indents instead of leaving the field; Shift+Tab dedents two spaces.
+  const handleTabIndent = (
+    e: React.KeyboardEvent<HTMLTextAreaElement>,
+  ): boolean => {
+    if (e.key !== "Tab" || !language) return false;
+    const ta = taRef.current;
+    if (!ta) return false;
+    e.preventDefault();
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    if (e.shiftKey) {
+      const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+      const lead = value.slice(lineStart).match(/^ {1,2}/)?.[0].length ?? 0;
+      if (lead === 0) return true;
+      const next = value.slice(0, lineStart) + value.slice(lineStart + lead);
+      onChange(next);
+      requestAnimationFrame(() => {
+        ta.selectionStart = ta.selectionEnd = Math.max(lineStart, start - lead);
+      });
+      return true;
+    }
+    const next = value.slice(0, start) + "  " + value.slice(end);
+    onChange(next);
+    requestAnimationFrame(() => {
+      ta.selectionStart = ta.selectionEnd = start + 2;
+    });
+    return true;
+  };
+
+  const wrapClass = [
+    "hl-ta-wrap",
+    className,
+    language ? "hl-ta-wrap--code" : "",
+    lineNumbers ? "hl-ta-wrap--gutter" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className={`hl-ta-wrap ${className}`}>
+    <>
+    <div className={wrapClass}>
+      {lineNumbers && (
+        <div ref={gutterRef} className="hl-ta-gutter" aria-hidden>
+          {Array.from({ length: lineCount }, (_, i) => {
+            const d = diagByLine.get(i + 1);
+            const cls = [
+              codeMode && i === caretLine ? "is-active" : "",
+              d ? `has-${d.severity}` : "",
+            ]
+              .filter(Boolean)
+              .join(" ");
+            return (
+              <span key={i} className={cls || undefined} title={d?.message}>
+                {i + 1}
+              </span>
+            );
+          })}
+        </div>
+      )}
       <div ref={mirrorRef} className="hl-ta-mirror" aria-hidden>
-        {segments.map((s, i) =>
-          s.expr ? (
-            <span key={i} className="hl-ta-expr">
-              {s.text}
-            </span>
-          ) : (
-            <span key={i}>{s.text}</span>
-          ),
-        )}
+        {segments.map(renderSegment)}
         {/* Trailing newline ensures the mirror grows when the textarea does. */}
         {value.endsWith("\n") && "\n"}
         {/* Non-breaking space keeps empty lines/empty content rendering. */}
         {value === "" && " "}
       </div>
+      {/* A1: active-line band — sits above the mirror (so its text shows
+          through the translucent fill) and below the transparent textarea. */}
+      {codeMode && metrics && (
+        <div
+          className="hl-ta-activeline"
+          aria-hidden
+          style={{
+            top: metrics.pt + caretLine * metrics.lh - scroll.top,
+            height: metrics.lh,
+          }}
+        />
+      )}
       <textarea
         ref={taRef}
         className="hl-ta-input"
@@ -1202,14 +1863,122 @@ function HighlightedTextarea({
         placeholder={placeholder}
         spellCheck={spellCheck}
         autoFocus={autoFocus}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          onChange(e.target.value);
+          const pos = e.target.selectionStart ?? e.target.value.length;
+          setCaret(pos);
+          refreshAc(pos, e.target.value);
+        }}
+        onSelect={updateCaret}
         onScroll={syncScroll}
-        onKeyDown={onKeyDown}
+        onBlur={() => window.setTimeout(() => setAcOpen(false), 120)}
+        onKeyDown={(e) => {
+          if (codeMode && acOpen && acItems.length > 0) {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setAcSel((s) => (s + 1) % acItems.length);
+              return;
+            }
+            if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setAcSel((s) => (s - 1 + acItems.length) % acItems.length);
+              return;
+            }
+            if (e.key === "Enter" || e.key === "Tab") {
+              e.preventDefault();
+              acceptAc(acItems[acSel]);
+              return;
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              setAcOpen(false);
+              return;
+            }
+          }
+          if (handleTabIndent(e)) return;
+          onKeyDown?.(e);
+        }}
         onDrop={onDrop}
         onDragOver={onDragOver}
       />
+      {/* A2: identifier autocomplete, anchored to the caret. */}
+      {codeMode && acOpen && acItems.length > 0 && metrics && (
+        <ul
+          className="hl-ta-ac"
+          role="listbox"
+          style={{
+            top: metrics.pt + (caretLine + 1) * metrics.lh - scroll.top + 2,
+            left: Math.max(4, metrics.pl + caretCol * metrics.cw - scroll.left),
+          }}
+        >
+          {acItems.map((s, i) => (
+            <li
+              key={s}
+              role="option"
+              aria-selected={i === acSel}
+              className={`hl-ta-ac-item${i === acSel ? " sel" : ""}`}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                acceptAc(s);
+              }}
+              onMouseEnter={() => setAcSel(i)}
+            >
+              {s}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
+      {/* A3: diagnostics strip — click a row to jump to the offending line. */}
+      {lint && codeMode && diags.length > 0 && (
+        <ul className="hl-ta-diags">
+          {diags.map((d, i) => (
+            <li
+              key={`${d.line}:${d.column}:${i}`}
+              className={`hl-ta-diag is-${d.severity}`}
+              onClick={() => jumpToLine(d.line)}
+            >
+              <span className="hl-ta-diag-loc">
+                {d.line}:{d.column}
+              </span>
+              {d.code && <span className="hl-ta-diag-code">{d.code}</span>}
+              <span className="hl-ta-diag-msg">{d.message}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
   );
+}
+
+const EXPR_HISTORY_KEY = "noodle_expr_history";
+
+function readExprHistory(fieldKey: string): string[] {
+  try {
+    const data = JSON.parse(localStorage.getItem(EXPR_HISTORY_KEY) ?? "{}") as Record<string, unknown>;
+    const arr = data[fieldKey];
+    return Array.isArray(arr) ? (arr as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function appendExprHistory(fieldKey: string, value: string): void {
+  if (!value.trim()) return;
+  try {
+    const data = JSON.parse(localStorage.getItem(EXPR_HISTORY_KEY) ?? "{}") as Record<string, string[]>;
+    const existing = Array.isArray(data[fieldKey]) ? data[fieldKey] : [];
+    const deduped = [value, ...existing.filter((v) => v !== value)].slice(0, 10);
+    localStorage.setItem(EXPR_HISTORY_KEY, JSON.stringify({ ...data, [fieldKey]: deduped }));
+  } catch {
+    /* ignore */
+  }
+}
+
+function formatExpression(value: string): string {
+  return value
+    .replace(/\{\{\s*([\s\S]*?)\s*\}\}/g, (_, inner) => `{{ ${inner.trim()} }}`)
+    .trim();
 }
 
 /** n8n-style expand modal: editor on the left, live Result preview on the right.
@@ -1220,12 +1989,14 @@ function ExpressionEditorModal({
   value,
   onChange,
   ctx,
+  nodeId,
   onClose,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   ctx?: ExprContext;
+  nodeId?: string;
   onClose: () => void;
 }) {
   const [view, setView] = useState<ResultView>("text");
@@ -1236,58 +2007,135 @@ function ExpressionEditorModal({
     loading: boolean;
   }>({ loading: false });
 
-  // Autocomplete state
-  const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [selectedSuggestion, setSelectedSuggestion] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // trapFocus:false — the editor + autocomplete drive their own Tab handling.
+  useModalA11y(dialogRef, onClose, { trapFocus: false });
+  // useModalA11y grabs the first focusable (the Format button) on open; for this
+  // modal the user wants to type, so move focus into the editor once on open.
+  useEffect(() => {
+    taRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  function updateSuggestions(val: string) {
-    const pos = taRef.current?.selectionStart ?? val.length;
-    const s = computeSuggestions(val, pos, ctx);
-    setSuggestions(s);
-    setSelectedSuggestion(0);
+  // Sidebar state
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem("noodle_expr_sidebar_collapsed") === "1"; } catch { return false; }
+  });
+  const allNodes = useEditor((s) => s.nodes);
+  const allEdges = useEditor((s) => s.edges);
+  const runOutputs = useEditor((s) => s.runOutputs);
+  const upstreamNodes = useMemo(
+    () => nodeId ? getUpstreamNodes(nodeId, allNodes, allEdges, runOutputs) : [],
+    [nodeId, allNodes, allEdges, runOutputs],
+  );
+  const [selectedUpstreamId, setSelectedUpstreamId] = useState<string | null>(
+    upstreamNodes[0]?.id ?? null,
+  );
+  const selectedUpstreamNode = upstreamNodes.find((n) => n.id === selectedUpstreamId) ?? upstreamNodes[0];
+
+  // Build the eval context straight from the live store. The modal already
+  // subscribes to runOutputs + edges (that's what powers the sidebar), so it
+  // can resolve {{ }} on its own — no dependency on the caller threading `ctx`
+  // all the way down (which is brittle and was silently arriving undefined).
+  // `$json`/`$input` come from the wired inputs, `$node[...]` from every run
+  // output. The `ctx` prop is kept as a fallback for callers without a nodeId.
+  const effectiveCtx = useMemo<ExprContext>(() => {
+    if (!nodeId) return ctx ?? {};
+    const incoming: Record<string, unknown> = {};
+    for (const edge of allEdges) {
+      if (edge.target !== nodeId) continue;
+      const upstream = runOutputs[edge.source];
+      if (!upstream || typeof upstream !== "object") continue;
+      const handle = edge.sourceHandle ?? "main";
+      const v = (upstream as Record<string, unknown>)[handle];
+      if (v !== undefined) incoming[edge.targetHandle ?? "input"] = v;
+    }
+    if (Object.keys(runOutputs).length === 0) return ctx ?? {};
+    return {
+      json: Object.values(incoming)[0] ?? ctx?.json,
+      inputs: Object.keys(incoming).length ? incoming : ctx?.inputs,
+      nodes: runOutputs,
+    };
+  }, [nodeId, allEdges, runOutputs, ctx]);
+
+  useEffect(() => {
+    if (upstreamNodes.length > 0 && !upstreamNodes.find((n) => n.id === selectedUpstreamId)) {
+      setSelectedUpstreamId(upstreamNodes[0]?.id ?? null);
+    }
+  }, [upstreamNodes, selectedUpstreamId]);
+
+  function toggleSidebar() {
+    setSidebarCollapsed((c) => {
+      const next = !c;
+      try { localStorage.setItem("noodle_expr_sidebar_collapsed", next ? "1" : "0"); } catch { /* */ }
+      return next;
+    });
   }
 
-  function applySuggestion(suggestion: string) {
+  const startFieldDrag = useCallback((e: React.DragEvent<HTMLElement>, expression: string) => {
+    e.dataTransfer.setData("text/plain", expression);
+    e.dataTransfer.setData("application/x-noodle-expression", expression);
+    e.dataTransfer.effectAllowed = "copy";
+    const ghost = document.createElement("div");
+    ghost.className = "expr-drag-ghost";
+    ghost.textContent = expression;
+    document.body.appendChild(ghost);
+    e.dataTransfer.setDragImage(ghost, 12, 12);
+    window.setTimeout(() => ghost.remove(), 0);
+  }, []);
+
+  const historyKey = `${nodeId ?? ""}:${label}`;
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const history = readExprHistory(historyKey);
+
+  const latestValue = useRef(value);
+  latestValue.current = value;
+  useEffect(() => {
+    return () => {
+      appendExprHistory(historyKey, latestValue.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyKey]);
+
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const dollarPosRef = useRef<number | null>(null);
+
+  function insertExpression(expression: string) {
     const ta = taRef.current;
     const pos = ta?.selectionStart ?? value.length;
-    const token = getTokenBeforeCursor(value, pos);
-    const before = value.slice(0, pos - token.length);
-    const after = value.slice(pos);
-    const newVal = before + suggestion + after;
-    onChange(newVal);
-    setSuggestions([]);
-    // Move cursor to end of inserted text
-    setTimeout(() => {
-      if (ta) {
-        const newPos = before.length + suggestion.length;
-        ta.setSelectionRange(newPos, newPos);
-        ta.focus();
-      }
-    }, 0);
+
+    if (dollarPosRef.current !== null) {
+      const dollarPos = dollarPosRef.current;
+      dollarPosRef.current = null;
+      const inner = expression.replace(/^\{\{\s*/, "").replace(/\s*\}\}$/, "");
+      onChange(value.slice(0, dollarPos - 1) + inner + value.slice(dollarPos));
+      return;
+    }
+
+    const before = value.slice(0, pos);
+    const opens = (before.match(/\{\{/g) ?? []).length;
+    const closes = (before.match(/\}\}/g) ?? []).length;
+    const insideExpr = opens > closes;
+    const toInsert = insideExpr
+      ? expression.replace(/^\{\{\s*/, "").replace(/\s*\}\}$/, "")
+      : expression;
+    onChange(value.slice(0, pos) + toInsert + value.slice(pos));
+    setPickerOpen(false);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (suggestions.length === 0) return;
-    if (e.key === "ArrowDown") {
+    if (e.key === " " && (e.ctrlKey || e.metaKey) && nodeId) {
       e.preventDefault();
-      setSelectedSuggestion((s) => Math.min(s + 1, suggestions.length - 1));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setSelectedSuggestion((s) => Math.max(s - 1, 0));
-    } else if (e.key === "Enter" || e.key === "Tab") {
-      e.preventDefault();
-      applySuggestion(suggestions[selectedSuggestion]);
-    } else if (e.key === "Escape") {
-      setSuggestions([]);
+      dollarPosRef.current = null;
+      setPickerOpen(true);
     }
   }
 
   const hasData =
-    ctx !== undefined &&
-    (ctx.json !== undefined ||
-      Object.keys(ctx.nodes ?? {}).length > 0 ||
-      Object.keys(ctx.inputs ?? {}).length > 0);
+    effectiveCtx.json !== undefined ||
+    Object.keys(effectiveCtx.nodes ?? {}).length > 0 ||
+    Object.keys(effectiveCtx.inputs ?? {}).length > 0;
   const hasExpr = EXPR_RE.test(value);
 
   useEffect(() => {
@@ -1311,9 +2159,9 @@ function ExpressionEditorModal({
       api
         .previewExpression({
           value,
-          json: ctx?.json,
-          inputs: ctx?.inputs,
-          nodes: ctx?.nodes,
+          json: effectiveCtx.json,
+          inputs: effectiveCtx.inputs,
+          nodes: effectiveCtx.nodes,
         })
         .then((res) => {
           if (!cancelled)
@@ -1333,7 +2181,7 @@ function ExpressionEditorModal({
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [value, ctx, hasExpr, hasData]);
+  }, [value, effectiveCtx, hasExpr, hasData]);
 
   const resultText = formatResultText(state.result);
   const parts = state.parts ?? [];
@@ -1342,48 +2190,218 @@ function ExpressionEditorModal({
     <div className="modal-overlay" onClick={onClose}>
       <div
         className="modal modal-wide expr-modal"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="expr-modal-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <header className="modal-head">
-          <h2>
+          <h2 id="expr-modal-title">
             Editing <span className="expr-modal-label">{label}</span>
           </h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>
-            ✕
-          </button>
-        </header>
-        <div className="expr-modal-body">
-          <section className="expr-modal-pane">
-            <div className="expr-modal-pane-head">
-              <span>Expression</span>
-              <span className="muted expr-modal-hint">
-                Anything inside <code>{"{{ }}"}</code> is evaluated
-              </span>
-            </div>
-            <div className="expr-modal-editor-wrap">
-              <HighlightedTextarea
-                className="expr-modal-editor"
-                value={value}
-                onChange={(v) => { onChange(v); updateSuggestions(v); }}
-                autoFocus
-                taRef={taRef}
-                onKeyDown={handleKeyDown}
-              />
-              {suggestions.length > 0 && (
-                <ul className="expr-autocomplete">
-                  {suggestions.map((s, i) => (
-                    <li
-                      key={s}
-                      className={i === selectedSuggestion ? "active" : ""}
-                      onMouseDown={(e) => { e.preventDefault(); applySuggestion(s); }}
-                      onMouseEnter={() => setSelectedSuggestion(i)}
-                    >
-                      {s}
+          <div className="expr-modal-header-actions">
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              onClick={() => onChange(formatExpression(value))}
+              title="Normalise {{ }} spacing"
+            >
+              Format
+            </button>
+            <div className="expr-history-wrap">
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => setHistoryOpen((o) => !o)}
+                title="Recent values for this field"
+                disabled={history.length === 0}
+              >
+                History {history.length > 0 ? `(${history.length})` : ""}
+              </button>
+              {historyOpen && history.length > 0 && (
+                <ul className="expr-history-dropdown">
+                  {history.map((entry, i) => (
+                    <li key={i}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onChange(entry);
+                          setHistoryOpen(false);
+                        }}
+                      >
+                        {entry.slice(0, 60)}{entry.length > 60 ? "…" : ""}
+                      </button>
                     </li>
                   ))}
                 </ul>
               )}
             </div>
+            <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
+              ✕
+            </button>
+          </div>
+        </header>
+        <div className="expr-modal-body">
+          {upstreamNodes.length > 0 && (
+            <aside className={`expr-sidebar${sidebarCollapsed ? " expr-sidebar--collapsed" : ""}`}>
+              <div className="expr-sidebar-head">
+                {!sidebarCollapsed && <span className="expr-sidebar-title">Variables</span>}
+                <button
+                  type="button"
+                  className="expr-sidebar-collapse"
+                  title={sidebarCollapsed ? "Expand variable panel" : "Collapse variable panel"}
+                  onClick={toggleSidebar}
+                >
+                  {sidebarCollapsed ? "›" : "‹"}
+                </button>
+              </div>
+              {!sidebarCollapsed && (
+                <div className="expr-sidebar-body">
+                  {upstreamNodes.length > 1 && (
+                    <div className="expr-sidebar-node-select">
+                      <select
+                        className="expr-sidebar-dropdown"
+                        value={selectedUpstreamId ?? ""}
+                        onChange={(e) => setSelectedUpstreamId(e.target.value)}
+                      >
+                        {upstreamNodes.map((n) => (
+                          <option key={n.id} value={n.id}>
+                            {n.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {upstreamNodes.length === 1 && (
+                    <div className="expr-sidebar-node-single">{upstreamNodes[0].label}</div>
+                  )}
+                  <div className="expr-sidebar-fields">
+                    {(selectedUpstreamNode?.fields.length ?? 0) === 0 && (
+                      <p className="expr-sidebar-empty">No output data yet.</p>
+                    )}
+                    {selectedUpstreamNode?.fields.map((field) => (
+                      <div
+                        key={field.path}
+                        className="expr-sidebar-field"
+                        draggable
+                        onDragStart={(e) => startFieldDrag(e, field.expression)}
+                        title={`Drag to insert ${field.expression}`}
+                      >
+                        <span className="expr-sidebar-grip">⠿</span>
+                        <span className="expr-sidebar-name">{field.path}</span>
+                        <span className="expr-sidebar-type">{field.type}</span>
+                        <span className="expr-sidebar-preview">{field.valuePreview}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="expr-sidebar-meta">
+                    {[
+                      { path: "$run.id", expr: "{{ $run.id }}" },
+                      { path: "$run.status", expr: "{{ $run.status }}" },
+                      { path: "$env.KEY", expr: "{{ $env.KEY }}" },
+                    ].map((m) => (
+                      <div
+                        key={m.path}
+                        className="expr-sidebar-field expr-sidebar-field--meta"
+                        draggable
+                        onDragStart={(e) => startFieldDrag(e, m.expr)}
+                        title={`Drag to insert ${m.expr}`}
+                      >
+                        <span className="expr-sidebar-grip">⠿</span>
+                        <span className="expr-sidebar-name">{m.path}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </aside>
+          )}
+          <section className="expr-modal-pane" style={{ position: "relative" }}>
+            <div className="expr-modal-pane-head">
+              <span>Expression</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span className="muted expr-modal-hint">
+                  Anything inside <code>{"{{ }}"}</code> is evaluated
+                </span>
+                {nodeId && (
+                  <button
+                    type="button"
+                    className="btn btn-xs expr-pick-btn"
+                    title="Pick a variable (Ctrl+Space)"
+                    onClick={() => { dollarPosRef.current = null; setPickerOpen((o) => !o); }}
+                  >
+                    $ Pick variable
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="expr-modal-editor-wrap">
+              <HighlightedTextarea
+                className="expr-modal-editor"
+                language="python"
+                lineNumbers
+                value={value}
+                onChange={(v) => {
+                  onChange(v);
+                  const pos = taRef.current?.selectionStart ?? v.length;
+                  const before = v.slice(0, pos);
+                  const opens = (before.match(/\{\{/g) ?? []).length;
+                  const closes = (before.match(/\}\}/g) ?? []).length;
+                  const insideExpr = opens > closes;
+                  if (insideExpr && v[pos - 1] === "$") {
+                    dollarPosRef.current = pos;
+                    setPickerOpen(true);
+                  }
+                }}
+                autoFocus
+                taRef={taRef}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape" && pickerOpen) {
+                    setPickerOpen(false);
+                    dollarPosRef.current = null;
+                    return;
+                  }
+                  handleKeyDown(e);
+                }}
+              />
+            </div>
+            {state.parts && state.parts.some((p) => p.kind === "expr") && (
+              <div className="expr-parts-bar">
+                <span className="expr-parts-label">Resolved:</span>
+                {state.parts
+                  .filter((p) => p.kind === "expr" || p.kind === "error")
+                  .map((p, i) =>
+                    p.kind === "error" ? (
+                      <span key={i} className="expr-part-chip expr-part-chip--error" title={p.error}>
+                        <span className="expr-part-chip-raw">{p.raw}</span>
+                        <span className="expr-part-chip-arrow">→</span>
+                        <span className="expr-part-chip-val">⚠ error</span>
+                      </span>
+                    ) : (
+                      <span key={i} className="expr-part-chip">
+                        <span className="expr-part-chip-raw">
+                          {p.raw.replace(/^\{\{\s*/, "").replace(/\s*\}\}$/, "").slice(0, 20)}
+                        </span>
+                        <span className="expr-part-chip-arrow">→</span>
+                        <span className="expr-part-chip-val">
+                          {String(p.value === null || p.value === undefined ? "null" : p.value).slice(0, 18)}
+                        </span>
+                      </span>
+                    ),
+                  )}
+              </div>
+            )}
+            {pickerOpen && nodeId && (
+              <div className="expr-picker-anchor">
+                <VariablePickerPopover
+                  nodeId={nodeId}
+                  onInsert={insertExpression}
+                  onClose={() => { setPickerOpen(false); dollarPosRef.current = null; }}
+                />
+              </div>
+            )}
           </section>
           <section className="expr-modal-pane">
             <div className="expr-modal-pane-head">
@@ -1409,8 +2427,8 @@ function ExpressionEditorModal({
               {state.loading && <p className="muted">Evaluating…</p>}
               {!state.loading && hasExpr && !hasData && (
                 <p className="muted">
-                  Run the workflow once to feed this preview with real input
-                  data — until then, only the literal text is shown.
+                  No upstream data yet — run the workflow once and this preview
+                  will resolve each <code>{"{{ }}"}</code> against live values.
                 </p>
               )}
               {!state.loading && state.error && (
@@ -1501,7 +2519,10 @@ function LoadOptionsField({
     setLoading(true);
     setErr("");
     api
-      .dynamicOptions(spec.load_options, buildLoadOptionsParams(credential, params))
+      .dynamicOptions(
+        spec.load_options,
+        buildLoadOptionsParams(credential, params, spec.depends_on ?? []),
+      )
       .then((res) => setFetched(res.options.map((o) => o.value)))
       .catch(() => setErr("Couldn't load list — type a value or retry."))
       .finally(() => setLoading(false));
@@ -1515,10 +2536,15 @@ function LoadOptionsField({
   const credentialId = credential?.id;
   const providerKey = typeof params.provider === "string" ? params.provider : "";
   const baseUrlKey = typeof params.base_url === "string" ? params.base_url : "";
+  // Refetch when any depends_on field changes too — e.g. choosing a different
+  // spreadsheet must reload that spreadsheet's sheet list.
+  const dependsKey = JSON.stringify(
+    (spec.depends_on ?? []).map((dep) => params[dep] ?? null),
+  );
   useEffect(() => {
     fetchOptions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [credentialId, providerKey, baseUrlKey]);
+  }, [credentialId, providerKey, baseUrlKey, dependsKey]);
 
   const options = mergeOptions(fetched, current);
   const filtered = query.trim()
@@ -1634,18 +2660,382 @@ function LoadOptionsField({
   );
 }
 
+interface RouteRow {
+  method: string;
+  path: string;
+  output: string;
+}
+
+const ROUTE_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+
+function routeRowsFromValue(value: unknown): RouteRow[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (r): r is Record<string, unknown> => Boolean(r) && typeof r === "object",
+    )
+    .map((r) => ({
+      method: typeof r.method === "string" ? r.method : "GET",
+      path: typeof r.path === "string" ? r.path : "",
+      output: typeof r.output === "string" ? r.output : "",
+    }));
+}
+
+// Editor for the API Endpoint node's `routes` param: one row per route
+// (method + sub-path template → named output branch). Each row's `output`
+// becomes a handle on the canvas (see `deriveApiEndpointOutputs` in store.ts).
+function RoutesField({
+  value,
+  onChange,
+}: {
+  value: unknown;
+  onChange: (v: unknown) => void;
+}) {
+  const [rows, setRows] = useState<RouteRow[]>(() => routeRowsFromValue(value));
+  const wrapRef = useRef<HTMLDivElement>(null);
+  // Resync from an external value change (undo/redo, AI fix) — FE-11.
+  useExternalValueSync(
+    value,
+    () => Boolean(wrapRef.current?.contains(document.activeElement)),
+    () => setRows(routeRowsFromValue(value)),
+  );
+
+  function commit(next: RouteRow[]): void {
+    setRows(next);
+    onChange(
+      next.map((r) => ({ method: r.method, path: r.path, output: r.output })),
+    );
+  }
+  function update(index: number, patch: Partial<RouteRow>): void {
+    commit(rows.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  }
+
+  return (
+    <div className="routes-field" ref={wrapRef}>
+      {rows.length === 0 && (
+        <p className="routes-empty">
+          No routes yet. Add one to create an endpoint branch.
+        </p>
+      )}
+      {rows.map((row, i) => (
+        <div className="routes-row" key={i}>
+          <select
+            className="field-input routes-method"
+            value={row.method}
+            onChange={(e) => update(i, { method: e.target.value })}
+          >
+            {ROUTE_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+          <input
+            className="field-input routes-path"
+            placeholder="/{id}"
+            value={row.path}
+            onChange={(e) => update(i, { path: e.target.value })}
+          />
+          <span className="routes-arrow" aria-hidden>
+            →
+          </span>
+          <input
+            className="field-input routes-output"
+            placeholder="branch name"
+            value={row.output}
+            onChange={(e) => update(i, { output: e.target.value })}
+          />
+          <button
+            type="button"
+            className="routes-remove"
+            aria-label="Remove route"
+            onClick={() => commit(rows.filter((_, idx) => idx !== i))}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="routes-add"
+        onClick={() =>
+          commit([
+            ...rows,
+            { method: "GET", path: "/", output: `route${rows.length + 1}` },
+          ])
+        }
+      >
+        + Add route
+      </button>
+    </div>
+  );
+}
+
+function FileUploadField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [filename, setFilename] = useState<string | null>(null);
+  const { notify } = useToast();
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBusy(true);
+    try {
+      const info = await uploadArtifact(file);
+      onChange(info.id);
+      setFilename(info.name);
+    } catch (err) {
+      notify(String(err), "error");
+    } finally {
+      setBusy(false);
+      e.target.value = "";
+    }
+  }
+
+  return (
+    <div className="file-upload-field">
+      {value && (
+        <div className="file-upload-current">
+          <span className="file-upload-name">{filename ?? value}</span>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            onClick={() => {
+              onChange("");
+              setFilename(null);
+            }}
+            aria-label="Remove file"
+          >
+            ×
+          </button>
+        </div>
+      )}
+      <label className={`btn btn-sm${busy ? " btn-disabled" : ""}`}>
+        {busy ? "Uploading…" : value ? "Replace file" : "Choose file"}
+        <input
+          type="file"
+          style={{ display: "none" }}
+          disabled={busy}
+          onChange={handleFile}
+        />
+      </label>
+    </div>
+  );
+}
+
+/**
+ * Resolves a field's `{{ }}` template against the live expression context and
+ * shows the *fully substituted* result inline (e.g. the complete URL with the
+ * variable filled in), so users don't have to open the expand modal to check.
+ */
+function InlineExprPreview({
+  value,
+  ctx,
+}: {
+  value: string;
+  ctx?: ExprContext;
+}) {
+  const [state, setState] = useState<{
+    result?: unknown;
+    error: string | null;
+    loading: boolean;
+  }>({ result: undefined, error: null, loading: false });
+
+  const hasExpr = EXPR_RE.test(value);
+  const hasData =
+    !!ctx &&
+    (ctx.json !== undefined ||
+      Object.keys(ctx.nodes ?? {}).length > 0 ||
+      Object.keys(ctx.inputs ?? {}).length > 0);
+
+  useEffect(() => {
+    if (!hasExpr || !hasData || !ctx) {
+      setState({ result: undefined, error: null, loading: false });
+      return;
+    }
+    let cancelled = false;
+    setState((s) => ({ ...s, loading: true }));
+    const handle = window.setTimeout(() => {
+      api
+        .previewExpression({
+          value,
+          json: ctx.json,
+          inputs: ctx.inputs,
+          nodes: ctx.nodes,
+        })
+        .then((res) => {
+          if (!cancelled)
+            setState({ result: res.result, error: res.error, loading: false });
+        })
+        .catch((err) => {
+          if (!cancelled)
+            setState({ result: undefined, error: String(err), loading: false });
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [value, ctx, hasExpr, hasData]);
+
+  if (!hasExpr || !hasData) return null;
+  if (state.loading) {
+    return <div className="expr-inline-preview is-loading">→ resolving…</div>;
+  }
+  if (state.error) {
+    return (
+      <div className="expr-inline-preview is-error" title={state.error}>
+        <span className="eip-arrow">→</span>
+        <span className="eip-val">⚠ {state.error}</span>
+      </div>
+    );
+  }
+  const text = formatResultText(state.result);
+  if (!text) return null;
+  return (
+    <div className="expr-inline-preview" title={text}>
+      <span className="eip-arrow">→</span>
+      <span className="eip-val">{text}</span>
+    </div>
+  );
+}
+
+// Single-line string input with expression autocomplete. When the caret sits
+// just after a `$…` token, it offers a dropdown of completions ($json keys,
+// upstream node ids, $env/$run helpers) driven by computeSuggestions.
+function ExprAutocompleteInput({
+  value,
+  onChange,
+  placeholder,
+  className,
+  ctx,
+  dropHandlers,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  className?: string;
+  ctx?: ExprContext;
+  dropHandlers: {
+    onDragOver: React.DragEventHandler<HTMLInputElement>;
+    onDrop: React.DragEventHandler<HTMLInputElement>;
+  };
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [sel, setSel] = useState(0);
+  const [open, setOpen] = useState(false);
+
+  const refresh = (cursorPos: number, val: string) => {
+    const token = getTokenBeforeCursor(val, cursorPos);
+    if (!token || !token.startsWith("$")) {
+      setOpen(false);
+      setSuggestions([]);
+      return;
+    }
+    const next = computeSuggestions(val, cursorPos, ctx).slice(0, 8);
+    setSuggestions(next);
+    setSel(0);
+    setOpen(next.length > 0);
+  };
+
+  const accept = (suggestion: string) => {
+    const input = inputRef.current;
+    const cursorPos = input?.selectionStart ?? value.length;
+    const token = getTokenBeforeCursor(value, cursorPos);
+    const start = cursorPos - token.length;
+    const next = value.slice(0, start) + suggestion + value.slice(cursorPos);
+    onChange(next);
+    setOpen(false);
+    const caret = start + suggestion.length;
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(caret, caret);
+      }
+    });
+  };
+
+  return (
+    <div className="expr-ac-wrap">
+      <input
+        ref={inputRef}
+        className={className}
+        type="text"
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          refresh(e.target.selectionStart ?? e.target.value.length, e.target.value);
+        }}
+        onKeyDown={(e) => {
+          if (!open || suggestions.length === 0) return;
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setSel((s) => (s + 1) % suggestions.length);
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setSel((s) => (s - 1 + suggestions.length) % suggestions.length);
+          } else if (e.key === "Enter" || e.key === "Tab") {
+            e.preventDefault();
+            accept(suggestions[sel]);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            setOpen(false);
+          }
+        }}
+        onKeyUp={(e) => {
+          if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) {
+            refresh(e.currentTarget.selectionStart ?? value.length, value);
+          }
+        }}
+        onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+        {...dropHandlers}
+      />
+      {open && suggestions.length > 0 && (
+        <ul className="expr-ac" role="listbox">
+          {suggestions.map((s, i) => (
+            <li
+              key={s}
+              role="option"
+              aria-selected={i === sel}
+              className={`expr-ac-item${i === sel ? " sel" : ""}`}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                accept(s);
+              }}
+              onMouseEnter={() => setSel(i)}
+            >
+              {s}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function ParamField({
   spec,
   value,
   onChange,
   credentialContext,
   exprContext,
+  nodeId,
 }: {
   spec: ParamSpec;
   value: unknown;
   onChange: (v: unknown) => void;
   credentialContext?: Record<string, unknown>;
   exprContext?: ExprContext;
+  nodeId?: string;
 }) {
   const [expanderOpen, setExpanderOpen] = useState(false);
   if (spec.credential) {
@@ -1679,6 +3069,17 @@ export function ParamField({
         placeholder={spec.placeholder}
       />
     );
+  }
+  if (spec.widget === "file_upload") {
+    return (
+      <FileUploadField
+        value={String(value ?? "")}
+        onChange={onChange}
+      />
+    );
+  }
+  if (spec.widget === "routes_table") {
+    return <RoutesField value={value} onChange={onChange} />;
   }
   if (spec.key_value) {
     return (
@@ -1789,9 +3190,11 @@ export function ParamField({
               value={current}
               onChange={onChange}
               ctx={exprContext}
+              nodeId={nodeId}
               onClose={() => setExpanderOpen(false)}
             />
           )}
+          {exprContext && <InlineExprPreview value={current} ctx={exprContext} />}
         </div>
       );
     }
@@ -1808,23 +3211,26 @@ export function ParamField({
     const isCredField = spec.credential != null;
     return (
       <div className={`field-wrap${isExpr ? " field-wrap-expr" : ""}`}>
-        <input
-          className={`field-input${isExpr ? " field-input-expr" : ""}`}
-          type="text"
-          placeholder={spec.placeholder}
-          value={current}
-          onChange={(e) => onChange(e.target.value)}
-          {...drop}
-        />
-        <button
-          type="button"
-          className={`fx-toggle${isExpr ? " fx-toggle-on" : ""}`}
-          onClick={toggleFx}
-          title={isExpr ? "Switch to fixed value" : "Switch to expression"}
-          tabIndex={-1}
-        >
-          ƒx
-        </button>
+        <div className="field-input-row">
+          <ExprAutocompleteInput
+            className={`field-input${isExpr ? " field-input-expr" : ""}`}
+            placeholder={spec.placeholder}
+            value={current}
+            onChange={onChange}
+            ctx={exprContext}
+            dropHandlers={drop}
+          />
+          <button
+            type="button"
+            className={`fx-toggle${isExpr ? " fx-toggle-on" : ""}`}
+            onClick={toggleFx}
+            title={isExpr ? "Switch to fixed value" : "Switch to expression"}
+            tabIndex={-1}
+          >
+            ƒx
+          </button>
+        </div>
+        {exprContext && <InlineExprPreview value={current} ctx={exprContext} />}
         {!isCredField && (
           <div className="expr-tokens-hint">
             <span className="expr-tokens-label">tokens:</span>
@@ -1847,167 +3253,6 @@ export function ParamField({
   return <JsonField value={value} onChange={onChange} />;
 }
 
-// ---- Webhook trigger: conditional param display ----
-
-export const WEBHOOK_AUTH_TYPE_OPTIONS = [
-  { value: "none", label: "None" },
-  { value: "basic", label: "Basic Auth" },
-  { value: "header", label: "Header Auth" },
-  { value: "query", label: "Query Auth" },
-];
-
-const WEBHOOK_CRED_BY_AUTH: Record<
-  string,
-  { type: string; fields: string[]; label: string }
-> = {
-  basic: {
-    type: "http_basic",
-    fields: ["username", "password"],
-    label: "Basic Auth",
-  },
-  header: {
-    type: "http_header",
-    fields: ["name", "value"],
-    label: "Header Auth",
-  },
-  query: {
-    type: "http_query",
-    fields: ["name", "value"],
-    label: "Query Auth",
-  },
-};
-
-function webhookAuthLabel(authType: string): string {
-  return (
-    WEBHOOK_AUTH_TYPE_OPTIONS.find((o) => o.value === authType)?.label ?? "None"
-  );
-}
-
-// Build a synthetic ParamSpec for the auth_credentials picker whose
-// credential type/fields swap based on the chosen auth_type.
-export function webhookCredentialSpec(
-  baseSpec: ParamSpec,
-  authType: string,
-): ParamSpec {
-  const cfg = WEBHOOK_CRED_BY_AUTH[authType];
-  if (!cfg) return baseSpec;
-  return {
-    ...baseSpec,
-    credential: {
-      type: cfg.type,
-      key: "*",
-      label: cfg.label,
-      fields: cfg.fields,
-      multi: true,
-    },
-  };
-}
-
-const WEBHOOK_LABEL_OVERRIDES: Record<string, string> = {
-  auth_type: "Authentication",
-  hmac_verification: "HMAC verification",
-  ip_allowlist: "IP allowlist",
-  trust_proxy: "Trust X-Forwarded-For",
-  dedup: "Deduplicate",
-  dedup_key: "Dedup key",
-  raw_body: "Capture raw body",
-  response_data: "Response data",
-};
-
-export function webhookParamLabel(
-  manifestId: string,
-  paramName: string,
-  params: Record<string, unknown>,
-): string | null {
-  if (manifestId !== "webhook_trigger") return null;
-  if (paramName === "auth_credentials") {
-    const authType = String(params.auth_type || "none").toLowerCase();
-    const label = webhookAuthLabel(authType);
-    return `Credential for ${label}`;
-  }
-  return WEBHOOK_LABEL_OVERRIDES[paramName] ?? null;
-}
-
-// Generic optional-parameter grouping. A param's manifest `group` marks it as
-// an optional "Add option" field the inspector tucks behind a chip; params with
-// no group are core and always shown. Works for every node — webhook is just
-// the first heavy adopter.
-export function paramGroup(spec: ParamSpec): string | null {
-  return spec.group ? String(spec.group) : null;
-}
-
-// A group should auto-expand (rather than show as a chip) when a saved workflow
-// already holds a non-default value for any param in it — so existing configs
-// never hide their settings.
-export function groupActiveByValue(
-  specs: ParamSpec[],
-  params: Record<string, unknown>,
-): boolean {
-  return specs.some((spec) => {
-    const value = params[spec.name];
-    if (value === undefined || value === null || value === "") return false;
-    return value !== spec.default;
-  });
-}
-
-export function webhookHiddenParam(
-  manifestId: string,
-  paramName: string,
-  params: Record<string, unknown>,
-): boolean {
-  if (manifestId !== "webhook_trigger") return false;
-  // Legacy fields that exist on old graphs but are no longer surfaced.
-  if (
-    paramName === "auth_username" ||
-    paramName === "auth_password" ||
-    paramName === "auth_header_name" ||
-    paramName === "auth_header_value" ||
-    paramName === "auth_query_name" ||
-    paramName === "auth_query_value"
-  ) {
-    return true;
-  }
-  if (paramName === "auth_credentials") {
-    const authType = String(params.auth_type || "none").toLowerCase();
-    return authType === "none";
-  }
-  // JWT header only applies to auth_type=jwt.
-  if (paramName === "auth_jwt_header") {
-    return String(params.auth_type || "none").toLowerCase() !== "jwt";
-  }
-  // HMAC signature fields appear only when verification is on.
-  if (
-    paramName === "hmac_header" ||
-    paramName === "hmac_algorithm" ||
-    paramName === "hmac_prefix"
-  ) {
-    return String(params.hmac_verification || "off").toLowerCase() !== "on";
-  }
-  // Trusting X-Forwarded-For only matters when an allowlist is configured.
-  if (paramName === "trust_proxy") {
-    return String(params.ip_allowlist || "").trim() === "";
-  }
-  // The dedup key only applies when dedup is on.
-  if (paramName === "dedup_key") {
-    return String(params.dedup || "off").toLowerCase() !== "on";
-  }
-  // Response shaping is an On Received concern; the custom body/headers
-  // reveal only when response_data=Custom.
-  if (
-    paramName === "response_data" ||
-    paramName === "response_body" ||
-    paramName === "response_headers"
-  ) {
-    const mode = String(params.response_mode || "On Received");
-    if (mode !== "On Received") return true;
-    if (paramName === "response_body" || paramName === "response_headers") {
-      return String(params.response_data || "") !== "Custom";
-    }
-    return false;
-  }
-  return false;
-}
-
 function UrlRow({ url }: { url: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -2023,6 +3268,86 @@ function UrlRow({ url }: { url: string }) {
       >
         {copied ? "Copied" : "Copy"}
       </button>
+    </div>
+  );
+}
+
+export function ChatTriggerPanel({
+  params,
+  onParamChange,
+}: {
+  params: Record<string, unknown>;
+  onParamChange?: (key: string, value: unknown) => void;
+}) {
+  const origin = window.location.origin;
+  const workflowId = useEditor((s) => s.workflowId);
+  if (!workflowId) return null;
+
+  const isPublic = Boolean(params.public_access);
+  const requireLogin = params.require_login !== false; // default true
+  const chatToken = typeof params.chat_token === "string" ? params.chat_token : "";
+
+  const baseUrl = `${origin}/chat/${workflowId}`;
+  const secretUrl = chatToken ? `${baseUrl}?token=${encodeURIComponent(chatToken)}` : "";
+
+  function generateToken(): void {
+    onParamChange?.("chat_token", crypto.randomUUID());
+  }
+
+  if (!isPublic) {
+    return (
+      <div className="inspector-section chat-trigger-panel">
+        <div className="inspector-section-head">Chat page</div>
+        <p className="field-desc">
+          Enable <strong>Public access</strong> in the Options above to get a
+          shareable chat URL.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="inspector-section chat-trigger-panel">
+      <div className="inspector-section-head">Chat page</div>
+      {requireLogin ? (
+        <>
+          <p className="field-desc">
+            <strong>Login required.</strong> Only users signed into this Noodle
+            instance can use this chat page.
+          </p>
+          <UrlRow url={baseUrl} />
+        </>
+      ) : secretUrl ? (
+        <>
+          <p className="field-desc">
+            <strong>Secret link.</strong> Anyone with this URL can chat — keep it
+            private. Regenerate to invalidate old links.
+          </p>
+          <UrlRow url={secretUrl} />
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            style={{ marginTop: 4 }}
+            onClick={generateToken}
+          >
+            Regenerate link
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="field-desc">
+            <strong>Secret link mode.</strong> Generate a secret URL to share
+            with trusted users — no Noodle account required.
+          </p>
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={generateToken}
+          >
+            Generate secret link
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -2047,6 +3372,7 @@ export function WebhookPanel({
       window.clearInterval(timerRef.current);
       timerRef.current = null;
     }
+    void api.stopListen(slug).catch(() => undefined);
     setListening(false);
   }
 
@@ -2064,6 +3390,7 @@ export function WebhookPanel({
     if (nodeId) setNodeOutput(nodeId, undefined);
     try {
       await api.clearWebhook(slug);
+      await api.startListen(slug);
     } catch (err) {
       setError(String(err));
       return;
@@ -2179,6 +3506,9 @@ function CodeEditorModal({
 }) {
   const [name, setName] = useState(defaultName);
   const [view, setView] = useState<"text" | "html" | "json">("text");
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // trapFocus:false — the code editor owns Tab for indentation.
+  useModalA11y(dialogRef, onClose, { trapFocus: false });
   const drop = exprDropHandlers(draft, onChange);
   const hasInput = inputData !== undefined && Object.keys(inputData).length > 0;
 
@@ -2251,13 +3581,18 @@ function CodeEditorModal({
     <div className="modal-overlay" onClick={onClose}>
       <div
         className="modal modal-wide code-modal"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="code-modal-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <header className="modal-head">
-          <h2>
+          <h2 id="code-modal-title">
             Editing code <span className="expr-modal-label">{label}</span>
           </h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+          <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </header>
@@ -2290,11 +3625,14 @@ function CodeEditorModal({
                 the <code>@node(...)</code> decorator is stripped on save
               </span>
             </div>
-            <textarea
-              className="field-input field-code code-modal-editor"
-              value={draft}
+            <HighlightedTextarea
+              className="code-modal-editor"
+              language="python"
+              lineNumbers
+              lint
               spellCheck={false}
-              onChange={(e) => onChange(e.target.value)}
+              value={draft}
+              onChange={onChange}
               onDrop={drop.onDrop}
               onDragOver={drop.onDragOver}
             />
@@ -2492,9 +3830,21 @@ export function NodeCodePanel({
     setSaving(true);
     try {
       const name = (nameOverride ?? newName).trim() || `${manifest.name} (custom)`;
+      // Format on save (best-effort): tidy the Python with ruff before
+      // persisting. Never blocks the save — falls through on any error.
+      let sourceToSave = draft;
+      try {
+        const fmt = await api.formatCode(draft);
+        if (!fmt.error) {
+          sourceToSave = fmt.code;
+          if (fmt.changed) setDraft(fmt.code);
+        }
+      } catch {
+        /* formatter unavailable — save as typed */
+      }
       // Code modules must be plain functions — strip any @node decorator the
       // user is viewing/editing before persisting.
-      const contents = stripLeadingDecorators(draft);
+      const contents = stripLeadingDecorators(sourceToSave);
       let moduleId: string;
       if (mode === "replace" && info.editable && info.module_id) {
         // Editable custom node → update its module in place.
@@ -2552,13 +3902,17 @@ export function NodeCodePanel({
               : "Built-in node source. Edit it to create your own customizable copy."}
           </p>
           <div className="node-code-editor-wrap">
-            <textarea
-              className="field-input field-code node-code-editor"
-              value={draft}
-              spellCheck={false}
+            <HighlightedTextarea
+              className="node-code-editor"
+              language="python"
+              lineNumbers
+              lint
               rows={18}
-              onChange={(e) => setDraft(e.target.value)}
-              {...exprDropHandlers(draft, setDraft)}
+              spellCheck={false}
+              value={draft}
+              onChange={setDraft}
+              onDrop={exprDropHandlers(draft, setDraft).onDrop}
+              onDragOver={exprDropHandlers(draft, setDraft).onDragOver}
             />
             <button
               type="button"
@@ -2577,14 +3931,38 @@ export function NodeCodePanel({
             </p>
           )}
           {!askSave ? (
-            <button
-              className="btn btn-sm"
-              style={{ marginTop: 8 }}
-              disabled={saving}
-              onClick={() => setAskSave(true)}
-            >
-              Save…
-            </button>
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button
+                className="btn btn-sm"
+                disabled={saving}
+                onClick={() => setAskSave(true)}
+              >
+                Save…
+              </button>
+              <button
+                className="btn btn-sm btn-ghost"
+                disabled={saving}
+                title="Format with ruff"
+                onClick={async () => {
+                  try {
+                    const fmt = await api.formatCode(draft);
+                    if (fmt.error) {
+                      toast.notify(`Format: ${fmt.error}`, "error");
+                    } else {
+                      if (fmt.changed) setDraft(fmt.code);
+                      toast.notify(
+                        fmt.changed ? "Formatted." : "Already formatted.",
+                        "success",
+                      );
+                    }
+                  } catch (e) {
+                    toast.notify(`Format failed: ${e}`, "error");
+                  }
+                }}
+              >
+                Format
+              </button>
+            </div>
           ) : (
             <div className="node-code-save">
               <div className="field-label">
@@ -2651,7 +4029,7 @@ export function NodeCodePanel({
 export function ToolModeSection({ nodeId }: { nodeId: string }) {
   const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
   const updateNodeSettings = useEditor((s) => s.updateNodeSettings);
-  if (!node || !node.data.manifest.usable_as_tool) return null;
+  if (!node || !node.data.manifest?.usable_as_tool) return null;
   const { manifest } = node.data;
   const on = Boolean(node.data.toolMode);
   return (
@@ -2770,16 +4148,31 @@ export function NodeDetails({
   const environmentsList = useEditor((s) => s.environmentsList);
   const applyEnvSwitch = useEditor((s) => s.applyEnvSwitch);
   const setEnvPackages = useEditor((s) => s.setEnvPackages);
+  const platform = useServerPlatform();
+  const activeEnv = environmentsList.find((e) => e.id === envId);
 
   const [mode, setMode] = useState<"inspector" | "python">("inspector");
   const [pkgBusy, setPkgBusy] = useState(false);
+  const [pkgElapsed, setPkgElapsed] = useState(0);
+  const [pkgDone, setPkgDone] = useState(false);
+  const [pickerParam, setPickerParam] = useState<string | null>(null);
+  const { notify } = useToast();
   useEffect(() => setMode("inspector"), [nodeId]);
+  // Guards the imperative install poller (addMissingToEnv) — it can run for up
+  // to PACKAGE_INSTALL_TIMEOUT_MS, well past an NDV close / node switch (FE-12).
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
 
   async function pin(): Promise<void> {
     if (!workflowId || runOutput === undefined) return;
     try {
-      await api.pinNode(workflowId, nodeId, runOutput);
-      setPinnedFor(nodeId, runOutput);
+      const saved = await api.pinNode(workflowId, nodeId, runOutput);
+      setPinnedFor(nodeId, saved.payload, saved.updated_at);
     } catch {
       /* ignore */
     }
@@ -2803,7 +4196,12 @@ export function NodeDetails({
     );
   }
 
+  if (!node.data.manifest) {
+    return null;
+  }
+
   const { manifest, params, disabled } = node.data;
+  const hasBrandIcon = isBrandIconName(manifest.icon);
   const color = categoryColor(manifest.category);
 
   const setParam = (name: string, value: unknown) => {
@@ -2811,19 +4209,58 @@ export function NodeDetails({
   };
 
   // Packages this node needs that the workflow's env doesn't have.
-  const missingPkgs = missingFor(manifest.requirements ?? [], envPackages);
+  const missingPkgs = missingFor(manifest.requirements ?? [], envPackages, platform ?? undefined);
   const satisfyingEnvs = environmentsList.filter(
-    (e) => e.id !== envId && missingFor(missingPkgs, e.packages).length === 0,
+    (e) => e.id !== envId && missingFor(missingPkgs, e.packages, platform ?? undefined).length === 0,
   );
 
   async function addMissingToEnv(): Promise<void> {
     if (!envId || pkgBusy) return;
     setPkgBusy(true);
+    setPkgElapsed(0);
+    setPkgDone(false);
+
+    // Tick elapsed seconds while installing
+    const startedAt = Date.now();
+    const ticker = window.setInterval(() => {
+      setPkgElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+
     try {
       const updated = [...envPackages, ...missingPkgs];
       await api.setPackages(envId, updated);
       setEnvPackages(updated);
-    } finally {
+
+      // Poll until env is ready, errored, or clearly stuck.
+      while (Date.now() - startedAt < PACKAGE_INSTALL_TIMEOUT_MS) {
+        await delay(PACKAGE_INSTALL_POLL_MS);
+        // The NDV closed / node switched mid-install — stop polling and
+        // ticking rather than leaking calls + setState on an unmounted tree.
+        if (!aliveRef.current) {
+          clearInterval(ticker);
+          return;
+        }
+        const env = await api.getEnvironment(envId);
+        if (env.status === "ready") {
+          clearInterval(ticker);
+          setPkgBusy(false);
+          setPkgDone(true);
+          window.setTimeout(() => setPkgDone(false), 3000);
+          return;
+        }
+        if (env.status === "error") {
+          clearInterval(ticker);
+          notify("Package installation failed — check the environment logs.", "error");
+          setPkgBusy(false);
+          return;
+        }
+      }
+      clearInterval(ticker);
+      notify("Package installation is still building. Check the environment logs.", "error");
+      setPkgBusy(false);
+    } catch {
+      clearInterval(ticker);
+      notify("Failed to install packages — check the environment.", "error");
       setPkgBusy(false);
     }
   }
@@ -2842,13 +4279,27 @@ export function NodeDetails({
   }
   const hasIncomingInputs = Object.keys(incomingInputs).length > 0;
 
+  // Live evaluation context for the expression preview. The store already holds
+  // each upstream node's most recent run output (that's what powers the Pick-
+  // variable sidebar), so the preview can resolve {{ }} against real data with
+  // no extra run — `$json`/`$input` from the wired inputs, `$node[...]` from
+  // every node's output. Mirrors noodle.expr.build_context on the backend.
+  const exprContext: ExprContext = {
+    json: Object.values(incomingInputs)[0],
+    inputs: incomingInputs,
+    nodes: runOutputs,
+  };
+
   return (
     <>
       {showHeader && (
         <div className="inspector-node">
           <div className="inspector-node-head">
-            <span className="inspector-glyph" style={{ color }}>
-              <NodeIcon name={manifest.icon} size={20} />
+            <span
+              className={`inspector-glyph${hasBrandIcon ? " has-brand-icon" : ""}`}
+              style={{ color }}
+            >
+              <NodeIcon name={manifest.icon} size={hasBrandIcon ? 30 : 20} />
             </span>
             <span className="inspector-node-name">{manifest.name}</span>
             {disabled && <span className="cred-type">disabled</span>}
@@ -2889,40 +4340,22 @@ export function NodeDetails({
         </div>
       )}
 
-      {missingPkgs.length > 0 && envId && (
-        <div className="ndv-missing-pkgs warn-text">
-          <p>
-            This node needs <strong>{missingPkgs.join(", ")}</strong>, not
-            installed in <strong>{envName ?? "this environment"}</strong>.
-          </p>
-          <div className="ndv-missing-actions">
-            <button
-              type="button"
-              className="btn btn-sm btn-primary"
-              disabled={pkgBusy}
-              onClick={() => void addMissingToEnv()}
-            >
-              {pkgBusy ? "Adding…" : `Add to ${envName ?? "env"}`}
-            </button>
-            {satisfyingEnvs.length > 0 && applyEnvSwitch && (
-              <select
-                className="field-input"
-                value=""
-                onChange={(e) =>
-                  e.target.value && applyEnvSwitch(e.target.value)
-                }
-              >
-                <option value="">Switch environment…</option>
-                {satisfyingEnvs.map((env) => (
-                  <option key={env.id} value={env.id}>
-                    {env.name}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-        </div>
-      )}
+      <PackageInstallPanel
+        missingPkgs={missingPkgs}
+        envId={envId}
+        envName={envName}
+        pkgBusy={pkgBusy}
+        pkgDone={pkgDone}
+        pkgElapsed={pkgElapsed}
+        satisfyingEnvs={satisfyingEnvs}
+        applyEnvSwitch={applyEnvSwitch}
+        onInstall={() => void addMissingToEnv()}
+      />
+
+      <SystemRequirementsPanel
+        requirements={manifest.system_requirements}
+        activeEnv={activeEnv}
+      />
 
       {mode === "python" ? (
         <NodeCodePanel
@@ -2934,8 +4367,6 @@ export function NodeDetails({
       ) : (
         <>
 
-      <ToolModeSection nodeId={node.id} />
-
       <div className="inspector-section">
         <div className="inspector-section-head">Parameters</div>
         <p className="field-desc expr-hint">
@@ -2946,8 +4377,17 @@ export function NodeDetails({
         {manifest.params.length === 0 && (
           <p className="muted">This node has no parameters.</p>
         )}
+        {manifest.integration && (
+          <ResourceOperationSelector
+            manifest={manifest}
+            params={params}
+            onChange={(next) => updateParams(node.id, next)}
+          />
+        )}
         {manifest.params
+          .filter((spec) => spec.widget !== "hidden")
           .filter((spec) => !webhookHiddenParam(manifest.id, spec.name, params))
+          .filter((spec) => matchesDisplayWhen(spec.display_when, params))
           .map((spec) => {
             const value = params[spec.name];
             const fx = typeof value === "string" && /\{\{.+?\}\}/s.test(value);
@@ -2974,8 +4414,28 @@ export function NodeDetails({
               <div className="field" key={`${node.id}:${spec.name}`}>
                 <div className="field-label">
                   <span className="field-name">{displayLabel}</span>
+                  {spec.description && (
+                    <span className="param-info-icon" aria-label={spec.description}>
+                      <Info size={12} weight="bold" />
+                      <span className="param-info-tooltip">{spec.description}</span>
+                    </span>
+                  )}
                   {fx && <span className="fx-badge" title="Contains expression">fx</span>}
                   {spec.required && <span className="field-req">required</span>}
+                  {(spec.type === "string" || spec.type === "expression") &&
+                    !spec.credential &&
+                    spec.widget !== "hidden" && (
+                      <button
+                        type="button"
+                        className="var-pick-inline-btn"
+                        title="Pick a variable from upstream nodes"
+                        onClick={() =>
+                          setPickerParam((p) => (p === spec.name ? null : spec.name))
+                        }
+                      >
+                        $
+                      </button>
+                    )}
                 </div>
                 <FromAiParamControl
                   nodeId={node.id}
@@ -2983,9 +4443,6 @@ export function NodeDetails({
                   value={value}
                   onSetParam={setParam}
                 />
-                {spec.description && (
-                  <p className="field-desc">{spec.description}</p>
-                )}
                 {isFromAiExpr(value) ? (
                   <p className="from-ai-note">↯ The model supplies this argument.</p>
                 ) : isWebhookAuthType ? (
@@ -3016,7 +4473,28 @@ export function NodeDetails({
                     value={value}
                     onChange={(v) => setParam(spec.name, v)}
                     credentialContext={params}
+                    exprContext={exprContext}
+                    nodeId={node.id}
                   />
+                )}
+                {pickerParam === spec.name && (
+                  <div className="var-pick-inline-wrap">
+                    <VariablePickerPopover
+                      nodeId={node.id}
+                      onInsert={(expr) => {
+                        const current = String(params[spec.name] ?? "");
+                        const opens = (current.match(/\{\{/g) ?? []).length;
+                        const closes = (current.match(/\}\}/g) ?? []).length;
+                        const insideExpr = opens > closes;
+                        const toInsert = insideExpr
+                          ? expr.replace(/^\{\{\s*/, "").replace(/\s*\}\}$/, "")
+                          : expr;
+                        setParam(spec.name, current + toInsert);
+                        setPickerParam(null);
+                      }}
+                      onClose={() => setPickerParam(null)}
+                    />
+                  </div>
                 )}
               </div>
             );
@@ -3052,7 +4530,15 @@ export function NodeDetails({
               {JSON.stringify(runOutput, null, 2)}
             </pre>
           ) : (
-            <p className="muted">No output captured.</p>
+            <p className="muted">
+              {disabled
+                ? "This node is disabled, so it will not produce output."
+                : runStatus === "skipped"
+                  ? "This node was skipped in the last run."
+                  : runStatus
+                    ? "No output was captured for this node in the last run."
+                    : "This node has not run yet."}
+            </p>
           )}
           {runOutput !== undefined && !pinned && (
             <button
@@ -3073,9 +4559,9 @@ export function NodeDetails({
             <span className="run-pill status-run-success">pinned</span>
           </div>
           <p className="field-desc">
-            Runs use this value instead of executing the node.
+            Runs use this value instead of executing the node. Pinned {formatPinnedAt(pinned.updatedAt)}.
           </p>
-          <pre className="run-output">{JSON.stringify(pinned, null, 2)}</pre>
+          <pre className="run-output">{JSON.stringify(pinned.payload, null, 2)}</pre>
           <button
             className="btn btn-sm btn-ghost"
             style={{ marginTop: 8 }}
@@ -3090,6 +4576,13 @@ export function NodeDetails({
         <WebhookPanel
           path={String(params.path ?? "noodle")}
           nodeId={node.id}
+        />
+      )}
+
+      {manifest.id === "chat_trigger" && (
+        <ChatTriggerPanel
+          params={params}
+          onParamChange={(key, value) => setParam(key, value)}
         />
       )}
         </>

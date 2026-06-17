@@ -43,16 +43,29 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.python
-    command: >-
-      sh -c "cd apps/api && alembic upgrade head && cd /app
-      && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        cd apps/api && alembic upgrade head && cd /app
+        && uvicorn app.main:app --host 0.0.0.0 --port 8000
     environment:
+      # Production posture so runtime_warnings() actually surface via
+      # /ops/runtime-mode (default SECRET_KEY, local artifacts, etc.).
+      RUNTIME_MODE: production
       DATABASE_URL: postgresql+asyncpg://noodle:noodle@postgres:5432/noodle
       REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      QUEUE_BACKEND: redis
+      # Control plane: runs are enqueued here and executed by the worker
+      # service below. ``control`` keeps that split (the worker still runs all
+      # local + docker execution) while ALSO dispatching agent/kubernetes
+      # runner pools — their WebSockets terminate on this API replica, so it
+      # must be the one that leases their runs. Use ``disabled`` only if you
+      # run no agent/kubernetes pools.
+      DISPATCH_ROLE: control
+      SCHEDULER_ROLE: leader
       CORS_ORIGINS: http://localhost:5173
-      ENABLE_INPROCESS_SCHEDULER: "false"
+      ENABLE_INPROCESS_SCHEDULER: "true"
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
       USE_SUBPROCESS_RUNNER: "true"
       ENVS_DIR: /app/envs
@@ -86,33 +99,49 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.python
-    command: celery -A worker.celery_app worker -l info
+    command: ["python", "-m", "app.worker_main"]
     environment:
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      API_BASE_URL: http://api:8000
+      RUNTIME_MODE: production
+      DATABASE_URL: postgresql+asyncpg://noodle:noodle@postgres:5432/noodle
+      REDIS_URL: redis://redis:6379/0
+      QUEUE_BACKEND: redis
+      DISPATCH_ROLE: worker
+      USE_SUBPROCESS_RUNNER: "true"
+      ENVS_DIR: /app/envs
+      ARTIFACTS_DIR: /app/artifacts
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
+      SECRET_KEY: ${NOODLE_SECRET_KEY:-noodle-dev-secret-change-me-in-production}
+      # --- Sandboxed execution (container-per-run isolation) ---
+      # Uncomment to run each workflow in a disposable hardened container
+      # instead of a worker subprocess. Requires the docker.sock volume below.
+      # See docs/deployment.md "Sandboxed execution".
+      #   auto     = use the sandbox when Docker is reachable, else fall back
+      #   required = refuse to start without it (mandatory when
+      #              MULTI_TENANCY_ENABLED=true)
+      # EXECUTION_SANDBOX: auto
+      # Container runtime: auto picks the strongest available
+      # (kata > runsc/gVisor > runc). Set explicitly to fail fast when a
+      # specific runtime is mandatory.
+      # SANDBOX_RUNTIME: auto
+    # The worker has no HTTP surface — disable the image's API healthcheck so it
+    # isn't perpetually "unhealthy".
+    healthcheck:
+      disable: true
+    volumes:
+      - envdata:/app/envs
+      - artifactdata:/app/artifacts
+      # Required for EXECUTION_SANDBOX: lets the worker spawn sibling run
+      # containers on the host daemon (Docker-out-of-Docker). The worker
+      # itself never runs untrusted code — runs execute in the hardened
+      # sibling containers it creates.
+      # - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
-      api:
-        condition: service_started
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
-
-  beat:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.python
-    command: celery -A worker.celery_app beat -l info
-    environment:
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      API_BASE_URL: http://api:8000
-      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
-    depends_on:
       api:
         condition: service_started
-      redis:
-        condition: service_healthy
 
   web:
     build:

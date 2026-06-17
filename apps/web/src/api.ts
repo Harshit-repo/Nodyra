@@ -4,18 +4,21 @@ import type {
   ArtifactInfo,
   AiWorkflowDraftRequest,
   AiWorkflowDraftResponse,
+  ChatPublicConfig,
   ChatTurnResponse,
   Credential,
   CredentialOAuthStartResponse,
   CredentialTestResponse,
   CredentialTypeInfo,
   Environment,
+  LicenseInfo,
   NodeManifest,
   NodeSource,
   PackageUsage,
   PinnedItem,
   CodeModule,
   CodeModuleFunctionPreview,
+  LintDiagnostic,
   Deployment,
   DeploymentCreate,
   DeploymentUpdate,
@@ -24,6 +27,11 @@ import type {
   RunBatchInfo,
   RunInfo,
   RunListItem,
+  OrgInfo,
+  OrgMemberInfo,
+  OrgSettingsInfo,
+  OrgUsageDay,
+  RunnerFleetHealth,
   RunnerInfo,
   RunnerPoolInfo,
   RegistrationTokenResponse,
@@ -40,6 +48,25 @@ import type {
 const BASE = "/api";
 const TOKEN_KEY = "noodle_token";
 const USER_KEY = "noodle_user";
+const ORG_KEY = "noodle_org";
+// Must match settings.csrf_cookie_name and settings.csrf_header_name defaults.
+const CSRF_COOKIE_NAME = "noodle_csrf";
+const CSRF_HEADER_NAME = "X-CSRF-Token";
+
+function _getCookie(name: string): string | null {
+  const entry = document.cookie.split("; ").find((row) => row.startsWith(`${name}=`));
+  return entry ? decodeURIComponent(entry.split("=").slice(1).join("=")) : null;
+}
+
+/** Selected organization (multi-tenancy). Sent as X-Org-Id on every request;
+ *  null means the server default org. */
+export function getOrgId(): string | null {
+  return localStorage.getItem(ORG_KEY);
+}
+export function setOrgId(orgId: string | null): void {
+  if (orgId) localStorage.setItem(ORG_KEY, orgId);
+  else localStorage.removeItem(ORG_KEY);
+}
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -67,6 +94,25 @@ export function onUnauthorized(handler: (() => void) | null): void {
   unauthorizedHandler = handler;
 }
 
+/** Clear the session and notify the app a 401-equivalent occurred. Used by the
+ *  REST 401 path and the run-stream `1008` (auth refused) close (FE-4). */
+function handleUnauthorized(): void {
+  setToken(null);
+  setUser(null);
+  unauthorizedHandler?.();
+}
+
+/** Sign out: clears server-side cookies and local session state. */
+export async function apiLogout(): Promise<void> {
+  try {
+    await request<void>("/auth/logout", { method: "POST" });
+  } catch {
+    // Best-effort: always clear local state even if the server call fails.
+  }
+  setToken(null);
+  setUser(null);
+}
+
 export class ApiError extends Error {
   status: number;
   detail: unknown;
@@ -76,23 +122,103 @@ export class ApiError extends Error {
     this.status = status;
     this.detail = detail;
   }
+  // Many call sites surface errors with `String(err)`. Default Error
+  // stringification prepends the class name ("ApiError: …"), which leaks an
+  // internal detail into user-facing toasts/banners. Return just the message.
+  override toString(): string {
+    return this.message;
+  }
+}
+
+/**
+ * Normalise any caught value into user-facing text. For `Error` (incl.
+ * `ApiError`) this returns `.message`, which strips the class-name prefix that
+ * `String(err)` would otherwise leak (e.g. "TypeError: Failed to fetch" →
+ * "Failed to fetch", "ApiError: 403 …" → "403 …"). Use this at display sites
+ * (toasts, inline banners) instead of `String(err)`.
+ */
+export function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  return String(err);
+}
+
+/**
+ * Turn an API error `detail` payload into human-readable text.
+ *
+ * FastAPI returns validation errors as an array of `{loc, msg, type}` objects;
+ * rendering that array verbatim dumps raw JSON at the user. Custom handlers
+ * return `{message, …}` objects or plain strings. Normalise all of these to a
+ * sentence; fall back to JSON only for genuinely unexpected shapes.
+ */
+export function formatErrorDetail(detail: unknown): string {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .map((item) =>
+        item && typeof item === "object" && "msg" in item
+          ? String((item as { msg: unknown }).msg)
+          : null,
+      )
+      .filter((m): m is string => Boolean(m));
+    if (msgs.length) return msgs.join("; ");
+  }
+  if (detail && typeof detail === "object" && "message" in detail) {
+    const message = (detail as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return JSON.stringify(detail);
+}
+
+/**
+ * `fetch`, but a network-level failure (offline, DNS, CORS, server down)
+ * — which rejects with a bare `TypeError: Failed to fetch` — is converted into
+ * a clean `ApiError` so display sites show a human message instead of leaking
+ * the class name. Intentional aborts (request `signal`) are re-thrown untouched.
+ */
+async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (err) {
+    if ((err as { name?: string })?.name === "AbortError") throw err;
+    throw new ApiError(
+      0,
+      "Could not reach the server. Check your connection and try again.",
+      err,
+    );
+  }
+}
+
+/** Auth/tenancy headers shared by every API request: Bearer when a token is
+ * stored, otherwise the CSRF double-submit header for cookie-auth mode, plus
+ * the active org. Content-Type is NOT set here — FormData uploads must let
+ * the browser pick the multipart boundary. */
+function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  } else {
+    // Cookie-auth mode: Bearer is absent but a CSRF cookie may be present.
+    // Echo it in the request header so the server-side CSRF double-submit
+    // check passes for state-changing requests.
+    const csrfToken = _getCookie(CSRF_COOKIE_NAME);
+    if (csrfToken) headers[CSRF_HEADER_NAME] = csrfToken;
+  }
+  const orgId = getOrgId();
+  if (orgId) headers["X-Org-Id"] = orgId;
+  return headers;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getToken();
-  const baseHeaders: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (token) baseHeaders.Authorization = `Bearer ${token}`;
   const headers = {
-    ...baseHeaders,
+    "Content-Type": "application/json",
+    ...authHeaders(),
     ...((init?.headers as Record<string, string>) ?? {}),
   };
-  const resp = await fetch(BASE + path, { ...init, headers });
+  const resp = await safeFetch(BASE + path, { ...init, headers });
   if (resp.status === 401) {
-    setToken(null);
-    setUser(null);
-    unauthorizedHandler?.();
+    handleUnauthorized();
     throw new Error("401 Unauthorized");
   }
   if (!resp.ok) {
@@ -103,11 +229,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       /* response had no JSON body */
     }
-    const message =
-      typeof detail === "string"
-        ? detail
-        : (detail as { message?: string })?.message ?? JSON.stringify(detail);
-    throw new ApiError(resp.status, `${resp.status} ${message}`, detail);
+    throw new ApiError(resp.status, `${resp.status} ${formatErrorDetail(detail)}`, detail);
   }
   if (resp.status === 204) return undefined as T;
   return (await resp.json()) as T;
@@ -116,11 +238,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export interface WorkflowPatch {
   name?: string;
   active?: boolean;
-  environment_id?: string;
+  environment_id?: string | null;
+  default_runner_pool_id?: string | null;
   graph?: WorkflowGraph;
   error_workflow_id?: string | null;
   error_alerts?: Record<string, unknown>;
   run_timeout_seconds?: number | null;
+  mcp_enabled?: boolean;
+  mcp_tool_name?: string | null;
+  mcp_description?: string | null;
+  mcp_parameters_schema?: Record<string, unknown> | null;
 }
 
 type Page<T> = { items: T[]; total: number; limit: number; offset: number };
@@ -156,10 +283,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  aiWorkflowDraft: (id: string, body: AiWorkflowDraftRequest) =>
+  aiWorkflowDraft: (id: string, body: AiWorkflowDraftRequest, signal?: AbortSignal) =>
     request<AiWorkflowDraftResponse>(`/workflows/${id}/ai-draft`, {
       method: "POST",
       body: JSON.stringify(body),
+      signal,
     }),
   deleteWorkflow: (id: string) =>
     request<void>(`/workflows/${id}`, { method: "DELETE" }),
@@ -176,6 +304,15 @@ export const api = {
     }),
 
   listEnvironments: () => request<Environment[]>("/environments"),
+  getEnvironment: (id: string) => request<Environment>(`/environments/${id}`),
+  listBackends: () =>
+    request<{
+      platform: string;
+      venv: { available: boolean; version: string | null; managed: boolean };
+      conda: { available: boolean; version: string | null; managed: boolean };
+      pixi: { available: boolean; version: string | null; managed: boolean };
+      docker: { available: boolean; version: string | null; managed: boolean };
+    }>("/environments/backends"),
   createEnvironment: (body: {
     name: string;
     python_version?: string;
@@ -184,6 +321,8 @@ export const api = {
     runner_pool_size?: number;
     runner_pool_max?: number | null;
     runner_pool_id?: string | null;
+    backend?: string;
+    backend_config?: Record<string, unknown>;
   }) =>
     request<Environment>("/environments", {
       method: "POST",
@@ -213,6 +352,14 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  getLicense: () => request<LicenseInfo>("/system-settings/license"),
+  applyLicense: (license_key: string) =>
+    request<LicenseInfo>("/system-settings/license", {
+      method: "PUT",
+      body: JSON.stringify({ license_key }),
+    }),
+  removeLicense: () =>
+    request<LicenseInfo>("/system-settings/license", { method: "DELETE" }),
   addPackage: (id: string, pkg: string) =>
     request<Environment>(`/environments/${id}/packages`, {
       method: "POST",
@@ -254,6 +401,32 @@ export const api = {
     request<ChatTurnResponse>(`/workflows/${workflowId}/chat`, {
       method: "POST",
       body: JSON.stringify({ message, session_id: sessionId }),
+    }),
+  startChatTurn: (workflowId: string, message: string, sessionId: string) =>
+    request<{ run_id: string | null; session_id: string }>(
+      `/workflows/${workflowId}/chat/stream`,
+      {
+        method: "POST",
+        body: JSON.stringify({ message, session_id: sessionId }),
+      },
+    ),
+  chatTurnResult: (workflowId: string, runId: string, sessionId: string) =>
+    request<ChatTurnResponse>(
+      `/workflows/${workflowId}/chat/result/${runId}?session_id=${encodeURIComponent(sessionId)}`,
+    ),
+  getPublicChatConfig: (workflowId: string) =>
+    request<ChatPublicConfig>(`/chat/p/${workflowId}`),
+  sendPublicChatMessage: (
+    workflowId: string,
+    message: string,
+    sessionId: string,
+    token?: string,
+  ) =>
+    request<ChatTurnResponse>(
+      `/chat/p/${workflowId}${token ? `?token=${encodeURIComponent(token)}` : ""}`,
+      {
+        method: "POST",
+        body: JSON.stringify({ message, session_id: sessionId }),
     }),
   getRun: (runId: string) => request<RunInfo>(`/runs/${runId}`),
   listRunArtifacts: (runId: string) =>
@@ -379,6 +552,16 @@ export const api = {
     }),
   workflowCustomNodeManifests: (workflowId: string) =>
     request<NodeManifest[]>(`/code-modules/manifests/workflow/${workflowId}`),
+  formatCode: (code: string) =>
+    request<{ code: string; changed: boolean; error: string | null }>(
+      "/code-modules/format",
+      { method: "POST", body: JSON.stringify({ code }) },
+    ),
+  lintCode: (code: string) =>
+    request<{ diagnostics: LintDiagnostic[]; linter: string }>(
+      "/code-modules/lint",
+      { method: "POST", body: JSON.stringify({ code }) },
+    ),
 
   listCredentials: () => request<Credential[]>("/credentials"),
   listCredentialTypes: () => request<CredentialTypeInfo[]>("/credentials/types"),
@@ -453,6 +636,15 @@ export const api = {
     request<void>(`/webhook-test/${encodeURIComponent(path)}/last`, {
       method: "DELETE",
     }),
+  startListen: (path: string) =>
+    request<{ listening: boolean; ttl_seconds: number }>(
+      `/webhook-test/${encodeURIComponent(path)}/listen`,
+      { method: "POST" },
+    ),
+  stopListen: (path: string) =>
+    request<void>(`/webhook-test/${encodeURIComponent(path)}/listen`, {
+      method: "DELETE",
+    }),
 
   authRequired: () => request<AuthState>("/auth/required"),
   login: (email: string, password: string) =>
@@ -470,6 +662,31 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  listMyOrgs: () => request<OrgInfo[]>("/me/orgs"),
+  createOrg: (body: { name: string; slug?: string }) =>
+    request<OrgInfo>("/orgs", { method: "POST", body: JSON.stringify(body) }),
+  listOrgMembers: () => request<OrgMemberInfo[]>("/orgs/current/members"),
+  addOrgMember: (body: { email: string; role: string }) =>
+    request<OrgMemberInfo>("/orgs/current/members", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateOrgMember: (userId: string, role: string) =>
+    request<OrgMemberInfo>(`/orgs/current/members/${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ role }),
+    }),
+  removeOrgMember: (userId: string) =>
+    request<void>(`/orgs/current/members/${userId}`, { method: "DELETE" }),
+  getOrgSettings: (orgId: string) =>
+    request<OrgSettingsInfo>(`/orgs/${orgId}/settings`),
+  updateOrgSettings: (orgId: string, body: Record<string, number>) =>
+    request<OrgSettingsInfo>(`/orgs/${orgId}/settings`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  getOrgUsage: (orgId: string, days = 14) =>
+    request<OrgUsageDay[]>(`/orgs/${orgId}/usage?days=${days}`),
   listUsers: () => request<UserAdminInfo[]>("/auth/users"),
   createUser: (body: {
     name?: string;
@@ -510,7 +727,7 @@ export const api = {
   decideRunApproval: (
     runId: string,
     approvalId: string,
-    decision: "approve" | "reject",
+    decision: RunApprovalDecision,
     reason = "",
   ) =>
     request<RunApprovalInfo>(`/runs/${runId}/approvals/${approvalId}/decision`, {
@@ -520,6 +737,34 @@ export const api = {
   runDebugSnapshot: (runId: string) =>
     request<RunDebugSnapshot>(`/runs/${runId}/debug-snapshot`),
 };
+
+export async function uploadArtifact(file: File): Promise<ArtifactInfo> {
+  // Same auth headers as request() — in cookie-auth mode the CSRF header is
+  // required or the server's CSRF gate rejects the upload with 403.
+  const headers = authHeaders();
+  const body = new FormData();
+  body.append("file", file);
+  const resp = await safeFetch(`${BASE}/artifacts/upload`, {
+    method: "POST",
+    headers,
+    body,
+  });
+  if (resp.status === 401) {
+    handleUnauthorized();
+    throw new Error("401 Unauthorized");
+  }
+  if (!resp.ok) {
+    let detail: unknown = resp.statusText;
+    try {
+      const parsed = (await resp.json()) as { detail?: unknown };
+      if (parsed.detail !== undefined && parsed.detail !== null) detail = parsed.detail;
+    } catch {
+      /* no JSON body */
+    }
+    throw new ApiError(resp.status, `${resp.status} ${formatErrorDetail(detail)}`, detail);
+  }
+  return (await resp.json()) as ArtifactInfo;
+}
 
 // --- Ops dashboard types -----------------------------------------------------
 
@@ -545,6 +790,9 @@ export interface QueueStats {
   dead_lettered: number;
   cancelled: number;
   oldest_queued_age_seconds: number | null;
+  /** Multi-tenancy: per-org active counts; "quota_parked" = queued entries
+   *  held back by the org's concurrency cap. Absent when MT is off. */
+  by_org?: Record<string, Record<string, number>> | null;
 }
 
 export interface RunTimelineEvent {
@@ -578,6 +826,8 @@ export interface RunApprovalInfo {
   reason: string;
 }
 
+export type RunApprovalDecision = "approve" | "reject" | "approve_all";
+
 export interface RunDebugSnapshot {
   run_id: string;
   workflow_id: string;
@@ -590,11 +840,16 @@ export interface RunDebugSnapshot {
   node_errors: Record<string, string>;
 }
 
-export function runEventsUrl(runId: string): string {
+function _runEventsBaseUrl(runId: string): string {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}/ws/runs/${runId}`;
+}
+
+/** @deprecated Use subscribeToRunEvents — it handles ticket-based auth. */
+export function runEventsUrl(runId: string): string {
   const token = getToken();
   const query = token ? `?token=${encodeURIComponent(token)}` : "";
-  return `${proto}//${window.location.host}/ws/runs/${runId}${query}`;
+  return `${_runEventsBaseUrl(runId)}${query}`;
 }
 
 /** Subscribe to a run's live events with auto-reconnect.
@@ -628,9 +883,32 @@ export function subscribeToRunEvents(
   let attempt = 0;
   let closedByCaller = false;
 
-  function open(): void {
+  async function open(): Promise<void> {
     if (closedByCaller) return;
-    socket = new WebSocket(runEventsUrl(runId));
+    // Fetch a single-use WS ticket so the token doesn't appear in server
+    // access logs (?token= query param is visible there; ?ticket= is not).
+    // A ticket is needed for BOTH auth modes: bearer (localStorage token)
+    // and cookie sessions (httpOnly cookie — getToken() is null but the
+    // ticket endpoint authenticates via the cookie). Only a fully anonymous
+    // client (auth disabled in dev) skips it; calling it anonymously would
+    // 401 and trip the global unauthorized handler.
+    let wsUrl = _runEventsBaseUrl(runId);
+    const bearerToken = getToken();
+    const hasSession = Boolean(bearerToken) || getUser() !== null;
+    if (hasSession) {
+      try {
+        const { ticket } = await request<{ ticket: string }>("/auth/ws-ticket", {
+          method: "POST",
+        });
+        wsUrl += `?ticket=${encodeURIComponent(ticket)}`;
+      } catch {
+        // Legacy fallback — only possible with a bearer token; a cookie
+        // session has nothing to put in the URL and connects unauthenticated
+        // (the server will close 1008 and route back to login).
+        if (bearerToken) wsUrl += `?token=${encodeURIComponent(bearerToken)}`;
+      }
+    }
+    socket = new WebSocket(wsUrl);
     socket.onmessage = (event) => {
       // Reset the backoff once any message arrives — the connection is healthy.
       attempt = 0;
@@ -648,6 +926,10 @@ export function subscribeToRunEvents(
       }
       // 1000 (normal) or 1008 (auth refused) → no point reconnecting.
       if (event.code === 1000 || event.code === 1008) {
+        // 1008 means the session expired/was rejected mid-stream — route the
+        // user back to login instead of leaving the rest of the UI in a stale
+        // signed-in state until the next REST call 401s (FE-4).
+        if (event.code === 1008) handleUnauthorized();
         handlers.onClosed?.();
         return;
       }
@@ -679,6 +961,8 @@ export function subscribeToRunEvents(
 
 export const runnerPoolsApi = {
   list: () => request<RunnerPoolInfo[]>("/runner-pools"),
+
+  health: () => request<RunnerFleetHealth>("/runner-pools/health"),
 
   create: (body: {
     name: string;

@@ -26,11 +26,13 @@ class OperationParamSpec:
     display_name: str = ""
     widget: str = ""
     load_options: str | None = None
+    depends_on: Sequence[str] = field(default_factory=tuple)
     credential_type: str | None = None
     required_scopes: Sequence[str] = field(default_factory=tuple)
     advanced: bool = False
     documentation_url: str = ""
     validation: dict[str, Any] | None = None
+    display_when: dict[str, Any] | None = None
 
     def to_param_spec(self) -> ParamSpec:
         return ParamSpec(
@@ -48,11 +50,13 @@ class OperationParamSpec:
             display_name=self.display_name,
             widget=self.widget,
             load_options=self.load_options,
+            depends_on=list(self.depends_on),
             credential_type=self.credential_type,
             required_scopes=[str(scope) for scope in self.required_scopes],
             advanced=self.advanced,
             documentation_url=self.documentation_url,
             validation=self.validation,
+            display_when=self.display_when,
         )
 
 
@@ -93,6 +97,14 @@ class IntegrationSpec:
     name: str
     credential_types: Sequence[str] = field(default_factory=tuple)
     resources: Sequence[ResourceSpec] = field(default_factory=tuple)
+    category: str = "Integrations"
+    version: str = "1.0.0"
+    description: str = ""
+    icon: str | None = None
+
+    def operations(self) -> tuple[OperationSpec, ...]:
+        """Flatten every operation across all resources, in declared order."""
+        return tuple(op for resource in self.resources for op in resource.operations)
 
 
 @dataclass(frozen=True)
@@ -158,6 +170,25 @@ ProviderTriggerHandleEvent = Callable[
 
 
 @dataclass(frozen=True)
+class ProviderTriggerPollContext:
+    """Input passed to a provider trigger's poll hook."""
+
+    params: dict[str, Any]
+    cursor: dict[str, Any]
+
+
+@dataclass
+class ProviderTriggerPollResult:
+    """Return value from a provider trigger's poll hook."""
+
+    events: list[dict[str, Any]]
+    cursor: dict[str, Any]
+
+
+ProviderTriggerPoll = Callable[[ProviderTriggerPollContext], ProviderTriggerPollResult]
+
+
+@dataclass(frozen=True)
 class ProviderTriggerSpec:
     node_id: str
     name: str
@@ -174,6 +205,8 @@ class ProviderTriggerSpec:
     activate: ProviderTriggerActivate | None = None
     deactivate: ProviderTriggerDeactivate | None = None
     handle_event: ProviderTriggerHandleEvent | None = None
+    poll: ProviderTriggerPoll | None = None
+    poll_interval_seconds: int = 300
 
     @property
     def trigger_key(self) -> str:

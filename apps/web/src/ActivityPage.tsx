@@ -164,6 +164,10 @@ export function ActivityPage() {
           <p className="muted">No activity recorded yet.</p>
         )}
 
+        {events && events.length > 0 && visible.length === 0 && (
+          <p className="muted">No activity matches the current filters.</p>
+        )}
+
         {events && visible.length > 0 && (
           <div className="activity-list">
             {visible.map((event) => (
@@ -172,7 +176,9 @@ export function ActivityPage() {
                   {event.action}
                 </span>
                 <span className="activity-target">{event.target_type}</span>
-                <span className="activity-detail">{event.detail || "—"}</span>
+                <span className="activity-detail" title={event.detail || undefined}>
+                  {event.detail || "—"}
+                </span>
                 <span className="activity-time">{when(event.created_at)}</span>
               </div>
             ))}

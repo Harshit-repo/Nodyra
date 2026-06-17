@@ -22,16 +22,18 @@ docstring); callers map between the two.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import socket
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import RunQueueEntry
+from app.models import Run, RunnerPool, RunQueueEntry
+from app.services import dispatcher_health
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,62 @@ logger = logging.getLogger(__name__)
 DEFAULT_LEASE_SECONDS = 30
 RETRY_BACKOFF_BASE_SECONDS = 5
 RETRY_BACKOFF_MAX_SECONDS = 300
+
+# ---------------------------------------------------------------------------
+# Dispatch wakeup — eliminates the full poll interval on new work
+# ---------------------------------------------------------------------------
+
+_QUEUE_NOTIFY_CHANNEL = "noodle:queue:notify"
+_wakeup: asyncio.Event | None = None
+
+
+def _get_wakeup() -> asyncio.Event:
+    """Per-process asyncio.Event; lazy so it is bound to the running loop."""
+    global _wakeup
+    if _wakeup is None:
+        _wakeup = asyncio.Event()
+    return _wakeup
+
+
+async def notify_queue_workers() -> None:
+    """Wake dispatch loops — in-process immediately, other processes via Redis.
+
+    Call this *after* committing the transaction that inserted the queue entry
+    so any woken worker can actually see the new row.
+    """
+    _get_wakeup().set()
+    try:
+        from app.redis_client import redis_client  # noqa: PLC0415
+        await redis_client.publish(_QUEUE_NOTIFY_CHANNEL, "1")
+    except Exception:  # Redis unavailable — polling fallback is still correct
+        logger.debug("notify_queue_workers: Redis publish failed — falling back to poll")
+
+
+async def _redis_queue_subscriber() -> None:
+    """Subscribe to cross-process queue notifications and set the local wakeup.
+
+    Runs as a background task inside ``run_queue_dispatch_loop``. Any Redis
+    error causes a silent exit; the dispatch loop falls back to its configured
+    poll interval.
+    """
+    try:
+        from app.redis_client import redis_client  # noqa: PLC0415
+        pubsub = redis_client.pubsub()
+        try:
+            await pubsub.subscribe(_QUEUE_NOTIFY_CHANNEL)
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    _get_wakeup().set()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("queue Redis subscriber exited; dispatch loop falls back to polling")
+        finally:
+            with contextlib.suppress(Exception):
+                await pubsub.unsubscribe(_QUEUE_NOTIFY_CHANNEL)
+                await pubsub.aclose()
+    except Exception:  # redis_client import failure (no Redis configured)
+        pass
 
 
 def _lease_seconds(override: int | None = None) -> int:
@@ -79,8 +137,15 @@ def _as_aware(value: datetime) -> datetime:
 
 
 async def _get(session: AsyncSession, run_id: str) -> RunQueueEntry | None:
+    # Queue bookkeeping is internal infrastructure keyed by a unique run_id;
+    # callers arrive in mixed org contexts (run task pinned to its org, the
+    # dispatch loop as system, request handlers in the caller's org). Org
+    # scoping here adds silent-miss failure modes without an isolation win,
+    # so the lookup deliberately bypasses the tenancy filter — like lease().
     return await session.scalar(
-        select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
+        select(RunQueueEntry)
+        .where(RunQueueEntry.run_id == run_id)
+        .execution_options(skip_org_filter=True)
     )
 
 
@@ -95,6 +160,8 @@ async def enqueue(
     runner_pool_id: str | None = None,
     max_attempts: int | None = None,
     available_at: datetime | None = None,
+    trace_context: dict | None = None,
+    replay_seed: dict | None = None,
 ) -> RunQueueEntry:
     """Add a run to the queue, or reset an existing entry for the same run.
 
@@ -115,6 +182,9 @@ async def enqueue(
         existing.lease_expires_at = None
         existing.last_error = None
         existing.available_at = available_at or _now(None)
+        existing.trace_context = trace_context
+        if replay_seed is not None:
+            existing.replay_seed = replay_seed
         return existing
 
     entry = RunQueueEntry(
@@ -127,10 +197,80 @@ async def enqueue(
         priority=priority,
         max_attempts=max_attempts if max_attempts is not None else _default_max_attempts(),
         available_at=available_at or _now(None),
+        trace_context=trace_context,
+        replay_seed=replay_seed,
     )
     session.add(entry)
     await session.flush()
     return entry
+
+
+async def _org_fair_order(
+    session: AsyncSession, moment: datetime
+) -> list[str]:
+    """Orgs with eligible queued work, fairest-first (Phase C2).
+
+    Two cheap grouped queries instead of correlated subqueries in the lease
+    statement, so the SKIP LOCKED fast path stays a plain indexed select:
+
+    * orgs are ordered by their current in-flight count ascending (an org
+      with nothing running leases before an org with a deep backlog — a
+      1000-entry flood from one tenant interleaves instead of starving the
+      rest), tie-broken by oldest eligible entry;
+    * orgs at their ``max_concurrent_runs`` cap are excluded entirely and
+      their queued entries get ``queue_reason="org_quota_exceeded"`` for the
+      backpressure UI.
+    """
+    from app.services.org_limits import effective_limits
+
+    eligible = (
+        await session.execute(
+            select(
+                RunQueueEntry.org_id,
+                func.min(RunQueueEntry.available_at),
+            )
+            .where(
+                RunQueueEntry.status == "queued",
+                RunQueueEntry.available_at <= moment,
+            )
+            .group_by(RunQueueEntry.org_id)
+            .execution_options(skip_org_filter=True)
+        )
+    ).all()
+    if not eligible:
+        return []
+    inflight = dict(
+        (
+            await session.execute(
+                select(RunQueueEntry.org_id, func.count())
+                .where(RunQueueEntry.status.in_(("leased", "running")))
+                .group_by(RunQueueEntry.org_id)
+                .execution_options(skip_org_filter=True)
+            )
+        ).all()
+    )
+    allowed: list[tuple[int, datetime, str]] = []
+    capped: list[str] = []
+    for org_id, oldest in eligible:
+        limits = await effective_limits(session, org_id)
+        cap = limits.max_concurrent_runs
+        if cap and inflight.get(org_id, 0) >= cap:
+            capped.append(org_id)
+            continue
+        allowed.append((inflight.get(org_id, 0), oldest, org_id))
+    if capped:
+        await session.execute(
+            update(RunQueueEntry)
+            .where(
+                RunQueueEntry.org_id.in_(capped),
+                RunQueueEntry.status == "queued",
+                RunQueueEntry.queue_reason != "org_quota_exceeded",
+            )
+            .values(queue_reason="org_quota_exceeded")
+            .execution_options(synchronize_session=False)
+        )
+    allowed.sort()
+    return [org_id for _, _, org_id in allowed]
 
 
 async def lease(
@@ -139,35 +279,71 @@ async def lease(
     worker_id: str,
     lease_seconds: int | None = None,
     now: datetime | None = None,
+    providers: frozenset[str] | None = None,
 ) -> RunQueueEntry | None:
     """Claim the next eligible queued entry for ``worker_id``.
 
     Eligible = ``status == "queued"`` and ``available_at <= now``. Ordered by
-    priority (high first) then oldest-available (FIFO within a priority). The
-    claimed entry is marked ``leased`` with a fresh lease expiry and its attempt
-    count incremented. Returns the leased entry, or ``None`` when nothing is
-    eligible.
+    priority (high first) then oldest-available (FIFO within a priority). With
+    multi-tenancy on, an org-fair pre-pass picks WHICH org to lease from
+    (fewest in-flight first, per-org caps enforced) before this ordering
+    applies within that org. The claimed entry is marked ``leased`` with a
+    fresh lease expiry and its attempt count incremented. Returns the leased
+    entry, or ``None`` when nothing is eligible.
     """
     moment = _now(now)
-    stmt = (
-        select(RunQueueEntry)
-        .where(
-            RunQueueEntry.status == "queued",
-            RunQueueEntry.available_at <= moment,
-        )
-        .order_by(
-            RunQueueEntry.priority.desc(),
-            RunQueueEntry.available_at.asc(),
-        )
-        .limit(1)
-    )
-    # Postgres: lock the candidate row and skip ones already locked by a peer
-    # worker so concurrent leases don't hand the same entry out twice. SQLite
-    # has no row locking, so only request it where supported.
-    if session.bind is not None and session.bind.dialect.name == "postgresql":
-        stmt = stmt.with_for_update(skip_locked=True)
 
-    entry = await session.scalar(stmt)
+    def _base_stmt():
+        stmt = (
+            select(RunQueueEntry)
+            .where(
+                RunQueueEntry.status == "queued",
+                RunQueueEntry.available_at <= moment,
+            )
+            .order_by(
+                RunQueueEntry.priority.desc(),
+                RunQueueEntry.available_at.asc(),
+            )
+            .limit(1)
+            .execution_options(skip_org_filter=True)
+        )
+        # Provider capability filter (program A1): a standalone worker can run
+        # entries whose execution it can actually host — "local" (no pool) and
+        # pools whose provider doesn't need a WS terminating in another
+        # process. None = no filter (inline single-process role).
+        if providers is not None:
+            clauses = []
+            if "local" in providers:
+                clauses.append(RunQueueEntry.runner_pool_id.is_(None))
+            remote = providers - {"local"}
+            if remote:
+                pool_ids = (
+                    select(RunnerPool.id)
+                    .where(RunnerPool.provider.in_(sorted(remote)))
+                    .scalar_subquery()
+                )
+                clauses.append(RunQueueEntry.runner_pool_id.in_(pool_ids))
+            stmt = stmt.where(or_(*clauses))
+        # Postgres: lock the candidate row and skip ones already locked by a
+        # peer worker so concurrent leases don't hand the same entry out
+        # twice. SQLite has no row locking, so only request it where
+        # supported.
+        if session.bind is not None and session.bind.dialect.name == "postgresql":
+            stmt = stmt.with_for_update(skip_locked=True)
+        return stmt
+
+    entry: RunQueueEntry | None = None
+    if settings.multi_tenancy_enabled:
+        # Try the fairest few orgs in order; a miss means a peer worker
+        # drained that org between the pre-pass and the lock attempt.
+        for org_id in (await _org_fair_order(session, moment))[:5]:
+            entry = await session.scalar(
+                _base_stmt().where(RunQueueEntry.org_id == org_id)
+            )
+            if entry is not None:
+                break
+    else:
+        entry = await session.scalar(_base_stmt())
     if entry is None:
         return None
 
@@ -408,6 +584,17 @@ async def requeue_expired_leases(
                 error="lease expired (worker lost)",
                 ts=moment,
             )
+            # The worker that held this lease is presumed dead mid-execution.
+            # Reset the user-facing Run row too: _execute_queued_entry only
+            # dispatches runs in status "queued".
+            run = await session.scalar(
+                select(Run)
+                .where(Run.id == entry.run_id, Run.status == "running")
+                .execution_options(skip_org_filter=True)
+            )
+            if run is not None:
+                run.status = "queued"
+                run.finished_at = None
         else:
             entry.status = "dead_lettered"
             entry.last_error = entry.last_error or "lease expired (worker lost)"
@@ -425,21 +612,23 @@ async def stats(session: AsyncSession, *, now: datetime | None = None) -> dict:
     moment = _now(now)
     rows = (
         await session.execute(
-            select(RunQueueEntry.status, func.count()).group_by(RunQueueEntry.status)
+            select(RunQueueEntry.status, func.count())
+            .group_by(RunQueueEntry.status)
+            .execution_options(skip_org_filter=True)
         )
     ).all()
     counts = {status: int(count) for status, count in rows}
 
     oldest = await session.scalar(
-        select(func.min(RunQueueEntry.available_at)).where(
-            RunQueueEntry.status == "queued"
-        )
+        select(func.min(RunQueueEntry.available_at))
+        .where(RunQueueEntry.status == "queued")
+        .execution_options(skip_org_filter=True)
     )
     oldest_age = None
     if oldest is not None:
         oldest_age = max(0.0, (moment - _as_aware(oldest)).total_seconds())
 
-    return {
+    result = {
         "queued": counts.get("queued", 0),
         "leased": counts.get("leased", 0),
         "running": counts.get("running", 0),
@@ -450,6 +639,43 @@ async def stats(session: AsyncSession, *, now: datetime | None = None) -> dict:
         "cancelled": counts.get("cancelled", 0),
         "oldest_queued_age_seconds": oldest_age,
     }
+    if settings.multi_tenancy_enabled:
+        # C6: per-org backpressure breakdown, including entries parked by the
+        # org concurrency cap (queue_reason="org_quota_exceeded").
+        org_rows = (
+            await session.execute(
+                select(
+                    RunQueueEntry.org_id,
+                    RunQueueEntry.status,
+                    func.count(),
+                )
+                .where(
+                    RunQueueEntry.status.in_(
+                        ("queued", "leased", "running", "waiting")
+                    )
+                )
+                .group_by(RunQueueEntry.org_id, RunQueueEntry.status)
+                .execution_options(skip_org_filter=True)
+            )
+        ).all()
+        by_org: dict[str, dict[str, int]] = {}
+        for org_id, status, count in org_rows:
+            by_org.setdefault(str(org_id), {})[str(status)] = int(count)
+        parked_rows = (
+            await session.execute(
+                select(RunQueueEntry.org_id, func.count())
+                .where(
+                    RunQueueEntry.status == "queued",
+                    RunQueueEntry.queue_reason == "org_quota_exceeded",
+                )
+                .group_by(RunQueueEntry.org_id)
+                .execution_options(skip_org_filter=True)
+            )
+        ).all()
+        for org_id, count in parked_rows:
+            by_org.setdefault(str(org_id), {})["quota_parked"] = int(count)
+        result["by_org"] = by_org
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -467,7 +693,37 @@ DISPATCH_SHUTDOWN_TIMEOUT = 5.0
 def _worker_id() -> str:
     """A stable-ish identifier for the current process so leases can be
     attributed to a specific replica when diagnosing lost workers."""
-    return f"{socket.gethostname()}:{id(asyncio.get_event_loop())}"
+    return f"{socket.gethostname()}:{id(asyncio.get_running_loop())}"
+
+
+async def _cancel_reconcile(
+    session: AsyncSession, active_runs: dict[str, "asyncio.Task[None]"]
+) -> list[str]:
+    """Cancel local tasks whose queue entry was cancelled by another process.
+
+    In split topologies the API replica handling DELETE /runs/{id} has no
+    task handle — it marks the RunQueueEntry cancelled and this worker-side
+    sweep turns that into a real asyncio cancellation.
+    """
+    if not active_runs:
+        return []
+    rows = (
+        await session.scalars(
+            select(RunQueueEntry.run_id)
+            .where(
+                RunQueueEntry.run_id.in_(list(active_runs)),
+                RunQueueEntry.status == "cancelled",
+            )
+            .execution_options(skip_org_filter=True)
+        )
+    ).all()
+    cancelled: list[str] = []
+    for run_id in rows:
+        task = active_runs.get(run_id)
+        if task is not None and not task.done():
+            task.cancel()
+            cancelled.append(run_id)
+    return cancelled
 
 
 async def run_queue_dispatch_loop() -> None:
@@ -486,21 +742,61 @@ async def run_queue_dispatch_loop() -> None:
     completed/failed/cancelled) via the queue interface.
     """
     # Import here to avoid the runner ↔ queue circular import.
-    from app.services.runner import _execute_queued_entry  # noqa: PLC0415
+    from app.services.runner import _active_runs, _execute_queued_entry  # noqa: PLC0415
     from app.services.runtime_pool import pool as runtime_pool  # noqa: PLC0415
 
     worker = _worker_id()
     in_flight: set[asyncio.Task[None]] = set()
 
+    # Provider capability by role (program A1): a standalone worker can host
+    # local subprocess runs and docker-pool runs; agent/kubernetes pools need
+    # the WebSocket-terminating API process (their run assignment routes through
+    # the in-memory _agents connection held by that replica), so a ``control``
+    # API leases only those. ``inline`` leases everything (single-process).
+    role = settings.dispatch_role
+    if role == "worker":
+        providers = frozenset({"local", "docker"})
+    elif role == "control":
+        providers = frozenset({"agent", "kubernetes"})
+    else:
+        providers = None
+
+    # Cross-process wakeup via Redis pub/sub; falls back to polling silently.
+    subscriber_task = asyncio.create_task(_redis_queue_subscriber())
+
     try:
         while True:
-            await asyncio.sleep(settings.queue_dispatch_poll_seconds)
+            # Wait for a notify() call (in-process or cross-process via Redis)
+            # or fall through after the configured poll interval.
             try:
+                await asyncio.wait_for(
+                    _get_wakeup().wait(),
+                    timeout=settings.queue_dispatch_poll_seconds,
+                )
+            except asyncio.TimeoutError:
+                pass
+            _get_wakeup().clear()
+            try:
+                # A6: advertise that this process is leasing its providers, so
+                # the Runner Pools health endpoint can tell a pool whose runs
+                # nothing dispatches from one that's simply at capacity.
+                await dispatcher_health.record_heartbeat(role)
+
                 async with SessionLocal() as session:
                     requeued = await requeue_expired_leases(session)
                     await session.commit()
                 if requeued:
                     logger.info("queue: requeued %d expired lease(s)", requeued)
+
+                if role == "worker":
+                    # Cross-process cancellation: see _cancel_reconcile.
+                    async with SessionLocal() as session:
+                        cancelled = await _cancel_reconcile(session, _active_runs)
+                    if cancelled:
+                        logger.info(
+                            "queue: cancelled %d run(s) flagged by control plane",
+                            len(cancelled),
+                        )
 
                 # Drain mode: keep requeueing expired leases and let in-flight
                 # tasks finish, but stop pulling new work so the process can
@@ -516,7 +812,9 @@ async def run_queue_dispatch_loop() -> None:
                 local_budget = runtime_pool.available_global_slots()
                 for _ in range(settings.queue_max_dispatches_per_tick):
                     async with SessionLocal() as session:
-                        entry = await lease(session, worker_id=worker)
+                        entry = await lease(
+                            session, worker_id=worker, providers=providers
+                        )
                         if entry is None:
                             await session.rollback()
                             break
@@ -539,6 +837,9 @@ async def run_queue_dispatch_loop() -> None:
             except Exception:  # noqa: BLE001 - never let one tick kill the loop
                 logger.exception("queue dispatch loop tick failed")
     finally:
+        subscriber_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await subscriber_task
         # Best-effort drain on shutdown so in-flight runs persist their state.
         if in_flight:
             await asyncio.wait(

@@ -1,3 +1,7 @@
+import { useRef } from "react";
+
+import { useModalA11y } from "./useModalA11y";
+
 interface ConfirmDialogProps {
   title: string;
   body: string;
@@ -15,13 +19,17 @@ export function ConfirmDialog({
   onCancel,
   onConfirm,
 }: ConfirmDialogProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, onCancel);
   return (
     <div className="modal-overlay" onClick={onCancel}>
       <div
+        ref={dialogRef}
         className="modal confirm-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="confirm-title">{title}</h2>

@@ -1,3 +1,4 @@
+import { ArrowLineDown, ArrowLineUp } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
@@ -93,12 +94,30 @@ function formatCell(value: unknown): string {
   }
 }
 
+// Hard cap on the rendered JSON string. The backend caps payloads, but a
+// pathological object would still freeze the main thread in `JSON.stringify`
+// and balloon the DOM — clamp the rendered text so the panel stays responsive.
+const MAX_JSON_CHARS = 100_000;
+
 function pretty(value: unknown): string {
+  let text: string | undefined;
   try {
-    return JSON.stringify(value, null, 2);
+    text = JSON.stringify(value, null, 2);
   } catch {
     return String(value);
   }
+  // `JSON.stringify` returns `undefined` (not a string, and without throwing)
+  // for a top-level `undefined`/function/symbol — e.g. an unrun node whose
+  // Input/Output panel data is still `undefined`. Guard before reading
+  // `.length` so the panel renders its empty state instead of crashing.
+  if (text === undefined) return value === undefined ? "" : String(value);
+  if (text.length > MAX_JSON_CHARS) {
+    return (
+      text.slice(0, MAX_JSON_CHARS) +
+      `\n\n… output truncated (${text.length.toLocaleString()} chars). Open the full artifact to see everything.`
+    );
+  }
+  return text;
 }
 
 function findHtmlPreview(value: unknown): string | null {
@@ -432,6 +451,147 @@ function JsonTree({
   );
 }
 
+function schemaType(value: unknown): string {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (Array.isArray(value)) return `array[${value.length}]`;
+  if (typeof value === "object") return "object";
+  return typeof value;
+}
+
+/**
+ * One row of the n8n-style schema view: a draggable field name + type, with a
+ * twist control for nested objects/arrays. Leaves carry the same drag payload
+ * as the JSON/table views (`{{ <prefix>.<path> }}`).
+ */
+function SchemaRow({
+  label,
+  value,
+  path,
+  dragPrefix,
+}: {
+  label: string;
+  value: unknown;
+  path: (string | number)[];
+  dragPrefix?: string;
+}) {
+  const expandable =
+    isPlainObject(value) || (Array.isArray(value) && value.length > 0);
+  const [open, setOpen] = useState(path.length <= 1);
+  const expr = dragPrefix ? buildExpression(dragPrefix, path) : undefined;
+  return (
+    <div className="schema-node">
+      <div
+        className="schema-row"
+        draggable={Boolean(expr)}
+        onDragStart={expr ? (e) => startExpressionDrag(e, expr) : undefined}
+        title={expr ? `Drag to insert ${expr}` : undefined}
+      >
+        {expandable ? (
+          <button
+            type="button"
+            className="schema-twist"
+            onClick={() => setOpen((o) => !o)}
+            aria-label={open ? "Collapse" : "Expand"}
+          >
+            {open ? "▾" : "▸"}
+          </button>
+        ) : (
+          <span className="schema-twist-spacer" aria-hidden />
+        )}
+        {expr && (
+          <span className="schema-grip" aria-hidden>
+            ⠿
+          </span>
+        )}
+        <span className="schema-key">{label}</span>
+        <span className="schema-type">{schemaType(value)}</span>
+      </div>
+      {expandable && open && (
+        <div className="schema-children">
+          {isPlainObject(value)
+            ? Object.entries(value).map(([k, v]) => (
+                <SchemaRow
+                  key={k}
+                  label={k}
+                  value={v}
+                  path={[...path, k]}
+                  dragPrefix={dragPrefix}
+                />
+              ))
+            : Array.isArray(value) && value.length > 0
+              ? (
+                <SchemaRow
+                  label="0"
+                  value={value[0]}
+                  path={[...path, 0]}
+                  dragPrefix={dragPrefix}
+                />
+              )
+              : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SchemaTree({
+  data,
+  dragPrefix,
+}: {
+  data: unknown;
+  dragPrefix?: string;
+}) {
+  if (isListOfRecords(data)) {
+    const keys = Array.from(new Set(data.flatMap((row) => Object.keys(row))));
+    const first = data[0] as Record<string, unknown>;
+    return (
+      <div className="schema-tree">
+        <div className="schema-arrayhint">
+          {data.length} items · fields of each item
+        </div>
+        {keys.map((k) => (
+          <SchemaRow
+            key={k}
+            label={k}
+            value={first[k]}
+            path={[k]}
+            dragPrefix={dragPrefix}
+          />
+        ))}
+      </div>
+    );
+  }
+  if (isPlainObject(data)) {
+    return (
+      <div className="schema-tree">
+        {Object.entries(data).map(([k, v]) => (
+          <SchemaRow
+            key={k}
+            label={k}
+            value={v}
+            path={[k]}
+            dragPrefix={dragPrefix}
+          />
+        ))}
+      </div>
+    );
+  }
+  if (Array.isArray(data) && data.length > 0) {
+    return (
+      <div className="schema-tree">
+        <div className="schema-arrayhint">{data.length} items</div>
+        <SchemaRow label="0" value={data[0]} path={[0]} dragPrefix={dragPrefix} />
+      </div>
+    );
+  }
+  return (
+    <div className="schema-tree">
+      <SchemaRow label="value" value={data} path={[]} dragPrefix={dragPrefix} />
+    </div>
+  );
+}
+
 const PAGE_SIZE = 100;
 
 function colStats(
@@ -511,7 +671,7 @@ function ColumnProfileCard({
     <div className="col-profile-pop" onClick={(e) => e.stopPropagation()}>
       <div className="col-profile-head">
         <strong>{col}</strong>
-        <button className="btn btn-xs btn-ghost" onClick={onClose}>
+        <button className="btn btn-xs btn-ghost" onClick={onClose} aria-label="Close">
           ✕
         </button>
       </div>
@@ -951,7 +1111,7 @@ function DataTable({
       </div>
     );
   }
-  return <pre className="data-json">{JSON.stringify(display, null, 2)}</pre>;
+  return <pre className="data-json">{pretty(display)}</pre>;
 }
 
 function HtmlPreview({ html }: { html: string }) {
@@ -1000,7 +1160,7 @@ function VariableExplorer({
             <RecordTable data={variable.preview} />
           ) : (
             <pre className="data-json variable-preview">
-              {JSON.stringify(variable.preview ?? variable.summary ?? null, null, 2)}
+              {pretty(variable.preview ?? variable.summary ?? null)}
             </pre>
           )}
         </section>
@@ -1118,14 +1278,33 @@ export function DataPanel({
         finishedAt,
       })
     : "";
-  const [view, setView] = useState<
-    "json" | "table" | "html" | "logs" | "variables" | "visual"
-  >(
-    canVisual ? "visual" : canHtml ? "html" : canTable ? "table" : "json",
-  );
   const empty = data === undefined || data === null;
-  let effectiveView: "json" | "table" | "html" | "logs" | "variables" | "visual" = view;
+  const canSchema =
+    !empty &&
+    (isPlainObject(display) || (Array.isArray(display) && display.length > 0));
+  const [view, setView] = useState<
+    "json" | "table" | "html" | "logs" | "variables" | "visual" | "schema"
+  >(
+    canVisual
+      ? "visual"
+      : canHtml
+        ? "html"
+        : dragPrefix && canSchema
+          ? "schema"
+          : canTable
+            ? "table"
+            : "json",
+  );
+  let effectiveView:
+    | "json"
+    | "table"
+    | "html"
+    | "logs"
+    | "variables"
+    | "visual"
+    | "schema" = view;
   if (view === "visual" && !canVisual) effectiveView = canTable ? "table" : "json";
+  if (view === "schema" && !canSchema) effectiveView = canTable ? "table" : "json";
   if (view === "table" && !canTable) effectiveView = "json";
   if (view === "html" && !canHtml) effectiveView = canTable ? "table" : "json";
   if (view === "logs" && !hasLogStream) {
@@ -1168,12 +1347,29 @@ export function DataPanel({
         : effectiveView === "html"
           ? htmlPreview ?? ""
           : pretty(display);
+  const panelClassName = `ndv-panel${empty ? " ndv-panel-empty-data" : ""}`;
+  // Direction cue + item count for the panel header. Count is only shown when
+  // it can be derived unambiguously (a list of items).
+  const isInput = title.toLowerCase().startsWith("input");
+  const DirIcon = isInput ? ArrowLineDown : ArrowLineUp;
+  const itemCount = Array.isArray(display) ? display.length : null;
 
   return (
-    <section className="ndv-panel">
+    <section className={panelClassName}>
       <header className="ndv-panel-head">
         <h3>
+          <DirIcon
+            className="ndv-panel-dir"
+            size={13}
+            weight="bold"
+            aria-hidden="true"
+          />
           {title}
+          {!empty && itemCount !== null && (
+            <span className="ndv-count-badge">
+              {itemCount} {itemCount === 1 ? "item" : "items"}
+            </span>
+          )}
           {typeof durationMs === "number" && (
             <span className="ndv-duration" title="Execution time">
               {durationMs} ms
@@ -1189,6 +1385,16 @@ export function DataPanel({
               title={report ? "Render report" : "Render chart"}
             >
               {report ? "Report" : "Chart"}
+            </button>
+          )}
+          {canSchema && (
+            <button
+              type="button"
+              className={effectiveView === "schema" ? "active" : ""}
+              onClick={() => setView("schema")}
+              title="Field schema (drag fields into parameters)"
+            >
+              Schema
             </button>
           )}
           <button
@@ -1278,6 +1484,8 @@ export function DataPanel({
           <p className="ndv-panel-empty muted">
             {emptyMessage ?? "No data yet."}
           </p>
+        ) : effectiveView === "schema" ? (
+          <SchemaTree data={display} dragPrefix={dragPrefix} />
         ) : effectiveView === "table" ? (
           <DataTable data={display} dragPrefix={dragPrefix} />
         ) : (

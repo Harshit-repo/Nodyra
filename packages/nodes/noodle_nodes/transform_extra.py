@@ -11,8 +11,10 @@ from __future__ import annotations
 import base64
 import gzip
 import json
-import xml.etree.ElementTree as ET
 from typing import Any
+
+from defusedxml import DefusedXmlException
+from defusedxml import ElementTree as ET
 
 from noodle.sdk import node
 
@@ -121,7 +123,10 @@ def xml_parse(input: Any = None, text: str = "") -> dict:
     payload = text or (str(input) if input is not None else "")
     if not payload.strip():
         return {}
-    root = ET.fromstring(payload)
+    try:
+        root = ET.fromstring(payload)
+    except (ET.ParseError, DefusedXmlException) as exc:
+        raise ValueError(f"xml_parse: invalid or unsafe XML: {exc}") from exc
     return {root.tag: _xml_to_dict(root)}
 
 

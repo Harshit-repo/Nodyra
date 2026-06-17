@@ -10,8 +10,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
   value: {{ .Values.postgres.url | quote }}
 - name: REDIS_URL
   value: {{ .Values.redis.url | quote }}
-- name: CELERY_BROKER_URL
-  value: {{ .Values.redis.url | quote }}
+- name: QUEUE_BACKEND
+  value: "redis"
 - name: SECRET_KEY
   value: {{ .Values.secret.key | quote }}
 {{- end -}}

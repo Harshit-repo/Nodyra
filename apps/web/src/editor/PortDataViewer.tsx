@@ -33,10 +33,17 @@ import { ReportView } from "./ReportView";
 const MIN_HEIGHT = 160;
 const DEFAULT_HEIGHT = 248;
 const MAX_HEIGHT = 430;
+const EMPTY_HEIGHT = 112;
 const COLLAPSED_HEIGHT = 44;
 
+interface PortConnectionPreview {
+  edge: Edge;
+  value: unknown;
+  hasValue: boolean;
+}
+
 function outputNames(node: NoodleNode): string[] {
-  return node.data.outputsOverride ?? node.data.manifest.outputs.map((o) => o.name);
+  return node.data.outputsOverride ?? node.data.manifest?.outputs.map((o) => o.name) ?? [];
 }
 
 function valueAtPort(
@@ -133,6 +140,75 @@ function edgeLabel(edge: Edge | undefined, direction: "input" | "output"): strin
     return `${edge.source}.${edge.sourceHandle ?? "main"}`;
   }
   return `${edge.target}.${edge.targetHandle ?? "input"}`;
+}
+
+function edgeSummary(
+  edges: Edge[],
+  direction: "input" | "output",
+): string {
+  if (edges.length === 0) return direction === "input" ? "not connected" : "no connection";
+  if (edges.length === 1) return edgeLabel(edges[0], direction);
+  return `${edges.length} connection${edges.length === 1 ? "" : "s"}`;
+}
+
+function isMemoryNode(node: NoodleNode): boolean {
+  const manifest = node.data.manifest;
+  if (!manifest) return false;
+  const label = `${manifest.id} ${manifest.name}`.toLowerCase();
+  return (
+    label.includes("memory") ||
+    manifest.outputs.some((port) => port.data_kind === "ai_memory")
+  );
+}
+
+function MemorySummary({
+  node,
+  outputs,
+}: {
+  node: NoodleNode;
+  outputs: unknown;
+}) {
+  const memoryPort =
+    node.data.manifest.outputs.find((port) => port.data_kind === "ai_memory") ??
+    node.data.manifest.outputs.find((port) => port.name.toLowerCase().includes("memory"));
+  const memoryValue = memoryPort ? valueAtPort(outputs, memoryPort.name) : null;
+  const typed = memoryValue?.hasValue ? asTypedEnvelope(memoryValue.value) : null;
+  const systemPrompt = String(node.data.params.system_prompt ?? "").trim();
+  const windowSize = node.data.params.window;
+  const adapterLabel =
+    typed?.python_type ||
+    (memoryValue?.hasValue ? valueSummary(memoryValue.value) : node.data.manifest.name);
+
+  return (
+    <section className="port-data-memory" aria-label="Selected memory node summary">
+      <div className="port-data-memory-head">
+        <span className="port-data-kind memory">memory</span>
+        <strong>{node.data.manifest.name}</strong>
+        <span>{memoryPort ? `${memoryPort.name} port` : "memory supplier"}</span>
+      </div>
+      <div className="port-data-memory-grid">
+        <span>
+          <strong>Adapter</strong>
+          {adapterLabel}
+        </span>
+        <span>
+          <strong>Window</strong>
+          {windowSize === null || windowSize === undefined || windowSize === ""
+            ? "default"
+            : String(windowSize)}
+        </span>
+        <span>
+          <strong>Seed</strong>
+          {systemPrompt ? `${systemPrompt.length} chars` : "none"}
+        </span>
+        <span>
+          <strong>State</strong>
+          {memoryValue?.hasValue ? "materialized" : "run to inspect"}
+        </span>
+      </div>
+      {typed?.repr && <pre className="port-data-memory-repr">{typed.repr}</pre>}
+    </section>
+  );
 }
 
 function DatasetCard({ dataset }: { dataset: DatasetRef }) {
@@ -332,48 +408,95 @@ function PortValuePreview({ value }: { value: unknown }) {
 function PortCard({
   name,
   direction,
-  connectedEdge,
+  connectedEdges,
+  inputConnections,
   value,
   hasValue,
   pinned,
 }: {
   name: string;
   direction: "input" | "output";
-  connectedEdge?: Edge;
+  connectedEdges: Edge[];
+  inputConnections?: PortConnectionPreview[];
   value: unknown;
   hasValue: boolean;
   pinned?: boolean;
 }) {
+  const connections = inputConnections ?? [];
+  const connectionWithValue = connections.find((connection) => connection.hasValue);
+  const primaryValue = connectionWithValue?.value ?? value;
+  const hasPreviewValue = hasValue || Boolean(connectionWithValue);
+  const [open, setOpen] = useState(hasPreviewValue || Boolean(pinned));
+  useEffect(() => {
+    if (hasPreviewValue || pinned) setOpen(true);
+  }, [hasPreviewValue, pinned]);
+  const summary = hasPreviewValue
+    ? valueSummary(primaryValue)
+    : edgeSummary(connectedEdges, direction);
   const className = [
     "port-data-card",
-    hasValue ? "has-data" : "is-empty",
-    connectedEdge ? "is-connected" : "is-disconnected",
+    hasPreviewValue ? "has-data" : "is-empty",
+    connectedEdges.length > 0 ? "is-connected" : "is-disconnected",
   ].join(" ");
 
   return (
-    <article className={className}>
-      <header className="port-data-card-head">
+    <details
+      className={className}
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="port-data-card-head">
+        <span className="port-data-caret" aria-hidden>›</span>
         <span className={`port-data-kind ${direction}`}>{direction}</span>
         <span className="port-data-name">{name}</span>
-        {hasValue && <span className="port-data-badge data">data</span>}
-        {hasValue && (
-          <span className="port-data-badge meta">{valueSummary(value)}</span>
+        {hasPreviewValue && <span className="port-data-badge data">data</span>}
+        <span className="port-data-badge meta">{summary}</span>
+        {connectedEdges.length > 1 && (
+          <span className="port-data-badge">{connectedEdges.length} wires</span>
         )}
         {pinned && <span className="port-data-badge">pinned</span>}
-      </header>
-      <div className="port-data-wire">{edgeLabel(connectedEdge, direction)}</div>
-      {hasValue ? (
-        <PortValuePreview value={value} />
-      ) : (
-        <p className="port-data-empty muted">
-          {connectedEdge
-            ? "No data on this port yet."
-            : direction === "input"
-              ? "This input has no wire."
-              : "This output has no downstream wire."}
-        </p>
-      )}
-    </article>
+      </summary>
+      <div className="port-data-card-body">
+        <div className="port-data-wire">{edgeSummary(connectedEdges, direction)}</div>
+        {connectedEdges.length > 1 && (
+          <div className="port-data-connection-list">
+            {connectedEdges.map((edge) => (
+              <span key={edge.id}>
+                {direction === "input"
+                  ? `${edge.source}.${edge.sourceHandle ?? "main"}`
+                  : `${edge.target}.${edge.targetHandle ?? "input"}`}
+              </span>
+            ))}
+          </div>
+        )}
+        {direction === "input" && connections.length > 1 ? (
+          <div className="port-data-connection-previews">
+            {connections.map((connection) => (
+              <div className="port-data-connection-preview" key={connection.edge.id}>
+                <div className="port-data-wire">
+                  {connection.edge.source}.{connection.edge.sourceHandle ?? "main"}
+                </div>
+                {connection.hasValue ? (
+                  <PortValuePreview value={connection.value} />
+                ) : (
+                  <p className="port-data-empty muted">No data on this wire yet.</p>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : hasPreviewValue ? (
+          <PortValuePreview value={primaryValue} />
+        ) : (
+          <p className="port-data-empty muted">
+            {connectedEdges.length > 0
+              ? "No data on this port yet."
+              : direction === "input"
+                ? "This input has no wire."
+                : "This output has no downstream wire."}
+          </p>
+        )}
+      </div>
+    </details>
   );
 }
 
@@ -385,18 +508,30 @@ export function PortDataViewer() {
   const [height, setHeight] = useState(DEFAULT_HEIGHT);
   const [collapsed, setCollapsed] = useState(false);
   const dragStart = useRef<{ y: number; height: number } | null>(null);
-
-  // Keep the global CSS var in sync so canvas-fab can track our height
-  useEffect(() => {
-    const h = collapsed ? COLLAPSED_HEIGHT : height;
-    document.documentElement.style.setProperty('--port-data-height-global', `${h}px`);
-  }, [height, collapsed]);
   const selectedId = useEditor((s) => s.selectedId);
-  const node = useEditor((s) => s.nodes.find((n) => n.id === selectedId));
+  // Manifest-less nodes (metanode boundary bars) aren't inspectable data nodes —
+  // treat them as no-selection so the panel never reads an absent manifest.
+  const node = useEditor((s) => {
+    const found = s.nodes.find((n) => n.id === selectedId);
+    return found?.data.manifest ? found : undefined;
+  });
   const edges = useEditor((s) => s.edges);
   const runOutputs = useEditor((s) => s.runOutputs);
   const runStatus = useEditor((s) => (selectedId ? s.runStatus[selectedId] : null));
   const pinned = useEditor((s) => (selectedId ? s.pinned[selectedId] : undefined));
+  const compactEmpty = !node && !collapsed;
+  const effectiveHeight = collapsed
+    ? COLLAPSED_HEIGHT
+    : compactEmpty
+      ? EMPTY_HEIGHT
+      : height;
+
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--port-data-height-global",
+      `${effectiveHeight}px`,
+    );
+  }, [effectiveHeight]);
 
   useEffect(() => {
     function onMove(event: MouseEvent) {
@@ -421,25 +556,29 @@ export function PortDataViewer() {
   }, []);
 
   function startResize(event: ReactMouseEvent<HTMLDivElement>) {
-    if (collapsed) return;
+    if (collapsed || compactEmpty) return;
     dragStart.current = { y: event.clientY, height };
     document.body.classList.add("is-resizing-vertical");
     event.preventDefault();
   }
 
-  const inputPorts = node?.data.manifest.inputs.map((p) => p.name) ?? [];
-  const outputs = node && pinned !== undefined ? pinned : node ? runOutputs[node.id] : undefined;
-  const selectedOutputNames = node ? outputNames(node) : [];
+  const inputPorts = node?.data.manifest?.inputs.map((p) => p.name) ?? [];
+  const outputs = node && pinned !== undefined ? pinned.payload : node ? runOutputs[node.id] : undefined;
+  const selectedOutputNames = node?.data.manifest ? outputNames(node) : [];
   const dataPortCount = selectedOutputNames.filter(
     (port) => valueAtPort(outputs, port).hasValue,
   ).length;
 
   return (
     <aside
-      className={`port-data-viewer${collapsed ? " is-collapsed" : ""}`}
+      className={[
+        "port-data-viewer",
+        collapsed ? "is-collapsed" : "",
+        compactEmpty ? "is-empty" : "",
+      ].filter(Boolean).join(" ")}
       style={
         {
-          "--port-data-height": `${collapsed ? COLLAPSED_HEIGHT : height}px`,
+          "--port-data-height": `${effectiveHeight}px`,
         } as CSSProperties
       }
     >
@@ -454,7 +593,7 @@ export function PortDataViewer() {
         <div>
           <h2>Port Data</h2>
           <span>
-            {node ? `${node.data.manifest.name} · ${node.id}` : "Select a node to inspect live port data"}
+            {node?.data.manifest ? `${node.data.manifest.name} · ${node.id}` : "Select a node to inspect live port data"}
           </span>
         </div>
         <div className="port-data-head-right">
@@ -487,62 +626,72 @@ export function PortDataViewer() {
           <span>Click a node to inspect every input and exit port in this panel.</span>
         </div>
       ) : (
-        <div className="port-data-columns">
-        <section className="port-data-column">
-          <div className="port-data-column-head">
-            <span>Input ports</span>
-            <span>{inputPorts.length}</span>
-          </div>
-          {inputPorts.length === 0 ? (
-            <p className="port-data-empty muted">This node has no input ports.</p>
-          ) : (
-            inputPorts.map((port) => {
-              const incoming = edges.find(
-                (edge) =>
-                  edge.target === node.id && (edge.targetHandle ?? "input") === port,
-              );
-              const upstream = incoming ? runOutputs[incoming.source] : undefined;
-              const sourcePort = incoming?.sourceHandle ?? "main";
-              const { value, hasValue } = valueAtPort(upstream, sourcePort);
-              return (
-                <PortCard
-                  key={port}
-                  name={port}
-                  direction="input"
-                  connectedEdge={incoming}
-                  value={value}
-                  hasValue={hasValue}
-                />
-              );
-            })
-          )}
-        </section>
+        <>
+          {isMemoryNode(node) && <MemorySummary node={node} outputs={outputs} />}
+          <div className="port-data-columns">
+            <section className="port-data-column">
+              <div className="port-data-column-head">
+                <span>Input ports</span>
+                <span>{inputPorts.length}</span>
+              </div>
+              {inputPorts.length === 0 ? (
+                <p className="port-data-empty muted">This node has no input ports.</p>
+              ) : (
+                inputPorts.map((port) => {
+                  const incoming = edges.filter(
+                    (edge) =>
+                      edge.target === node.id && (edge.targetHandle ?? "input") === port,
+                  );
+                  const inputConnections = incoming.map((edge) => {
+                    const upstream = runOutputs[edge.source];
+                    const sourcePort = edge.sourceHandle ?? "main";
+                    const { value, hasValue } = valueAtPort(upstream, sourcePort);
+                    return { edge, value, hasValue };
+                  });
+                  const firstValue =
+                    inputConnections.find((connection) => connection.hasValue) ??
+                    inputConnections[0];
+                  return (
+                    <PortCard
+                      key={port}
+                      name={port}
+                      direction="input"
+                      connectedEdges={incoming}
+                      inputConnections={inputConnections}
+                      value={firstValue?.value}
+                      hasValue={Boolean(firstValue?.hasValue)}
+                    />
+                  );
+                })
+              )}
+            </section>
 
-        <section className="port-data-column">
-          <div className="port-data-column-head">
-            <span>Exit ports</span>
-            <span>{selectedOutputNames.length}</span>
+            <section className="port-data-column">
+              <div className="port-data-column-head">
+                <span>Exit ports</span>
+                <span>{selectedOutputNames.length}</span>
+              </div>
+              {selectedOutputNames.map((port) => {
+                const outgoing = edges.filter(
+                  (edge) =>
+                    edge.source === node.id && (edge.sourceHandle ?? "main") === port,
+                );
+                const { value, hasValue } = valueAtPort(outputs, port);
+                return (
+                  <PortCard
+                    key={port}
+                    name={port}
+                    direction="output"
+                    connectedEdges={outgoing}
+                    value={value}
+                    hasValue={hasValue}
+                    pinned={pinned !== undefined}
+                  />
+                );
+              })}
+            </section>
           </div>
-          {selectedOutputNames.map((port) => {
-            const outgoing = edges.find(
-              (edge) =>
-                edge.source === node.id && (edge.sourceHandle ?? "main") === port,
-            );
-            const { value, hasValue } = valueAtPort(outputs, port);
-            return (
-              <PortCard
-                key={port}
-                name={port}
-                direction="output"
-                connectedEdge={outgoing}
-                value={value}
-                hasValue={hasValue}
-                pinned={pinned !== undefined}
-              />
-            );
-          })}
-        </section>
-      </div>
+        </>
       )}
     </aside>
   );

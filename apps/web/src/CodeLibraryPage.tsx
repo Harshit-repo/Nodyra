@@ -1,7 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
-import { api } from "./api";
+import { errorMessage } from "./api";
+import { useConfirm } from "./ConfirmProvider";
 import { HomeHeader } from "./HomeHeader";
+import {
+  useCodeModules,
+  useCreateCodeModuleMutation,
+  useDeleteCodeModuleMutation,
+  useEnvironments,
+  usePreviewCodeModuleMutation,
+  useUpdateCodeModuleMutation,
+  useWorkflows,
+} from "./queries";
+import { useToast } from "./ToastProvider";
+import { useModalA11y } from "./useModalA11y";
 import type {
   CodeModule,
   CodeModuleFunctionPreview,
@@ -12,9 +24,16 @@ import type {
 type Scope = "all" | "global" | "environment" | "workflow";
 
 function scopeBadge(scope: string): string {
-  if (scope === "global") return "🌐";
-  if (scope === "environment") return "🐍";
-  return "📎";
+  if (scope === "global") return "Global";
+  if (scope === "environment") return "Env";
+  return "Flow";
+}
+
+function scopeLabel(scope: Scope): string {
+  if (scope === "all") return "All";
+  if (scope === "global") return "Global";
+  if (scope === "environment") return "Environments";
+  return "Workflows";
 }
 
 function relativeTime(iso: string): string {
@@ -28,34 +47,51 @@ function relativeTime(iso: string): string {
 }
 
 export function CodeLibraryPage() {
-  const [modules, setModules] = useState<CodeModule[] | null>(null);
-  const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
-  const [environments, setEnvironments] = useState<Environment[]>([]);
   const [tab, setTab] = useState<Scope>("all");
+  const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<CodeModule | null>(null);
   const [creating, setCreating] = useState(false);
-  const [error, setError] = useState("");
-
-  async function refresh(): Promise<void> {
-    try {
-      const list = await api.listCodeModules();
-      setModules(list);
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
-  useEffect(() => {
-    void refresh();
-    api.listWorkflows().then(setWorkflows).catch(() => {});
-    api.listEnvironments().then(setEnvironments).catch(() => {});
-  }, []);
+  const confirm = useConfirm();
+  const { notify } = useToast();
+  const modulesQuery = useCodeModules();
+  const workflowsQuery = useWorkflows();
+  const environmentsQuery = useEnvironments();
+  const deleteModule = useDeleteCodeModuleMutation();
+  const modules = modulesQuery.data ?? null;
+  const workflows = workflowsQuery.data ?? [];
+  const environments = environmentsQuery.data ?? [];
+  const error =
+    modulesQuery.isError && !modulesQuery.data
+      ? errorMessage(modulesQuery.error)
+      : "";
 
   const filtered = useMemo(() => {
     if (!modules) return null;
-    if (tab === "all") return modules;
-    return modules.filter((m) => m.scope === tab);
-  }, [modules, tab]);
+    const needle = query.trim().toLowerCase();
+    return modules.filter((module) => {
+      if (tab !== "all" && module.scope !== tab) return false;
+      if (!needle) return true;
+      const text = [
+        module.name,
+        module.scope,
+        module.contents,
+        scopeDetail(module),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return text.includes(needle);
+    });
+  }, [modules, query, tab]);
+
+  const stats = useMemo(() => {
+    const rows = modules ?? [];
+    return {
+      all: rows.length,
+      global: rows.filter((item) => item.scope === "global").length,
+      environment: rows.filter((item) => item.scope === "environment").length,
+      workflow: rows.filter((item) => item.scope === "workflow").length,
+    };
+  }, [modules]);
 
   const envName = (id: string | null): string =>
     environments.find((e) => e.id === id)?.name ?? "(unknown env)";
@@ -68,15 +104,28 @@ export function CodeLibraryPage() {
     return `Workflow · ${workflowName(m.workflow_id)}`;
   }
 
+  function moduleSummary(module: CodeModule): {
+    functions: number;
+    imports: number;
+    lines: number;
+  } {
+    const lines = module.contents.split(/\r?\n/);
+    const functions = lines.filter((line) => /^\s*def\s+\w+/.test(line)).length;
+    const imports = lines.filter((line) => /^\s*(from\s+\S+\s+import|import\s+\S+)/.test(line)).length;
+    return { functions, imports, lines: lines.length };
+  }
+
   async function remove(m: CodeModule): Promise<void> {
-    if (!confirm(`Delete ${m.name}? Graphs referencing its functions will error on next run.`)) {
-      return;
-    }
+    const ok = await confirm({
+      title: `Delete ${m.name}?`,
+      body: "Graphs referencing its functions will error on next run.",
+    });
+    if (!ok) return;
     try {
-      await api.deleteCodeModule(m.id);
-      await refresh();
+      await deleteModule.mutateAsync(m.id);
+      notify("Code file deleted.", "success");
     } catch (e) {
-      setError(String(e));
+      notify(`Could not delete code file. ${errorMessage(e)}`, "error");
     }
   }
 
@@ -85,17 +134,48 @@ export function CodeLibraryPage() {
       <HomeHeader />
       <main className="home-main">
         <div className="home-bar">
-          <h1>
-            Code Library
-            {filtered && <span className="home-count">{filtered.length}</span>}
-          </h1>
+          <div>
+            <h1>
+              Code Library
+              {filtered && <span className="home-count">{filtered.length}</span>}
+            </h1>
+            <p className="muted">
+              Reusable Python functions that become workflow nodes.
+            </p>
+          </div>
           <button
             type="button"
-            className="btn"
+            className="btn btn-primary"
             onClick={() => setCreating(true)}
           >
-            + New file
+            New file
           </button>
+        </div>
+
+        {modules && (
+          <div className="codelib-summary" aria-label="Code library summary">
+            {(["all", "global", "environment", "workflow"] as Scope[]).map((scope) => (
+              <button
+                type="button"
+                key={scope}
+                className={tab === scope ? "is-selected" : ""}
+                onClick={() => setTab(scope)}
+              >
+                <strong>{stats[scope]}</strong>
+                <span>{scopeLabel(scope)}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="codelib-toolbar">
+          <input
+            className="field-input"
+            aria-label="Search code files"
+            placeholder="Search by filename, scope, import, or function..."
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
         </div>
 
         <div className="codelib-tabs">
@@ -109,54 +189,86 @@ export function CodeLibraryPage() {
               {s === "all"
                 ? "All"
                 : s === "global"
-                  ? "🌐 Global"
+                  ? "Global"
                   : s === "environment"
-                    ? "🐍 Environments"
-                    : "📎 Workflows"}
+                    ? "Environments"
+                    : "Workflows"}
             </button>
           ))}
         </div>
 
         {error && <p className="error-text">{error}</p>}
-        {!modules && !error && <p className="muted">Loading…</p>}
+        {!modules && !error && (
+          <div className="codelib-list" aria-label="Loading files">
+            {Array.from({ length: 5 }).map((_, index) => (
+              <div className="codelib-row skeleton-row" key={index}>
+                <div className="codelib-main">
+                  <span className="skeleton-line short" />
+                  <span className="skeleton-line" />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {filtered && filtered.length === 0 && (
-          <p className="muted">
-            No files in this scope. Click <strong>+ New file</strong> to add one.
-          </p>
+          <div className="empty-state">
+            <h2>No code files found</h2>
+            <p className="muted">
+              {query.trim()
+                ? "Try a different search or scope."
+                : "Create a Python file to expose reusable functions as nodes."}
+            </p>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setCreating(true)}
+            >
+              New file
+            </button>
+          </div>
         )}
 
         {filtered && filtered.length > 0 && (
           <div className="codelib-list">
-            {filtered.map((m) => (
-              <div className="codelib-row" key={m.id}>
-                <span className="codelib-badge" title={m.scope}>
-                  {scopeBadge(m.scope)}
-                </span>
-                <div className="codelib-main">
-                  <div className="codelib-name">{m.name}</div>
-                  <div className="codelib-meta">
-                    {scopeDetail(m)} · updated {relativeTime(m.updated_at)}
+            {filtered.map((m) => {
+              const summary = moduleSummary(m);
+              return (
+                <article className="codelib-row" key={m.id}>
+                  <span className={`codelib-badge scope-${m.scope}`} title={m.scope}>
+                    {scopeBadge(m.scope)}
+                  </span>
+                  <div className="codelib-main">
+                    <div className="codelib-name">{m.name}</div>
+                    <div className="codelib-meta">
+                      {scopeDetail(m)} · updated {relativeTime(m.updated_at)}
+                    </div>
+                    <div className="codelib-metrics">
+                      <span>{summary.functions} function{summary.functions === 1 ? "" : "s"}</span>
+                      <span>{summary.imports} import{summary.imports === 1 ? "" : "s"}</span>
+                      <span>{summary.lines} lines</span>
+                      {m.include_undecorated && <span>undecorated enabled</span>}
+                    </div>
                   </div>
-                </div>
-                <div className="codelib-actions">
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
-                    onClick={() => setEditing(m)}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
-                    onClick={() => void remove(m)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            ))}
+                  <div className="codelib-actions">
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => setEditing(m)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      onClick={() => void remove(m)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
 
@@ -170,9 +282,7 @@ export function CodeLibraryPage() {
               setCreating(false);
             }}
             onSaved={() => {
-              setEditing(null);
-              setCreating(false);
-              void refresh();
+              void modulesQuery.refetch();
             }}
           />
         )}
@@ -195,6 +305,7 @@ function CodeModuleDialog({
   onSaved: () => void;
 }) {
   const [name, setName] = useState(initial?.name ?? "functions.py");
+  const [moduleId, setModuleId] = useState(initial?.id ?? null);
   const [contents, setContents] = useState(
     initial?.contents ?? "def my_node(x: int = 0) -> int:\n    return x + 1\n",
   );
@@ -205,7 +316,15 @@ function CodeModuleDialog({
   const [workflowId, setWorkflowId] = useState(initial?.workflow_id ?? "");
   const [preview, setPreview] = useState<CodeModuleFunctionPreview | null>(null);
   const [saving, setSaving] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
   const [error, setError] = useState("");
+  const { notify } = useToast();
+  const createModule = useCreateCodeModuleMutation();
+  const updateModule = useUpdateCodeModuleMutation();
+  const previewModule = usePreviewCodeModuleMutation();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // trapFocus:false — the body embeds a code textarea that owns Tab.
+  useModalA11y(dialogRef, onClose, { trapFocus: false });
 
   async function save(): Promise<void> {
     setError("");
@@ -224,40 +343,73 @@ function CodeModuleDialog({
     setSaving(true);
     try {
       let saved: CodeModule;
-      if (initial) {
-        saved = await api.updateCodeModule(initial.id, { name, contents });
+      if (moduleId) {
+        saved = await updateModule.mutateAsync({
+          id: moduleId,
+          body: { name: name.trim(), contents },
+        });
       } else {
-        saved = await api.createCodeModule({
+        saved = await createModule.mutateAsync({
           scope,
           environment_id: scope === "environment" ? environmentId : null,
           workflow_id: scope === "workflow" ? workflowId : null,
-          name,
+          name: name.trim(),
           contents,
         });
+        setModuleId(saved.id);
       }
-      const p = await api.previewCodeModule(saved.id);
+      const p = await previewModule.mutateAsync(saved.id);
       setPreview(p);
+      notify("Code file saved.", "success");
       onSaved();
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     } finally {
       setSaving(false);
     }
   }
 
+  async function previewSaved(): Promise<void> {
+    if (!moduleId || previewing) return;
+    setPreviewing(true);
+    setError("");
+    try {
+      setPreview(await previewModule.mutateAsync(moduleId));
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal modal-wide"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="code-module-dialog-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="modal-head">
-          <h2>{initial ? `Edit ${initial.name}` : "New file"}</h2>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>
+          <div>
+            <h2 id="code-module-dialog-title">
+              {moduleId ? `Edit ${name || "code file"}` : "New code file"}
+            </h2>
+            <p className="muted">
+              Define Python functions here, then preview which functions become nodes.
+            </p>
+          </div>
+          <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </header>
         <div className="modal-body">
           {error && <p className="error-text">{error}</p>}
 
-          {!initial && (
+          {!moduleId && (
             <div className="field">
               <div className="field-label">
                 <span className="field-name">Scope</span>
@@ -265,7 +417,7 @@ function CodeModuleDialog({
               <select
                 className="field-input"
                 value={scope}
-                onChange={(e) => setScope(e.target.value)}
+                onChange={(e) => setScope(e.target.value as CodeModule["scope"])}
               >
                 <option value="global">Global — every workflow</option>
                 <option value="environment">Environment</option>
@@ -321,8 +473,8 @@ function CodeModuleDialog({
               <span className="field-name">Source</span>
             </div>
             <textarea
-              className="field-input field-code"
-              rows={16}
+              className="field-input field-code codelib-source"
+              rows={18}
               value={contents}
               onChange={(e) => setContents(e.target.value)}
               spellCheck={false}
@@ -330,7 +482,7 @@ function CodeModuleDialog({
           </div>
 
           {preview && (
-            <div className="functions-preview">
+            <div className="functions-preview codelib-preview">
               {preview.syntax_error ? (
                 <p className="error-text">
                   Syntax error: {preview.syntax_error}
@@ -339,6 +491,9 @@ function CodeModuleDialog({
                 <>
                   <p className="muted">
                     Registered nodes: {preview.registered.length}
+                    {preview.environment_name
+                      ? ` · environment ${preview.environment_name}`
+                      : ""}
                   </p>
                   {preview.registered.length > 0 && (
                     <ul className="functions-list-funcs">
@@ -357,6 +512,16 @@ function CodeModuleDialog({
                         .join(", ")}
                     </p>
                   )}
+                  {preview.imports.length > 0 && (
+                    <p className="muted">
+                      Imports: {preview.imports.join(", ")}
+                    </p>
+                  )}
+                  {preview.missing_in_env.length > 0 && (
+                    <p className="warn-text">
+                      Missing in environment: {preview.missing_in_env.join(", ")}
+                    </p>
+                  )}
                 </>
               )}
             </div>
@@ -364,10 +529,19 @@ function CodeModuleDialog({
         </div>
         <footer className="modal-foot">
           <button className="btn btn-ghost" onClick={onClose} disabled={saving}>
-            Cancel
+            Close
           </button>
-          <button className="btn" onClick={() => void save()} disabled={saving}>
-            {saving ? "Saving…" : initial ? "Save changes" : "Create file"}
+          {moduleId && (
+            <button
+              className="btn btn-ghost"
+              onClick={() => void previewSaved()}
+              disabled={saving || previewing}
+            >
+              {previewing ? "Previewing..." : "Preview functions"}
+            </button>
+          )}
+          <button className="btn btn-primary" onClick={() => void save()} disabled={saving}>
+            {saving ? "Saving..." : moduleId ? "Save and preview" : "Create and preview"}
           </button>
         </footer>
       </div>

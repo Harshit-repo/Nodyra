@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
+
 import noodle_nodes  # noqa: F401 - registers nodes
 from noodle.ai_runtime import (
     AgentActionRequest,
@@ -333,6 +335,49 @@ def test_document_loader_and_splitter_return_chunks() -> None:
     assert chunks["documents"][0]["metadata"]["source_document_id"] == "history"
 
 
+def test_text_document_loader_rejects_oversized_text() -> None:
+    from noodle_nodes.ai_v2.document_loaders import MAX_AI_DOCUMENT_CHARS
+
+    loader = registry.get("ai_text_document_loader").func(
+        text="x" * (MAX_AI_DOCUMENT_CHARS + 1),
+        document_id="huge",
+    )
+    try:
+        loader.load()
+    except ValueError as exc:
+        assert "limit" in str(exc)
+    else:
+        raise AssertionError("oversized AI text document should be rejected")
+
+
+def test_file_document_loader_rejects_oversized_file(tmp_path) -> None:
+    from noodle_nodes.ai_v2.document_loaders import MAX_AI_DOCUMENT_BYTES
+
+    path = tmp_path / "huge.txt"
+    path.write_bytes(b"x" * (MAX_AI_DOCUMENT_BYTES + 1))
+    loader = registry.get("ai_file_document_loader").func(path=str(path))
+    try:
+        loader.load()
+    except ValueError as exc:
+        assert "limit" in str(exc)
+    else:
+        raise AssertionError("oversized AI file document should be rejected")
+
+
+def test_recursive_text_splitter_rejects_excessive_chunks() -> None:
+    loader = registry.get("ai_text_document_loader").func(
+        text=" ".join(f"word{i}" for i in range(500)),
+        document_id="many",
+    )
+    splitter = registry.get("ai_recursive_text_splitter").func
+    try:
+        splitter(loader=loader, chunk_size=100, chunk_overlap=0, max_chunks=1)
+    except ValueError as exc:
+        assert "max_chunks" in str(exc)
+    else:
+        raise AssertionError("excessive AI text splitter chunks should be rejected")
+
+
 def test_url_document_loader_blocks_private_targets(monkeypatch) -> None:
     def fake_get(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError("private target should be blocked before requests")
@@ -347,6 +392,34 @@ def test_url_document_loader_blocks_private_targets(monkeypatch) -> None:
         assert "private" in str(exc)
     else:
         raise AssertionError("private URL document target should be blocked")
+
+
+def test_vector_store_upsert_rejects_excessive_document_count() -> None:
+    embedding_model = ScriptedEmbeddingModel()
+    store = registry.get("ai_in_memory_vector_store").func(namespace="test")
+    upsert = registry.get("ai_vector_store_upsert").func
+    with pytest.raises(ValueError, match="max_documents"):
+        upsert(
+            documents={"documents": [{"id": "1", "text": "ada"}, {"id": "2", "text": "grace"}]},
+            model=embedding_model,
+            store=store,
+            max_documents=1,
+        )
+
+
+def test_retrieve_documents_caps_top_k() -> None:
+    class RecordingRetriever(RetrieverAdapter):
+        def __init__(self) -> None:
+            self.top_k = 0
+
+        def retrieve(self, query: str, *, top_k: int = 5) -> list[Any]:
+            self.top_k = top_k
+            return []
+
+    retriever = RecordingRetriever()
+    retrieve = registry.get("ai_retrieve_documents").func
+    retrieve(input={"query": "ada"}, retriever=retriever, top_k=500)
+    assert retriever.top_k == 100
 
 
 def test_vector_store_upsert_and_retriever_returns_nearest_document() -> None:
@@ -447,6 +520,23 @@ def test_qdrant_vector_store_uses_rest_api(monkeypatch) -> None:
     assert docs[0].id == "ada"
     assert docs[0].score == 0.98
     assert docs[0].metadata["topic"] == "computing"
+
+
+def test_qdrant_vector_store_blocks_private_targets(monkeypatch) -> None:
+    def fake_request(*args: Any, **kwargs: Any) -> FakeResponse:
+        raise AssertionError("private target should be blocked before requests")
+
+    monkeypatch.setattr("requests.request", fake_request)
+    store = registry.get("ai_qdrant_vector_store").func(
+        credentials={"url": "http://127.0.0.1:6333", "api_key": "qd-key"},
+        collection="docs",
+    )
+    try:
+        store.query(vector=[1.0, 0.0], top_k=1)
+    except ValueError as exc:
+        assert "private" in str(exc)
+    else:
+        raise AssertionError("private Qdrant target should be blocked")
 
 
 def test_rag_chain_uses_retrieved_context() -> None:
@@ -694,6 +784,52 @@ def test_http_tool_blocks_private_targets(monkeypatch) -> None:
         raise AssertionError("private AI HTTP target should be blocked")
 
 
+def test_http_tool_renders_url_template_arguments(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, **kwargs: Any) -> Any:
+        captured["method"] = method
+        captured["url"] = url
+        captured["kwargs"] = kwargs
+        return FakeResponse({"ok": True})
+
+    monkeypatch.setattr("requests.request", fake_request)
+    adapter = registry.get("ai_http_tool").func(
+        name="search",
+        description="Search",
+        url="https://example.test/search/{account.id}?q={{ query }}",
+        method="GET",
+    )
+
+    result = adapter.invoke(
+        {"query": "Ada Lovelace", "account": {"id": "team/A"}}
+    )
+
+    assert captured["method"] == "GET"
+    assert captured["url"] == "https://example.test/search/team%2FA?q=Ada%20Lovelace"
+    assert captured["kwargs"]["params"] == {
+        "query": "Ada Lovelace",
+        "account": {"id": "team/A"},
+    }
+    assert result == '{"ok": true}'
+
+
+def test_http_tool_rejects_missing_url_template_argument(monkeypatch) -> None:
+    def fake_request(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("missing template arguments should block requests")
+
+    monkeypatch.setattr("requests.request", fake_request)
+    adapter = registry.get("ai_http_tool").func(
+        name="search",
+        description="Search",
+        url="https://example.test/search/{query}",
+        method="GET",
+    )
+
+    with pytest.raises(ValueError, match="missing URL template argument"):
+        adapter.invoke({})
+
+
 def test_workflow_tool_returns_adapter() -> None:
     fn = registry.get("ai_workflow_tool").func
     adapter = fn(
@@ -780,6 +916,14 @@ def test_agent_v2_requests_tool_and_resumes_to_final() -> None:
     assert request.allow_side_effects is True
     assert request.tool_calls[0].name == "lookup"
     assert model.requests[0].tools[0].name == "lookup"
+    assert model.requests[0].messages[0].role == MessageRole.system
+    assert "Noodle tools available" in model.requests[0].messages[0].content
+    assert "lookup" in model.requests[0].messages[0].content
+    assert "query: string, required" in model.requests[0].messages[0].content
+    assert (
+        "Never call a tool with an empty argument object"
+        in model.requests[0].messages[0].content
+    )
     assert model.requests[0].messages[-1].role == MessageRole.user
     assert request.messages_so_far[-1].tool_calls[0].id == "call_1"
 
@@ -805,6 +949,150 @@ def test_agent_v2_requests_tool_and_resumes_to_final() -> None:
     assert model.requests[1].messages[-1].role == MessageRole.tool
 
 
+def test_agent_v2_preserves_approve_all_for_followup_tool_calls() -> None:
+    model = ScriptedChatModel(
+        [
+            ChatResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call_2",
+                        name="lookup",
+                        arguments={"query": "Grace"},
+                    )
+                ],
+                model="test-model",
+                provider="test",
+            ),
+        ]
+    )
+    fn = registry.get("ai_agent_v2").func
+    prior_call = ToolCall(id="call_1", name="lookup", arguments={"query": "Ada"})
+    resume = AgentResumeInput(
+        tool_results=[
+            ToolResult(tool_call_id="call_1", name="lookup", content="Ada Lovelace")
+        ],
+        messages_so_far=[
+            AIMessage.user("Find people"),
+            AIMessage.assistant("", tool_calls=[prior_call]),
+        ],
+        step=1,
+        max_steps=4,
+        allow_side_effects=True,
+    )
+
+    request = fn(
+        input={"task": "Find people"},
+        model=model,
+        tool=DummyTool("lookup"),
+        side_effect_approval="require_approval",
+        agent_resume=resume,
+    )
+
+    assert isinstance(request, AgentActionRequest)
+    assert request.allow_side_effects is True
+    assert request.tool_calls[0].id == "call_2"
+
+
+def test_agent_v2_falls_back_to_tool_result_for_empty_json_reply() -> None:
+    model = ScriptedChatModel(
+        [ChatResponse(text="{}", model="test-model", provider="test")]
+    )
+    fn = registry.get("ai_agent_v2").func
+    prior_call = ToolCall(
+        id="call_1",
+        name="execute_command",
+        arguments={"command": "python --version"},
+    )
+    resume = AgentResumeInput(
+        tool_results=[
+            ToolResult(
+                tool_call_id="call_1",
+                name="execute_command",
+                content=json.dumps(
+                    {
+                        "stdout": "Python 3.12.8\n",
+                        "stderr": "",
+                        "returncode": 0,
+                    }
+                ),
+            )
+        ],
+        messages_so_far=[
+            AIMessage.user("Which Python version is installed?"),
+            AIMessage.assistant("", tool_calls=[prior_call]),
+        ],
+        step=1,
+        max_steps=4,
+    )
+
+    output = fn(
+        input={"task": "Which Python version is installed?"},
+        model=model,
+        tool=DummyTool("execute_command"),
+        agent_resume=resume,
+    )
+
+    assert output["answer"] == "Python 3.12.8"
+
+
+def test_agent_v2_returns_intermediate_steps_trace() -> None:
+    model = ScriptedChatModel(
+        [
+            ChatResponse(
+                tool_calls=[
+                    ToolCall(id="call_1", name="lookup", arguments={"query": "Ada"})
+                ],
+                model="test-model",
+                provider="test",
+            ),
+            ChatResponse(text="Ada Lovelace", model="test-model", provider="test"),
+        ]
+    )
+    fn = registry.get("ai_agent_v2").func
+
+    request = fn(input={"task": "Find Ada"}, model=model, tool=DummyTool("lookup"))
+    assert isinstance(request, AgentActionRequest)
+
+    resume = AgentResumeInput(
+        tool_results=[
+            ToolResult(tool_call_id="call_1", name="lookup", content="Ada Lovelace")
+        ],
+        messages_so_far=request.messages_so_far,
+        step=1,
+        max_steps=4,
+    )
+    output = fn(
+        input={"task": "Find Ada"},
+        model=model,
+        tool=DummyTool("lookup"),
+        agent_resume=resume,
+    )
+
+    assert output["tool_calls_count"] == 1
+    steps = output["intermediate_steps"]
+    assert len(steps) == 1
+    assert steps[0]["tool"] == "lookup"
+    assert steps[0]["arguments"] == {"query": "Ada"}
+    assert steps[0]["result"] == "Ada Lovelace"
+    assert steps[0]["status"] == "success"
+
+
+def test_agent_v2_can_disable_tool_trace() -> None:
+    model = ScriptedChatModel(
+        [ChatResponse(text="hello", model="test-model", provider="test")]
+    )
+    fn = registry.get("ai_agent_v2").func
+
+    output = fn(
+        input={"task": "Say hello"},
+        model=model,
+        return_tool_trace=False,
+    )
+
+    assert "intermediate_steps" not in output
+    assert "tool_calls_count" not in output
+
+
 def test_agent_v2_saves_final_response_to_memory() -> None:
     memory = registry.get("ai_buffer_memory").func(window=10)
     model = ScriptedChatModel(
@@ -821,6 +1109,25 @@ def test_agent_v2_saves_final_response_to_memory() -> None:
     saved = memory.load(session_id="s1")
     assert output["answer"] == "hello"
     assert [msg.role for msg in saved] == [MessageRole.user, MessageRole.assistant]
+
+
+def test_agent_v2_tool_instruction_is_not_saved_to_memory() -> None:
+    memory = registry.get("ai_buffer_memory").func(window=10)
+    model = ScriptedChatModel(
+        [ChatResponse(text="hello", model="test-model", provider="test")]
+    )
+    fn = registry.get("ai_agent_v2").func
+
+    fn(
+        input={"task": "Say hello", "session_id": "s1"},
+        model=model,
+        tool=DummyTool("lookup"),
+        memory=memory,
+    )
+
+    assert "Noodle tools available" in model.requests[0].messages[0].content
+    saved = memory.load(session_id="s1")
+    assert all("Noodle tools available" not in msg.content for msg in saved)
 
 
 # ---------------------------------------------------------------------------
@@ -1010,3 +1317,69 @@ def test_raise_if_tools_unsupported_ignores_unrelated_errors() -> None:
     _raise_if_tools_unsupported(
         resp, service="openrouter", model="x", has_tools=True
     )
+
+
+def test_openai_normalize_response_joins_list_content_parts() -> None:
+    """Some OpenAI-compatible providers (via OpenRouter) return ``content`` as
+    a list of typed parts instead of a string; the text parts must be joined,
+    not stringified into a Python repr."""
+    from noodle_nodes.ai_v2.providers.openai import _normalize_response
+
+    body = {
+        "choices": [
+            {
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "Python "},
+                        {"type": "text", "text": "3.12.8"},
+                        {"type": "image_url", "image_url": {"url": "x"}},
+                    ]
+                },
+                "finish_reason": "stop",
+            }
+        ]
+    }
+    assert _normalize_response(body, "openrouter").text == "Python 3.12.8"
+
+
+def test_agent_v2_retries_once_when_parser_rejects_final_answer() -> None:
+    model = ScriptedChatModel(
+        [
+            ChatResponse(text="not json at all", model="m", provider="test"),
+            ChatResponse(text='{"answer": "fixed"}', model="m", provider="test"),
+        ]
+    )
+    parser = registry.get("ai_structured_output_parser").func(
+        schema='{"required": ["answer"]}'
+    )
+    fn = registry.get("ai_agent_v2").func
+
+    output = fn(input={"task": "Go"}, model=model, parser=parser)
+
+    assert output["parsed"] == {"answer": "fixed"}
+    assert output["answer"] == '{"answer": "fixed"}'
+    assert len(model.requests) == 2
+    # The corrective turn shows the model its failed reply and the error.
+    correction = model.requests[1].messages[-1]
+    assert correction.role == MessageRole.user
+    assert "failed validation" in correction.content
+    assert model.requests[1].messages[-2].content == "not json at all"
+
+
+def test_agent_v2_parser_failure_after_retry_propagates() -> None:
+    import pytest
+
+    model = ScriptedChatModel(
+        [
+            ChatResponse(text="not json", model="m", provider="test"),
+            ChatResponse(text="still not json", model="m", provider="test"),
+        ]
+    )
+    parser = registry.get("ai_structured_output_parser").func(
+        schema='{"required": ["answer"]}'
+    )
+    fn = registry.get("ai_agent_v2").func
+
+    with pytest.raises(Exception):  # noqa: B017 - parser's own error surfaces
+        fn(input={"task": "Go"}, model=model, parser=parser)
+    assert len(model.requests) == 2

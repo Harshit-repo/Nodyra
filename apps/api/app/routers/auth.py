@@ -1,8 +1,8 @@
-from collections import defaultdict, deque
-from time import monotonic
+import time
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -17,18 +17,21 @@ from app.schemas import (
     UserCreate,
     UserInfo,
     UserUpdate,
+    WsTicketResponse,
 )
 from app.security import (
+    _extract_token,
+    _user_from_session_token,
     current_user,
     normalize_role,
     require_permission,
 )
+from app.services import rate_limit
 from app.services.audit import log_audit
 from app.services.crypto import (
     create_token,
     hash_password,
     verify_password,
-    verify_token,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -38,34 +41,21 @@ users_router = APIRouter(prefix="/users", tags=["users"])
 require_user_manage = require_permission("user:manage")
 
 
-# Per-(bucket, IP) sliding-window rate limiter for unauthenticated endpoints.
-# Kept in-process to avoid adding a Redis hop on every login attempt; a
-# multi-replica deployment behind a load balancer effectively gets N*limit
-# attempts, which is still enough to block naive brute-force from a single IP.
-# Operators wanting strict cross-replica limits should add a WAF in front.
-_AUTH_RATE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
-
-
-def _enforce_auth_rate_limit(request: Request, bucket: str) -> None:
+# Per-(bucket, IP) rate limiting for unauthenticated endpoints is delegated to
+# the shared limiter (app.services.rate_limit), which is Redis-backed across
+# replicas and falls back to an in-process sliding window — see H5.
+async def _enforce_auth_rate_limit(request: Request, bucket: str) -> None:
     if not settings.auth_rate_limit_enabled:
         return
-    limit = settings.auth_rate_limit_per_minute
-    if limit <= 0:
-        return
     ip = request.client.host if request.client else "anon"
-    key = f"{bucket}:{ip}"
-    history = _AUTH_RATE_BUCKETS[key]
-    now = monotonic()
-    cutoff = now - 60.0
-    while history and history[0] < cutoff:
-        history.popleft()
-    if len(history) >= limit:
+    allowed = await rate_limit.allow(
+        bucket, ip, limit=settings.auth_rate_limit_per_minute
+    )
+    if not allowed:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             f"Too many {bucket} attempts; try again in a minute.",
         )
-    history.append(now)
-
 
 
 async def _user_count(session: AsyncSession) -> int:
@@ -99,6 +89,52 @@ def _token_response(user: User) -> TokenResponse:
             company=user.company,
             role=user.role,
         ),
+    )
+
+
+def _set_session_cookies(response: Response, token: str) -> None:
+    """Attach httpOnly session cookie + non-httpOnly CSRF cookie to the response.
+
+    The CSRF cookie carries a same-value token the SPA must echo in the
+    ``X-CSRF-Token`` header.  It is NOT httpOnly so JS can read it.
+    The session cookie IS httpOnly so JS cannot access the bearer token.
+    """
+    import secrets
+
+    csrf_value = secrets.token_urlsafe(32)
+    ttl = settings.auth_token_ttl_seconds
+    samesite = settings.session_cookie_samesite
+
+    response.set_cookie(
+        key=settings.session_cookie_name,
+        value=token,
+        max_age=ttl,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite=samesite,
+    )
+    response.set_cookie(
+        key=settings.csrf_cookie_name,
+        value=csrf_value,
+        max_age=ttl,
+        httponly=False,
+        secure=settings.session_cookie_secure,
+        samesite=samesite,
+    )
+
+
+def _clear_session_cookies(response: Response) -> None:
+    response.delete_cookie(
+        key=settings.session_cookie_name,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite=settings.session_cookie_samesite,
+    )
+    response.delete_cookie(
+        key=settings.csrf_cookie_name,
+        httponly=False,
+        secure=settings.session_cookie_secure,
+        samesite=settings.session_cookie_samesite,
     )
 
 
@@ -143,9 +179,10 @@ async def _assert_role_change_allowed(
 async def register(
     body: RegisterRequest,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_session),
 ):
-    _enforce_auth_rate_limit(request, "register")
+    await _enforce_auth_rate_limit(request, "register")
     email = _email(body.email)
     existing = await session.scalar(select(User).where(User.email == email))
     if existing is not None:
@@ -168,23 +205,107 @@ async def register(
     )
     session.add(user)
     await log_audit(session, "register", "user", detail=f"{email} ({role})")
-    await session.commit()
-    return _token_response(user)
+    try:
+        await session.commit()
+    except IntegrityError:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
+    result = _token_response(user)
+    _set_session_cookies(response, result.token)
+    return result
 
 
 @router.post("/login", response_model=TokenResponse)
 async def login(
     body: LoginRequest,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_session),
 ):
-    _enforce_auth_rate_limit(request, "login")
+    await _enforce_auth_rate_limit(request, "login")
     user = await session.scalar(select(User).where(User.email == _email(body.email)))
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "Invalid email or password"
         )
-    return _token_response(user)
+    result = _token_response(user)
+    _set_session_cookies(response, result.token)
+    return result
+
+
+def _revoke_sessions(user: User) -> None:
+    """Stamp the per-user revocation cutoff (C1).
+
+    Every outstanding token has ``iat`` < now (it was minted earlier), so the
+    cutoff invalidates them all. A re-login moments later mints a token with a
+    strictly-larger ``iat`` (sub-second resolution) and survives.
+    """
+    user.sessions_valid_after = time.time()
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(response: Response) -> None:
+    """Clear the httpOnly session cookie and CSRF cookie.
+
+    Safe to call when not signed in (idempotent cookie deletion).
+    """
+    _clear_session_cookies(response)
+
+
+@router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
+async def logout_all(
+    response: Response,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Revoke every session for the current user ("log out everywhere").
+
+    Invalidates all outstanding tokens (this device included) by advancing the
+    user's revocation cutoff, then clears this response's cookies.
+    """
+    _revoke_sessions(user)
+    await log_audit(
+        session, "revoke_sessions", "user", user.id, user.email,
+        actor_id=user.id, actor_email=user.email,
+    )
+    await session.commit()
+    _clear_session_cookies(response)
+
+
+@router.post(
+    "/users/{user_id}/revoke-sessions",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_user_manage)],
+)
+async def revoke_user_sessions(
+    user_id: str,
+    actor: User | None = Depends(require_user_manage),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Admin lockout: revoke all of a target user's sessions (C1)."""
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    _revoke_sessions(user)
+    await log_audit(
+        session, "revoke_sessions", "user", user.id, user.email,
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
+    )
+    await session.commit()
+
+
+@router.post("/ws-ticket", response_model=WsTicketResponse)
+async def ws_ticket(user: User = Depends(current_user)) -> WsTicketResponse:
+    """Mint a single-use WebSocket authentication ticket.
+
+    Browsers can't send custom headers on WS upgrades, so the SPA calls this
+    endpoint first to get a short-lived ticket and passes it as ``?ticket=``
+    on the WS URL.  The ticket is consumed on first use.
+    """
+    from app.services.ws_ticket import create_ticket
+
+    ticket = await create_ticket(user.id)
+    return WsTicketResponse(ticket=ticket)
 
 
 @router.get("/me", response_model=UserInfo)
@@ -200,20 +321,33 @@ async def users_me(user: User = Depends(current_user)):
 
 @router.get("/required", response_model=AuthRequiredResponse)
 async def auth_required(
+    request: Request,
     authorization: str | None = Header(default=None),
     session: AsyncSession = Depends(get_session),
 ):
     """Frontend bootstrap — tells the UI whether to show a login screen."""
     user: User | None = None
-    if authorization and authorization.startswith("Bearer "):
-        user_id = verify_token(authorization.removeprefix("Bearer "))
-        if user_id is not None:
-            user = await session.get(User, user_id)
+    token, _ = _extract_token(authorization, request)
+    if token:
+        user = await _user_from_session_token(token, session)
     count = await _user_count(session)
+    from app.services.licensing import current_license
+
+    lic = await current_license()
     return AuthRequiredResponse(
         auth_required=settings.auth_required,
         signed_in=user is not None,
         registration_open=count == 0 or settings.auth_allow_registration,
+        multi_tenancy=settings.multi_tenancy_enabled,
+        edition=lic.edition.value,
+        entitlements=[f.value for f in lic.features],
+        limits={
+            "environments": lic.limits.environments,
+            "runners": lic.limits.runners,
+            "deployments": lic.limits.deployments,
+            "seats": lic.limits.seats,
+        },
+        license_notice=lic.notice,
         user=UserInfo.model_validate(user) if user is not None else None,
     )
 
@@ -253,6 +387,8 @@ async def create_user(
     existing = await session.scalar(select(User).where(User.email == email))
     if existing is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
+    from app.services.licensing import enforce_resource_cap
+    await enforce_resource_cap(session, "seats")
     user = User(
         email=email,
         name=_clean(body.name),
