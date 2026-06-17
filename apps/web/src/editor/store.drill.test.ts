@@ -117,6 +117,19 @@ describe("metanode drill-in: port lifecycle", () => {
     expect(handles.length).toBe(before);
   });
 
+  it("a chosen port kind persists on the parent even while unwired", () => {
+    load(chainGraph4());
+    const meta = useEditor.getState().collapseToMetanode(["B", "C"])!;
+    useEditor.getState().enterMetanode(meta);
+    useEditor.getState().addMetaPort("input", "dataset");
+    useEditor.getState().exitMetanode();
+    const metaNode = useEditor.getState().nodes.find((n) => n.id === meta)!;
+    const ports = (metaNode.data.params as { ports: { inputs: { data_kind?: string }[] } }).ports;
+    expect(ports.inputs.at(-1)!.data_kind).toBe("dataset");
+    // the synthetic manifest exposes the typed port too
+    expect(metaNode.data.manifest.inputs.at(-1)!.data_kind).toBe("dataset");
+  });
+
   it("removing an input port drops its parent edge on exit", () => {
     load(chainGraph4());
     const meta = useEditor.getState().collapseToMetanode(["B", "C"])!;

@@ -476,7 +476,7 @@ function foldInterior(
   // inside (rewiring, adding nodes) keep the metanode's parent ports accurate.
   const interiorById = new Map(interior.map((n) => [n.id, n]));
   const inputDescriptors =
-    (inputBar?.data as { ports?: { id: string }[] } | undefined)?.ports ?? [];
+    (inputBar?.data as { ports?: { id: string; data_kind?: string }[] } | undefined)?.ports ?? [];
   const inputs = inputDescriptors.map((d) => {
     const targets = liveEdges
       .filter((e) => e.source === META_BAR_INPUT_ID && (e.sourceHandle ?? "") === d.id)
@@ -484,7 +484,11 @@ function foldInterior(
     const first = targets[0];
     return {
       port: d.id,
-      data_kind: first ? metaPortKind(interiorById.get(first.target), "input", first.target_input) : undefined,
+      // Derive from the wired internal target; fall back to the port's chosen
+      // kind (set when the user added it) while it's still unconnected.
+      data_kind: first
+        ? metaPortKind(interiorById.get(first.target), "input", first.target_input)
+        : d.data_kind,
       targets,
     };
   });
@@ -1068,7 +1072,7 @@ export interface EditorStore {
   enterMetanode: (metaId: string) => void;
   exitMetanode: () => void;
   exitToDepth: (depth: number) => void;
-  addMetaPort: (side: "input" | "output") => void;
+  addMetaPort: (side: "input" | "output", dataKind?: string) => void;
   removeMetaPort: (side: "input" | "output", portId: string) => void;
   runKeyFor: (nodeId: string) => string;
   drillStepRunDisabledReason: () => string | null;
@@ -2046,7 +2050,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
     }
   },
 
-  addMetaPort: (side) => {
+  addMetaPort: (side, dataKind = "any") => {
     const state = get();
     const barId = side === "input" ? META_BAR_INPUT_ID : META_BAR_OUTPUT_ID;
     const seq = state.drillPortSeq;
@@ -2058,7 +2062,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
               ...n,
               data: {
                 ...n.data,
-                ports: [...((n.data as unknown as { ports: { id: string; label: string; data_kind?: string }[] }).ports), { id: newId, label: newId, data_kind: "any" }],
+                ports: [...((n.data as unknown as { ports: { id: string; label: string; data_kind?: string }[] }).ports), { id: newId, label: newId, data_kind: dataKind }],
               },
             }
           : n,
