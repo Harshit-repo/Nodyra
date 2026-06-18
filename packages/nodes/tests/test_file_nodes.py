@@ -400,23 +400,11 @@ def test_read_s3_parquet_as_dataset(store_ctx, tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _mock_response(content: bytes, content_type: str = "application/octet-stream", status: int = 200):
-    resp = MagicMock()
-    resp.content = content
-    resp.headers = {"Content-Type": content_type}
-    resp.is_redirect = False  # prevent MagicMock truthy default from triggering redirect loop
-    resp.raise_for_status = MagicMock()
-    if status >= 400:
-        import requests as _req
-        resp.raise_for_status.side_effect = _req.HTTPError(f"HTTP {status}")
-    return resp
-
-
 def test_read_url_csv_auto_detect_by_extension() -> None:
     from noodle_nodes.file_nodes import read_url_file
 
     fake_ref = {"__noodle_dataset__": True}
-    with patch("requests.get", return_value=_mock_response(b"a,b\n1,2\n")):
+    with patch("noodle_nodes.file_nodes._ssrf_safe_fetch", return_value=(b"a,b\n1,2\n", "application/octet-stream")):
         with patch("noodle_nodes.file_nodes.csv_parse", return_value=fake_ref) as mock_parse:
             result = read_url_file(
                 input=None,
@@ -432,8 +420,7 @@ def test_read_url_csv_auto_detect_by_content_type() -> None:
     from noodle_nodes.file_nodes import read_url_file
 
     fake_ref = {"__noodle_dataset__": True}
-    resp = _mock_response(b"x,y\n1,2\n", content_type="text/csv")
-    with patch("requests.get", return_value=resp):
+    with patch("noodle_nodes.file_nodes._ssrf_safe_fetch", return_value=(b"x,y\n1,2\n", "text/csv")):
         with patch("noodle_nodes.file_nodes.csv_parse", return_value=fake_ref):
             result = read_url_file(
                 input=None,
@@ -447,7 +434,7 @@ def test_read_url_csv_auto_detect_by_content_type() -> None:
 def test_read_url_text_format_explicit() -> None:
     from noodle_nodes.file_nodes import read_url_file
 
-    with patch("requests.get", return_value=_mock_response(b"hello")):
+    with patch("noodle_nodes.file_nodes._ssrf_safe_fetch", return_value=(b"hello", "text/plain")):
         result = read_url_file(
             input=None,
             url="https://example.com/readme.txt",
@@ -461,7 +448,7 @@ def test_read_url_text_format_explicit() -> None:
 def test_read_url_custom_headers_forwarded() -> None:
     from noodle_nodes.file_nodes import read_url_file
 
-    with patch("requests.get", return_value=_mock_response(b"ok")) as mock_get:
+    with patch("noodle_nodes.file_nodes._ssrf_safe_fetch", return_value=(b"ok", "text/plain")) as mock_fetch:
         read_url_file(
             input=None,
             url="https://example.com/data.txt",
@@ -469,30 +456,30 @@ def test_read_url_custom_headers_forwarded() -> None:
             request_headers='{"Authorization": "Bearer tok"}',
             output_as_dataset=False,
         )
-    call_kwargs = mock_get.call_args.kwargs
-    assert call_kwargs["headers"]["Authorization"] == "Bearer tok"
+    # _ssrf_safe_fetch(url, headers) — headers is the second positional arg
+    _called_headers = mock_fetch.call_args.args[1]
+    assert _called_headers.get("Authorization") == "Bearer tok"
 
 
 def test_read_url_http_error_raises() -> None:
     from noodle_nodes.file_nodes import read_url_file
-    import requests as _req
 
-    with patch("requests.get", return_value=_mock_response(b"", status=403)):
-        with pytest.raises(_req.HTTPError):
+    with patch("noodle_nodes.file_nodes._ssrf_safe_fetch", side_effect=ValueError("HTTP 403 from https://example.com/private.csv")):
+        with pytest.raises(ValueError, match="HTTP 403"):
             read_url_file(input=None, url="https://example.com/private.csv", format="auto")
 
 
 def test_read_url_invalid_headers_json_raises() -> None:
     from noodle_nodes.file_nodes import read_url_file
 
-    with patch("requests.get", return_value=_mock_response(b"ok")):
-        with pytest.raises(ValueError, match="request_headers must be valid JSON"):
-            read_url_file(
-                input=None,
-                url="https://example.com/f.txt",
-                format="text",
-                request_headers="not-json",
-            )
+    # JSON parsing happens before _ssrf_safe_fetch is called — no mock needed.
+    with pytest.raises(ValueError, match="request_headers must be valid JSON"):
+        read_url_file(
+            input=None,
+            url="https://example.com/f.txt",
+            format="text",
+            request_headers="not-json",
+        )
 
 
 def test_read_url_missing_url_raises() -> None:
@@ -508,7 +495,7 @@ def test_read_url_json_auto_detect_by_extension() -> None:
     data = [{"id": 1}, {"id": 2}]
     json_bytes = json.dumps(data).encode()
     fake_ref = {"__noodle_dataset__": True}
-    with patch("requests.get", return_value=_mock_response(json_bytes)):
+    with patch("noodle_nodes.file_nodes._ssrf_safe_fetch", return_value=(json_bytes, "application/json")):
         with patch("noodle_nodes.file_nodes._parse_file_bytes", return_value=fake_ref) as mock_parse:
             result = read_url_file(
                 input=None,

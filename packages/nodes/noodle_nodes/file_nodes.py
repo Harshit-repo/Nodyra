@@ -466,35 +466,122 @@ def read_s3_file(
     )
 
 
-def _validate_ssrf_url(url: str) -> None:
-    """Reject URLs that could cause SSRF: non-http(s) schemes, unresolvable hosts, or
-    addresses that resolve to loopback, private, link-local, or other non-global ranges."""
+_REDIRECT_AUTH_HEADERS = frozenset({
+    "authorization",
+    "cookie",
+    "proxy-authorization",
+    "x-api-key",
+    "x-auth-token",
+    "x-access-token",
+})
+
+
+def _ssrf_safe_fetch(url: str, headers: dict, *, timeout: int = 60) -> tuple[bytes, str]:
+    """Fetch ``url`` and return ``(body_bytes, content_type)``.
+
+    SSRF protections applied:
+    1. DNS-rebinding prevention: the hostname is resolved once via
+       ``socket.getaddrinfo``, every returned address is checked to be globally
+       routable, and the TCP connection is made directly to the validated IP via
+       urllib3.  ``assert_hostname`` / ``server_hostname`` preserve the original
+       hostname for TLS certificate verification and SNI so HTTPS keeps working.
+    2. Cross-host redirect credential stripping: auth-class headers
+       (Authorization, Cookie, …) are removed before following a redirect to a
+       different hostname, preventing user credentials from being forwarded to an
+       attacker-controlled domain.
+    """
     import ipaddress
     import socket
-    from urllib.parse import urlparse as _urlparse
+    import urllib3
+    from urllib.parse import urlparse
 
-    parsed = _urlparse(url)
-    if parsed.scheme not in {"http", "https"}:
-        raise ValueError(
-            f"read_url_file: unsupported URL scheme {parsed.scheme!r}; only http and https are allowed"
-        )
-    hostname = parsed.hostname
-    if not hostname:
-        raise ValueError("read_url_file: URL must include a hostname")
-    try:
-        addrs = {info[4][0] for info in socket.getaddrinfo(hostname, None)}
-    except socket.gaierror as exc:
-        raise ValueError(f"read_url_file: cannot resolve hostname {hostname!r}: {exc}") from exc
-    for addr in addrs:
-        try:
-            ip = ipaddress.ip_address(addr)
-        except ValueError:
-            continue
-        if not ip.is_global:
+    current_url = url
+    current_headers = dict(headers)
+    max_redirects = 10
+
+    while True:
+        parsed = urlparse(current_url)
+        if parsed.scheme not in {"http", "https"}:
             raise ValueError(
-                f"read_url_file: requests to private/loopback addresses are not allowed "
-                f"({hostname!r} resolves to {addr})"
+                f"read_url_file: unsupported URL scheme {parsed.scheme!r}; "
+                "only http and https are allowed"
             )
+        hostname = parsed.hostname
+        if not hostname:
+            raise ValueError("read_url_file: URL must include a hostname")
+
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+        # Resolve once and validate every returned address before connecting.
+        try:
+            infos = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+        except socket.gaierror as exc:
+            raise ValueError(
+                f"read_url_file: cannot resolve hostname {hostname!r}: {exc}"
+            ) from exc
+        if not infos:
+            raise ValueError(f"read_url_file: no addresses for {hostname!r}")
+        for info in infos:
+            addr = info[4][0]
+            try:
+                ip = ipaddress.ip_address(addr)
+            except ValueError:
+                continue
+            if not ip.is_global:
+                raise ValueError(
+                    f"read_url_file: {hostname!r} resolves to {addr}, which is not a "
+                    "globally routable address; requests to private/loopback/link-local "
+                    "addresses are not allowed"
+                )
+
+        # Connect directly to the validated IP.  For HTTPS, assert_hostname and
+        # server_hostname keep TLS verification and SNI tied to the original
+        # hostname rather than the raw IP.
+        validated_ip = infos[0][4][0]
+        path = (parsed.path or "/") + (f"?{parsed.query}" if parsed.query else "")
+        req_headers = {"Host": hostname, **current_headers}
+
+        if parsed.scheme == "https":
+            pool: urllib3.HTTPConnectionPool = urllib3.HTTPSConnectionPool(
+                validated_ip,
+                port=port,
+                assert_hostname=hostname,
+                server_hostname=hostname,
+            )
+        else:
+            pool = urllib3.HTTPConnectionPool(validated_ip, port=port)
+
+        resp = pool.request(
+            "GET", path, headers=req_headers,
+            redirect=False, preload_content=True, timeout=timeout,
+        )
+
+        if resp.status in (301, 302, 303, 307, 308) and max_redirects > 0:
+            location = resp.headers.get("Location", "")
+            if not location:
+                break
+            # Resolve relative Location headers (e.g. "/new-path") against the
+            # current URL so same-origin redirects continue to work correctly.
+            from urllib.parse import urljoin as _urljoin
+            resolved_location = _urljoin(current_url, location)
+            redirect_hostname = urlparse(resolved_location).hostname
+            if redirect_hostname and redirect_hostname != hostname:
+                # Cross-host redirect: strip auth-class headers so credentials
+                # are never forwarded to an attacker-controlled domain.
+                current_headers = {
+                    k: v for k, v in current_headers.items()
+                    if k.lower() not in _REDIRECT_AUTH_HEADERS
+                }
+            current_url = resolved_location
+            max_redirects -= 1
+        else:
+            break
+
+    if resp.status >= 400:
+        raise ValueError(f"read_url_file: HTTP {resp.status} from {current_url}")
+
+    content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip()
+    return resp.data, content_type
 
 
 _URL_FORMAT_CHOICES = ["auto", "csv", "json", "parquet", "text"]
@@ -574,8 +661,6 @@ def read_url_file(
     import json as _json
     from urllib.parse import urlparse
 
-    import requests as _requests
-
     if not url:
         raise ValueError("read_url_file: url must be provided")
 
@@ -592,24 +677,7 @@ def read_url_file(
             raise ValueError("read_url_file: request_headers must be a JSON object")
         headers = parsed_headers
 
-    # Validate scheme and resolved IP before making the request; re-validate on each redirect
-    # to prevent SSRF via open redirect chains pointing to internal services.
-    _validate_ssrf_url(url)
-    current_url = url
-    max_redirects = 10
-    while True:
-        resp = _requests.get(current_url, headers=headers, timeout=60, allow_redirects=False)
-        if resp.is_redirect and max_redirects > 0:
-            location = resp.headers.get("Location", "")
-            _validate_ssrf_url(location)
-            current_url = location
-            max_redirects -= 1
-        else:
-            break
-    resp.raise_for_status()
-
-    content_bytes: bytes = resp.content
-    content_type: str = (resp.headers.get("Content-Type") or "").split(";")[0].strip()
+    content_bytes, content_type = _ssrf_safe_fetch(url, headers)
 
     # Derive filename from the original URL path (the final URL may be a CDN path)
     url_path = urlparse(url).path
