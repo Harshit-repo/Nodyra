@@ -393,3 +393,226 @@ def test_read_s3_parquet_as_dataset(store_ctx, tmp_path: Path) -> None:
         )
     assert is_dataset_ref(result)
     assert result["row_count"] == 3
+
+
+# ---------------------------------------------------------------------------
+# read_url_file
+# ---------------------------------------------------------------------------
+
+
+def _mock_response(content: bytes, content_type: str = "application/octet-stream", status: int = 200):
+    resp = MagicMock()
+    resp.content = content
+    resp.headers = {"Content-Type": content_type}
+    resp.raise_for_status = MagicMock()
+    if status >= 400:
+        import requests as _req
+        resp.raise_for_status.side_effect = _req.HTTPError(f"HTTP {status}")
+    return resp
+
+
+def test_read_url_csv_auto_detect_by_extension() -> None:
+    from noodle_nodes.file_nodes import read_url_file
+
+    fake_ref = {"__noodle_dataset__": True}
+    with patch("requests.get", return_value=_mock_response(b"a,b\n1,2\n")):
+        with patch("noodle_nodes.file_nodes.csv_parse", return_value=fake_ref) as mock_parse:
+            result = read_url_file(
+                input=None,
+                url="https://example.com/data.csv",
+                format="auto",
+                output_as_dataset=True,
+            )
+    assert result is fake_ref
+    mock_parse.assert_called_once()
+
+
+def test_read_url_csv_auto_detect_by_content_type() -> None:
+    from noodle_nodes.file_nodes import read_url_file
+
+    fake_ref = {"__noodle_dataset__": True}
+    resp = _mock_response(b"x,y\n1,2\n", content_type="text/csv")
+    with patch("requests.get", return_value=resp):
+        with patch("noodle_nodes.file_nodes.csv_parse", return_value=fake_ref):
+            result = read_url_file(
+                input=None,
+                url="https://example.com/download?token=abc",
+                format="auto",
+                output_as_dataset=True,
+            )
+    assert result is fake_ref
+
+
+def test_read_url_text_format_explicit() -> None:
+    from noodle_nodes.file_nodes import read_url_file
+
+    with patch("requests.get", return_value=_mock_response(b"hello")):
+        result = read_url_file(
+            input=None,
+            url="https://example.com/readme.txt",
+            format="text",
+            output_as_dataset=False,
+        )
+    assert result["text"] == "hello"
+    assert result["filename"] == "readme.txt"
+
+
+def test_read_url_custom_headers_forwarded() -> None:
+    from noodle_nodes.file_nodes import read_url_file
+
+    with patch("requests.get", return_value=_mock_response(b"ok")) as mock_get:
+        read_url_file(
+            input=None,
+            url="https://example.com/data.txt",
+            format="text",
+            request_headers='{"Authorization": "Bearer tok"}',
+            output_as_dataset=False,
+        )
+    call_kwargs = mock_get.call_args.kwargs
+    assert call_kwargs["headers"]["Authorization"] == "Bearer tok"
+
+
+def test_read_url_http_error_raises() -> None:
+    from noodle_nodes.file_nodes import read_url_file
+    import requests as _req
+
+    with patch("requests.get", return_value=_mock_response(b"", status=403)):
+        with pytest.raises(_req.HTTPError):
+            read_url_file(input=None, url="https://example.com/private.csv", format="auto")
+
+
+def test_read_url_invalid_headers_json_raises() -> None:
+    from noodle_nodes.file_nodes import read_url_file
+
+    with patch("requests.get", return_value=_mock_response(b"ok")):
+        with pytest.raises(ValueError, match="request_headers must be valid JSON"):
+            read_url_file(
+                input=None,
+                url="https://example.com/f.txt",
+                format="text",
+                request_headers="not-json",
+            )
+
+
+def test_read_url_missing_url_raises() -> None:
+    from noodle_nodes.file_nodes import read_url_file
+
+    with pytest.raises(ValueError, match="url must be provided"):
+        read_url_file(input=None, url="", format="auto")
+
+
+def test_read_url_json_auto_detect_by_extension() -> None:
+    from noodle_nodes.file_nodes import read_url_file
+
+    data = [{"id": 1}, {"id": 2}]
+    json_bytes = json.dumps(data).encode()
+    fake_ref = {"__noodle_dataset__": True}
+    with patch("requests.get", return_value=_mock_response(json_bytes)):
+        with patch("noodle_nodes.file_nodes._parse_file_bytes", return_value=fake_ref) as mock_parse:
+            result = read_url_file(
+                input=None,
+                url="https://example.com/records.json",
+                format="auto",
+                output_as_dataset=True,
+            )
+    assert result is fake_ref
+    call_kwargs = mock_parse.call_args.kwargs
+    assert call_kwargs["fmt"] == "json"
+
+
+# ---------------------------------------------------------------------------
+# stream_large_file
+# ---------------------------------------------------------------------------
+
+def _make_csv_bytes(rows: int = 5) -> bytes:
+    lines = ["id,name,value"]
+    for i in range(rows):
+        lines.append(f"{i},item{i},{i * 10}")
+    return "\n".join(lines).encode()
+
+
+def _make_ndjson_bytes(rows: int = 3) -> bytes:
+    import json as _json
+    lines = [_json.dumps({"id": i, "val": i * 2}) for i in range(rows)]
+    return "\n".join(lines).encode()
+
+
+def test_stream_large_file_csv_returns_dataset_ref(store_ctx) -> None:
+    """stream_large_file on a CSV upload always returns a DatasetRef."""
+    from noodle_nodes.file_nodes import stream_large_file
+
+    upload_dir = store_ctx.base_dir / "uploads" / "upload-001"
+    upload_dir.mkdir(parents=True)
+    (upload_dir / "big.csv").write_bytes(_make_csv_bytes(100))
+
+    chunks: list[str] = []
+    with patch("noodle.context.emit_chunk", side_effect=lambda msg: chunks.append(msg)):
+        result = stream_large_file(input=None, file="upload-001", format="csv")
+
+    assert result.get("__noodle_dataset__") is True
+    assert any("big.csv" in c for c in chunks)
+    assert any("rows" in c.lower() or "done" in c.lower() for c in chunks)
+
+
+def test_stream_large_file_json_returns_dataset_ref(store_ctx) -> None:
+    from noodle_nodes.file_nodes import stream_large_file
+
+    upload_dir = store_ctx.base_dir / "uploads" / "upload-002"
+    upload_dir.mkdir(parents=True)
+    (upload_dir / "records.jsonl").write_bytes(_make_ndjson_bytes(50))
+
+    result = stream_large_file(input=None, file="upload-002", format="json")
+    assert result.get("__noodle_dataset__") is True
+
+
+def test_stream_large_file_server_path_csv(store_ctx, tmp_path) -> None:
+    from noodle_nodes.file_nodes import stream_large_file
+
+    csv_file = tmp_path / "data.csv"
+    csv_file.write_bytes(_make_csv_bytes(200))
+
+    result = stream_large_file(input=None, path=str(csv_file), format="csv")
+    assert result.get("__noodle_dataset__") is True
+
+
+def test_stream_large_file_emits_three_chunks(store_ctx) -> None:
+    from noodle_nodes.file_nodes import stream_large_file
+
+    upload_dir = store_ctx.base_dir / "uploads" / "upload-003"
+    upload_dir.mkdir(parents=True)
+    (upload_dir / "sample.csv").write_bytes(_make_csv_bytes(10))
+
+    chunks: list[str] = []
+    with patch("noodle.context.emit_chunk", side_effect=lambda msg: chunks.append(msg)):
+        stream_large_file(input=None, file="upload-003", format="csv")
+
+    assert len(chunks) == 3, f"Expected 3 emit_chunk calls, got {len(chunks)}: {chunks}"
+
+
+def test_stream_large_file_missing_source_raises() -> None:
+    from noodle_nodes.file_nodes import stream_large_file
+
+    with pytest.raises(ValueError, match="path or file"):
+        stream_large_file(input=None, path="", file="", format="csv")
+
+
+def test_stream_large_file_auto_format_csv_extension(store_ctx) -> None:
+    from noodle_nodes.file_nodes import stream_large_file
+
+    upload_dir = store_ctx.base_dir / "uploads" / "upload-004"
+    upload_dir.mkdir(parents=True)
+    (upload_dir / "sales.csv").write_bytes(_make_csv_bytes(5))
+
+    result = stream_large_file(input=None, file="upload-004", format="auto")
+    assert result.get("__noodle_dataset__") is True
+
+
+def test_stream_large_file_auto_format_json_extension(store_ctx) -> None:
+    from noodle_nodes.file_nodes import stream_large_file
+
+    upload_dir = store_ctx.base_dir / "uploads" / "upload-005"
+    upload_dir.mkdir(parents=True)
+    (upload_dir / "events.jsonl").write_bytes(_make_ndjson_bytes(5))
+
+    result = stream_large_file(input=None, file="upload-005", format="auto")
+    assert result.get("__noodle_dataset__") is True

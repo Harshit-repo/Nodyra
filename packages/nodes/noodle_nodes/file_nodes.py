@@ -464,3 +464,243 @@ def read_s3_file(
         has_header=has_header,
         output_as_dataset=output_as_dataset,
     )
+
+
+_URL_FORMAT_CHOICES = ["auto", "csv", "json", "parquet", "text"]
+_EXT_TO_FMT = {
+    ".csv": "csv",
+    ".json": "json",
+    ".jsonl": "json",
+    ".ndjson": "json",
+    ".parquet": "parquet",
+    ".txt": "text",
+    ".md": "text",
+}
+_CT_TO_FMT = {
+    "text/csv": "csv",
+    "application/csv": "csv",
+    "application/json": "json",
+    "application/x-ndjson": "json",
+    "application/vnd.apache.parquet": "parquet",
+    "text/plain": "text",
+}
+
+
+@node(
+    name="Read URL File",
+    category="Files",
+    description=(
+        "Download a file from an HTTP/HTTPS URL and parse it as CSV, JSON, Parquet, or text. "
+        "Set format to 'auto' to detect from URL extension or Content-Type."
+    ),
+    icon="link",
+    param_output_kinds={"main": _DATASET_TOGGLE},
+    params={
+        "url": {
+            "description": "Full HTTP/HTTPS URL of the file to download.",
+            "placeholder": "https://example.com/data.csv",
+        },
+        "format": {
+            "choices": _URL_FORMAT_CHOICES,
+            "description": (
+                "File format. 'auto' detects from URL extension then Content-Type header."
+            ),
+        },
+        "request_headers": {
+            "display_name": "Request headers (JSON)",
+            "advanced": True,
+            "description": (
+                "Optional extra HTTP headers as a JSON object, "
+                'e.g. {"Authorization": "Bearer token"}.'
+            ),
+            "placeholder": '{"Authorization": "Bearer token"}',
+        },
+        "delimiter": {
+            "display_when": {"format": "csv"},
+            "description": "CSV delimiter character.",
+        },
+        "has_header": {
+            "display_when": {"format": "csv"},
+            "description": "Whether the first row is a header.",
+        },
+        "output_as_dataset": {
+            "description": (
+                "Return a DatasetRef (Parquet) for CSV and JSON formats. "
+                "Parquet format always returns DatasetRef regardless of this setting."
+            ),
+        },
+    },
+)
+def read_url_file(
+    input: Any,
+    url: str = "",
+    format: str = "auto",
+    request_headers: str = "",
+    delimiter: str = ",",
+    has_header: bool = True,
+    output_as_dataset: bool = True,
+) -> Any:
+    import json as _json
+    from urllib.parse import urlparse
+
+    import requests as _requests
+
+    if not url:
+        raise ValueError("read_url_file: url must be provided")
+
+    # Parse extra headers
+    headers: dict = {}
+    if request_headers:
+        try:
+            parsed_headers = _json.loads(request_headers)
+        except _json.JSONDecodeError as exc:
+            raise ValueError(
+                f"read_url_file: request_headers must be valid JSON: {exc}"
+            ) from exc
+        if not isinstance(parsed_headers, dict):
+            raise ValueError("read_url_file: request_headers must be a JSON object")
+        headers = parsed_headers
+
+    resp = _requests.get(url, headers=headers, timeout=60)
+    resp.raise_for_status()
+
+    content_bytes: bytes = resp.content
+    content_type: str = (resp.headers.get("Content-Type") or "").split(";")[0].strip()
+
+    # Derive filename from URL path
+    url_path = urlparse(url).path
+    filename = url_path.rstrip("/").split("/")[-1] or "download"
+
+    # Resolve format
+    fmt = format
+    if fmt == "auto":
+        ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        fmt = _EXT_TO_FMT.get(ext) or _CT_TO_FMT.get(content_type) or "text"
+
+    return _parse_file_bytes(
+        content_bytes,
+        filename=filename,
+        fmt=fmt,
+        delimiter=delimiter,
+        has_header=has_header,
+        output_as_dataset=output_as_dataset,
+    )
+
+
+_STREAM_FORMAT_CHOICES = ["auto", "csv", "json"]
+_STREAM_EXT_TO_FMT = {
+    ".csv": "csv",
+    ".tsv": "csv",
+    ".json": "json",
+    ".jsonl": "json",
+    ".ndjson": "json",
+}
+
+
+@node(
+    name="Stream Large File",
+    category="Files",
+    description=(
+        "Stream a large CSV or NDJSON file into a DatasetRef using DuckDB. "
+        "Handles files too large to load into memory. Emits progress updates while processing."
+    ),
+    icon="database",
+    output_kinds={"main": "dataset"},
+    params={
+        "file": {
+            "widget": "file_upload",
+            "display_name": "Upload file",
+            "description": "Upload from your browser. The file is saved and reused across runs.",
+        },
+        "path": {
+            "advanced": True,
+            "display_name": "Server path",
+            "description": (
+                "Absolute path on the server filesystem. "
+                "When the data volume is mounted, use /app/data/yourfile.ext."
+            ),
+        },
+        "format": {
+            "choices": _STREAM_FORMAT_CHOICES,
+            "description": "'auto' detects from filename extension (csv or json/jsonl/ndjson).",
+        },
+        "delimiter": {
+            "display_when": {"format": "csv"},
+            "description": "CSV delimiter character. Leave blank to auto-detect.",
+        },
+    },
+)
+def stream_large_file(
+    input: Any,
+    path: str = "",
+    file: str = "",
+    format: str = "auto",
+    delimiter: str = "",
+) -> Any:
+    import os
+    import tempfile
+
+    import duckdb as _duckdb
+    from noodle.context import emit_chunk
+    from noodle.datasets import reserve_artifact_path
+    from noodle_nodes.datasets import _finalize_parquet
+
+    # Resolve source: upload artifact or server path
+    if file:
+        content_bytes, filename = _read_upload_bytes(file)
+        src_bytes = content_bytes
+    elif path:
+        p = pathlib.Path(path)
+        filename = p.name
+        src_bytes = p.read_bytes()
+    else:
+        raise ValueError("stream_large_file: either path or file (artifact_id) must be provided")
+
+    # Resolve format
+    fmt = format
+    if fmt == "auto":
+        ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        fmt = _STREAM_EXT_TO_FMT.get(ext, "csv")
+
+    emit_chunk(f"Reading {filename}…")
+
+    # Write bytes to a temp file so DuckDB can read it
+    suffix = ".csv" if fmt == "csv" else ".jsonl"
+    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    try:
+        tmp.write(src_bytes)
+        tmp.close()
+        src_sql = tmp.name.replace("'", "''")
+
+        emit_chunk("Indexing…")
+
+        out_path, out_partial = reserve_artifact_path(
+            filename.rsplit(".", 1)[0] + ".parquet",
+            content_type="application/vnd.apache.parquet",
+            kind="dataset",
+        )
+        out_sql = str(out_path).replace("'", "''")
+
+        con = _duckdb.connect(":memory:")
+        if fmt == "csv":
+            delim_clause = f", DELIM '{delimiter}'" if delimiter else ""
+            con.execute(
+                f"COPY (SELECT * FROM read_csv_auto('{src_sql}'{delim_clause})) "
+                f"TO '{out_sql}' (FORMAT PARQUET, COMPRESSION ZSTD)"
+            )
+        else:
+            con.execute(
+                f"COPY (SELECT * FROM read_ndjson('{src_sql}')) "
+                f"TO '{out_sql}' (FORMAT PARQUET, COMPRESSION ZSTD)"
+            )
+        con.close()
+
+        result = _finalize_parquet(out_path, out_partial)
+        row_count = result.get("row_count", 0)
+        emit_chunk(f"Done — {row_count:,} rows")
+        return result
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
