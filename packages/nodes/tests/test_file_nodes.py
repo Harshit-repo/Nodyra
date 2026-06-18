@@ -1,20 +1,33 @@
-"""Tests for file reading nodes (read_text_file, read_csv_file, read_json_file, read_xml_file)."""
+"""Tests for file reading nodes (read_text_file, read_csv_file, read_json_file, read_xml_file,
+read_s3_file, read_url_file, stream_large_file)."""
 from __future__ import annotations
 
 import json
 import textwrap
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 import noodle_nodes  # noqa: F401 — registers nodes
+from noodle.artifacts import LocalArtifactStore
+from noodle.context import artifact_store, current_node_id
 from noodle_nodes.file_nodes import (
     read_csv_file,
     read_json_file,
     read_text_file,
     read_xml_file,
 )
+
+
+@pytest.fixture
+def store_ctx(tmp_path):
+    store = LocalArtifactStore(tmp_path, run_id="test-run")
+    tok_a = artifact_store.set(store)
+    tok_n = current_node_id.set("test-node")
+    yield store
+    current_node_id.reset(tok_n)
+    artifact_store.reset(tok_a)
 
 # ---------------------------------------------------------------------------
 # read_text_file
@@ -218,3 +231,165 @@ def test_read_xml_dataset_rejects_unsafe_entities(tmp_path: Path) -> None:
 def test_read_xml_no_source() -> None:
     with pytest.raises(ValueError, match="either path or file"):
         read_xml_file(input=None, path="", file="")
+
+
+# ---------------------------------------------------------------------------
+# read_s3_file
+# ---------------------------------------------------------------------------
+
+
+def _make_s3_creds(endpoint: str = "") -> dict:
+    return {
+        "access_key_id": "AKIATEST",
+        "secret_access_key": "secrettest",
+        "endpoint_url": endpoint,
+        "region": "us-east-1",
+    }
+
+
+def _mock_boto3_client(content_bytes: bytes):
+    """Return a mock boto3 client whose get_object yields content_bytes."""
+    body = MagicMock()
+    body.read.return_value = content_bytes
+    client = MagicMock()
+    client.get_object.return_value = {"Body": body}
+    return client
+
+
+def test_read_s3_csv_raw_mode() -> None:
+    from noodle_nodes.file_nodes import read_s3_file
+
+    csv_bytes = b"name,age\nAlice,30\nBob,25\n"
+    mock_client = _mock_boto3_client(csv_bytes)
+    with patch("boto3.client", return_value=mock_client):
+        result = read_s3_file(
+            input=None,
+            credentials=_make_s3_creds(),
+            bucket="my-bucket",
+            key="data/people.csv",
+            format="csv",
+            output_as_dataset=False,
+        )
+    assert result["row_count"] == 2
+    assert result["rows"][0] == {"name": "Alice", "age": "30"}
+    assert result["filename"] == "people.csv"
+
+
+def test_read_s3_csv_as_dataset() -> None:
+    from noodle_nodes.file_nodes import read_s3_file
+
+    fake_ref = {"__noodle_dataset__": True}
+    csv_bytes = b"name,age\nAlice,30\n"
+    mock_client = _mock_boto3_client(csv_bytes)
+    with patch("boto3.client", return_value=mock_client):
+        with patch("noodle_nodes.file_nodes.csv_parse", return_value=fake_ref) as mock_parse:
+            result = read_s3_file(
+                input=None,
+                credentials=_make_s3_creds(),
+                bucket="b",
+                key="f.csv",
+                format="csv",
+                output_as_dataset=True,
+            )
+    assert result is fake_ref
+    mock_parse.assert_called_once()
+
+
+def test_read_s3_json_raw_mode() -> None:
+    from noodle_nodes.file_nodes import read_s3_file
+
+    data = [{"x": 1}, {"x": 2}]
+    json_bytes = json.dumps(data).encode()
+    mock_client = _mock_boto3_client(json_bytes)
+    with patch("boto3.client", return_value=mock_client):
+        result = read_s3_file(
+            input=None,
+            credentials=_make_s3_creds(),
+            bucket="b",
+            key="data.json",
+            format="json",
+            output_as_dataset=False,
+        )
+    assert result["data"] == data
+    assert result["filename"] == "data.json"
+
+
+def test_read_s3_json_as_dataset() -> None:
+    from noodle_nodes.file_nodes import read_s3_file
+
+    fake_ref = {"__noodle_dataset__": True}
+    data = [{"x": 1}, {"x": 2}]
+    json_bytes = json.dumps(data).encode()
+    mock_client = _mock_boto3_client(json_bytes)
+    with patch("boto3.client", return_value=mock_client):
+        with patch("noodle_nodes.file_nodes._parse_file_bytes", return_value=fake_ref) as mock_parse:
+            result = read_s3_file(
+                input=None,
+                credentials=_make_s3_creds(),
+                bucket="b",
+                key="data.json",
+                format="json",
+                output_as_dataset=True,
+            )
+    assert result is fake_ref
+    mock_parse.assert_called_once()
+
+
+def test_read_s3_text_format() -> None:
+    from noodle_nodes.file_nodes import read_s3_file
+
+    mock_client = _mock_boto3_client(b"hello world")
+    with patch("boto3.client", return_value=mock_client):
+        result = read_s3_file(
+            input=None,
+            credentials=_make_s3_creds(),
+            bucket="b",
+            key="notes.txt",
+            format="text",
+            output_as_dataset=False,
+        )
+    assert result["text"] == "hello world"
+    assert result["filename"] == "notes.txt"
+
+
+def test_read_s3_empty_endpoint_passes_none_to_boto3() -> None:
+    from noodle_nodes.file_nodes import read_s3_file
+
+    mock_client = _mock_boto3_client(b"a,b\n1,2\n")
+    with patch("boto3.client", return_value=mock_client) as mock_boto3:
+        with patch("noodle_nodes.file_nodes.csv_parse", return_value={}):
+            read_s3_file(
+                input=None,
+                credentials=_make_s3_creds(endpoint=""),
+                bucket="b",
+                key="f.csv",
+                format="csv",
+                output_as_dataset=True,
+            )
+    call_kwargs = mock_boto3.call_args.kwargs
+    assert call_kwargs["endpoint_url"] is None
+
+
+def test_read_s3_parquet_as_dataset(store_ctx, tmp_path: Path) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from noodle.datasets import is_dataset_ref
+    from noodle_nodes.file_nodes import read_s3_file
+
+    parquet_file = tmp_path / "sample.parquet"
+    table = pa.table({"col1": [1, 2, 3], "col2": ["a", "b", "c"]})
+    pq.write_table(table, str(parquet_file))
+    parquet_bytes = parquet_file.read_bytes()
+
+    mock_client = _mock_boto3_client(parquet_bytes)
+    with patch("boto3.client", return_value=mock_client):
+        result = read_s3_file(
+            input=None,
+            credentials=_make_s3_creds(),
+            bucket="b",
+            key="data/sample.parquet",
+            format="parquet",
+            output_as_dataset=True,
+        )
+    assert is_dataset_ref(result)
+    assert result["row_count"] == 3
