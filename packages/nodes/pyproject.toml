@@ -30,6 +30,9 @@ ml = [
     "numpy>=1.26",
     "joblib>=1.3",
 ]
+storage = [
+    "boto3>=1.34",
+]
 
 [build-system]
 requires = ["hatchling"]

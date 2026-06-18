@@ -251,6 +251,40 @@ _TYPES: tuple[CredentialTypeSpec, ...] = (
         ],
         documentation_url="https://modelcontextprotocol.io",
     ),
+    CredentialTypeSpec(
+        id="s3_compatible",
+        name="S3-Compatible Storage",
+        provider="Storage",
+        auth_method="api_key",
+        fields=[
+            CredentialFieldSpec(
+                key="access_key_id",
+                label="Access Key ID",
+                secret=False,
+                placeholder="AKIAIOSFODNN7EXAMPLE",
+            ),
+            CredentialFieldSpec(
+                key="secret_access_key",
+                label="Secret Access Key",
+                placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            ),
+            CredentialFieldSpec(
+                key="endpoint_url",
+                label="Endpoint URL",
+                secret=False,
+                required=False,
+                placeholder="https://s3.amazonaws.com",
+                help="Leave blank for AWS S3. Set to e.g. http://minio:9000 for MinIO.",
+            ),
+            CredentialFieldSpec(
+                key="region",
+                label="Region",
+                secret=False,
+                required=False,
+                placeholder="us-east-1",
+            ),
+        ],
+    ),
 )
 
 _BY_ID: dict[str, CredentialTypeSpec] = {spec.id: spec for spec in _TYPES}
