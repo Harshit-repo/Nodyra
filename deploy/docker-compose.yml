@@ -70,6 +70,7 @@ services:
       USE_SUBPROCESS_RUNNER: "true"
       ENVS_DIR: /app/envs
       ARTIFACTS_DIR: /app/artifacts
+      # DATA_DIR: /app/data
       AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
       AUTH_ALLOW_REGISTRATION: ${AUTH_ALLOW_REGISTRATION:-false}
       AUTH_REGISTRATION_ROLE: ${AUTH_REGISTRATION_ROLE:-viewer}
@@ -89,6 +90,9 @@ services:
     volumes:
       - envdata:/app/envs
       - artifactdata:/app/artifacts
+      # User data directory: uncomment both lines below to expose a host folder to nodes.
+      # Files placed in ./data/ on the host are available at /app/data/ inside the container.
+      # - ./data:/app/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -109,6 +113,7 @@ services:
       USE_SUBPROCESS_RUNNER: "true"
       ENVS_DIR: /app/envs
       ARTIFACTS_DIR: /app/artifacts
+      # DATA_DIR: /app/data
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN must be set (shared API <-> worker secret)}
       SECRET_KEY: ${NOODLE_SECRET_KEY:-noodle-dev-secret-change-me-in-production}
       # --- Sandboxed execution (container-per-run isolation) ---
@@ -130,6 +135,8 @@ services:
     volumes:
       - envdata:/app/envs
       - artifactdata:/app/artifacts
+      # User data directory: uncomment to expose a host folder to nodes.
+      # - ./data:/app/data
       # Required for EXECUTION_SANDBOX: lets the worker spawn sibling run
       # containers on the host daemon (Docker-out-of-Docker). The worker
       # itself never runs untrusted code — runs execute in the hardened

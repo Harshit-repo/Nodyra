@@ -32,6 +32,22 @@ def _read_upload_bytes(artifact_id: str) -> tuple[bytes, str]:
     category="Files",
     description="Read a text file from a server path or browser-uploaded artifact.",
     icon="file-text",
+    params={
+        "file": {
+            "widget": "file_upload",
+            "display_name": "Upload file",
+            "description": "Upload from your browser. The file is saved and reused across runs — no need to re-upload.",
+        },
+        "path": {
+            "advanced": True,
+            "display_name": "Server path",
+            "description": (
+                "Absolute path on the server filesystem. "
+                "When the data volume is mounted, use /app/data/yourfile.ext. "
+                "See deploy/docker-compose.yml for setup."
+            ),
+        },
+    },
 )
 def read_text_file(
     input: Any,
@@ -64,6 +80,22 @@ _DATASET_TOGGLE = {"param": "output_as_dataset", "true": "dataset", "false": "an
     ),
     icon="table",
     param_output_kinds={"main": _DATASET_TOGGLE},
+    params={
+        "file": {
+            "widget": "file_upload",
+            "display_name": "Upload file",
+            "description": "Upload from your browser. The file is saved and reused across runs — no need to re-upload.",
+        },
+        "path": {
+            "advanced": True,
+            "display_name": "Server path",
+            "description": (
+                "Absolute path on the server filesystem. "
+                "When the data volume is mounted, use /app/data/yourfile.ext. "
+                "See deploy/docker-compose.yml for setup."
+            ),
+        },
+    },
 )
 def read_csv_file(
     input: Any,
@@ -118,6 +150,22 @@ def read_csv_file(
     ),
     icon="braces",
     param_output_kinds={"main": _DATASET_TOGGLE},
+    params={
+        "file": {
+            "widget": "file_upload",
+            "display_name": "Upload file",
+            "description": "Upload from your browser. The file is saved and reused across runs — no need to re-upload.",
+        },
+        "path": {
+            "advanced": True,
+            "display_name": "Server path",
+            "description": (
+                "Absolute path on the server filesystem. "
+                "When the data volume is mounted, use /app/data/yourfile.ext. "
+                "See deploy/docker-compose.yml for setup."
+            ),
+        },
+    },
 )
 def read_json_file(
     input: Any,
@@ -177,6 +225,22 @@ def read_json_file(
     icon="code",
     requirements=("xmltodict",),
     param_output_kinds={"main": _DATASET_TOGGLE},
+    params={
+        "file": {
+            "widget": "file_upload",
+            "display_name": "Upload file",
+            "description": "Upload from your browser. The file is saved and reused across runs — no need to re-upload.",
+        },
+        "path": {
+            "advanced": True,
+            "display_name": "Server path",
+            "description": (
+                "Absolute path on the server filesystem. "
+                "When the data volume is mounted, use /app/data/yourfile.ext. "
+                "See deploy/docker-compose.yml for setup."
+            ),
+        },
+    },
 )
 def read_xml_file(
     input: Any,
