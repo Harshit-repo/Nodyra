@@ -466,6 +466,37 @@ def read_s3_file(
     )
 
 
+def _validate_ssrf_url(url: str) -> None:
+    """Reject URLs that could cause SSRF: non-http(s) schemes, unresolvable hosts, or
+    addresses that resolve to loopback, private, link-local, or other non-global ranges."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse as _urlparse
+
+    parsed = _urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError(
+            f"read_url_file: unsupported URL scheme {parsed.scheme!r}; only http and https are allowed"
+        )
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("read_url_file: URL must include a hostname")
+    try:
+        addrs = {info[4][0] for info in socket.getaddrinfo(hostname, None)}
+    except socket.gaierror as exc:
+        raise ValueError(f"read_url_file: cannot resolve hostname {hostname!r}: {exc}") from exc
+    for addr in addrs:
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            continue
+        if not ip.is_global:
+            raise ValueError(
+                f"read_url_file: requests to private/loopback addresses are not allowed "
+                f"({hostname!r} resolves to {addr})"
+            )
+
+
 _URL_FORMAT_CHOICES = ["auto", "csv", "json", "parquet", "text"]
 _EXT_TO_FMT = {
     ".csv": "csv",
@@ -561,13 +592,26 @@ def read_url_file(
             raise ValueError("read_url_file: request_headers must be a JSON object")
         headers = parsed_headers
 
-    resp = _requests.get(url, headers=headers, timeout=60)
+    # Validate scheme and resolved IP before making the request; re-validate on each redirect
+    # to prevent SSRF via open redirect chains pointing to internal services.
+    _validate_ssrf_url(url)
+    current_url = url
+    max_redirects = 10
+    while True:
+        resp = _requests.get(current_url, headers=headers, timeout=60, allow_redirects=False)
+        if resp.is_redirect and max_redirects > 0:
+            location = resp.headers.get("Location", "")
+            _validate_ssrf_url(location)
+            current_url = location
+            max_redirects -= 1
+        else:
+            break
     resp.raise_for_status()
 
     content_bytes: bytes = resp.content
     content_type: str = (resp.headers.get("Content-Type") or "").split(";")[0].strip()
 
-    # Derive filename from URL path
+    # Derive filename from the original URL path (the final URL may be a CDN path)
     url_path = urlparse(url).path
     filename = url_path.rstrip("/").split("/")[-1] or "download"
 
@@ -683,7 +727,14 @@ def stream_large_file(
 
         con = _duckdb.connect(":memory:")
         if fmt == "csv":
-            delim_clause = f", DELIM '{delimiter}'" if delimiter else ""
+            if delimiter:
+                if len(delimiter) != 1 or delimiter in ("'", "\\"):
+                    raise ValueError(
+                        "stream_large_file: delimiter must be a single character other than ' or \\"
+                    )
+                delim_clause = f", DELIM '{delimiter}'"
+            else:
+                delim_clause = ""
             con.execute(
                 f"COPY (SELECT * FROM read_csv_auto('{src_sql}'{delim_clause})) "
                 f"TO '{out_sql}' (FORMAT PARQUET, COMPRESSION ZSTD)"

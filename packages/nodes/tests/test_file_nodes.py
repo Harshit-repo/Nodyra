@@ -404,6 +404,7 @@ def _mock_response(content: bytes, content_type: str = "application/octet-stream
     resp = MagicMock()
     resp.content = content
     resp.headers = {"Content-Type": content_type}
+    resp.is_redirect = False  # prevent MagicMock truthy default from triggering redirect loop
     resp.raise_for_status = MagicMock()
     if status >= 400:
         import requests as _req
