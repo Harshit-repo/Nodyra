@@ -154,10 +154,19 @@ def test_status_no_answer():
     assert result["IsTerminal"] is True
 
 
+def test_status_busy():
+    """busy → Category=busy, IsTerminal=True."""
+    result = twilio_call_status_handler(
+        input={"CallSid": "CA5", "CallStatus": "busy"}
+    )
+    assert result["Category"] == "busy"
+    assert result["IsTerminal"] is True
+
+
 def test_status_unknown():
     """ringing (unknown status) → Category=other, IsTerminal=False."""
     result = twilio_call_status_handler(
-        input={"CallSid": "CA5", "CallStatus": "ringing"}
+        input={"CallSid": "CA6", "CallStatus": "ringing"}
     )
     assert result["Category"] == "other"
     assert result["IsTerminal"] is False
