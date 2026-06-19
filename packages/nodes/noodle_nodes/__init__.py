@@ -64,6 +64,11 @@ from noodle_nodes.integrations_v2.providers import openai_v2 as openai_v2
 from noodle_nodes.integrations_v2.providers import woocommerce as woocommerce_v2
 from noodle_nodes.integrations_v2.providers import imap as imap_v2
 from noodle_nodes.integrations_v2.providers import filesystem_triggers as filesystem_triggers_v2
+from noodle_nodes.integrations_v2.providers import websocket_trigger as websocket_trigger_v2
+from noodle_nodes.integrations_v2.providers import kafka_trigger as kafka_trigger_v2
+from noodle_nodes.integrations_v2.providers import mqtt_trigger as mqtt_trigger_v2
+from noodle_nodes.integrations_v2.providers import postgres_listen_trigger as postgres_listen_trigger_v2
+from noodle_nodes.integrations_v2.providers import s3_event_trigger as s3_event_trigger_v2
 from noodle_nodes.integrations_v2.providers import vapi as vapi_v2
 from noodle_nodes.integrations_v2.providers import retell as retell_v2
 from noodle_nodes.integrations_v2.providers import bland as bland_v2
@@ -132,6 +137,11 @@ __all__ = [
     "woocommerce_v2",
     "imap_v2",
     "filesystem_triggers_v2",
+    "websocket_trigger_v2",
+    "kafka_trigger_v2",
+    "mqtt_trigger_v2",
+    "postgres_listen_trigger_v2",
+    "s3_event_trigger_v2",
     "vapi_v2",
     "retell_v2",
     "bland_v2",
