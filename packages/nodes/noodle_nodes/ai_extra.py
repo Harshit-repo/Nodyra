@@ -17,7 +17,7 @@ from typing import Any
 
 import requests
 
-from noodle.artifacts import write_bytes
+from noodle.artifacts import is_artifact_ref, read_bytes as read_artifact_bytes, write_bytes
 from noodle.sdk import node
 from noodle_nodes._creds import cred_multi, cred_single
 from noodle_nodes.http_security import assert_public_http_url
@@ -591,3 +591,160 @@ def pinecone_query(
         timeout=_HTTP_TIMEOUT,
     )
     return _expect_ok(response, "pinecone")
+
+
+# ============================================================================
+# Text to Speech (File) — artifact output with speed + cache_key
+# ============================================================================
+
+
+@node(
+    name="Text to Speech (File)",
+    id="text_to_speech_file",
+    param_groups={"Options": ["voice", "model", "format", "speed", "filename", "cache_key"]},
+    category="AI",
+    icon="brand:openai",
+    output_kinds={"main": "artifact"},
+    params={
+        "credentials": {**cred_single("openai", "api_key", "OpenAI API key"), "description": "OpenAI API key."},
+        "text": {"description": "Text to synthesize. Falls back to wired input.", "multiline": True},
+        "voice": {"choices": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"], "description": "Voice preset."},
+        "model": {"choices": ["tts-1", "tts-1-hd"], "description": "TTS model."},
+        "format": {"choices": ["mp3", "opus", "aac", "flac", "wav", "pcm"], "description": "Audio container format."},
+        "speed": {"description": "Playback speed multiplier, 0.25–4.0."},
+        "filename": {"placeholder": "speech.mp3", "description": "Artifact filename."},
+        "cache_key": {"description": "Optional cache label (stored as metadata, not used for lookup in this build)."},
+    },
+)
+def text_to_speech_file(
+    input=None,
+    credentials: str = "",
+    text: str = "",
+    voice: str = "alloy",
+    model: str = "tts-1",
+    format: str = "mp3",
+    speed: float = 1.0,
+    filename: str = "speech.mp3",
+    cache_key: str = "",
+) -> dict:
+    """Synthesize speech with OpenAI TTS and store as a noodle artifact."""
+    api_key = credentials
+    if not api_key:
+        raise ValueError("text_to_speech_file: credentials are required")
+    payload_text = text or (str(input) if input is not None else "")
+    if not payload_text:
+        raise ValueError("text_to_speech_file: text is required")
+    response = requests.post(
+        "https://api.openai.com/v1/audio/speech",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model or "tts-1",
+            "voice": voice or "alloy",
+            "input": payload_text,
+            "response_format": format or "mp3",
+            "speed": float(speed) if speed is not None else 1.0,
+        },
+        timeout=_HTTP_TIMEOUT * 2,
+    )
+    if response.status_code >= 400:
+        body = response.text[:500]
+        raise RuntimeError(f"text_to_speech_file: HTTP {response.status_code} — {body}")
+    content_type = response.headers.get("content-type", "audio/mpeg")
+    ext = format or "mp3"
+    artifact_name = filename or f"speech.{ext}"
+    if "." not in artifact_name:
+        artifact_name = f"{artifact_name}.{ext}"
+    metadata: dict[str, Any] = {"model": model or "tts-1", "voice": voice or "alloy", "speed": float(speed) if speed is not None else 1.0}
+    if cache_key:
+        metadata["cache_key"] = cache_key
+    return write_bytes(
+        response.content,
+        name=artifact_name,
+        content_type=content_type,
+        kind="audio",
+        metadata=metadata,
+    )
+
+
+# ============================================================================
+# Speech to Text (File) — reads from artifact ref, uploads to Whisper
+# ============================================================================
+
+WHISPER_MAX_BYTES = 25 * 1024 * 1024
+
+
+@node(
+    name="Speech to Text (File)",
+    id="speech_to_text_file",
+    param_groups={"Options": ["model", "language", "response_format", "prompt", "temperature"]},
+    category="AI",
+    icon="brand:openai",
+    params={
+        "credentials": {**cred_single("openai", "api_key", "OpenAI API key"), "description": "OpenAI API key."},
+        "artifact_input": {"description": "Audio artifact ref. Falls back to wired input."},
+        "model": {"choices": ["whisper-1"], "description": "Whisper model."},
+        "language": {"placeholder": "en", "description": "ISO-639-1 language hint."},
+        "response_format": {"choices": ["json", "text", "srt", "verbose_json", "vtt"], "description": "Transcript format."},
+        "prompt": {"description": "Vocabulary/context hint for the transcription.", "multiline": True},
+        "temperature": {"description": "Sampling temperature (0.0–1.0)."},
+    },
+)
+def speech_to_text_file(
+    input=None,
+    credentials: str = "",
+    artifact_input: str = "",
+    model: str = "whisper-1",
+    language: str = "",
+    response_format: str = "verbose_json",
+    prompt: str = "",
+    temperature: float = 0.0,
+) -> dict:
+    """Transcribe an audio artifact using OpenAI Whisper."""
+    api_key = credentials
+    if not api_key:
+        raise ValueError("speech_to_text_file: credentials are required")
+
+    # Resolve the artifact ref from wired input or artifact_input param.
+    if is_artifact_ref(input):
+        ref = input
+    elif artifact_input and is_artifact_ref(artifact_input):
+        ref = artifact_input
+    else:
+        raise ValueError("speech_to_text_file: wired input must be an audio artifact ref")
+
+    if ref.get("kind") != "audio":
+        raise ValueError(
+            f"speech_to_text_file: expected an audio artifact, got kind={ref.get('kind')!r}"
+        )
+
+    size = ref.get("size_bytes", 0)
+    if size and size > WHISPER_MAX_BYTES:
+        raise ValueError(
+            f"speech_to_text_file: artifact is {size} bytes; Whisper limit is 25 MB"
+        )
+
+    audio_bytes = read_artifact_bytes(ref)
+    artifact_name = ref.get("name") or "audio.mp3"
+
+    data: dict[str, Any] = {
+        "model": model or "whisper-1",
+        "response_format": response_format or "verbose_json",
+    }
+    if language:
+        data["language"] = language
+    if prompt:
+        data["prompt"] = prompt
+    if temperature:
+        data["temperature"] = str(float(temperature))
+
+    response = requests.post(
+        "https://api.openai.com/v1/audio/transcriptions",
+        headers={"Authorization": f"Bearer {api_key}"},
+        data=data,
+        files={"file": (artifact_name, audio_bytes)},
+        timeout=_HTTP_TIMEOUT * 2,
+    )
+    return _expect_ok(response, "speech_to_text_file")
