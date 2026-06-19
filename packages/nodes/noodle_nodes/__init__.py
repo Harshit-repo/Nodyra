@@ -78,6 +78,7 @@ from noodle_nodes import text_processing_nodes as text_processing_nodes
 from noodle_nodes import data_transform_nodes as data_transform_nodes
 from noodle_nodes import system_extra_nodes as system_extra_nodes
 from noodle_nodes import crypto_extra_nodes as crypto_extra_nodes
+from noodle_nodes import deepgram_nodes as deepgram_nodes
 
 __version__ = "0.0.1"
 __all__ = [
@@ -143,6 +144,7 @@ __all__ = [
     "data_transform_nodes",
     "system_extra_nodes",
     "crypto_extra_nodes",
+    "deepgram_nodes",
     "llm",
     "llm_evals",
     "llm_training",
