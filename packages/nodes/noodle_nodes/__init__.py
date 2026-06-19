@@ -63,6 +63,7 @@ from noodle_nodes.integrations_v2.providers import pipedrive as pipedrive_v2
 from noodle_nodes.integrations_v2.providers import openai_v2 as openai_v2
 from noodle_nodes.integrations_v2.providers import woocommerce as woocommerce_v2
 from noodle_nodes.integrations_v2.providers import imap as imap_v2
+from noodle_nodes.integrations_v2.providers import filesystem_triggers as filesystem_triggers_v2
 from noodle_nodes.integrations_v2.providers import vapi as vapi_v2
 from noodle_nodes.integrations_v2.providers import retell as retell_v2
 from noodle_nodes.integrations_v2.providers import bland as bland_v2
@@ -130,6 +131,7 @@ __all__ = [
     "openai_v2",
     "woocommerce_v2",
     "imap_v2",
+    "filesystem_triggers_v2",
     "vapi_v2",
     "retell_v2",
     "bland_v2",
