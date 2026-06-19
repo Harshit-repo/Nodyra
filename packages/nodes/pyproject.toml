@@ -39,6 +39,9 @@ voice = [
 deepgram = [
     "deepgram-sdk>=3.0",
 ]
+ollama = [
+    "ollama>=0.4",
+]
 
 [build-system]
 requires = ["hatchling"]
