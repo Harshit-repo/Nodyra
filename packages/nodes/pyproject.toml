@@ -33,6 +33,12 @@ ml = [
 storage = [
     "boto3>=1.34",
 ]
+voice = [
+    "audioop-lts>=0.2 ; python_version >= '3.13'",
+]
+deepgram = [
+    "deepgram-sdk>=3.0",
+]
 
 [build-system]
 requires = ["hatchling"]
