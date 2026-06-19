@@ -221,18 +221,25 @@ def handle_voice_event(
     creds = _credentials_dict(credentials)
     auth_token = str(creds.get("auth_token") or "")
 
-    # Determine the callback URL from query or use an empty string fallback
-    # The URL used for signature validation must match the full URL Twilio posted to
+    # _callback_url is injected by the trigger runtime from the subscription
+    # config stored during activate (config["callback_url"]). Fail closed:
+    # if it is missing, the runtime is misconfigured and we must not accept
+    # the request — an unverifiable webhook is an unauthenticated request.
     callback_url = str(params.get("_callback_url") or "")
 
-    if auth_token and callback_url:
-        valid = _validate_twilio_signature(auth_token, callback_url, form_params, signature)
-        if not valid:
-            return ProviderTriggerEvent(
-                payload=None,
-                response_body={"message": "Twilio webhook signature verification failed"},
-                response_status=403,
-            )
+    if not auth_token or not callback_url:
+        return ProviderTriggerEvent(
+            payload=None,
+            response_body={"message": "Twilio webhook misconfigured: cannot validate signature"},
+            response_status=500,
+        )
+
+    if not signature or not _validate_twilio_signature(auth_token, callback_url, form_params, signature):
+        return ProviderTriggerEvent(
+            payload=None,
+            response_body={"message": "Twilio webhook signature verification failed"},
+            response_status=403,
+        )
 
     # Skip completed calls — only fire on new inbound calls
     call_status = str(form_params.get("CallStatus") or "")

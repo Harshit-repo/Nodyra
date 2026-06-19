@@ -178,21 +178,33 @@ def test_handle_event_rejects_invalid_signature():
 # ---------------------------------------------------------------------------
 
 def test_handle_event_skips_completed_calls():
+    """Completed calls are skipped after a valid signature check."""
     call_params = {"CallSid": "CA123", "CallStatus": "completed"}
-    body_str = urllib.parse.urlencode(call_params)
-    request = ProviderTriggerRequest(
-        headers={"x-twilio-signature": ""},
-        query={},
-        body=call_params,
-        raw_body=body_str.encode(),
-    )
-    # No _callback_url → signature validation is skipped, but CallStatus=completed triggers skip
-    node_params = {"credentials": _CREDS}
+    request = _make_signed_request(_CREDS["auth_token"], _CALLBACK, call_params)
+    node_params = {"credentials": _CREDS, "_callback_url": _CALLBACK}
 
     event = handle_voice_event(request, node_params)
 
     assert event.payload is None
     assert event.response_status == 200
+
+
+def test_handle_event_fails_closed_when_callback_url_missing():
+    """Without _callback_url the runtime cannot validate — must fail with 500."""
+    call_params = {"CallSid": "CA123", "CallStatus": "ringing"}
+    body_str = urllib.parse.urlencode(call_params)
+    request = ProviderTriggerRequest(
+        headers={"x-twilio-signature": "anything"},
+        query={},
+        body=call_params,
+        raw_body=body_str.encode(),
+    )
+    node_params = {"credentials": _CREDS}  # no _callback_url
+
+    event = handle_voice_event(request, node_params)
+
+    assert event.payload is None
+    assert event.response_status == 500
 
 
 # ---------------------------------------------------------------------------
