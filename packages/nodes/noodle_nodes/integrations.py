@@ -183,37 +183,6 @@ def slack_send_message(
     )
 
 
-@node(
-    name="Discord Send Message",
-    id="discord_send_message",
-    param_groups={"Options": ["username", "embeds"]},
-    category="Integrations",
-    icon="message",
-    params={
-        "webhook_url": {
-            **_credential("discord_webhook", "webhook_url", "Discord webhook URL"),
-            "description": "Discord channel webhook URL.",
-        },
-        "content": {"placeholder": "Message text. Blank uses the input payload."},
-        "username": {"placeholder": "Optional webhook display name."},
-        "embeds": {"description": "Optional Discord embeds JSON array."},
-    },
-)
-def discord_send_message(
-    input: Any = None,
-    webhook_url: str = "",
-    content: str = "",
-    username: str = "",
-    embeds: list | None = None,
-) -> Any:
-    """Send a message to a Discord channel webhook."""
-    payload: dict[str, Any] = {"content": _text_from_input(input, content)}
-    if username:
-        payload["username"] = username
-    if embeds is not None:
-        payload["embeds"] = embeds
-    return _request_json("POST", webhook_url, headers=_with_json(), json_body=payload)
-
 
 @node(
     name="SMTP Send Email",
@@ -546,42 +515,6 @@ def github_create_issue(
         json_body=payload,
     )
 
-
-@node(
-    name="Postgres Query",
-    id="postgres_query",
-    param_groups={"Options": ["parameters"]},
-    category="Integrations",
-    icon="database",
-    params={
-        "connection_url": {
-            **_credential("postgres", "connection_url", "Postgres connection URL"),
-            "description": "Postgres connection URL.",
-        },
-        "sql": {"multiline": True, "placeholder": "select * from users limit 10"},
-        "parameters": {"description": "Optional positional list or named dict parameters."},
-    },
-)
-def postgres_query(
-    input: Any = None,  # noqa: ARG001 - input ignored
-    connection_url: str = "",
-    sql: str = "",
-    parameters: Any = None,
-) -> Any:
-    """Run a SQL statement against PostgreSQL and return rows for queries."""
-    try:
-        import psycopg
-        from psycopg.rows import dict_row
-    except ImportError as exc:  # pragma: no cover - depends on user env
-        raise _missing_dependency("Postgres Query", "psycopg[binary]") from exc
-
-    with psycopg.connect(connection_url, row_factory=dict_row) as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(sql, _query_parameters(parameters))
-            if cursor.description:
-                return cursor.fetchall()
-            conn.commit()
-            return {"rowcount": cursor.rowcount}
 
 
 @node(

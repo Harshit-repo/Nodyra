@@ -43,6 +43,14 @@ import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
 from app import tracing
 from app.config import settings
 from app.db import SessionLocal
+from app.exceptions import (
+    DedicatedPoolRequired,
+    PackageNotInstalled,
+    QuotaExceeded,
+    SingleFlightConflict,
+    StepNeedsUpstreamTrigger,
+    WorkflowNeedsTrigger,
+)
 from app.models import (
     CodeModule,
     Deployment,
@@ -301,7 +309,7 @@ async def start_run(
             parameters=parameters,
             trigger_node_id=trigger_node_id,
             deduplication_key=deduplication_key,
-            run_id=run_id,
+            pre_run_id=run_id,
         )
     finally:
         if org_token is not None:
@@ -340,7 +348,7 @@ async def _start_run_impl(
     parameters: dict | None = None,
     trigger_node_id: str | None = None,
     deduplication_key: str | None = None,
-    run_id: str | None = None,
+    pre_run_id: str | None = None,
 ) -> str:
     """Create a run record and launch execution in the background.
 
@@ -356,7 +364,7 @@ async def _start_run_impl(
         if trigger_node_id is None:
             chosen = first_trigger_node(graph, prefer_manual=True)
             if chosen is None:
-                raise ValueError("Workflow needs a trigger to run.")
+                raise WorkflowNeedsTrigger("Workflow needs a trigger to run.")
             trigger_node_id = chosen["id"] if isinstance(chosen, dict) else chosen.id
         targets = resolve_trigger_targets(graph, trigger_node_id, None)
     elif not targets_have_trigger(_expanded_for_gating(graph), targets):
@@ -364,7 +372,8 @@ async def _start_run_impl(
         # ("<meta_id>/<child>"); they only gain their upstream trigger once the
         # metanode is inlined (the engine does this at execute time), so gate
         # against the expanded graph too.
-        raise ValueError("Connect a trigger upstream before running this step.")
+        raise StepNeedsUpstreamTrigger(
+            "Connect a trigger upstream before running this step.")
 
     cache = _seed_parameters(graph, cache, parameters, trigger_id=trigger_node_id)
 
@@ -434,7 +443,7 @@ async def _start_run_impl(
                         or pool.org_id != org.id
                         or pool.provider not in ("docker", "kubernetes")
                     ):
-                        raise ValueError(
+                        raise DedicatedPoolRequired(
                             "This organization requires isolated execution: "
                             "assign one of its docker/kubernetes runner pools "
                             "to the workflow, environment, or deployment."
@@ -451,7 +460,7 @@ async def _start_run_impl(
             if limits.executions_per_day:
                 used = await metering.runs_today(session, wf_obj.org_id)
                 if used >= limits.executions_per_day:
-                    raise ValueError(
+                    raise QuotaExceeded(
                         "Daily execution quota reached for this organization "
                         f"({used}/{limits.executions_per_day}). Runs resume "
                         "at midnight UTC, or an owner can raise the quota."
@@ -469,7 +478,7 @@ async def _start_run_impl(
         if preflight_env is not None:
             missing = find_missing_packages(graph, list(preflight_env.packages))
             if missing:
-                raise ValueError(format_missing(missing))
+                raise PackageNotInstalled(format_missing(missing))
 
         if wf_obj is not None and wf_obj.allow_concurrent is False:
             # Single-flight gate — lock the workflow row to serialize concurrent
@@ -483,7 +492,7 @@ async def _start_run_impl(
                 .limit(1)
             )
             if existing is not None:
-                raise RuntimeError(
+                raise SingleFlightConflict(
                     "Workflow is configured single-flight and another run is in progress."
                 )
 
@@ -500,10 +509,18 @@ async def _start_run_impl(
             deduplication_key=deduplication_key,
         )
         # A caller can pre-generate the run id (webhook raw-body capture writes
-        # artifacts under runs/<run_id>/ before the run exists). Leaving it unset
-        # lets the model default mint one.
-        if run_id is not None:
-            run.id = run_id
+        # artifacts under runs/<pre_run_id>/ before the run exists). Leaving it
+        # unset lets the model default mint one.  Check for collisions (UUID4 hex
+        # is astronomically unlikely to collide, but the DB is the authority).
+        if pre_run_id is not None:
+            existing = await session.get(Run, pre_run_id)
+            if existing is not None:
+                logger.warning(
+                    "pre_generated run_id %s already exists; falling back to auto-generated id",
+                    pre_run_id,
+                )
+            else:
+                run.id = pre_run_id
         # Park the run on the durable queue instead of dispatching inline when
         # (a) this replica is a pure control plane (dispatch_role=disabled —
         # applies to remote-pool runs too; a worker or WS-holding replica

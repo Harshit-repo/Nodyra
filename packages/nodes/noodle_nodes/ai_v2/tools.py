@@ -12,12 +12,10 @@ import re
 from typing import Any
 from urllib.parse import quote
 
-import requests
-
 from noodle.ai_runtime import ToolAdapter, ToolParameterSchema, ToolSchema
 from noodle.context import workflow_caller
 from noodle.sdk import node
-from noodle_nodes.http_security import assert_public_http_url
+from noodle_nodes.http_security import safe_request
 
 AI_CATEGORY = "AI"
 
@@ -121,7 +119,6 @@ class HttpToolAdapter(ToolAdapter):
         if not self._url:
             raise ValueError(f"{self._name}: url is required")
         rendered_url = _render_url_template(self._url, arguments)
-        assert_public_http_url(rendered_url, context=f"{self._name} AI HTTP tool")
         kwargs: dict[str, Any] = {
             "headers": self._headers,
             "timeout": max(1, min(300, self._timeout)),
@@ -130,7 +127,13 @@ class HttpToolAdapter(ToolAdapter):
             kwargs["params"] = arguments
         else:
             kwargs["json"] = arguments
-        resp = requests.request(self._method, rendered_url, **kwargs)
+        # SEC-2: the URL is templated from model-supplied arguments (prompt
+        # injection can steer it), so the guard re-validates every redirect hop,
+        # not just the first request.
+        resp = safe_request(
+            self._method, rendered_url,
+            context=f"{self._name} AI HTTP tool", **kwargs,
+        )
         if resp.status_code >= 400:
             return f"HTTP {resp.status_code}: {resp.text[:1000]}"
         return resp.text[:8000]

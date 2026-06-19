@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app import models
 from app.config import settings
 from app.services import retention
+from app.exceptions import DedicatedPoolRequired
 from app.services.runner import start_run
 from app.tenancy import DEFAULT_ORG_ID, active_org_id, current_org_id, run_as_system
 
@@ -60,7 +61,7 @@ async def test_dedicated_org_without_pool_is_refused(client: AsyncClient, mt_on)
         workflow_id = await _seed(
             session, isolation="dedicated_pool", pool_org=None, provider="docker"
         )
-    with pytest.raises(ValueError, match="isolated execution"):
+    with pytest.raises(DedicatedPoolRequired, match="isolated execution"):
         await start_run(workflow_id, GRAPH, 1)
 
 
@@ -72,7 +73,7 @@ async def test_dedicated_org_with_foreign_pool_is_refused(client: AsyncClient, m
             pool_org=DEFAULT_ORG_ID,  # someone else's pool
             provider="docker",
         )
-    with pytest.raises(ValueError, match="isolated execution"):
+    with pytest.raises(DedicatedPoolRequired, match="isolated execution"):
         await start_run(workflow_id, GRAPH, 1)
 
 
@@ -83,7 +84,7 @@ async def test_dedicated_org_with_agent_pool_is_refused(client: AsyncClient, mt_
         workflow_id = await _seed(
             session, isolation="dedicated_pool", pool_org="org-x", provider="agent"
         )
-    with pytest.raises(ValueError, match="isolated execution"):
+    with pytest.raises(DedicatedPoolRequired, match="isolated execution"):
         await start_run(workflow_id, GRAPH, 1)
 
 

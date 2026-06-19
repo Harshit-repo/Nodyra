@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from croniter import croniter
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.config import settings
 from app.db import SessionLocal
@@ -899,9 +899,20 @@ async def dispatch_webhook(
 
 
 async def _all_workflows() -> list[Workflow]:
-    """Used by the editor test URL — draft-mode dispatch ignores `active`."""
+    """Used by the editor test URL — draft-mode dispatch ignores `active`.
+
+    Loads workflows that are either active (published) or currently being
+    edited (have a draft_graph), skipping archived/inactive workflows that
+    have neither.  This avoids loading thousands of stale rows on every
+    test-webhook request while still matching published-only workflows that
+    have no open draft.
+    """
     async with SessionLocal() as session:
-        result = await session.scalars(select(Workflow))
+        result = await session.scalars(
+            select(Workflow).where(
+                or_(Workflow.active.is_(True), Workflow.draft_graph.is_not(None))
+            )
+        )
         return list(result.all())
 
 
@@ -1220,4 +1231,5 @@ async def scheduler_loop() -> None:
         except Exception:
             logger.exception("scheduler tick failed")
             _backoff = min(_backoff * 2 if _backoff else 5.0, 300.0)
-        await asyncio.sleep(30 + _backoff)
+        interval = max(1.0, settings.scheduler_tick_seconds + _backoff)
+        await asyncio.sleep(interval)

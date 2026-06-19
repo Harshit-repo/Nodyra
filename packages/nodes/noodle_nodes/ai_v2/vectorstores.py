@@ -8,8 +8,6 @@ import re
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
-import requests
-
 from noodle.ai_runtime import (
     Document,
     EmbeddingModelAdapter,
@@ -19,7 +17,7 @@ from noodle.ai_runtime import (
 )
 from noodle.sdk import node
 from noodle_nodes._creds import cred_multi
-from noodle_nodes.http_security import assert_public_http_url
+from noodle_nodes.http_security import safe_request
 
 AI_CATEGORY = "AI"
 QDRANT_CREDENTIAL_FIELDS = ["url", "api_key"]
@@ -181,19 +179,20 @@ class QdrantVectorStoreAdapter(VectorStoreAdapter):
     def _target_url(self, path: str) -> str:
         if not self._url:
             raise ValueError("qdrant vector store: url is required")
-        url = f"{self._url}{path}"
-        assert_public_http_url(url, context="qdrant vector store")
-        return url
+        return f"{self._url}{path}"
 
     def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict:
         if not self._collection:
             raise ValueError("qdrant vector store: collection is required")
-        response = requests.request(
+        # SEC-2: self._url comes from user credentials — the guard validates the
+        # target (and every redirect hop).
+        response = safe_request(
             method,
             self._target_url(path),
             headers=self._headers,
             json=payload,
             timeout=max(1, min(300, self._timeout)),
+            context="qdrant vector store",
         )
         if response.status_code >= 400:
             raise RuntimeError(
@@ -207,11 +206,12 @@ class QdrantVectorStoreAdapter(VectorStoreAdapter):
         return body if isinstance(body, dict) else {}
 
     def _collection_exists(self) -> bool:
-        response = requests.request(
+        response = safe_request(
             "GET",
             self._target_url(f"/collections/{self._collection}"),
             headers=self._headers,
             timeout=max(1, min(300, self._timeout)),
+            context="qdrant vector store",
         )
         if response.status_code == 404:
             return False

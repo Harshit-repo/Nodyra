@@ -77,9 +77,9 @@ def test_rss_trigger_is_registered() -> None:
 def test_rss_first_run_no_events() -> None:
     """First run with no cursor (seen_guids=None) fires no events."""
     with patch(
-        "noodle_nodes.integrations_v2.providers.rss.triggers.requests"
+        "noodle_nodes.integrations_v2.providers.rss.triggers.safe_request"
     ) as mock_req:
-        mock_req.get.return_value = _mock_response(RSS_FEED)
+        mock_req.return_value = _mock_response(RSS_FEED)
         result = rss_triggers.poll_rss_feed(
             ProviderTriggerPollContext(
                 params={"feed_url": "https://example.com/feed.xml", "max_items": 10},
@@ -93,9 +93,9 @@ def test_rss_first_run_no_events() -> None:
 
 def test_rss_new_items_after_cursor() -> None:
     with patch(
-        "noodle_nodes.integrations_v2.providers.rss.triggers.requests"
+        "noodle_nodes.integrations_v2.providers.rss.triggers.safe_request"
     ) as mock_req:
-        mock_req.get.return_value = _mock_response(RSS_FEED)
+        mock_req.return_value = _mock_response(RSS_FEED)
         result = rss_triggers.poll_rss_feed(
             ProviderTriggerPollContext(
                 params={"feed_url": "https://example.com/feed.xml", "max_items": 10},
@@ -110,9 +110,9 @@ def test_rss_new_items_after_cursor() -> None:
 
 def test_atom_feed_parses_entries() -> None:
     with patch(
-        "noodle_nodes.integrations_v2.providers.rss.triggers.requests"
+        "noodle_nodes.integrations_v2.providers.rss.triggers.safe_request"
     ) as mock_req:
-        mock_req.get.return_value = _mock_response(ATOM_FEED)
+        mock_req.return_value = _mock_response(ATOM_FEED)
         result = rss_triggers.poll_rss_feed(
             ProviderTriggerPollContext(
                 params={"feed_url": "https://example.com/atom.xml", "max_items": 10},
@@ -125,9 +125,9 @@ def test_atom_feed_parses_entries() -> None:
 
 def test_rss_rejects_unsafe_xml_entities() -> None:
     with patch(
-        "noodle_nodes.integrations_v2.providers.rss.triggers.requests"
+        "noodle_nodes.integrations_v2.providers.rss.triggers.safe_request"
     ) as mock_req:
-        mock_req.get.return_value = _mock_response(UNSAFE_FEED)
+        mock_req.return_value = _mock_response(UNSAFE_FEED)
         with pytest.raises(ValueError, match="unsafe feed XML"):
             rss_triggers.poll_rss_feed(
                 ProviderTriggerPollContext(

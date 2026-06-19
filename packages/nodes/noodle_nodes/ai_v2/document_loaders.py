@@ -6,11 +6,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-import requests
-
 from noodle.ai_runtime import Document, DocumentLoaderAdapter
 from noodle.sdk import node
-from noodle_nodes.http_security import assert_public_http_url
+from noodle_nodes.http_security import safe_request
 
 AI_CATEGORY = "AI"
 MAX_AI_DOCUMENT_CHARS = 1_000_000
@@ -126,10 +124,13 @@ class UrlDocumentLoaderAdapter(DocumentLoaderAdapter):
     def load(self) -> list[Document]:
         if not self._url:
             raise ValueError("url document loader: url is required")
-        assert_public_http_url(self._url, context="url document loader")
-        response = requests.get(
+        # SEC-2: self._url is user-supplied — the guard validates it and every
+        # redirect hop.
+        response = safe_request(
+            "GET",
             self._url,
             timeout=max(1, min(300, self._timeout)),
+            context="url document loader",
         )
         if response.status_code >= 400:
             raise RuntimeError(

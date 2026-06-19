@@ -133,17 +133,32 @@ class RunBroker:
         payload = json.dumps(event)
         r = self._redis
         if r is not None:
-            try:
-                pipe = r.pipeline()
-                pipe.rpush(self._history_key(run_id), payload)
-                pipe.expire(self._history_key(run_id), RUN_EVENT_TTL_SECONDS)
-                pipe.publish(self._channel(run_id), payload)
-                await pipe.execute()
-                return
-            except Exception:
-                logger.exception("Redis publish failed for run %s — using in-process", run_id)
+            for attempt in range(2):
+                try:
+                    pipe = r.pipeline()
+                    pipe.rpush(self._history_key(run_id), payload)
+                    pipe.expire(self._history_key(run_id), RUN_EVENT_TTL_SECONDS)
+                    pipe.publish(self._channel(run_id), payload)
+                    await pipe.execute()
+                    return
+                except Exception:
+                    if attempt == 0:
+                        logger.warning(
+                            "Redis publish failed for run %s (attempt %d) — retrying",
+                            run_id, attempt + 1,
+                        )
+                        await asyncio.sleep(0.1)
+                    else:
+                        logger.exception(
+                            "Redis publish failed for run %s after retry — "
+                            "event will not reach cross-process subscribers",
+                            run_id,
+                        )
 
-        # Fallback: in-process
+        # Fallback: in-process.  In split topologies the in-process buffer
+        # won't be consumed by subscribers on other replicas — the event is
+        # lost to the shared broker — but local in-process subscribers
+        # (single-process dev, inline mode) still get it.
         self._publish_inprocess(run_id, event)
 
     async def _publish_oneshot(self, run_id: str, event: Event) -> None:

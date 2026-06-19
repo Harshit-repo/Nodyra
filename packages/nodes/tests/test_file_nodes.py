@@ -469,6 +469,52 @@ def test_read_url_http_error_raises() -> None:
             read_url_file(input=None, url="https://example.com/private.csv", format="auto")
 
 
+def test_ssrf_fetch_blocks_private_by_default(monkeypatch) -> None:
+    """SEC-3: with the default egress policy a private resolved address is
+    rejected before any connection is attempted."""
+    import socket
+
+    from noodle_nodes.file_nodes import _ssrf_safe_fetch
+
+    monkeypatch.delenv("NOODLE_ALLOW_PRIVATE_EGRESS", raising=False)
+    monkeypatch.setattr(
+        socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("10.0.0.5", 80))]
+    )
+    with pytest.raises(ValueError, match="globally routable"):
+        _ssrf_safe_fetch("http://internal.example/data", {})
+
+
+def test_ssrf_fetch_allows_private_when_opted_in(monkeypatch) -> None:
+    """SEC-3: self-hosted opt-out lets read_url_file reach an internal host."""
+    import socket
+
+    import urllib3
+
+    from noodle_nodes.file_nodes import _ssrf_safe_fetch
+
+    monkeypatch.setenv("NOODLE_ALLOW_PRIVATE_EGRESS", "1")
+    monkeypatch.setattr(
+        socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("10.0.0.5", 80))]
+    )
+
+    class _FakeResp:
+        status = 200
+        headers = {"Content-Type": "text/plain"}
+        data = b"ok"
+
+    class _FakePool:
+        def __init__(self, *a, **k) -> None:
+            pass
+
+        def request(self, *a, **k):
+            return _FakeResp()
+
+    monkeypatch.setattr(urllib3, "HTTPConnectionPool", _FakePool)
+    body, content_type = _ssrf_safe_fetch("http://10.0.0.5/data", {})
+    assert body == b"ok"
+    assert content_type == "text/plain"
+
+
 def test_read_url_invalid_headers_json_raises() -> None:
     from noodle_nodes.file_nodes import read_url_file
 

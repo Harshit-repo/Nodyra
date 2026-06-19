@@ -3,6 +3,7 @@ import json
 import pytest
 
 from noodle.context import node_debug
+from noodle_nodes.http_security import UnsafeHttpTargetError
 from noodle_nodes.integrations_v2 import ProviderError, ProviderTransport, RetryPolicy
 from noodle_nodes.integrations_v2.providers.google import GoogleTransport
 from noodle_nodes.integrations_v2.providers.microsoft import MicrosoftGraphTransport
@@ -173,6 +174,67 @@ def test_google_transport_adds_bearer_and_api_key(monkeypatch) -> None:
     assert calls[0]["url"].startswith("https://sheets.googleapis.com/v4/")
     assert calls[0]["kwargs"]["headers"]["Authorization"] == "Bearer google-token"
     assert calls[0]["kwargs"]["params"]["key"] == "google-api-key"
+
+
+def test_transport_blocks_private_host_ssrf(monkeypatch) -> None:
+    """SEC-1: a user-controlled base_url pointing at a private/metadata host
+    must be rejected before any HTTP request is issued."""
+    issued: list[str] = []
+
+    def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
+        issued.append(url)
+        return FakeResponse(200, {"ok": True})
+
+    monkeypatch.setattr("requests.request", fake_request)
+    transport = ProviderTransport(
+        provider="gitlab",
+        base_url="http://169.254.169.254",
+        retry_policy=RetryPolicy(max_attempts=3, backoff_seconds=0),
+    )
+
+    with pytest.raises(UnsafeHttpTargetError):
+        transport.request("GET", "/api/v4/user", operation="get_user")
+
+    # The request must never have been dispatched, and SSRF must not be retried.
+    assert issued == []
+
+
+def test_transport_blocks_absolute_url_override_to_private_host(monkeypatch) -> None:
+    """SEC-1: passing an absolute http(s) URL that targets a private host is
+    rejected even though url() passes absolute URLs through untouched."""
+
+    def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
+        raise AssertionError("request must not be dispatched for a blocked host")
+
+    monkeypatch.setattr("requests.request", fake_request)
+    transport = ProviderTransport(
+        provider="demo",
+        base_url="https://api.example",
+        retry_policy=RetryPolicy(max_attempts=1),
+    )
+
+    with pytest.raises(UnsafeHttpTargetError):
+        transport.request("GET", "http://127.0.0.1:8080/admin", operation="probe")
+
+
+def test_transport_allows_public_host(monkeypatch) -> None:
+    """SEC-1: ordinary public hosts continue to work unchanged."""
+    calls: list[str] = []
+
+    def fake_request(method: str, url: str, **kwargs):  # noqa: ARG001
+        calls.append(url)
+        return FakeResponse(200, {"ok": True})
+
+    monkeypatch.setattr("requests.request", fake_request)
+    transport = ProviderTransport(
+        provider="demo",
+        base_url="https://api.example/v1",
+        retry_policy=RetryPolicy(max_attempts=1),
+    )
+
+    result = transport.request("GET", "/things", operation="list_things")
+    assert result == {"ok": True}
+    assert calls == ["https://api.example/v1/things"]
 
 
 def test_microsoft_graph_transport_sets_base_url_and_bearer(monkeypatch) -> None:

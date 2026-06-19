@@ -138,11 +138,12 @@ def sitemap_crawl(
 ) -> dict:
     """Parse a sitemap URL/XML and return discovered URLs as a DatasetRef."""
     try:
-        import requests  # type: ignore[import-not-found]
+        import requests  # type: ignore[import-not-found]  # noqa: F401 - ensures dep present
     except ImportError as exc:
         raise RuntimeError("Sitemap Crawl requires requests>=2.28.") from exc
 
     from noodle_nodes.datasets import records_to_dataset
+    from noodle_nodes.http_security import safe_request
 
     source = url or (str(input) if input is not None and not _is_artifact_ref(input) else "")
     if _is_artifact_ref(input):
@@ -152,7 +153,12 @@ def sitemap_crawl(
 
     def _load(candidate: str) -> tuple[str, str]:
         if candidate.startswith(("http://", "https://")):
-            resp = requests.get(candidate, timeout=float(timeout_seconds or 15))
+            # SEC-2: candidate is a user-supplied URL — route through the SSRF
+            # guard so a sitemap fetch cannot reach internal/metadata endpoints.
+            resp = safe_request(
+                "GET", candidate, timeout=float(timeout_seconds or 15),
+                context="sitemap_crawl",
+            )
             resp.raise_for_status()
             return candidate, resp.text
         return "input", candidate

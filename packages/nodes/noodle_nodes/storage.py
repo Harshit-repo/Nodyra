@@ -22,6 +22,7 @@ import requests
 
 from noodle.sdk import node
 from noodle_nodes._creds import cred_multi, cred_single
+from noodle_nodes.http_security import safe_request
 
 _HTTP_TIMEOUT = 30
 
@@ -296,13 +297,17 @@ def elasticsearch_search(
     if api_key:
         headers["Authorization"] = f"ApiKey {api_key}"
     auth = (username, password) if username else None
-    response = requests.post(
+    # SEC-2: base_url comes from user credentials (often a self-hosted
+    # Elasticsearch host) — route through the SSRF guard.
+    response = safe_request(
+        "POST",
         f"{base_url.rstrip('/')}/{index}/_search",
         headers=headers,
         auth=auth,
         json=body,
         timeout=_HTTP_TIMEOUT,
         verify=True,
+        context="elasticsearch search",
     )
     return _expect_ok(response, "elasticsearch")
 

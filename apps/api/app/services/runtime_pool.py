@@ -123,6 +123,12 @@ async def _rss_soft_budget_bytes() -> int:
 # ``NOODLE_CODE_NODE_TIMEOUT_SECONDS`` (set explicitly below); the rest of the
 # allowlist is OS plumbing the interpreter needs to boot and make TLS/temp-file
 # syscalls work, cross-platform.
+#
+# Deliberately EXCLUDED: HTTP_PROXY, HTTPS_PROXY, NO_PROXY.  User code in Code
+# / HTTP Request nodes that needs a corporate proxy must configure it at the
+# node level (HTTP Request node params) rather than relying on environment
+# variables — this prevents untrusted code from reaching internal networks
+# through a proxy that the host implicitly trusts.
 _WORKER_ENV_ALLOWLIST = frozenset(
     name.upper()
     for name in (
@@ -163,21 +169,36 @@ def _worker_env() -> dict[str, str]:
 
     Passes through OS plumbing and ``NOODLE_*`` variables only; never the
     API's secrets. Name matching is case-insensitive (Windows semantics).
+    ``NOODLE_CODE_NODE_TIMEOUT_SECONDS`` is set fresh on every call so a
+    live-settings change takes effect for the next spawned worker without
+    waiting for the allowlist cache to expire.
     """
     global _WORKER_ENV_CACHE, _WORKER_ENV_CACHE_AT
     now = time.monotonic()
     if _WORKER_ENV_CACHE is not None and (now - _WORKER_ENV_CACHE_AT) < _WORKER_ENV_CACHE_TTL:
-        return _WORKER_ENV_CACHE
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if key.upper() in _WORKER_ENV_ALLOWLIST or key.upper().startswith("NOODLE_")
-    }
+        env = dict(_WORKER_ENV_CACHE)
+    else:
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key.upper() in _WORKER_ENV_ALLOWLIST or key.upper().startswith("NOODLE_")
+        }
+        _WORKER_ENV_CACHE = dict(env)
+        _WORKER_ENV_CACHE_AT = now
     env["NOODLE_CODE_NODE_TIMEOUT_SECONDS"] = str(
         settings.code_node_timeout_seconds
     )
-    _WORKER_ENV_CACHE = env
-    _WORKER_ENV_CACHE_AT = now
+    # SEC-3: egress policy for node HTTP/DB. If the operator pinned
+    # NOODLE_ALLOW_PRIVATE_EGRESS it was copied through the allowlist above and
+    # wins; otherwise the default follows the deployment model — hosted
+    # multi-tenant blocks private targets (a tenant must never reach internal
+    # services or 169.254.169.254), single-tenant self-hosted trusts its own
+    # network so Ollama/localhost, VPC databases, and self-hosted integrations
+    # work out of the box.
+    if "NOODLE_ALLOW_PRIVATE_EGRESS" not in env:
+        env["NOODLE_ALLOW_PRIVATE_EGRESS"] = (
+            "0" if settings.multi_tenancy_enabled else "1"
+        )
     return env
 
 

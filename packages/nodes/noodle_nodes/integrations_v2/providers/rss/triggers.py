@@ -9,6 +9,7 @@ from defusedxml import DefusedXmlException
 from defusedxml.ElementTree import ParseError as XmlParseError
 from defusedxml.ElementTree import fromstring as safe_xml_fromstring
 
+from noodle_nodes.http_security import safe_request
 from noodle_nodes.integrations_v2.registry import register_provider_trigger
 from noodle_nodes.integrations_v2.specs import (
     OperationParamSpec,
@@ -60,10 +61,14 @@ def _parse_atom(root: Element) -> list[dict[str, Any]]:
 
 
 def _fetch_items(feed_url: str) -> list[dict[str, Any]]:
-    resp = requests.get(
+    # SEC-2: feed_url is user-supplied and may be attacker-influenced — route
+    # through the SSRF guard (which re-validates redirects too).
+    resp = safe_request(
+        "GET",
         feed_url,
         timeout=15,
         headers={"User-Agent": "Noodle/1.0 feed-reader"},
+        context="rss_feed_trigger",
     )
     resp.raise_for_status()
     try:

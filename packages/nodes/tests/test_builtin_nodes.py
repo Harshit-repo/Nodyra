@@ -84,14 +84,13 @@ def test_expected_integration_nodes_are_registered() -> None:
     ids = {m.id for m in registry.manifests()}
     expected = {
         "slack_send_message",
-        "discord_send_message",
+        "discord",
         "smtp_send_email",
         "google_sheets_read",
         "google_sheets_append",
         "notion_create_page",
         "github_get_repo",
         "github_create_issue",
-        "postgres_query",
         "mysql_query",
         "s3_put_object",
         "s3_get_object",

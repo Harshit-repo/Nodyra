@@ -116,6 +116,9 @@ class Settings(BaseSettings):
     # on and set scheduler_role=leader so one replica owns it (avoids
     # double-fire); set false to disable scheduling in this process entirely.
     enable_inprocess_scheduler: bool = True
+    # Seconds between scheduler ticks. 30 is the default — operators who need
+    # sub-30-second cron precision can lower this at the cost of more DB polls.
+    scheduler_tick_seconds: float = 30.0
     # Default IANA timezone for the app. Used as the fallback when a
     # schedule_trigger has no explicit ``tz`` field set. Blank → detect the
     # server's local timezone at startup; set explicitly in .env to pin it
@@ -259,6 +262,11 @@ class Settings(BaseSettings):
     # WAF/CDN already throttles ingress.
     webhook_rate_limit_enabled: bool = True
     webhook_rate_limit_per_minute: int = 120
+    # Number of trusted reverse-proxy hops in front of the API.  When > 0 the
+    # rate limiter reads the real client IP from X-Forwarded-For (skipping the
+    # last N entries which belong to the proxies).  Leave at 0 for direct
+    # exposure or when the proxy is not trusted to set that header correctly.
+    trusted_proxy_count: int = 0
     secret_key: str = DEFAULT_SECRET_KEY
     # Shared secret the worker presents to call /internal/* endpoints.
     # Blank = no check (fine for local dev where only your machine reaches

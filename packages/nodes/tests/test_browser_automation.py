@@ -316,11 +316,11 @@ def test_sitemap_crawl_does_not_fetch_duplicate_nested_sitemaps(
         def raise_for_status(self) -> None:
             return None
 
-    def fake_get(url: str, **kwargs: Any) -> Response:
+    def fake_request(method: str, url: str, **kwargs: Any) -> Response:
         calls.append(url)
         return Response(child if url.endswith("child.xml") else index)
 
-    monkeypatch.setattr("requests.get", fake_get)
+    monkeypatch.setattr("noodle_nodes.http_security.safe_request", fake_request)
     result = sitemap_crawl(url="https://example.com/index.xml")
 
     assert result["url_count"] == 1

@@ -18,7 +18,7 @@ The runner sets these before invoking the engine. Nodes can read them via
 
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from typing import Any
+from typing import Any, Protocol
 
 WorkflowCaller = Callable[[str, Any], Awaitable[Any]]
 
@@ -88,4 +88,22 @@ def emit_chunk(delta: str, *, channel: str = "output") -> None:
 # engine; empty for single-tenant deployments.
 org_run_limits: ContextVar[dict[str, int]] = ContextVar(
     "noodle_org_run_limits", default={}
+)
+
+
+class WebSocketConnection(Protocol):
+    """Minimal interface a node uses to read/write a managed WebSocket."""
+
+    async def send(self, data: bytes | str) -> None: ...
+    async def recv(self) -> bytes | str: ...
+    async def close(self) -> None: ...
+
+
+# Injected by the runtime when a node needs a managed WebSocket connection.
+# The runtime opens and tracks connections so they are cleaned up when the
+# node run finishes or times out. Default None = not inside a live run.
+NodeWsConnectFn = Callable[[str, dict], Awaitable["WebSocketConnection"]]
+
+node_ws_connect: ContextVar[NodeWsConnectFn | None] = ContextVar(
+    "noodle_node_ws_connect", default=None
 )

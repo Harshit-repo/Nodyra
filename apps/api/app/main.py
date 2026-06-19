@@ -68,32 +68,42 @@ from app.services.triggers import scheduler_loop
 
 
 async def _ensure_global_environment() -> None:
-    """Make sure exactly one global environment exists."""
+    """Make sure exactly one global environment exists.
+
+    Runs unscoped (``run_as_system``) so the org filter in multi-tenant mode
+    doesn't limit the SELECT to the default org, which would cause every
+    other org to appear to have no global environment.
+    """
     logger = logging.getLogger("noodle")
     try:
-        async with SessionLocal() as session:
-            existing = (
-                await session.scalars(select(Environment).where(Environment.is_global.is_(True)))
-            ).all()
-            if len(existing) > 1:
-                logger.warning(
-                    "_ensure_global_environment: found %d global environments; "
-                    "expected exactly one. Multi-replica startup race likely.",
-                    len(existing),
-                )
-            if not existing:
-                session.add(
-                    Environment(
-                        name="Global",
-                        is_global=True,
-                        packages=["requests"],
-                        status="pending",
+        from app.tenancy import run_as_system
+
+        with run_as_system():
+            async with SessionLocal() as session:
+                existing = (
+                    await session.scalars(
+                        select(Environment).where(Environment.is_global.is_(True))
                     )
-                )
-                try:
-                    await session.commit()
-                except IntegrityError:
-                    pass  # Concurrent replica inserted first — benign
+                ).all()
+                if len(existing) > 1:
+                    logger.warning(
+                        "_ensure_global_environment: found %d global environments; "
+                        "expected exactly one. Multi-replica startup race likely.",
+                        len(existing),
+                    )
+                if not existing:
+                    session.add(
+                        Environment(
+                            name="Global",
+                            is_global=True,
+                            packages=["requests"],
+                            status="pending",
+                        )
+                    )
+                    try:
+                        await session.commit()
+                    except IntegrityError:
+                        pass  # Concurrent replica inserted first — benign
     except Exception:
         logger.debug("_ensure_global_environment failed; DB may not be migrated yet", exc_info=True)
 
@@ -414,6 +424,23 @@ tracing.instrument_sqlalchemy(engine)
 # Access-Control-Allow-Origin header — otherwise the browser reports an opaque
 # CORS failure instead of the real status and the SPA can't react (e.g. redirect
 # to login on session expiry).
+
+
+from app.exceptions import ServiceError
+
+
+@app.exception_handler(ServiceError)
+async def _service_error_handler(request: Request, exc: ServiceError) -> JSONResponse:
+    """Convert ServiceError subclasses to typed HTTP responses via ExceptionMiddleware.
+
+    Registered on ServiceError (not Exception) so Starlette routes it through
+    ExceptionMiddleware (MRO walk) rather than ServerErrorMiddleware, which
+    would call the handler AND still re-raise the exception in test mode.
+    """
+    return JSONResponse(
+        status_code=exc.http_status,
+        content={"detail": str(exc), **exc.detail},
+    )
 
 
 @app.exception_handler(Exception)

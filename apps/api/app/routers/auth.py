@@ -23,6 +23,7 @@ from app.security import (
     _extract_token,
     _user_from_session_token,
     current_user,
+    get_client_ip,
     normalize_role,
     require_permission,
 )
@@ -47,7 +48,7 @@ require_user_manage = require_permission("user:manage")
 async def _enforce_auth_rate_limit(request: Request, bucket: str) -> None:
     if not settings.auth_rate_limit_enabled:
         return
-    ip = request.client.host if request.client else "anon"
+    ip = get_client_ip(request)
     allowed = await rate_limit.allow(
         bucket, ip, limit=settings.auth_rate_limit_per_minute
     )

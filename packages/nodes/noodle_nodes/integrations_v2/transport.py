@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from noodle.context import node_debug
+from noodle_nodes.http_security import safe_request
 from noodle_nodes.integrations_v2.errors import ProviderError
 
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
@@ -195,7 +196,13 @@ class ProviderTransport:
         for attempt in range(1, attempts + 1):
             attempt_start = time.perf_counter()
             try:
-                response = requests.request(
+                # SEC-1/SEC-3: every provider request — including ones whose host
+                # is built from user-supplied credentials (self-hosted GitLab,
+                # Supabase, WooCommerce, …) — goes through the shared SSRF guard,
+                # which validates the target and re-validates every redirect hop.
+                # UnsafeHttpTargetError is intentionally NOT caught here: an SSRF
+                # attempt must fail fast, never silently retry.
+                response = safe_request(
                     method,
                     url,
                     headers=self.headers(headers),
@@ -203,6 +210,7 @@ class ProviderTransport:
                     json=json_body,
                     data=data,
                     timeout=timeout,
+                    context=f"{self.provider} {operation}",
                 )
             except requests.RequestException as exc:
                 latency_ms = max(0, int((time.perf_counter() - attempt_start) * 1000))

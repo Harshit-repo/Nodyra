@@ -28,6 +28,27 @@ from app.tenancy import DEFAULT_ORG_ID, current_org_id
 
 VALID_ROLES = ("viewer", "editor", "admin", "owner")
 
+
+def get_client_ip(request: Request) -> str:
+    """Return the real client IP, respecting ``trusted_proxy_count``.
+
+    When ``trusted_proxy_count > 0`` the X-Forwarded-For header is read and
+    the entry at position ``-(trusted_proxy_count)`` from the right is used
+    (the rightmost entries are added by our own trusted proxies; the first
+    entry we don't control is the client).  Falls back to the direct
+    connection address when the header is absent or has too few entries.
+    """
+    n = settings.trusted_proxy_count
+    if n > 0:
+        xff = request.headers.get("x-forwarded-for", "")
+        if xff:
+            parts = [p.strip() for p in xff.split(",")]
+            idx = max(0, len(parts) - n)
+            return parts[idx]
+    if request.client:
+        return request.client.host
+    return "anon"
+
 _ROLE_RANK = {
     "viewer": 10,
     "editor": 20,

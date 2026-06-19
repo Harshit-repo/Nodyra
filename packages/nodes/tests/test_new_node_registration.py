@@ -18,21 +18,10 @@ from noodle_nodes import ai_extra, cloud_devops, communication, llm, saas, stora
 
 BRAND_NODE_IDS = {
     # Communication (Integrations)
-    "telegram_send_message": ("brand:telegram", "Integrations"),
-    "teams_send_webhook": ("brand:microsoftteams", "Integrations"),
-    "sendgrid_send_email": ("brand:sendgrid", "Integrations"),
-    "twilio_send_sms": ("brand:twilio", "Integrations"),
     "pushover_notify": ("brand:pushover", "Integrations"),
     # SaaS (Integrations)
     "linear_create_issue": ("brand:linear", "Integrations"),
     "jira_create_issue": ("brand:jira", "Integrations"),
-    "trello_create_card": ("brand:trello", "Integrations"),
-    "hubspot_create_contact": ("brand:hubspot", "Integrations"),
-    "asana_create_task": ("brand:asana", "Integrations"),
-    "calendly_get_event": ("brand:calendly", "Integrations"),
-    "zoom_create_meeting": ("brand:zoom", "Integrations"),
-    "mailchimp_add_subscriber": ("brand:mailchimp", "Integrations"),
-    "shopify_list_orders": ("brand:shopify", "Integrations"),
     # AI
     "openai_embeddings": ("brand:openai", "AI"),
     "openai_whisper_transcribe": ("brand:openai", "AI"),
@@ -83,21 +72,10 @@ def test_brand_nodes_registered_with_brand_icon() -> None:
     "func",
     [
         # Communication
-        communication.telegram_send_message,
-        communication.teams_send_webhook,
-        communication.sendgrid_send_email,
-        communication.twilio_send_sms,
         communication.pushover_notify,
         # SaaS
-        saas.linear_create_issue,
         saas.jira_create_issue,
-        saas.trello_create_card,
-        saas.hubspot_create_contact,
-        saas.asana_create_task,
-        saas.calendly_get_event,
-        saas.zoom_create_meeting,
-        saas.mailchimp_add_subscriber,
-        saas.shopify_list_orders,
+        saas.linear_create_issue,
         # AI/ML
         ai_extra.openai_embeddings,
         ai_extra.openai_tts,

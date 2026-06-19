@@ -495,6 +495,9 @@ def _ssrf_safe_fetch(url: str, headers: dict, *, timeout: int = 60) -> tuple[byt
     import urllib3
     from urllib.parse import urlparse
 
+    from noodle_nodes.http_security import private_egress_allowed
+
+    allow_private = private_egress_allowed()
     current_url = url
     current_headers = dict(headers)
     max_redirects = 10
@@ -527,7 +530,7 @@ def _ssrf_safe_fetch(url: str, headers: dict, *, timeout: int = 60) -> tuple[byt
                 ip = ipaddress.ip_address(addr)
             except ValueError:
                 continue
-            if not ip.is_global:
+            if not allow_private and not ip.is_global:
                 raise ValueError(
                     f"read_url_file: {hostname!r} resolves to {addr}, which is not a "
                     "globally routable address; requests to private/loopback/link-local "

@@ -2,6 +2,7 @@ import { Info, MagnifyingGlass, Plus, WarningCircle, X } from "@phosphor-icons/r
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, errorMessage, uploadArtifact } from "../api";
+import { formatBytes } from "./artifactValues";
 import { categoryColor } from "../categories";
 import {
   LLM_PROVIDER_VARIANTS,
@@ -2780,7 +2781,28 @@ function FileUploadField({
 }) {
   const [busy, setBusy] = useState(false);
   const [filename, setFilename] = useState<string | null>(null);
+  const [sizeBytes, setSizeBytes] = useState<number | null>(null);
   const { notify } = useToast();
+
+  // Resolve filename + size from the artifact store on mount / when the saved
+  // artifact_id changes (e.g. after a page reload the local state is gone but
+  // the artifact is still pinned in the workflow params).
+  useEffect(() => {
+    if (!value) {
+      setFilename(null);
+      setSizeBytes(null);
+      return;
+    }
+    let cancelled = false;
+    api.getArtifact(value).then((info) => {
+      if (cancelled) return;
+      setFilename(info.name);
+      setSizeBytes(info.size_bytes ?? null);
+    }).catch(() => {
+      // artifact may have been deleted — leave label as the raw id
+    });
+    return () => { cancelled = true; };
+  }, [value]);
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -2790,6 +2812,7 @@ function FileUploadField({
       const info = await uploadArtifact(file);
       onChange(info.id);
       setFilename(info.name);
+      setSizeBytes(info.size_bytes ?? null);
     } catch (err) {
       notify(String(err), "error");
     } finally {
@@ -2803,12 +2826,22 @@ function FileUploadField({
       {value && (
         <div className="file-upload-current">
           <span className="file-upload-name">{filename ?? value}</span>
+          {sizeBytes != null && (
+            <span className="file-upload-size">{formatBytes(sizeBytes)}</span>
+          )}
+          <span
+            className="file-upload-pinned"
+            title="File is saved and will be reused across runs without re-uploading"
+          >
+            pinned
+          </span>
           <button
             type="button"
             className="btn btn-sm btn-ghost"
             onClick={() => {
               onChange("");
               setFilename(null);
+              setSizeBytes(null);
             }}
             aria-label="Remove file"
           >

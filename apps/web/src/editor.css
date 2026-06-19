@@ -7878,3 +7878,49 @@ select.field-input:hover {
 .expr-ac-item.sel {
   box-shadow: inset 2px 0 0 var(--accent, #4c9eff);
 }
+
+/* ── File upload field ──────────────────────────────────────────────────── */
+.file-upload-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.file-upload-current {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent, #4c9eff) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, #4c9eff) 25%, transparent);
+  font-size: 12px;
+  min-width: 0;
+}
+.file-upload-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink, #e9eef6);
+  font-weight: 500;
+}
+.file-upload-size {
+  color: var(--ink-2, #aab4c5);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.file-upload-pinned {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: color-mix(in srgb, var(--accent, #4c9eff) 18%, transparent);
+  color: var(--accent, #4c9eff);
+  flex-shrink: 0;
+  cursor: default;
+}

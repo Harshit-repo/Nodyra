@@ -30,7 +30,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from app.config import settings
-from app.security import require_permission
+from app.security import get_client_ip, require_permission
 from app.services.triggers import dispatch_webhook, wait_for_webhook_result
 
 logger = logging.getLogger(__name__)
@@ -328,7 +328,7 @@ async def _enforce_webhook_rate_limit(path: str, request: Request) -> None:
         return
     from app.services import rate_limit
 
-    ip = request.client.host if request.client else "anon"
+    ip = get_client_ip(request)
     allowed = await rate_limit.allow(
         "webhook", f"{path}:{ip}", limit=settings.webhook_rate_limit_per_minute
     )

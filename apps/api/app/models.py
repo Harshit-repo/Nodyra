@@ -18,6 +18,7 @@ from sqlalchemy import (
     UniqueConstraint,
     false,
     func,
+    text,
     true,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -138,6 +139,20 @@ class Environment(Base):
     """A Python environment: the global one or a user-created custom venv."""
 
     __tablename__ = "environments"
+    __table_args__ = (
+        # Partial unique index: at most one global environment per org.
+        # Both dialects receive a WHERE clause so create_all() in tests (SQLite)
+        # does not create a full unique constraint that would block multiple
+        # non-global environments per org.
+        Index(
+            "uq_environment_is_global",
+            "org_id",
+            "is_global",
+            unique=True,
+            postgresql_where=text("is_global IS TRUE"),
+            sqlite_where=text("is_global IS TRUE"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     org_id: Mapped[str] = mapped_column(

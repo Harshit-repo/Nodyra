@@ -20,7 +20,7 @@ from app.schemas import (
     CredentialTypeInfo,
     CredentialUpdate,
 )
-from app.security import optional_current_user, require_permission
+from app.security import get_client_ip, optional_current_user, require_permission
 from app.services.audit import log_audit
 from app.services.credential_tests import (
     available_test_services,
@@ -254,6 +254,7 @@ async def oauth_callback(
     state: str | None = None,
     error: str | None = None,
     error_description: str | None = None,
+    request: Request = None,  # injected by FastAPI
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     """Handle provider OAuth redirect.
@@ -262,7 +263,23 @@ async def oauth_callback(
     ``noodle_oauth_error``) message to the opener window and closes itself.  If
     no opener is present (direct navigation) the page shows a brief status
     message instead.
+
+    Rate-limited per IP to mitigate brute-force state-guessing and the
+    callback's exemption from the auth gate and CSRF middleware.
     """
+    # Per-IP sliding-window cap — same primitive as /auth/login.
+    from app.services import rate_limit as _rl
+
+    ip = get_client_ip(request)
+    allowed = await _rl.allow(
+        "oauth_callback", ip, limit=20, window_seconds=60,
+    )
+    if not allowed:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many OAuth callback requests; try again in a minute.",
+        )
+
     if error:
         return _oauth_popup_html(
             success=False,

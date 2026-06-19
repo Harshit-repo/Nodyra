@@ -3,13 +3,36 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import socket
-from typing import Any, Callable
-from urllib.parse import urljoin, urlsplit, urlparse
+from collections.abc import Callable
+from typing import Any
+from urllib.parse import urljoin, urlparse, urlsplit
 
 
 class UnsafeHttpTargetError(ValueError):
     """Raised when an HTTP node targets a private or unsupported URL."""
+
+
+# Env-driven egress policy. The nodes package deliberately does not import
+# ``app.config`` (it runs in the isolated runtime subprocess), so the policy is
+# read from the environment, which the worker propagates into the runtime.
+_ALLOW_PRIVATE_ENV = "NOODLE_ALLOW_PRIVATE_EGRESS"
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def private_egress_allowed() -> bool:
+    """Whether node HTTP/DB egress may target private/loopback/link-local hosts.
+
+    Default ``False`` — the safe choice for multi-tenant hosted deployments,
+    where a tenant must never reach internal services or cloud metadata
+    (``169.254.169.254``). Single-tenant / self-hosted operators who
+    legitimately call internal targets (self-hosted GitLab, an internal API,
+    a VPC database) set ``NOODLE_ALLOW_PRIVATE_EGRESS=1`` to opt out.
+
+    Scheme validation (http/https only) always applies regardless of this flag.
+    """
+    return os.environ.get(_ALLOW_PRIVATE_ENV, "").strip().lower() in _TRUTHY
 
 
 # 3xx statuses that carry a Location header we must re-validate before following.
@@ -47,6 +70,39 @@ def _hostname_is_private(hostname: str) -> bool:
     return _is_private_address(host)
 
 
+def assert_public_host(
+    host: str, port: int | None = None, *, context: str = "connection"
+) -> None:
+    """Reject a network host that is, or resolves to, a private/loopback/
+    link-local address.
+
+    The scheme-agnostic core shared by HTTP nodes and non-HTTP egress (database
+    connection nodes). Respects the ``NOODLE_ALLOW_PRIVATE_EGRESS`` opt-out so a
+    single-tenant operator can reach an internal/VPC host (SEC-4).
+    """
+    name = (host or "").strip()
+    if not name:
+        raise UnsafeHttpTargetError(f"{context}: host is required")
+    if private_egress_allowed():
+        return
+    if _hostname_is_private(name):
+        raise UnsafeHttpTargetError(
+            f"{context}: private, loopback, or link-local hosts are blocked"
+        )
+    try:
+        infos = socket.getaddrinfo(name, port, type=socket.SOCK_STREAM)
+    except OSError:
+        # DNS failure — let the connection layer surface the normal error.
+        return
+    for info in infos:
+        sockaddr = info[4]
+        if sockaddr and _is_private_address(str(sockaddr[0])):
+            raise UnsafeHttpTargetError(
+                f"{context}: host resolves to a private, loopback, "
+                "or link-local address"
+            )
+
+
 def assert_public_http_url(url: str, *, context: str = "HTTP request") -> None:
     """Reject URLs that can reach local/private network resources.
 
@@ -74,25 +130,9 @@ def assert_public_http_url(url: str, *, context: str = "HTTP request") -> None:
     hostname = parsed.hostname or ""
     if not hostname:
         raise UnsafeHttpTargetError(f"{context}: url must include a hostname")
-    if _hostname_is_private(hostname):
-        raise UnsafeHttpTargetError(
-            f"{context}: private, loopback, or link-local HTTP targets are blocked"
-        )
-    try:
-        infos = socket.getaddrinfo(hostname, parsed.port, type=socket.SOCK_STREAM)
-    except OSError:
-        # DNS failure — let the request layer surface the normal connection
-        # error rather than masking it here.
-        return
-    for info in infos:
-        sockaddr = info[4]
-        if not sockaddr:
-            continue
-        if _is_private_address(str(sockaddr[0])):
-            raise UnsafeHttpTargetError(
-                f"{context}: hostname resolves to a private, loopback, "
-                "or link-local address"
-            )
+    # Scheme validation above always applies; private-host blocking (and its
+    # opt-out) is shared with non-HTTP egress via assert_public_host (SEC-3/4).
+    assert_public_host(hostname, parsed.port, context=context)
 
 
 def _redirect_strips_credentials(old_url: str, new_url: str) -> bool:
@@ -180,4 +220,10 @@ def safe_request(
     raise UnsafeHttpTargetError(f"{context}: too many redirects (>{max_redirects})")
 
 
-__all__ = ["UnsafeHttpTargetError", "assert_public_http_url", "safe_request"]
+__all__ = [
+    "UnsafeHttpTargetError",
+    "assert_public_host",
+    "assert_public_http_url",
+    "private_egress_allowed",
+    "safe_request",
+]

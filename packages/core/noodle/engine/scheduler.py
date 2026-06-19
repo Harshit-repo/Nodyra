@@ -309,35 +309,66 @@ async def _execute_nodes(
 
     indegree = {u: len(plan.deps[u]) for u in plan.units}
     ready = [u for u in plan.units if indegree[u] == 0]  # insertion order
-    pending: set[asyncio.Task] = set()
+
+    # Semaphore-gated worker pool: each worker pulls a node from the shared
+    # queue, executes it, and pushes any newly-unblocked dependents.  This
+    # avoids the per-batch ``asyncio.wait(FIRST_COMPLETED)`` call that created
+    # O(N) event-loop round-trips for N scheduling rounds — the semaphore
+    # already bounds concurrency (each node holds a slot).
+    total = len(plan.units)
     completed = 0
-    try:
-        while ready or pending:
-            for nid in ready:  # task creation order == start order
-                pending.add(asyncio.ensure_future(_one(nid)))
-            ready = []
-            done, pending = await asyncio.wait(
-                pending, return_when=asyncio.FIRST_COMPLETED
-            )
-            newly_ready: list[str] = []
-            for task in done:
-                nid, st = task.result()  # re-raises node-task exceptions
+
+    # Unbounded queue so a ready node is never blocked from being posted.
+    queue: asyncio.Queue[str | None] = asyncio.Queue()
+    for nid in ready:
+        queue.put_nowait(nid)
+
+    # Workers are cheap coroutines that block on queue.get() when idle.
+    # The per-node semaphore (node_sem) still gates actual execution inside
+    # _one(); the worker count here just determines how many coroutines can
+    # pull from the queue in parallel.  50 is generous for any realistic
+    # graph width and avoids scheduling overhead for tiny graphs.
+    worker_count = min(total, 50)
+
+    async def _worker() -> None:
+        nonlocal completed, run_status
+        while True:
+            nid = await queue.get()
+            try:
+                if nid is None:  # sentinel
+                    return
+                _, st = await _one(nid)
                 run_status = _worse_status(run_status, st)
                 completed += 1
                 for dep in plan.dependents[nid]:
                     indegree[dep] -= 1
                     if indegree[dep] == 0:
-                        newly_ready.append(dep)
-            ready = sorted(newly_ready, key=plan.index.__getitem__)
+                        queue.put_nowait(dep)
+            finally:
+                # Always decrement — even on exception — so queue.join()
+                # never hangs waiting for a task_done() that will never come.
+                # The exception propagates naturally; asyncio.gather(*workers)
+                # surfaces it after queue.join() drains the remaining work.
+                queue.task_done()
+
+    workers = [asyncio.ensure_future(_worker()) for _ in range(worker_count)]
+    try:
+        # Wait until all units have been dequeued and processed.  Workers exit
+        # when they pull a sentinel; we post one sentinel per worker after the
+        # work is done.
+        await queue.join()
+        for _ in workers:
+            queue.put_nowait(None)
+        # Drain workers — they'll all see a sentinel and return.
+        await asyncio.gather(*workers)
     except BaseException:
-        # Run cancellation (or an escaped node exception) must not leave
-        # in-flight node tasks running detached (REL-2 class).
-        for task in pending:
-            task.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+        # REL-2: cancel every in-flight worker so no node task runs detached.
+        for w in workers:
+            w.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
         raise
-    if completed != len(plan.units):
+
+    if completed != total:
         raise GraphError(
             "scheduler stalled: a unit's dependencies never completed"
         )  # defensive — _topo_order() in execute() should make this unreachable

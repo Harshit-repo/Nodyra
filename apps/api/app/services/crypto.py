@@ -51,10 +51,25 @@ def encrypt_data(data: dict) -> str:
     return _fernet().encrypt(json.dumps(data).encode()).decode()
 
 
-def decrypt_data(token: str) -> dict:
+def decrypt_data(token: str, *, strict: bool = False) -> dict:
+    """Decrypt a Fernet-encrypted JSON payload.
+
+    When ``strict=False`` (the default, for back-compat), returns ``{}`` on
+    any decrypt failure — callers that consume the result as a dict must
+    interpret ``{}`` as either "valid empty data" or "decrypt failure"
+    depending on context.
+
+    When ``strict=True``, raises :class:`CredentialDecryptError` so the
+    caller can distinguish a corrupt/wrong-key token from a legitimate
+    empty payload.
+    """
     try:
         return json.loads(_fernet().decrypt(token.encode()).decode())
-    except (InvalidToken, ValueError):
+    except (InvalidToken, ValueError) as exc:
+        if strict:
+            raise CredentialDecryptError(
+                "decrypt_data: invalid token or wrong key"
+            ) from exc
         return {}
 
 
