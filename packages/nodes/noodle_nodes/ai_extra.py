@@ -748,3 +748,100 @@ def speech_to_text_file(
         timeout=_HTTP_TIMEOUT * 2,
     )
     return _expect_ok(response, "speech_to_text_file")
+
+
+# ============================================================================
+# ElevenLabs TTS — high-quality TTS with voice cloning support
+# ============================================================================
+
+
+@node(
+    name="ElevenLabs Text-to-Speech",
+    id="elevenlabs_tts",
+    param_groups={"Options": ["model", "stability", "similarity_boost", "filename"]},
+    category="AI",
+    icon="brand:elevenlabs",
+    output_kinds={"main": "artifact"},
+    params={
+        "credentials": {
+            **cred_single("elevenlabs", "api_key", "ElevenLabs API key"),
+            "description": "ElevenLabs API key.",
+        },
+        "text": {
+            "description": "Text to synthesize. Falls back to wired input.",
+            "multiline": True,
+        },
+        "voice_id": {
+            "description": "ElevenLabs voice ID (e.g. '21m00Tcm4TlvDq8ikWAM' for Rachel).",
+        },
+        "model": {
+            "choices": [
+                "eleven_multilingual_v2",
+                "eleven_turbo_v2_5",
+                "eleven_turbo_v2",
+                "eleven_monolingual_v1",
+            ],
+            "description": "TTS model.",
+        },
+        "stability": {
+            "description": "Voice stability (0.0–1.0). Lower = more expressive.",
+        },
+        "similarity_boost": {
+            "description": "Similarity boost (0.0–1.0). Higher = closer to original voice.",
+        },
+        "filename": {
+            "placeholder": "speech.mp3",
+            "description": "Artifact filename for the generated audio.",
+        },
+    },
+)
+def elevenlabs_tts(
+    input: Any = None,
+    credentials: str = "",
+    text: str = "",
+    voice_id: str = "21m00Tcm4TlvDq8ikWAM",
+    model: str = "eleven_multilingual_v2",
+    stability: float = 0.5,
+    similarity_boost: float = 0.75,
+    filename: str = "speech.mp3",
+) -> dict:
+    """Synthesize speech with ElevenLabs and store audio as an artifact."""
+    api_key = credentials
+    if not api_key:
+        raise ValueError("elevenlabs_tts: credentials are required")
+    payload_text = text or (str(input) if input is not None else "")
+    if not payload_text:
+        raise ValueError("elevenlabs_tts: text is required")
+    if not voice_id:
+        raise ValueError("elevenlabs_tts: voice_id is required")
+
+    response = requests.post(
+        f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+        headers={
+            "xi-api-key": api_key,
+            "Content-Type": "application/json",
+        },
+        json={
+            "text": payload_text,
+            "model_id": model or "eleven_multilingual_v2",
+            "voice_settings": {
+                "stability": float(stability),
+                "similarity_boost": float(similarity_boost),
+            },
+        },
+        timeout=_HTTP_TIMEOUT * 2,
+    )
+    if response.status_code >= 400:
+        body = response.text[:500]
+        raise RuntimeError(f"elevenlabs_tts: HTTP {response.status_code} — {body}")
+    content_type = response.headers.get("content-type", "audio/mpeg")
+    artifact_name = filename or "speech.mp3"
+    if "." not in artifact_name:
+        artifact_name = f"{artifact_name}.mp3"
+    return write_bytes(
+        response.content,
+        name=artifact_name,
+        content_type=content_type,
+        kind="audio",
+        metadata={"model": model or "eleven_multilingual_v2", "voice_id": voice_id},
+    )

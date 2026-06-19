@@ -65,6 +65,7 @@ from noodle_nodes.integrations_v2.providers import woocommerce as woocommerce_v2
 from noodle_nodes.integrations_v2.providers import vapi as vapi_v2
 from noodle_nodes.integrations_v2.providers import retell as retell_v2
 from noodle_nodes.integrations_v2.providers import bland as bland_v2
+from noodle_nodes.integrations_v2.providers import elevenlabs_convai as elevenlabs_convai_v2
 from noodle_nodes import file_nodes as file_nodes
 from noodle_nodes import docker_nodes as docker_nodes
 from noodle_nodes import translation_nodes as translation_nodes
@@ -129,6 +130,7 @@ __all__ = [
     "vapi_v2",
     "retell_v2",
     "bland_v2",
+    "elevenlabs_convai_v2",
     "file_nodes",
     "docker_nodes",
     "translation_nodes",
