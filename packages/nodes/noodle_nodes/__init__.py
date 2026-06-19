@@ -62,6 +62,7 @@ from noodle_nodes.integrations_v2.providers import clickup as clickup_v2
 from noodle_nodes.integrations_v2.providers import pipedrive as pipedrive_v2
 from noodle_nodes.integrations_v2.providers import openai_v2 as openai_v2
 from noodle_nodes.integrations_v2.providers import woocommerce as woocommerce_v2
+from noodle_nodes.integrations_v2.providers import vapi as vapi_v2
 from noodle_nodes import file_nodes as file_nodes
 from noodle_nodes import docker_nodes as docker_nodes
 from noodle_nodes import translation_nodes as translation_nodes
@@ -123,6 +124,7 @@ __all__ = [
     "pipedrive_v2",
     "openai_v2",
     "woocommerce_v2",
+    "vapi_v2",
     "file_nodes",
     "docker_nodes",
     "translation_nodes",
