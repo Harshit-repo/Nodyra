@@ -201,7 +201,7 @@ export default function App() {
               <Route path="/security" element={<PageErrorBoundary><SecurityPage /></PageErrorBoundary>} />
               <Route path="/organization" element={<PageErrorBoundary><OrganizationPage /></PageErrorBoundary>} />
               <Route path="/settings" element={<PageErrorBoundary><SettingsPage /></PageErrorBoundary>} />
-              <Route path="*" element={<NotFound />} />
+              <Route path="*" element={<PageErrorBoundary><NotFound /></PageErrorBoundary>} />
             </Route>
             <Route
               path="/workflows/:id"
