@@ -8,6 +8,7 @@ Heavy deps (simpleeval, playwright) are lazy-imported with friendly errors.
 from __future__ import annotations
 
 import ast
+import html
 import json
 import math
 import os
@@ -17,6 +18,10 @@ import subprocess
 import sys
 import tempfile
 from typing import Any
+
+import httpx
+
+from noodle_nodes.http_security import safe_request
 
 from noodle.ai_runtime import ToolAdapter, ToolParameterSchema, ToolSchema
 from noodle.sdk import node
@@ -312,4 +317,193 @@ def ai_code_execution_tool(
         name=name, description=description, language=language,
         allowed_modules=allowed_modules, timeout_seconds=timeout_seconds,
         max_output_chars=max_output_chars,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Web Search Tool
+# ---------------------------------------------------------------------------
+
+_SEARCH_PROVIDERS_NEEDING_KEY = {"tavily", "serpapi", "brave"}
+
+
+class WebSearchToolAdapter(ToolAdapter):
+    """Calls a web-search provider API; returns structured results."""
+
+    def __init__(self, *, provider: str, credentials: Any, name: str, description: str,
+                 max_results: int, search_depth: str, include_content: bool,
+                 timeout_seconds: int) -> None:
+        self._provider = (provider or "tavily").lower()
+        creds = credentials if isinstance(credentials, dict) else {}
+        self._api_key = str(creds.get("api_key") or "").strip()
+        if self._provider in _SEARCH_PROVIDERS_NEEDING_KEY and not self._api_key:
+            raise ValueError(f"AI Web Search Tool: {self._provider} requires an api_key credential.")
+        self._name = name or "web_search"
+        self._description = description or "Search the web for current information."
+        self._max_results = max(1, min(20, int(max_results or 5)))
+        self._search_depth = search_depth or "basic"
+        self._include_content = bool(include_content)
+        self._timeout = max(1, min(120, int(timeout_seconds or 15)))
+
+    @property
+    def schema(self) -> ToolSchema:
+        return ToolSchema(
+            name=self._name,
+            description=self._description,
+            parameters=ToolParameterSchema(
+                properties={
+                    "query": {"type": "string", "description": "Search query."},
+                    "max_results": {"type": "integer", "description": "Optional result count."},
+                },
+                required=["query"],
+            ),
+        )
+
+    @property
+    def side_effecting(self) -> bool:
+        return False
+
+    def invoke(self, arguments: dict[str, Any]) -> str:
+        query = str((arguments or {}).get("query") or "").strip()
+        if not query:
+            return json.dumps({"results": [], "total": 0, "provider": self._provider})
+        limit = self._max_results
+        req = arguments.get("max_results")
+        if isinstance(req, (int, float)) and 0 < int(req) <= 20:
+            limit = int(req)
+        try:
+            if self._provider == "tavily":
+                results = self._tavily(query, limit)
+            elif self._provider == "serpapi":
+                results = self._serpapi(query, limit)
+            elif self._provider == "brave":
+                results = self._brave(query, limit)
+            else:
+                results = self._duckduckgo(query, limit)
+        except httpx.HTTPError as exc:
+            return json.dumps({"error": f"Search failed: {exc}"})
+        if self._include_content and results:
+            results[0]["content"] = self._fetch_content(results[0].get("url", ""))
+        return json.dumps({"results": results, "total": len(results), "provider": self._provider})
+
+    def _normalise(self, *, title: str, url: str, snippet: str, score: float | None) -> dict[str, Any]:
+        return {
+            "title": html.unescape(str(title or ""))[:300],
+            "url": str(url or ""),
+            "snippet": html.unescape(str(snippet or ""))[:500],
+            "score": float(score) if score is not None else 0.0,
+        }
+
+    def _tavily(self, query: str, limit: int) -> list[dict[str, Any]]:
+        resp = httpx.post(
+            "https://api.tavily.com/search",
+            json={"api_key": self._api_key, "query": query,
+                  "max_results": limit, "search_depth": self._search_depth},
+            timeout=self._timeout,
+        )
+        if resp.status_code == 429:
+            raise httpx.HTTPError("Rate limited. Try again later.")
+        if resp.status_code >= 400:
+            raise httpx.HTTPError(f"HTTP {resp.status_code}")
+        data = resp.json()
+        return [self._normalise(title=r.get("title"), url=r.get("url"),
+                                snippet=r.get("content"), score=r.get("score"))
+                for r in (data.get("results") or [])][:limit]
+
+    def _serpapi(self, query: str, limit: int) -> list[dict[str, Any]]:
+        resp = httpx.post("https://serpapi.com/search",
+                          params={"q": query, "api_key": self._api_key, "num": limit},
+                          timeout=self._timeout)
+        if resp.status_code == 429:
+            raise httpx.HTTPError("Rate limited. Try again later.")
+        if resp.status_code >= 400:
+            raise httpx.HTTPError(f"HTTP {resp.status_code}")
+        data = resp.json()
+        return [self._normalise(title=r.get("title"), url=r.get("link"),
+                                snippet=r.get("snippet"), score=None)
+                for r in (data.get("organic_results") or [])][:limit]
+
+    def _brave(self, query: str, limit: int) -> list[dict[str, Any]]:
+        resp = httpx.get("https://api.search.brave.com/res/v1/web/search",
+                         params={"q": query, "count": limit},
+                         headers={"X-Subscription-Token": self._api_key},
+                         timeout=self._timeout)
+        if resp.status_code == 429:
+            raise httpx.HTTPError("Rate limited. Try again later.")
+        if resp.status_code >= 400:
+            raise httpx.HTTPError(f"HTTP {resp.status_code}")
+        data = resp.json()
+        items = ((data.get("web") or {}).get("results")) or []
+        return [self._normalise(title=r.get("title"), url=r.get("url"),
+                                snippet=r.get("description"), score=None)
+                for r in items][:limit]
+
+    def _duckduckgo(self, query: str, limit: int) -> list[dict[str, Any]]:
+        try:
+            import re
+            resp = httpx.get("https://duckduckgo.com/html/",
+                             params={"q": query}, timeout=self._timeout,
+                             headers={"User-Agent": "Mozilla/5.0"})
+            if resp.status_code >= 400:
+                return []
+            pattern = re.compile(r'result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', re.S)
+            results: list[dict[str, Any]] = []
+            for m in pattern.finditer(resp.text):
+                url, title_html = m.group(1), re.sub(r"<[^>]+>", "", m.group(2))
+                results.append(self._normalise(title=title_html, url=url, snippet="", score=None))
+                if len(results) >= limit:
+                    break
+            return results
+        except (httpx.HTTPError, ValueError):
+            return []
+
+    def _fetch_content(self, url: str) -> str:
+        if not url:
+            return ""
+        try:
+            resp = safe_request("GET", url, context=f"{self._name} web search content", timeout=self._timeout)
+            return resp.text[:8000]
+        except Exception:  # noqa: BLE001 - content fetch is best-effort
+            return ""
+
+
+@node(
+    name="AI Web Search Tool",
+    id="ai_web_search_tool",
+    category=AI_CATEGORY,
+    role="tool",
+    icon="ai",
+    outputs=["tool"],
+    output_kinds={"tool": "ai_tool"},
+    param_groups={"Options": ["search_depth", "include_content", "timeout_seconds"]},
+    params={
+        "name": {"description": "Tool name exposed to the model (snake_case)."},
+        "description": {"widget": "textarea", "description": "What the tool does."},
+        "provider": {"choices": ["tavily", "serpapi", "brave", "duckduckgo"], "description": "Search provider."},
+        "credentials": {
+            "type": "search_api_key", "label": "Search API key", "multi": True,
+            "fields": ["api_key"],
+            "description": "API key for the provider (not needed for duckduckgo).",
+        },
+        "max_results": {"description": "Max results (1-20)."},
+        "search_depth": {"choices": ["basic", "advanced"], "description": "Tavily depth.", "group": "Options"},
+        "include_content": {"widget": "toggle", "description": "Fetch full content for top result.", "group": "Options"},
+        "timeout_seconds": {"description": "Per-request timeout.", "group": "Options"},
+    },
+)
+def ai_web_search_tool(
+    name: str = "web_search",
+    description: str = "Search the web for current information.",
+    provider: str = "tavily",
+    credentials: Any = None,
+    max_results: int = 5,
+    search_depth: str = "basic",
+    include_content: bool = False,
+    timeout_seconds: int = 15,
+) -> ToolAdapter:
+    """Supply a web-search tool to a downstream AI Agent."""
+    return WebSearchToolAdapter(
+        provider=provider, credentials=credentials, name=name, description=description,
+        max_results=max_results, search_depth=search_depth,
+        include_content=include_content, timeout_seconds=timeout_seconds,
     )

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 
 import pytest
 
 import noodle_nodes  # noqa: F401 - registers nodes
 from noodle.sdk import registry
-from noodle_nodes.ai_v2.agent_tools import CalculatorToolAdapter, CodeExecToolAdapter, _ast_security_check
+from noodle_nodes.ai_v2.agent_tools import CalculatorToolAdapter, CodeExecToolAdapter, WebSearchToolAdapter, _ast_security_check
 
 
 def _result(adapter, **args) -> dict:
@@ -140,3 +141,73 @@ def test_code_exec_node_registered_typed_port() -> None:
     manifest = registry.get("ai_code_execution_tool").manifest
     out = next(o for o in manifest.outputs if o.name == "tool")
     assert out.data_kind == "ai_tool"
+
+
+# ---------------------------------------------------------------------------
+# Web Search Tool tests
+# ---------------------------------------------------------------------------
+
+
+class _FakeHttpResponse:
+    def __init__(self, payload, status_code=200):
+        self._payload = payload
+        self.status_code = status_code
+
+    def json(self):
+        return self._payload
+
+
+def _tavily_adapter(**kw):
+    defaults = dict(provider="tavily", credentials={"api_key": "k"}, name="web_search",
+                    description="", max_results=5, search_depth="basic",
+                    include_content=False, timeout_seconds=15)
+    defaults.update(kw)
+    return WebSearchToolAdapter(**defaults)
+
+
+def test_web_search_missing_creds_raises() -> None:
+    with pytest.raises(ValueError):
+        WebSearchToolAdapter(provider="tavily", credentials={}, name="web_search",
+                             description="", max_results=5, search_depth="basic",
+                             include_content=False, timeout_seconds=15)
+
+
+def test_web_search_duckduckgo_no_creds_ok() -> None:
+    WebSearchToolAdapter(provider="duckduckgo", credentials={}, name="web_search",
+                         description="", max_results=5, search_depth="basic",
+                         include_content=False, timeout_seconds=15)
+
+
+def test_web_search_formats_tavily() -> None:
+    payload = {"results": [
+        {"title": "T1", "url": "https://a.com", "content": "snippet one", "score": 0.9},
+    ]}
+    with patch("noodle_nodes.ai_v2.agent_tools.httpx.post",
+               return_value=_FakeHttpResponse(payload)):
+        out = json.loads(_tavily_adapter().invoke({"query": "indexing"}))
+    assert out["total"] == 1
+    assert out["results"][0]["url"] == "https://a.com"
+    assert out["results"][0]["score"] == 0.9
+
+
+def test_web_search_empty_results() -> None:
+    with patch("noodle_nodes.ai_v2.agent_tools.httpx.post",
+               return_value=_FakeHttpResponse({"results": []})):
+        out = json.loads(_tavily_adapter().invoke({"query": "x"}))
+    assert out == {"results": [], "total": 0, "provider": "tavily"}
+
+
+def test_web_search_rate_limit() -> None:
+    with patch("noodle_nodes.ai_v2.agent_tools.httpx.post",
+               return_value=_FakeHttpResponse({}, status_code=429)):
+        out = json.loads(_tavily_adapter().invoke({"query": "x"}))
+    assert "error" in out
+
+
+def test_web_search_truncates_snippet() -> None:
+    payload = {"results": [{"title": "T", "url": "https://a.com",
+                            "content": "z" * 2000, "score": 0.1}]}
+    with patch("noodle_nodes.ai_v2.agent_tools.httpx.post",
+               return_value=_FakeHttpResponse(payload)):
+        out = json.loads(_tavily_adapter().invoke({"query": "x"}))
+    assert len(out["results"][0]["snippet"]) <= 500
