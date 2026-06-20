@@ -45,6 +45,9 @@ ollama = [
 azure-speech = [
     "azure-cognitiveservices-speech>=1.35",
 ]
+huggingface = [
+    "huggingface-hub>=0.20",
+]
 
 [build-system]
 requires = ["hatchling"]
