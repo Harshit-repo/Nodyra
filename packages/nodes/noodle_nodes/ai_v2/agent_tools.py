@@ -411,9 +411,9 @@ class WebSearchToolAdapter(ToolAdapter):
                 for r in (data.get("results") or [])][:limit]
 
     def _serpapi(self, query: str, limit: int) -> list[dict[str, Any]]:
-        resp = httpx.post("https://serpapi.com/search",
-                          params={"q": query, "api_key": self._api_key, "num": limit},
-                          timeout=self._timeout)
+        resp = httpx.get("https://serpapi.com/search",
+                         params={"q": query, "api_key": self._api_key, "num": limit},
+                         timeout=self._timeout)
         if resp.status_code == 429:
             raise httpx.HTTPError("Rate limited. Try again later.")
         if resp.status_code >= 400:
