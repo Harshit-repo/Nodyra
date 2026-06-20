@@ -90,6 +90,7 @@ from noodle_nodes import ollama_nodes as ollama_nodes
 from noodle_nodes import azure_speech_nodes as azure_speech_nodes
 from noodle_nodes import ai_analytical_nodes as ai_analytical_nodes
 from noodle_nodes import python_science_nodes as python_science_nodes
+from noodle_nodes import zvec_nodes as zvec_nodes
 
 __version__ = "0.0.1"
 __all__ = [
@@ -167,6 +168,7 @@ __all__ = [
     "azure_speech_nodes",
     "ai_analytical_nodes",
     "python_science_nodes",
+    "zvec_nodes",
     "llm",
     "llm_evals",
     "llm_training",

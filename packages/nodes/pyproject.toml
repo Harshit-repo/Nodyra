@@ -75,6 +75,9 @@ networkx = [
 sympy = [
     "sympy>=1.12",
 ]
+zvec = [
+    "zvec>=0.4",
+]
 
 [build-system]
 requires = ["hatchling"]
