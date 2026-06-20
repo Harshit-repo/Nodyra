@@ -293,7 +293,7 @@ class CodeExecToolAdapter(ToolAdapter):
         "language": {"choices": ["python", "javascript"], "description": "Runtime."},
         "timeout_seconds": {"description": "Hard kill timeout (1-300)."},
         "allowed_modules": {
-            "description": "Comma-separated import allowlist. Empty blocks all imports.",
+            "description": "Comma-separated import allowlist (e.g. math,json). Empty = no restriction; list modules to enforce an allowlist.",
             "group": "Options",
         },
         "max_output_chars": {"description": "Truncate stdout/stderr above this.", "group": "Options"},
