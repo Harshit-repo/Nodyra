@@ -43,11 +43,11 @@ export function diffNodeRows(a: RunInfo, b: RunInfo): DiffRow[] {
   });
 }
 
-function statusSymbol(s: string | null): string {
+function statusGlyph(s: string | null): string {
   if (s === "success") return "✓";
   if (s === "error") return "✗";
   if (s == null) return "—";
-  return s.slice(0, 1);
+  return "·";
 }
 
 function statusColor(s: string | null): string {
@@ -57,7 +57,15 @@ function statusColor(s: string | null): string {
 }
 
 function fmtMs(ms: number | null): string {
-  return ms != null ? `${ms}ms` : "—";
+  if (ms == null) return "—";
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
+
+function deltaMs(a: number | null, b: number | null): string | null {
+  if (a == null || b == null) return null;
+  const d = b - a;
+  if (Math.abs(d) < 5) return null;
+  return d > 0 ? `+${fmtMs(d)}` : `-${fmtMs(Math.abs(d))}`;
 }
 
 export function RunDiff({ workflowId, diffPair, onChangePair }: RunDiffProps) {
@@ -81,88 +89,93 @@ export function RunDiff({ workflowId, diffPair, onChangePair }: RunDiffProps) {
       <div className="sc-head">
         <span className="sc-head-title">Run diff</span>
       </div>
-      <div className="sc-diff-selectors">
-        <select
-          className="sc-diff-select"
-          value={aId}
-          onChange={(e) => onChangePair([e.target.value, bId])}
-        >
-          {runs.map((r) => (
-            <option key={r.id} value={r.id}>
-              #{r.id.slice(0, 6)} · {r.status}
-            </option>
-          ))}
-        </select>
-        <span style={{ color: "var(--border)" }}>vs</span>
-        <select
-          className="sc-diff-select"
-          value={bId}
-          onChange={(e) => onChangePair([aId, e.target.value])}
-        >
-          {runs.map((r) => (
-            <option key={r.id} value={r.id}>
-              #{r.id.slice(0, 6)} · {r.status}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="sc-diff-body">
-        <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
-          <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-            <div className="sc-diff-col">
-              <div className="sc-diff-col-head">
-                <div
-                  className="sc-node-dot"
-                  style={{ background: aRun?.status === "success" ? "var(--ok)" : "var(--error)" }}
-                />
-                #{aId.slice(0, 6)} · {aRun?.status ?? "—"}
-              </div>
-              {rows.map((row) => (
-                <div
-                  key={row.nodeId}
-                  className={`sc-diff-row${row.change !== "none" ? ` ${row.change}` : ""}`}
-                >
-                  <div className="sc-node-dot" style={{ background: statusColor(row.aStatus) }} />
-                  <span className="sc-diff-node-name">{row.nodeId}</span>
-                  <span className="sc-diff-status" style={{ color: statusColor(row.aStatus) }}>
-                    {statusSymbol(row.aStatus)}
-                  </span>
-                  <span className="sc-diff-ms">{fmtMs(row.aDurationMs)}</span>
-                </div>
-              ))}
-            </div>
-            <div className="sc-diff-divider" />
-            <div className="sc-diff-col">
-              <div className="sc-diff-col-head">
-                <div
-                  className="sc-node-dot"
-                  style={{ background: bRun?.status === "success" ? "var(--ok)" : "var(--error)" }}
-                />
-                #{bId.slice(0, 6)} · {bRun?.status ?? "—"}
-              </div>
-              {rows.map((row) => (
-                <div
-                  key={row.nodeId}
-                  className={`sc-diff-row${row.change !== "none" ? ` ${row.change}` : ""}`}
-                >
-                  <div className="sc-node-dot" style={{ background: statusColor(row.bStatus) }} />
-                  <span className="sc-diff-node-name">{row.nodeId}</span>
-                  <span className="sc-diff-status" style={{ color: statusColor(row.bStatus) }}>
-                    {statusSymbol(row.bStatus)}
-                  </span>
-                  <span className="sc-diff-ms">{fmtMs(row.bDurationMs)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+
+      <div className="sc-diff-picks">
+        <div className="sc-diff-pick">
+          <div className="sc-diff-pick-label">Base</div>
+          <select
+            className="sc-diff-select"
+            value={aId}
+            onChange={(e) => onChangePair([e.target.value, bId])}
+          >
+            {runs.map((r) => (
+              <option key={r.id} value={r.id}>
+                #{r.id.slice(0, 6)} · {r.status}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="sc-diff-vs">→</div>
+        <div className="sc-diff-pick">
+          <div className="sc-diff-pick-label">Compare</div>
+          <select
+            className="sc-diff-select"
+            value={bId}
+            onChange={(e) => onChangePair([aId, e.target.value])}
+          >
+            {runs.map((r) => (
+              <option key={r.id} value={r.id}>
+                #{r.id.slice(0, 6)} · {r.status}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
+
+      {(aQuery.isLoading || bQuery.isLoading) && (
+        <div style={{ padding: 16, color: "var(--ink-3)", fontSize: 12 }}>Loading…</div>
+      )}
+
+      {rows.length > 0 && (
+        <div className="sc-diff-body">
+          <div className="sc-diff-table-head">
+            <div className="sc-dt-node">Node</div>
+            <div className="sc-dt-cell">Base</div>
+            <div className="sc-dt-cell">Compare</div>
+            <div className="sc-dt-delta">Δ</div>
+          </div>
+          {rows.map((row) => {
+            const delta = deltaMs(row.aDurationMs, row.bDurationMs);
+            const deltaPositive = row.bDurationMs != null && row.aDurationMs != null && row.bDurationMs > row.aDurationMs;
+            return (
+              <div
+                key={row.nodeId}
+                className={`sc-diff-trow${row.change !== "none" ? ` ${row.change}` : ""}`}
+              >
+                <div className="sc-dt-node" title={row.nodeId}>{row.nodeId}</div>
+                <div className="sc-dt-cell">
+                  <span className="sc-dt-glyph" style={{ color: statusColor(row.aStatus) }}>
+                    {statusGlyph(row.aStatus)}
+                  </span>
+                  <span className="sc-dt-ms">{fmtMs(row.aDurationMs)}</span>
+                </div>
+                <div className="sc-dt-cell">
+                  <span className="sc-dt-glyph" style={{ color: statusColor(row.bStatus) }}>
+                    {statusGlyph(row.bStatus)}
+                  </span>
+                  <span className="sc-dt-ms">{fmtMs(row.bDurationMs)}</span>
+                </div>
+                <div
+                  className="sc-dt-delta"
+                  style={{ color: delta ? (deltaPositive ? "var(--error)" : "var(--ok)") : "var(--border)" }}
+                >
+                  {delta ?? "—"}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <div className="sc-diff-footer">
-        {improved > 0 && <span style={{ color: "var(--ok)" }}>+{improved} fixed</span>}
-        {worse > 0 && <span style={{ color: "var(--error)" }}>-{worse} broke</span>}
-        {changed > 0 && <span style={{ color: "var(--warn)" }}>{changed} changed</span>}
+        {improved > 0 && <span style={{ color: "var(--ok)" }}>↑ {improved} fixed</span>}
+        {worse > 0 && <span style={{ color: "var(--error)" }}>↓ {worse} broke</span>}
+        {changed > 0 && <span style={{ color: "var(--warn)" }}>~ {changed} changed</span>}
         {rows.length > 0 && improved === 0 && worse === 0 && changed === 0 && (
-          <span>No differences</span>
+          <span style={{ color: "var(--ink-3)" }}>Identical</span>
+        )}
+        {rows.length === 0 && !aQuery.isLoading && !bQuery.isLoading && (
+          <span style={{ color: "var(--ink-3)" }}>Select two runs to compare</span>
         )}
       </div>
     </>

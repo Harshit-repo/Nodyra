@@ -16,6 +16,8 @@ export function RunInfo({ selectedRunId, onOpenDiff }: RunInfoProps) {
   const runQuery = useRun(selectedRunId);
   const run = runQuery.data as RunInfoType | undefined;
   const [note, setNote] = useState("");
+  const [payloadOpen, setPayloadOpen] = useState(true);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (!selectedRunId) return;
@@ -26,6 +28,13 @@ export function RunInfo({ selectedRunId, onOpenDiff }: RunInfoProps) {
     if (!selectedRunId) return;
     setNote(value);
     safeSetItem(getNoteKey(selectedRunId), value);
+  }
+
+  function copyPayload(str: string) {
+    void navigator.clipboard.writeText(str).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
   }
 
   if (!selectedRunId) {
@@ -54,14 +63,34 @@ export function RunInfo({ selectedRunId, onOpenDiff }: RunInfoProps) {
       </div>
       <div className="sc-info-body">
         <div className="sc-info-section">
-          <div className="sc-info-sec-head">
+          <button
+            className="sc-info-sec-head sc-info-sec-toggle"
+            onClick={() => setPayloadOpen((v) => !v)}
+          >
             <span>Trigger payload</span>
-            <span style={{ color: "var(--accent)", fontSize: "9px" }}>{run.trigger_type}</span>
-          </div>
-          <pre className="sc-info-payload">{payloadStr}</pre>
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span className="sc-info-badge">{run.trigger_type}</span>
+              <span className="sc-info-chevron">{payloadOpen ? "▾" : "▸"}</span>
+            </span>
+          </button>
+          {payloadOpen && (
+            <div className="sc-info-payload-wrap">
+              <button
+                className="sc-info-copy-btn"
+                onClick={() => copyPayload(payloadStr)}
+                title="Copy to clipboard"
+              >
+                {copied ? "Copied!" : "Copy"}
+              </button>
+              <pre className="sc-info-payload">{payloadStr}</pre>
+            </div>
+          )}
         </div>
+
         <div className="sc-info-section">
-          <div className="sc-info-sec-head">Note</div>
+          <div className="sc-info-sec-head">
+            <span>Note</span>
+          </div>
           <textarea
             className="sc-info-note"
             placeholder="Add a note to this run…"
@@ -69,7 +98,8 @@ export function RunInfo({ selectedRunId, onOpenDiff }: RunInfoProps) {
             onChange={(e) => saveNote(e.target.value)}
           />
         </div>
-        <div className="sc-info-section" style={{ padding: "10px 12px" }}>
+
+        <div className="sc-info-section" style={{ padding: "10px 12px", border: "none" }}>
           <button className="sc-action-btn" style={{ width: "100%" }} onClick={onOpenDiff}>
             Compare with another run →
           </button>

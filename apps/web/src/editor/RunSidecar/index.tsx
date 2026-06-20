@@ -1,9 +1,13 @@
+import { useEffect } from "react";
 import { useRunSidecar, type SidecarTab } from "./useRunSidecar";
 import { RunList } from "./RunList";
 import { RunDiff } from "./RunDiff";
 import { RunTimeline } from "./RunTimeline";
 import { RunStats } from "./RunStats";
 import { RunInfo } from "./RunInfo";
+import { useRun } from "../../queries";
+import { useEditor } from "../store";
+import type { RunInfo as RunInfoType } from "../../types";
 
 interface RunSidecarProps {
   workflowId: string;
@@ -28,6 +32,12 @@ export function RunSidecar({ workflowId }: RunSidecarProps) {
     diffPair,
     setDiffPair,
   } = useRunSidecar();
+
+  const runQuery = useRun(selectedRunId);
+  const applyRunInfo = useEditor((s) => s.applyRunInfo);
+  useEffect(() => {
+    if (runQuery.data) applyRunInfo(runQuery.data as RunInfoType);
+  }, [runQuery.data, applyRunInfo]);
 
   return (
     <aside className="run-sidecar">

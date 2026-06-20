@@ -43,7 +43,6 @@ export function RunList({
   const runsQuery = useRuns(workflowId, { staleTime: 5000 });
   const runs: RunInfo[] = (runsQuery.data ?? []) as RunInfo[];
 
-  const applyRunInfo = useEditor((s) => s.applyRunInfo);
   const rerunMutation = useRerunRunMutation();
 
   const selectedRun = runs.find((r) => r.id === selectedRunId) ?? null;
@@ -56,7 +55,6 @@ export function RunList({
 
   function selectRun(run: RunInfo) {
     onSelectRun(run.id);
-    applyRunInfo(run);
   }
 
   function copyInputs() {

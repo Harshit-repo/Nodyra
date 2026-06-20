@@ -1494,7 +1494,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
           <NodePalette />
           <div className="editor-stage">
             <Canvas />
-            {runId && !running && (
+            {sidecarOpen && runId && !running && (
               <div className="run-exec-banner">
                 <div className="run-exec-banner-dot" />
                 <span className="run-exec-banner-label">Viewing</span>
