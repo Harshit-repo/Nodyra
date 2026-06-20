@@ -29,10 +29,11 @@ const mockRuns = [
 ];
 
 beforeEach(() => {
-  vi.mocked(queries.useRuns).mockReturnValue({ data: mockRuns, isLoading: false } as ReturnType<typeof queries.useRuns>);
-  vi.mocked(queries.useRun).mockReturnValue({ data: mockRuns[0], isLoading: false } as ReturnType<typeof queries.useRun>);
+  vi.mocked(queries.useRuns).mockReturnValue({ data: mockRuns, isLoading: false } as unknown as ReturnType<typeof queries.useRuns>);
+  vi.mocked(queries.useRun).mockReturnValue({ data: mockRuns[0], isLoading: false } as unknown as ReturnType<typeof queries.useRun>);
   vi.mocked(queries.useRerunRunMutation).mockReturnValue({ mutate: vi.fn(), isPending: false } as unknown as ReturnType<typeof queries.useRerunRunMutation>);
-  vi.mocked(editorStore.useEditor).mockImplementation((selector: (s: unknown) => unknown) =>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  vi.mocked(editorStore.useEditor).mockImplementation((selector: any) =>
     selector({ applyRunInfo: vi.fn(), clearRun: vi.fn(), runId: null, nodes: [] })
   );
 });

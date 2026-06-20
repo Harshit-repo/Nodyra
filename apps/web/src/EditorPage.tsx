@@ -1,6 +1,6 @@
 import { ReactFlowProvider } from "@xyflow/react";
 import { Keyboard } from "@phosphor-icons/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useBlocker, useParams } from "react-router-dom";
 
 import { api, errorMessage, getOrgId, getToken, type RunStreamHandle, subscribeToRunEvents } from "./api";
@@ -12,7 +12,6 @@ import { ChatPanel } from "./editor/ChatPanel";
 import { CommandPalette } from "./editor/CommandPalette";
 import { FunctionsPanel } from "./editor/FunctionsPanel";
 import { Inspector } from "./editor/Inspector";
-import { NodeDetailModal } from "./editor/NodeDetailModal";
 import { NodePalette } from "./editor/NodePalette";
 import { PortDataViewer } from "./editor/PortDataViewer";
 import { WorkflowHistory } from "./editor/WorkflowHistory";
@@ -31,7 +30,6 @@ import {
   useNodes,
   usePinned,
   useRunnerPools,
-  useRuns,
   useWorkflow,
   useWorkflowCustomNodeManifests,
 } from "./queries";
@@ -44,6 +42,7 @@ import { SaveIndicator, type SaveState } from "./editor/SaveIndicator";
 import { PublishPill } from "./editor/PublishPill";
 import { OverflowMenu, type OverflowItem } from "./editor/OverflowMenu";
 import { WorkflowSettingsModal } from "./editor/WorkflowSettingsModal";
+import { RunSidecar } from "./editor/RunSidecar";
 import type {
   AiDraftMode,
   AiFixStrategy,
@@ -51,11 +50,16 @@ import type {
   Environment,
   GraphNode,
   RunEvent,
-  RunInfo,
   RunnerPoolInfo,
   WorkflowDetail,
   WorkflowGraph,
 } from "./types";
+
+const NodeDetailModal = lazy(() =>
+  import("./editor/NodeDetailModal").then((module) => ({
+    default: module.NodeDetailModal,
+  })),
+);
 
 interface WebhookListenState {
   nodeId: string;
@@ -268,8 +272,7 @@ export function EditorPage() {
   const environmentsQuery = useEnvironments();
   const runnerPoolsQuery = useRunnerPools();
   const pinnedQuery = usePinned(id ?? null);
-  const runsQuery = useRuns(id ?? null, { enabled: false });
-  const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
+const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   const [name, setName] = useState("");
   const [active, setActive] = useState(false);
   const [environmentId, setEnvironmentId] = useState<string | null>(null);
@@ -283,8 +286,7 @@ export function EditorPage() {
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
-  const [runsOpen, setRunsOpen] = useState(false);
-  const [runsList, setRunsList] = useState<RunInfo[]>([]);
+  const [sidecarOpen, setSidecarOpen] = useState(false);
   const [cancellingRun, setCancellingRun] = useState(false);
   const [webhookListen, setWebhookListen] = useState<WebhookListenState | null>(
     null,
@@ -320,10 +322,10 @@ export function EditorPage() {
   const wsRef = useRef<RunStreamHandle | null>(null);
   const webhookTimerRef = useRef<number | null>(null);
   const listenPathRef = useRef<string | null>(null);
-  const runsMenuRef = useRef<HTMLDivElement | null>(null);
-  const aiAbortRef = useRef<AbortController | null>(null);
+const aiAbortRef = useRef<AbortController | null>(null);
   const saveInProgressRef = useRef(false);
   const loadedWorkflowIdRef = useRef<string | null>(null);
+  const creatingChildIdsRef = useRef<Set<string>>(new Set());
 
   const setManifests = useEditor((s) => s.setManifests);
   const setEnvContext = useEditor((s) => s.setEnvContext);
@@ -378,6 +380,7 @@ export function EditorPage() {
   const applyRunInfo = useEditor((s) => s.applyRunInfo);
   const setNodeOutput = useEditor((s) => s.setNodeOutput);
   const clearRun = useEditor((s) => s.clearRun);
+  const runHasError = useEditor((s) => Object.values(s.runStatus).some((st) => st === "error"));
   const ndvOpenId = useEditor((s) => s.ndvOpenId);
   const closeNdv = useEditor((s) => s.closeNdv);
   const setRunHandler = useEditor((s) => s.setRunHandler);
@@ -529,11 +532,12 @@ export function EditorPage() {
   }, [setApplyEnvSwitch]);
 
   // Auto-create child workflows for newly dropped Map Group nodes.
-  const mgNeedingChildKey = mapGroupsNeedingChild.map((m) => m.id).join(",");
   useEffect(() => {
     if (!id || mapGroupsNeedingChild.length === 0) return;
     const manualTriggerManifest = manifestsById["manual_trigger"];
     for (const mg of mapGroupsNeedingChild) {
+      if (creatingChildIdsRef.current.has(mg.id)) continue;
+      creatingChildIdsRef.current.add(mg.id);
       setChildWorkflowLoading(mg.id, true, null);
       void (async () => {
         try {
@@ -561,16 +565,29 @@ export function EditorPage() {
             edges: [],
           };
           await api.updateWorkflow(childWf.id, { graph: initialGraph });
+          if (loadedWorkflowIdRef.current !== id) return;
           updateParams(mg.id, { ...mg.data.params, child_workflow_id: childWf.id });
           loadChildGraph(mg.id, childWf.id, initialGraph);
         } catch (err) {
-          setChildWorkflowLoading(mg.id, false, String(err));
-          notify(`Could not create map body workflow: ${String(err)}`, "error");
+          if (loadedWorkflowIdRef.current === id) {
+            setChildWorkflowLoading(mg.id, false, String(err));
+            notify(`Could not create map body workflow: ${String(err)}`, "error");
+          }
+        } finally {
+          creatingChildIdsRef.current.delete(mg.id);
         }
       })();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mgNeedingChildKey, id]);
+  }, [
+    id,
+    loadChildGraph,
+    manifestsById,
+    mapGroupsNeedingChild,
+    name,
+    notify,
+    setChildWorkflowLoading,
+    updateParams,
+  ]);
 
   // Task 20: Debug in editor. When ExecutionsPage links to
   // /workflows/<id>?debug_run=<run_id>, load that run's snapshot once the
@@ -1262,38 +1279,11 @@ export function EditorPage() {
     return () => window.removeEventListener("noodle:open-shortcuts", onOpenShortcuts);
   }, []);
 
-  useEffect(() => {
-    if (!runsOpen) return;
-    function onClickOutside(e: MouseEvent) {
-      if (runsMenuRef.current && !runsMenuRef.current.contains(e.target as Node)) {
-        setRunsOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", onClickOutside);
-    return () => document.removeEventListener("mousedown", onClickOutside);
-  }, [runsOpen]);
-
-  async function openRuns(): Promise<void> {
-    if (!id) return;
-    if (runsOpen) {
-      setRunsOpen(false);
-      return;
-    }
-    try {
-      const result = await runsQuery.refetch();
-      const list = result.data ?? [];
-      setRunsList(list);
-      setRunsOpen(true);
-    } catch (err) {
-      setMessage(String(err));
-    }
-  }
-
   async function viewRun(runId: string): Promise<void> {
-    setRunsOpen(false);
     try {
       const run = await api.getRun(runId);
       applyRunInfo(run);
+      setSidecarOpen(true);
     } catch (err) {
       setMessage(String(err));
     }
@@ -1375,34 +1365,13 @@ export function EditorPage() {
             ✨ AI Draft
           </button>
 
-          <div className="runs-menu" ref={runsMenuRef}>
-            <button className="btn" onClick={() => void openRuns()}>
-              Runs ▾
-            </button>
-            {runsOpen && (
-              <div
-                className="runs-dropdown"
-              >
-                {runsList.length === 0 && (
-                  <p className="runs-empty muted">No runs yet.</p>
-                )}
-                {runsList.map((r) => (
-                  <button
-                    key={r.id}
-                    className="runs-item"
-                    onClick={() => void viewRun(r.id)}
-                  >
-                    <span className={`run-pill status-run-${r.status}`}>
-                      {r.status}
-                    </span>
-                    <span className="runs-item-meta">
-                      {new Date(r.started_at).toLocaleString()} · {r.trigger_type}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          <button
+            className={`btn${sidecarOpen ? " active" : ""}`}
+            onClick={() => setSidecarOpen((v) => !v)}
+            title="Run history"
+          >
+            Runs
+          </button>
 
           {canWrite && (
             <PublishPill
@@ -1525,6 +1494,21 @@ export function EditorPage() {
           <NodePalette />
           <div className="editor-stage">
             <Canvas />
+            {runId && !running && (
+              <div className="run-exec-banner">
+                <div className="run-exec-banner-dot" />
+                <span className="run-exec-banner-label">Viewing</span>
+                <span className="run-exec-banner-id">#{runId.slice(0, 6)}</span>
+                <span className="run-exec-banner-meta">
+                  {runHasError ? " · error" : " · success"}
+                </span>
+                <div className="run-exec-banner-end">
+                  <button className="run-exec-banner-exit" onClick={clearRun}>
+                    Exit run view
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="canvas-fab">
               {running ? (
                 <button
@@ -1553,11 +1537,16 @@ export function EditorPage() {
             </div>
             <PortDataViewer />
           </div>
+          {sidecarOpen && id && <RunSidecar workflowId={id} />}
           <Inspector />
         </div>
       </ReactFlowProvider>
 
-      {ndvOpenId && <NodeDetailModal nodeId={ndvOpenId} />}
+      {ndvOpenId && (
+        <Suspense fallback={null}>
+          <NodeDetailModal nodeId={ndvOpenId} />
+        </Suspense>
+      )}
 
       {aiOpen && (
         <AiDraftModal

@@ -19,11 +19,11 @@ beforeEach(() => {
   vi.mocked(queries.useRuns).mockReturnValue({
     data: [],
     isLoading: false,
-  } as ReturnType<typeof queries.useRuns>);
+  } as unknown as ReturnType<typeof queries.useRuns>);
   vi.mocked(queries.useRun).mockReturnValue({
     data: null,
     isLoading: false,
-  } as ReturnType<typeof queries.useRun>);
+  } as unknown as ReturnType<typeof queries.useRun>);
   vi.mocked(queries.useRerunRunMutation).mockReturnValue({
     mutate: vi.fn(),
     isPending: false,
