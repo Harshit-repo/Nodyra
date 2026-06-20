@@ -2,7 +2,7 @@
 
 > Date: 2026-06-20
 > Status: approved for implementation planning
-> Scope: Phase B — five new power tool nodes, seven Agent node enhancements making Noodle's AI agent best-in-class vs. n8n, Make, Windmill, and LangChain visual tools.
+> Scope: Phase B — five new power tool nodes, nine Agent node enhancements (incl. sub-agent port + prominent strategy selector) making Noodle's AI agent best-in-class vs. n8n, Make, Windmill, and LangChain visual tools.
 
 ---
 
@@ -12,14 +12,15 @@ The current `ai_agent_v2` is a clean ReAct loop. It does the job but has no mean
 
 | Gap | What we're shipping |
 |---|---|
-| Only one dumb strategy (ReAct) | Three strategies: React / Plan-and-Execute / Reflexion |
+| Only one dumb strategy (ReAct) | Three strategies selectable front-and-center: React / Plan-and-Execute / Reflexion |
 | One model does everything | Dual-model port: cheap model for tool steps, powerful for synthesis |
+| No multi-agent orchestration | Sub-agent ports: connect specialist agents as delegatable tools on the parent |
 | All tools sent every call | Semantic top-K tool selection |
 | Context blows up over 15+ steps | Auto context compression |
 | RAG needs 3+ extra nodes | `retriever` port directly on Agent |
 | No built-in power tools | Code execution, web search, browser, calculator, RAG tool nodes + Agent toggles |
 
-Together these make Noodle's agent the only visual automation tool that: runs code, reflects on its answers, uses a cheap model for grunt work, never hits context limits, and searches your vector DB without extra nodes.
+Together these make Noodle's agent the only visual automation tool that: orchestrates specialist sub-agents, runs code, reflects on its own answers, uses a cheap model for grunt work, never hits context limits, and searches your vector DB — all wired visually.
 
 ---
 
@@ -320,13 +321,21 @@ All changes are to `packages/nodes/noodle_nodes/ai_v2/agents.py` plus the `@node
 ### 3.1 New Input Ports
 
 ```python
-inputs=["input", "model", "fast_model", "tool", "retriever", "memory", "parser", "guardrail"],
+inputs=[
+    "input", "model", "fast_model",
+    "tool", "retriever",
+    "subagent_1", "subagent_2", "subagent_3",   # NEW
+    "memory", "parser", "guardrail",
+],
 input_kinds={
     "input": "main",
     "model": "ai_language_model",
-    "fast_model": "ai_language_model",   # NEW
+    "fast_model": "ai_language_model",    # NEW
     "tool": "ai_tool",
-    "retriever": "ai_retriever",          # NEW
+    "retriever": "ai_retriever",           # NEW
+    "subagent_1": "ai_subagent",           # NEW
+    "subagent_2": "ai_subagent",           # NEW
+    "subagent_3": "ai_subagent",           # NEW
     "memory": "ai_memory",
     "parser": "ai_output_parser",
     "guardrail": "ai_guardrail",
@@ -335,15 +344,24 @@ input_kinds={
 
 ### 3.2 New Params (grouped)
 
-New param groups added to the existing `@node` decorator:
+New param groups added to the existing `@node` decorator.
 
-**Strategy group:**
+**Top-level (no group — always visible alongside `prompt`):**
+
+`strategy` is promoted to a top-level param, displayed directly beneath `prompt` in the node inspector so every user immediately sees it. It is NOT inside a collapsible group.
 
 | Param | Type | Default | Description |
 |---|---|---|---|
-| `strategy` | choices: react/plan_and_execute/reflexion | `react` | Execution strategy |
-| `reflection_rounds` | int | 1 | Reflexion: how many self-critique rounds (1–2). Only shown when strategy=reflexion |
-| `persona` | choices (see §3.5) | `none` | Pre-built system prompt preset |
+| `strategy` | choices: react / plan_and_execute / reflexion | `react` | How the agent executes: ReAct loop, Plan-then-Execute, or Reflexion (self-critique). |
+| `persona` | choices (see §3.5) | `none` | Pre-built expert persona (sets system prompt template). |
+
+`reflection_rounds` stays in the **Strategy** collapsible group since it only matters when `strategy=reflexion`:
+
+**Strategy group (collapsible):**
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `reflection_rounds` | int | 1 | Reflexion only: self-critique rounds (1–2). `depends_on: strategy=reflexion`. |
 
 **Context group:**
 
@@ -641,6 +659,175 @@ User's custom `system` always appended AFTER the persona — user intent overrid
 - Persona templates are short (< 200 chars each): minimal token impact.
 - Future: user-defined personas stored as workflow variables? Out of scope for v1.
 
+### 3.10 Sub-Agent Ports (`subagent_1/2/3`)
+
+This is the most architecturally significant addition. The parent agent gains up to three sub-agent ports. Each connected sub-agent is automatically exposed as a delegatable tool: the parent calls `delegate_to_{name}(task, context)` and the sub-agent runs its own full agent loop (with its own model, tools, strategy) and returns a final answer.
+
+#### 3.10.1 New Node: `AI Sub-Agent` (`ai_sub_agent`)
+
+A supplier node that captures a specialist agent configuration and outputs it on an `ai_subagent` port.
+
+**Inputs:**
+- `model` (ai_language_model) — the sub-agent's own model (can differ from parent)
+- `tool` (ai_tool) — tools available to the sub-agent
+
+**Output:** `subagent` (kind: `ai_subagent`)
+
+**Parameters:**
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `name` | string | `sub_agent` | Snake-case name exposed to parent as `delegate_to_{name}` |
+| `description` | textarea | — | What this specialist agent does — critical for parent to know when to delegate |
+| `system` | textarea | — | Sub-agent's system prompt / persona |
+| `strategy` | choices: react/plan_and_execute/reflexion | `react` | Sub-agent's own execution strategy |
+| `max_steps` | int | 6 | Sub-agent's step budget (independent of parent's) |
+| `temperature` | float | 0.2 | Sub-agent's sampling temperature |
+| `max_tokens` | int | — | Sub-agent's token limit |
+| `persona` | choices | `none` | Sub-agent's persona preset |
+| `side_effecting` | toggle | True | Whether delegating to this agent requires approval |
+
+**What it outputs:** A `SubAgentAdapter` dataclass containing all the above config plus the resolved `ChatModelAdapter` and `list[ToolAdapter]`.
+
+#### 3.10.2 `SubAgentAdapter` and `SubAgentToolAdapter`
+
+`SubAgentAdapter` (output of the sub-agent supplier node) is a new adapter class — NOT a `ToolAdapter`. It carries the full configuration for a sub-agent. The parent agent's function converts each connected `SubAgentAdapter` into a `SubAgentToolAdapter` (a `ToolAdapter`) that runs the nested agent loop.
+
+**`SubAgentToolAdapter.schema`:**
+```json
+{
+  "name": "delegate_to_{name}",
+  "description": "{description}",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "task": {"type": "string", "description": "The specific task to delegate."},
+      "context": {"type": "string", "description": "Optional context or data to pass to the sub-agent."}
+    },
+    "required": ["task"]
+  }
+}
+```
+
+**`SubAgentToolAdapter.invoke_async()` — nested agent loop:**
+
+```python
+async def invoke_async(self, arguments: dict) -> str:
+    task = str(arguments.get("task") or "")
+    context = str(arguments.get("context") or "")
+    if context:
+        task = f"{task}\n\nContext provided:\n{context}"
+
+    messages = []
+    if self._system:
+        messages.append(AIMessage.system(self._system))
+    messages.append(AIMessage.user(task))
+
+    tool_schemas = [adapter.schema for adapter in self._tools]
+    steps: list[dict] = []
+    step = 0
+
+    while step < self._max_steps:
+        request = ChatRequest(
+            messages=messages,
+            model=_model_name(self._model),
+            temperature=self._temperature,
+            max_tokens=self._max_tokens,
+            tools=tool_schemas,
+        )
+        response = await self._model.complete_async(request)
+
+        if not response.tool_calls:
+            # Final answer — return with sub-agent trace
+            return json.dumps({
+                "answer": response.text,
+                "sub_agent": self._name,
+                "steps_taken": step,
+                "intermediate_steps": steps,
+            }, ensure_ascii=False, default=str)
+
+        # Execute tool calls
+        messages.append(AIMessage.assistant(response.text, tool_calls=response.tool_calls))
+        for call in response.tool_calls:
+            tool = self._tool_map.get(call.name)
+            try:
+                if tool is None:
+                    result = f"Tool '{call.name}' not available to this sub-agent."
+                elif hasattr(tool, "invoke_async"):
+                    result = await tool.invoke_async(dict(call.arguments))
+                else:
+                    result = tool.invoke(dict(call.arguments))
+            except Exception as exc:
+                result = f"Tool error: {exc}"
+            messages.append(AIMessage.tool_result(
+                tool_call_id=call.id,
+                name=call.name,
+                content=result,
+            ))
+            steps.append({"tool": call.name, "arguments": dict(call.arguments), "result": result})
+        step += 1
+
+    return json.dumps({
+        "answer": "Sub-agent reached max steps without a final answer.",
+        "sub_agent": self._name,
+        "steps_taken": step,
+        "intermediate_steps": steps,
+    }, ensure_ascii=False, default=str)
+```
+
+**Key properties of this design:**
+
+- Sub-agent runs synchronously nested inside the parent's tool dispatch cycle. No engine changes required.
+- Sub-agent's tool calls are dispatched directly (not via engine) — they run without the parent's `side_effect_approval` gate. Document: all sub-agent tool calls are auto-approved. If users need approval at the sub-agent level, they should configure the sub-agent node's `side_effecting=True` which gates the parent's call to it.
+- Sub-agent's full `intermediate_steps` trace is returned inside the tool result JSON — the parent agent (and the run timeline) can see what the sub-agent did.
+- `plan_and_execute` and `reflexion` strategies work inside sub-agents via the same strategy logic.
+- `fast_model` is not supported inside sub-agents for v1 — sub-agent always uses its configured `model` for all steps. Can be added later by wiring a second model to the sub-agent node.
+
+#### 3.10.3 Parent Agent Integration
+
+Sub-agent adapters are assembled alongside built-ins and retriever tool:
+
+```
+1. Built-in tools (toggles)
+2. Retriever auto-tool
+3. Sub-agent tools (from subagent_1/2/3 ports)
+4. External wired tools (tool port)
+```
+
+External tools still win on name collision. Sub-agents are de-duplicated by `delegate_to_{name}` — connecting two sub-agents with the same `name` raises a `ValueError` at the parent agent node construction.
+
+A helper `_subagent_tool_adapters(subagent_1, subagent_2, subagent_3)` collects connected `SubAgentAdapter` instances and wraps each in `SubAgentToolAdapter`.
+
+**Edge cases:**
+
+- Sub-agent model not connected: `ai_sub_agent` node raises `ValueError("connect an AI Chat Model to the sub-agent model port")` at supplier evaluation time.
+- Sub-agent with no tools connected: valid — sub-agent runs as a pure LLM without tool calling. Useful for reasoning-only specialists.
+- Sub-agent calls another sub-agent (nesting depth > 1): not prevented but not supported in v1. Nesting creates a synchronous call chain. Document: circular sub-agent references (A delegates to B which delegates to A) would cause infinite recursion — users must ensure no cycles. Engine-level cycle detection is out of scope.
+- Parent delegates to sub-agent in a tight loop (model calls delegate repeatedly): counts against parent's `max_steps`. Each delegation = one step in the parent.
+- Sub-agent times out: the sub-agent's own `max_steps` limits run time. No per-sub-agent wall-clock timeout in v1 — document this. Parent's `timeout_seconds` applies per model call, not to the entire nested loop.
+- Sub-agent raises uncaught exception: caught at `invoke_async`, returned as `{"error": "...", "sub_agent": "..."}`. Parent agent sees the error and can recover.
+- `subagent_1` and `subagent_2` both have the same name: raises `ValueError` in `_subagent_tool_adapters`. Caught before agent loop starts.
+- `SubAgentAdapter` accidentally connected to `tool` port: `collect_tool_adapters()` already filters by `isinstance(value, ToolAdapter)`. `SubAgentAdapter` is NOT a `ToolAdapter`. Wrong port = no tools registered + user sees a connection validation error.
+
+#### 3.10.4 Usage Pattern Examples
+
+**Research + Writer pipeline:**
+```
+[AI Chat Model: gpt-4o-mini] → [AI Sub-Agent: name="researcher", system="Search and summarize sources"]
+                                        ↓ subagent port
+[AI Chat Model: gpt-4o]     → [Agent: strategy=plan_and_execute, persona=creative_writer]
+```
+Parent delegates research to the cheap sub-agent, then writes with the expensive model.
+
+**Data analyst with code:**
+```
+[AI Chat Model: claude-haiku] ─────────── [AI Code Execution Tool]
+                                   └─→ [AI Sub-Agent: name="analyst"]
+                                              ↓ subagent port
+[AI Chat Model: claude-sonnet] ──────── [Agent: strategy=reflexion]
+```
+Sub-agent does all the data crunching; parent synthesizes and self-critiques the result.
+
 ---
 
 ## 4. Merge/Dedup Logic for Tool Lists
@@ -688,15 +875,19 @@ found inside tool results."
 packages/nodes/noodle_nodes/ai_v2/
   agent_tools.py          # NEW: CodeExecToolAdapter, WebSearchToolAdapter,
                           #      BrowserToolAdapter, CalculatorToolAdapter,
-                          #      RetrieverToolAdapter + 5 @node definitions
+                          #      RetrieverToolAdapter, SubAgentAdapter,
+                          #      SubAgentToolAdapter + 6 @node definitions
+                          #      (5 tool nodes + ai_sub_agent supplier node)
   agents.py               # MODIFIED: dual-model, strategies, compression,
                           #            semantic selection, retriever port,
-                          #            usage tracking, persona, built-in toggles
+                          #            sub-agent ports, usage tracking,
+                          #            persona, built-in toggles,
+                          #            strategy as top-level param
   __init__.py             # MODIFIED: import agent_tools
 
 packages/nodes/tests/
-  test_ai_agent_tools.py  # NEW: unit tests for all 5 tool node adapters
-  test_ai_agent_v2_enhanced.py  # NEW: tests for new agent features
+  test_ai_agent_tools.py       # NEW: all 6 tool/subagent adapter unit tests
+  test_ai_agent_v2_enhanced.py # NEW: all agent enhancement tests
 ```
 
 The existing `test_ai_agent_v2.py` (if present) is not modified — new test file avoids collisions.
@@ -804,6 +995,24 @@ The existing `test_ai_agent_v2.py` (if present) is not modified — new test fil
 - `test_top_k_falls_back_when_all_zero_score` — no keyword overlap → all tools included
 - `test_all_selection_sends_all_tools` — `tool_selection="all"` → all 10 tools in schema
 
+**Strategy visibility:**
+- `test_strategy_param_is_top_level` — `strategy` not inside any param group in `@node` decorator
+- `test_strategy_react_is_default` — default value is `"react"`
+
+**Sub-agent ports:**
+- `test_subagent_creates_delegate_tool` — SubAgentAdapter on subagent_1 → `delegate_to_{name}` in tool schemas
+- `test_subagent_invoke_calls_nested_model` — invoke_async → mock model called with sub-agent's config
+- `test_subagent_returns_trace_in_result` — sub-agent that calls tools → intermediate_steps in JSON result
+- `test_subagent_max_steps_respected` — sub-agent with max_steps=1 → stops after 1 tool call
+- `test_subagent_tool_error_graceful` — sub-agent tool raises → error in result, no exception propagated to parent
+- `test_subagent_model_not_connected_raises` — ai_sub_agent node without model → ValueError at supplier time
+- `test_subagent_no_tools_valid` — sub-agent with no tool connection → runs as pure LLM
+- `test_subagent_duplicate_name_raises` — two sub-agents with same name → ValueError before loop starts
+- `test_subagent_wrong_port_ignored` — SubAgentAdapter on tool port → not registered (type mismatch)
+- `test_subagent_exception_caught_as_error_json` — nested loop raises → parent gets error JSON, continues
+- `test_three_subagents_all_registered` — subagent_1/2/3 all connected → 3 delegate tools in schema
+- `test_subagent_deduped_by_external_tool` — external tool named `delegate_to_x` + sub-agent named `x` → external wins
+
 ---
 
 ## 8. Output Schema (complete `ai_agent_v2` output after this spec)
@@ -859,15 +1068,16 @@ The existing `test_ai_agent_v2.py` (if present) is not modified — new test fil
 ## 10. Backwards Compatibility
 
 All new params have safe defaults matching current behaviour:
-- `strategy="react"` → identical to today
+- `strategy="react"` → identical to today (now top-level but same default)
 - `fast_model` not connected → identical to today
+- `subagent_1/2/3` not connected → no sub-agent tools registered
 - `max_history_tokens=0` → no compression
 - `tool_selection="all"` → identical to today
 - `retriever` not connected → no auto-tool
 - `persona="none"` → no template
 - All `enable_*` toggles default to False → no built-in tools added
 
-Existing workflows using `ai_agent_v2` continue to work without any changes.
+Existing workflows using `ai_agent_v2` continue to work without any changes. The `strategy` param moving from the Options group to top-level is a UI change only — the param name and default value are unchanged, so serialised workflow JSON is unaffected.
 
 ---
 
@@ -881,5 +1091,7 @@ Existing workflows using `ai_agent_v2` continue to work without any changes.
 | `ast` | Code execution AST check | Yes (stdlib) |
 | `subprocess` | Code execution | Yes (stdlib) |
 | `tempfile` | Code execution temp dir | Yes (stdlib) |
+| none | Sub-agent | Uses existing `noodle.ai_runtime` adapters — zero new deps |
 
 `simpleeval` and `playwright` are lazy-imported with friendly error messages. No global deps added.
+Sub-agent feature adds zero new dependencies — it composes existing adapter interfaces.
