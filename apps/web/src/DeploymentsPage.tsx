@@ -4,7 +4,6 @@ import { Link, useNavigate } from "react-router-dom";
 import { ApiError, errorMessage } from "./api";
 import { useConfirm } from "./ConfirmProvider";
 import { useEntitlements } from "./entitlements";
-import { HomeHeader } from "./HomeHeader";
 import {
   useCreateDeploymentMutation,
   useDeleteDeploymentMutation,
@@ -231,7 +230,6 @@ export function DeploymentsPage() {
 
   return (
     <div className="home">
-      <HomeHeader />
       <main className="home-main">
         <div className="home-bar">
           <h1>

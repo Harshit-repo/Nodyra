@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 
 import { errorMessage, getOrgId, getUser } from "./api";
 import { useConfirm } from "./ConfirmProvider";
-import { HomeHeader } from "./HomeHeader";
 import {
   useAddOrgMemberMutation,
   useMyOrgs,
@@ -160,7 +159,6 @@ export function OrganizationPage() {
 
   return (
     <div className="home">
-      <HomeHeader />
       <main className="home-main">
         <div className="home-bar">
           <div>

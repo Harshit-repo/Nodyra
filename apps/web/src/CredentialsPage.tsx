@@ -13,7 +13,6 @@ import {
   type CredentialPreset,
   type CredentialScope,
 } from "./credentialPresets";
-import { HomeHeader } from "./HomeHeader";
 import {
   LLM_PROVIDER_VARIANTS,
   getLlmVariant,
@@ -717,7 +716,6 @@ export function CredentialsPage() {
 
   return (
     <div className="home">
-      <HomeHeader />
       <main className="home-main">
         <div className="home-bar">
           <h1>

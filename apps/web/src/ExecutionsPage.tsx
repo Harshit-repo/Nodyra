@@ -9,7 +9,6 @@ import {
   type RunTimeline,
   subscribeToRunEvents,
 } from "./api";
-import { HomeHeader } from "./HomeHeader";
 import {
   queryKeys,
   useAllRuns,
@@ -366,7 +365,6 @@ export function ExecutionsPage() {
 
   return (
     <div className="home">
-      <HomeHeader />
       <main className="home-main">
         <div className="home-bar">
           <h1>

@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage, getUser } from "./api";
 import { useConfirm } from "./ConfirmProvider";
 import { useEntitlements } from "./entitlements";
-import { HomeHeader } from "./HomeHeader";
 import { useToast } from "./ToastProvider";
 import type { UserAdminInfo } from "./types";
 
@@ -112,7 +111,6 @@ export function SecurityPage() {
 
   return (
     <div className="home">
-      <HomeHeader />
       <main className="home-main">
         <div className="home-bar">
           <div>

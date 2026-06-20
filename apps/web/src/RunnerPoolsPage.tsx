@@ -2,7 +2,6 @@ import { useRef, useState } from "react";
 
 import { useConfirm } from "./ConfirmProvider";
 import { useEntitlements } from "./entitlements";
-import { HomeHeader } from "./HomeHeader";
 import { useCan } from "./permissions";
 import {
   useCreateRunnerPoolMutation,
@@ -18,6 +17,8 @@ import {
   useUpdateRunnerPoolMutation,
 } from "./queries";
 import { useModalA11y } from "./useModalA11y";
+import { useTimeout } from "./hooks/useTimeout";
+import { useMountedRef } from "./hooks/useMountedRef";
 import type {
   RegistrationTokenResponse,
   RunnerFleetHealth,
@@ -687,6 +688,8 @@ function AddMachineDialog({
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState<RegistrationTokenResponse | null>(null);
   const [copied, setCopied] = useState(false);
+  const scheduleTimeout = useTimeout();
+  const mountedRef = useMountedRef();
   const createToken = useCreateRunnerRegistrationTokenMutation();
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalA11y(dialogRef, onClose);
@@ -725,8 +728,9 @@ noodle-runner start`
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(installCmd);
+      if (!mountedRef.current) return;
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      scheduleTimeout(() => setCopied(false), 2000);
     } catch {
       /* clipboard blocked */
     }
@@ -1308,7 +1312,6 @@ export function RunnerPoolsPage() {
 
   return (
     <div className="home">
-      <HomeHeader />
       <main className="home-main">
         <div className="home-bar">
           <h1>

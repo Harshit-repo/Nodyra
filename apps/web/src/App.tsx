@@ -9,6 +9,8 @@ import { api, apiLogout, onUnauthorized, setToken, setUser } from "./api";
 import { NO_AUTH_FALLBACK, shouldRetryAuthError } from "./authBootstrap";
 import { BackendLoading } from "./BackendLoading";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { HomeLayout } from "./HomeLayout";
+import { PageErrorBoundary } from "./PageErrorBoundary";
 // AppAssistant is temporarily unmounted from the UI (see Routes below) but kept
 // in the codebase for continued iteration.
 // import { AppAssistant } from "./AppAssistant";
@@ -186,25 +188,32 @@ export default function App() {
               {auth.license_notice}
             </div>
           )}
-          <ErrorBoundary resetKey={location.pathname}>
-            <Suspense fallback={<BackendLoading retrying={false} />}>
-              <Routes>
-                <Route path="/" element={<WorkflowsPage />} />
-                <Route path="/environments" element={<EnvironmentsPage />} />
-                <Route path="/code-library" element={<CodeLibraryPage />} />
-                <Route path="/deployments" element={<DeploymentsPage />} />
-                <Route path="/executions" element={<ExecutionsPage />} />
-                <Route path="/credentials" element={<CredentialsPage />} />
-                <Route path="/activity" element={<ActivityPage />} />
-                <Route path="/runner-pools" element={<RunnerPoolsPage />} />
-                <Route path="/security" element={<SecurityPage />} />
-                <Route path="/organization" element={<OrganizationPage />} />
-                <Route path="/settings" element={<SettingsPage />} />
-                <Route path="/workflows/:id" element={<EditorPage />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </Suspense>
-          </ErrorBoundary>
+          <Routes>
+            <Route element={<HomeLayout />}>
+              <Route path="/" element={<PageErrorBoundary><WorkflowsPage /></PageErrorBoundary>} />
+              <Route path="/environments" element={<PageErrorBoundary><EnvironmentsPage /></PageErrorBoundary>} />
+              <Route path="/code-library" element={<PageErrorBoundary><CodeLibraryPage /></PageErrorBoundary>} />
+              <Route path="/deployments" element={<PageErrorBoundary><DeploymentsPage /></PageErrorBoundary>} />
+              <Route path="/executions" element={<PageErrorBoundary><ExecutionsPage /></PageErrorBoundary>} />
+              <Route path="/credentials" element={<PageErrorBoundary><CredentialsPage /></PageErrorBoundary>} />
+              <Route path="/activity" element={<PageErrorBoundary><ActivityPage /></PageErrorBoundary>} />
+              <Route path="/runner-pools" element={<PageErrorBoundary><RunnerPoolsPage /></PageErrorBoundary>} />
+              <Route path="/security" element={<PageErrorBoundary><SecurityPage /></PageErrorBoundary>} />
+              <Route path="/organization" element={<PageErrorBoundary><OrganizationPage /></PageErrorBoundary>} />
+              <Route path="/settings" element={<PageErrorBoundary><SettingsPage /></PageErrorBoundary>} />
+              <Route path="*" element={<NotFound />} />
+            </Route>
+            <Route
+              path="/workflows/:id"
+              element={
+                <Suspense fallback={<BackendLoading retrying={false} />}>
+                  <ErrorBoundary resetKey={location.pathname}>
+                    <EditorPage />
+                  </ErrorBoundary>
+                </Suspense>
+              }
+            />
+          </Routes>
           </EntitlementsProvider>
           {/* App-wide AI assistant (floating dock). Temporarily disabled in the UI
               while it is iterated on — the component and its backend wiring remain

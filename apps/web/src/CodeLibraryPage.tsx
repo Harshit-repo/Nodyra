@@ -2,7 +2,6 @@ import { useMemo, useRef, useState } from "react";
 
 import { errorMessage } from "./api";
 import { useConfirm } from "./ConfirmProvider";
-import { HomeHeader } from "./HomeHeader";
 import {
   useCodeModules,
   useCreateCodeModuleMutation,
@@ -131,7 +130,6 @@ export function CodeLibraryPage() {
 
   return (
     <div className="home">
-      <HomeHeader />
       <main className="home-main">
         <div className="home-bar">
           <div>

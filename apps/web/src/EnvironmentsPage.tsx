@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { errorMessage } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { HomeHeader } from "./HomeHeader";
 import { PackageDrawer } from "./PackageDrawer";
 import {
   useCreateEnvironmentMutation,
@@ -884,7 +883,6 @@ export function EnvironmentsPage() {
 
   return (
     <div className="home">
-      <HomeHeader />
       <main className="home-main">
         <div className="home-bar">
           <h1>

@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 
 import { api, getUser } from "./api";
 import { useConfirm } from "./ConfirmProvider";
-import { HomeHeader } from "./HomeHeader";
 import {
   getFontPreference,
   getThemePreference,
@@ -352,7 +351,6 @@ export function SettingsPage() {
 
   return (
     <div className="home">
-      <HomeHeader />
       <main className="home-main">
         <div className="home-bar">
           <div>

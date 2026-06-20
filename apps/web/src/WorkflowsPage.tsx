@@ -4,7 +4,6 @@ import { DotsThreeVertical, Rows, SquaresFour } from "@phosphor-icons/react";
 
 import { api, errorMessage } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { HomeHeader } from "./HomeHeader";
 import { Logo } from "./Logo";
 import {
   useCreateWorkflowMutation,
@@ -18,6 +17,7 @@ import {
 } from "./queries";
 import { useToast } from "./ToastProvider";
 import { useModalA11y } from "./useModalA11y";
+import { safeGetItem, safeSetItem } from "./safeStorage";
 import type {
   ProviderTriggerStatusCounts,
   ProviderTriggerSubscription,
@@ -205,7 +205,7 @@ export function WorkflowsPage() {
   const [renameBusy, setRenameBusy] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"grid" | "list">(() => {
-    return (localStorage.getItem("noodle-wf-view") as "grid" | "list") ?? "grid";
+    return safeGetItem("noodle-wf-view") === "list" ? "list" : "grid";
   });
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [providerModalWorkflow, setProviderModalWorkflow] =
@@ -311,7 +311,7 @@ export function WorkflowsPage() {
 
   function setView(mode: "grid" | "list"): void {
     setViewMode(mode);
-    localStorage.setItem("noodle-wf-view", mode);
+    safeSetItem("noodle-wf-view", mode);
   }
 
   async function openProviderStatus(
@@ -395,8 +395,6 @@ export function WorkflowsPage() {
 
   return (
     <div className="home">
-      <HomeHeader />
-
       <main className="home-main">
         <div className="home-bar">
           <h1>

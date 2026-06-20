@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "./api";
-import { HomeHeader } from "./HomeHeader";
 import type { AuditEvent } from "./types";
 
 function when(iso: string): string {
@@ -82,7 +81,6 @@ export function ActivityPage() {
 
   return (
     <div className="home">
-      <HomeHeader />
       <main className="home-main">
         <div className="home-bar">
           <h1>
