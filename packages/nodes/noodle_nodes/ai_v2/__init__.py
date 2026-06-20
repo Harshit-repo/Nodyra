@@ -20,6 +20,7 @@ Submodules:
 - guardrails.py           — Guardrail supplier node
 """
 
+from noodle_nodes.ai_v2 import agent_tools as agent_tools
 from noodle_nodes.ai_v2 import agents as agents
 from noodle_nodes.ai_v2 import mcp as mcp
 from noodle_nodes.ai_v2 import document_loaders as document_loaders
@@ -35,6 +36,7 @@ from noodle_nodes.ai_v2 import tools as tools
 from noodle_nodes.ai_v2 import vectorstores as vectorstores
 
 __all__ = [
+    "agent_tools",
     "document_loaders",
     "embeddings",
     "agents",

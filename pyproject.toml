@@ -31,6 +31,7 @@ dev = [
     # Postgres async driver for the CI lane that runs the suite against a real
     # Postgres (exercises the durable queue's SELECT ... FOR UPDATE SKIP LOCKED).
     "asyncpg>=0.29",
+    "simpleeval>=0.9",
 ]
 
 [tool.ruff]
