@@ -461,6 +461,20 @@ textarea:focus-visible {
   gap: 8px;
   margin-top: 6px;
 }
+
+.page-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  padding: 24px;
+}
+
+.page-error-icon {
+  color: var(--ink-2, #aab1bd);
+  margin-bottom: 4px;
+}
+
 .mono-tag {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -635,6 +649,7 @@ textarea:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+.wf-card::before {
   content: "";
   position: absolute;
   left: 0;
