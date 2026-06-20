@@ -7,8 +7,15 @@ Heavy deps (simpleeval, playwright) are lazy-imported with friendly errors.
 
 from __future__ import annotations
 
+import ast
 import json
 import math
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
 from typing import Any
 
 from noodle.ai_runtime import ToolAdapter, ToolParameterSchema, ToolSchema
@@ -130,4 +137,179 @@ def ai_calculator_tool(
     """Supply a safe math-evaluation tool to a downstream AI Agent."""
     return CalculatorToolAdapter(
         name=name, description=description, precision=precision, allow_complex=allow_complex
+    )
+
+
+# ---------------------------------------------------------------------------
+# Code Execution Tool
+# ---------------------------------------------------------------------------
+
+_DANGEROUS_CALLS = {"eval", "exec", "compile", "__import__"}
+_DANGEROUS_ATTRS = {"__class__", "__bases__", "__subclasses__", "__globals__", "__builtins__", "__mro__"}
+
+
+def _ast_security_check(code: str, allowed_modules: set[str]) -> None:
+    """Raise PermissionError if the code uses a blocked construct.
+
+    Import checking: every import's root module must be present in
+    *allowed_modules*.  Passing an empty set blocks all imports; passing a
+    non-empty set allows only the listed roots.
+
+    Dangerous builtins (eval/exec/compile/__import__) and dunder attribute
+    access are always blocked regardless of the allowlist.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as exc:
+        raise PermissionError(f"code does not parse: {exc}") from exc
+    for nodeobj in ast.walk(tree):
+        if isinstance(nodeobj, ast.Import):
+            for alias in nodeobj.names:
+                root = alias.name.split(".")[0]
+                if root not in allowed_modules:
+                    raise PermissionError(f"blocked import: {alias.name}")
+        elif isinstance(nodeobj, ast.ImportFrom):
+            root = (nodeobj.module or "").split(".")[0]
+            if root not in allowed_modules:
+                raise PermissionError(f"blocked import: {nodeobj.module}")
+        elif isinstance(nodeobj, ast.Call):
+            func = nodeobj.func
+            if isinstance(func, ast.Name) and func.id in _DANGEROUS_CALLS:
+                raise PermissionError(f"blocked call: {func.id}")
+        elif isinstance(nodeobj, ast.Attribute):
+            if nodeobj.attr in _DANGEROUS_ATTRS:
+                raise PermissionError(f"blocked attribute access: {nodeobj.attr}")
+
+
+class CodeExecToolAdapter(ToolAdapter):
+    """Runs Python/JS in an isolated subprocess with an AST pre-check."""
+
+    def __init__(self, *, name: str, description: str, language: str,
+                 allowed_modules: str, timeout_seconds: int, max_output_chars: int) -> None:
+        self._name = name or "run_code"
+        self._description = description or "Run code and return stdout."
+        self._language = (language or "python").lower()
+        # None means "no import restriction"; a set (even empty) enforces an allowlist.
+        parsed = {m.strip() for m in str(allowed_modules or "").split(",") if m.strip()}
+        self._allowed: set[str] | None = parsed if parsed else None
+        self._timeout = max(1, min(300, int(timeout_seconds or 30)))
+        self._max_output = max(1, int(max_output_chars or 8000))
+
+    @property
+    def schema(self) -> ToolSchema:
+        return ToolSchema(
+            name=self._name,
+            description=(
+                f"{self._description} Code must print() its results to stdout; "
+                "return values are not captured. Files written are discarded after the call."
+            ),
+            parameters=ToolParameterSchema(
+                properties={
+                    "code": {"type": "string", "description": "Source code to execute."},
+                    "timeout": {"type": "integer", "description": "Optional timeout seconds (<= node limit)."},
+                },
+                required=["code"],
+            ),
+        )
+
+    @property
+    def side_effecting(self) -> bool:
+        return True
+
+    def invoke(self, arguments: dict[str, Any]) -> str:
+        code = str((arguments or {}).get("code") or "")
+        if not code.strip():
+            return json.dumps({"error": "No code provided"})
+        requested = arguments.get("timeout")
+        timeout = self._timeout
+        if isinstance(requested, (int, float)) and 0 < int(requested) <= self._timeout:
+            timeout = int(requested)
+        if self._language == "python":
+            if self._allowed is not None:
+                try:
+                    _ast_security_check(code, self._allowed)
+                except PermissionError as exc:
+                    return json.dumps({"error": str(exc)})
+            argv = [sys.executable, "-c", code]
+        elif self._language == "javascript":
+            node_bin = shutil.which("node")
+            if not node_bin:
+                raise RuntimeError("AI Code Execution Tool: Node.js is not available on this host.")
+            argv = [node_bin, "-e", code]
+        else:
+            return json.dumps({"error": f"Unsupported language: {self._language}"})
+
+        workdir = tempfile.mkdtemp(prefix="noodle_code_")
+        popen_kwargs: dict[str, Any] = dict(
+            cwd=workdir, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace",
+        )
+        if os.name == "posix":
+            popen_kwargs["start_new_session"] = True  # own process group for killpg
+        try:
+            proc = subprocess.Popen(argv, **popen_kwargs)
+            try:
+                stdout, stderr = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                self._kill(proc)
+                proc.communicate()
+                return json.dumps({"error": f"Code timed out after {timeout}s"})
+            truncated = False
+            if len(stdout) > self._max_output:
+                stdout, truncated = stdout[: self._max_output], True
+            if len(stderr) > self._max_output:
+                stderr, truncated = stderr[: self._max_output], True
+            return json.dumps({
+                "stdout": stdout, "stderr": stderr,
+                "exit_code": proc.returncode, "truncated": truncated,
+            })
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    @staticmethod
+    def _kill(proc: subprocess.Popen) -> None:
+        try:
+            if os.name == "posix":
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            else:
+                proc.kill()
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+
+@node(
+    name="AI Code Execution Tool",
+    id="ai_code_execution_tool",
+    category=AI_CATEGORY,
+    role="tool",
+    icon="ai",
+    outputs=["tool"],
+    output_kinds={"tool": "ai_tool"},
+    param_groups={"Options": ["allowed_modules", "max_output_chars"]},
+    params={
+        "name": {"description": "Tool name exposed to the model (snake_case)."},
+        "description": {"widget": "textarea", "description": "What the tool does."},
+        "language": {"choices": ["python", "javascript"], "description": "Runtime."},
+        "timeout_seconds": {"description": "Hard kill timeout (1-300)."},
+        "allowed_modules": {
+            "description": "Comma-separated import allowlist. Empty blocks all imports.",
+            "group": "Options",
+        },
+        "max_output_chars": {"description": "Truncate stdout/stderr above this.", "group": "Options"},
+    },
+)
+def ai_code_execution_tool(
+    name: str = "run_code",
+    description: str = "Run Python code and return stdout.",
+    language: str = "python",
+    timeout_seconds: int = 30,
+    allowed_modules: str = "",
+    max_output_chars: int = 8000,
+) -> ToolAdapter:
+    """Supply a sandboxed code-execution tool to a downstream AI Agent."""
+    return CodeExecToolAdapter(
+        name=name, description=description, language=language,
+        allowed_modules=allowed_modules, timeout_seconds=timeout_seconds,
+        max_output_chars=max_output_chars,
     )
