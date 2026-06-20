@@ -69,20 +69,15 @@ export function RunTimeline({ selectedRunId }: RunTimelineProps) {
         </span>
       </div>
       <div className="sc-wf-body">
-        <div className="sc-wf-ticks-row">
-          <div className="sc-wf-tick-spacer" />
-          <div className="sc-wf-ticks">
-            <span className="sc-wf-tick" style={{ left: "0%" }}>
-              0
-            </span>
-            <span className="sc-wf-tick" style={{ left: "50%" }}>
-              {fmtMs(totalMs / 2)}
-            </span>
-            <span className="sc-wf-tick" style={{ left: "100%" }}>
-              {fmtMs(totalMs)}
-            </span>
+        {totalMs > 0 && (
+          <div className="sc-wf-ticks-row">
+            <div className="sc-wf-tick-spacer" />
+            <div className="sc-wf-ticks">
+              <span className="sc-wf-tick" style={{ left: "0%" }}>0</span>
+              <span className="sc-wf-tick" style={{ left: "100%" }}>{fmtMs(totalMs)}</span>
+            </div>
           </div>
-        </div>
+        )}
         {bars.map((bar) => (
           <div key={bar.nodeId} className="sc-wf-row">
             <div className="sc-wf-name" title={bar.nodeId}>
@@ -99,14 +94,19 @@ export function RunTimeline({ selectedRunId }: RunTimelineProps) {
           </div>
         ))}
         {neck && (
-          <div className="sc-wf-critical">
+          <div
+            className="sc-wf-critical"
+            title="Percentages are proportional to each node's duration_ms. Parallel branches sum to more than 100%."
+          >
             <div>
               Bottleneck:{" "}
               <span style={{ color: neck.status === "error" ? "var(--error)" : "var(--ink)" }}>
                 {neck.nodeId}
               </span>
             </div>
-            <div style={{ color: "var(--ink-3)" }}>{Math.round(neck.widthPct)}% of total time</div>
+            <div style={{ color: "var(--ink-3)" }}>
+              {neck.durationMs != null ? fmtMs(neck.durationMs) : "—"} · {Math.round(neck.widthPct)}% of node time
+            </div>
           </div>
         )}
       </div>

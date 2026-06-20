@@ -51,5 +51,13 @@ describe("RunSidecar", () => {
     render(<RunSidecar {...props} />);
     fireEvent.click(screen.getByText("Diff"));
     expect(screen.getByText("Run diff")).toBeTruthy();
+    expect(screen.queryByText("Run history")).toBeNull();
+  });
+
+  it("only one panel is rendered at a time", () => {
+    render(<RunSidecar {...props} />);
+    expect(screen.getByText("Run history")).toBeTruthy();
+    expect(screen.queryByText("Run diff")).toBeNull();
+    expect(screen.queryByText("Node reliability")).toBeNull();
   });
 });

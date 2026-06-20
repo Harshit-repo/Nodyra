@@ -8067,11 +8067,17 @@ select.field-input:hover {
   color: var(--ink-3);
   font-family: var(--font-mono);
 }
-.sc-insp-run-ref {
+.sc-insp-timeline-btn {
   font-size: 10px;
   font-family: var(--font-mono);
   color: var(--accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.8;
 }
+.sc-insp-timeline-btn:hover { opacity: 1; }
 
 .sc-node-row {
   display: flex;

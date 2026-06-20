@@ -37,6 +37,7 @@ export function RunList({
   onSelectRun,
   pinnedNodeId,
   onPinNode,
+  onSwitchTab,
 }: RunListProps) {
   const [filter, setFilter] = useState<Filter>("all");
   const runsQuery = useRuns(workflowId, { staleTime: 5000 });
@@ -116,7 +117,13 @@ export function RunList({
         <div className="sc-inspect">
           <div className="sc-insp-head">
             <span className="sc-insp-label">Node results</span>
-            <span className="sc-insp-run-ref">#{selectedRun.id.slice(0, 4)}</span>
+            <button
+              className="sc-insp-timeline-btn"
+              onClick={() => onSwitchTab("timeline")}
+              title="View timing waterfall"
+            >
+              ◫ Timeline
+            </button>
           </div>
           {selectedRun.node_runs.map((nr) => (
             <div

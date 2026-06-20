@@ -47,31 +47,25 @@ export function RunSidecar({ workflowId }: RunSidecarProps) {
         ))}
       </nav>
 
-      <div className={`sc-panel${activeTab === "runs" ? " active" : ""}`} role="tabpanel">
-        <RunList
-          workflowId={workflowId}
-          selectedRunId={selectedRunId}
-          onSelectRun={setSelectedRunId}
-          pinnedNodeId={pinnedNodeId}
-          onPinNode={setPinnedNodeId}
-          onSwitchTab={setActiveTab}
-        />
-      </div>
-
-      <div className={`sc-panel${activeTab === "diff" ? " active" : ""}`} role="tabpanel">
-        <RunDiff workflowId={workflowId} diffPair={diffPair} onChangePair={setDiffPair} />
-      </div>
-
-      <div className={`sc-panel${activeTab === "timeline" ? " active" : ""}`} role="tabpanel">
-        <RunTimeline selectedRunId={selectedRunId} />
-      </div>
-
-      <div className={`sc-panel${activeTab === "stats" ? " active" : ""}`} role="tabpanel">
-        <RunStats workflowId={workflowId} />
-      </div>
-
-      <div className={`sc-panel${activeTab === "info" ? " active" : ""}`} role="tabpanel">
-        <RunInfo selectedRunId={selectedRunId} onOpenDiff={() => setActiveTab("diff")} />
+      <div className="sc-panel active" role="tabpanel">
+        {activeTab === "runs" && (
+          <RunList
+            workflowId={workflowId}
+            selectedRunId={selectedRunId}
+            onSelectRun={setSelectedRunId}
+            pinnedNodeId={pinnedNodeId}
+            onPinNode={setPinnedNodeId}
+            onSwitchTab={setActiveTab}
+          />
+        )}
+        {activeTab === "diff" && (
+          <RunDiff workflowId={workflowId} diffPair={diffPair} onChangePair={setDiffPair} />
+        )}
+        {activeTab === "timeline" && <RunTimeline selectedRunId={selectedRunId} />}
+        {activeTab === "stats" && <RunStats workflowId={workflowId} />}
+        {activeTab === "info" && (
+          <RunInfo selectedRunId={selectedRunId} onOpenDiff={() => setActiveTab("diff")} />
+        )}
       </div>
     </aside>
   );
