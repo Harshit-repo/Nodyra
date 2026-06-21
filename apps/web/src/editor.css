@@ -8689,3 +8689,22 @@ select.field-input:hover {
   border-color: var(--line-1);
   background: var(--surface-2);
 }
+
+/* NDV output coerce-preview selector */
+.data-coerce-select {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--ink-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  padding: 2px 4px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.data-coerce-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  color: var(--ink);
+}

@@ -99,6 +99,31 @@ function formatCell(value: unknown): string {
 // and balloon the DOM — clamp the rendered text so the panel stays responsive.
 const MAX_JSON_CHARS = 100_000;
 
+type CoerceTarget = "none" | "string" | "number" | "boolean" | "json";
+
+function coercePreview(value: unknown, to: CoerceTarget): unknown {
+  if (to === "none") return value;
+  // Flatten single-output wrapper first (mirrors unwrapSingleOutput)
+  const v = value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (() => {
+        const keys = Object.keys(value as object);
+        return keys.length === 1 ? (value as Record<string, unknown>)[keys[0]] : value;
+      })()
+    : value;
+  const s = v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
+  if (to === "string") return s;
+  if (to === "number") { const n = Number(s); return isNaN(n) ? `(cannot convert "${s}" to number)` : n; }
+  if (to === "boolean") {
+    if (s === "" || s === "0" || s.toLowerCase() === "false" || s.toLowerCase() === "no") return false;
+    return true;
+  }
+  if (to === "json") {
+    try { return JSON.parse(s); }
+    catch { return `(invalid JSON: ${s.slice(0, 60)})`; }
+  }
+  return v;
+}
+
 function pretty(value: unknown): string {
   let text: string | undefined;
   try {
@@ -1304,7 +1329,11 @@ export function DataPanel({
   startedAt?: number | null;
   finishedAt?: number | null;
 }) {
-  const display = unwrapSingleOutput(data);
+  const [coerce, setCoerce] = useState<CoerceTarget>("none");
+  useEffect(() => { setCoerce("none"); }, [data]);
+
+  const rawDisplay = unwrapSingleOutput(data);
+  const display = coerce !== "none" ? coercePreview(data, coerce) : rawDisplay;
   const chart = asChartRef(display);
   const report = asReportRef(display);
   const canVisual = Boolean(chart || report);
@@ -1422,6 +1451,21 @@ export function DataPanel({
             </span>
           )}
         </h3>
+        {!dragPrefix && !empty && (
+          <select
+            className="data-coerce-select"
+            aria-label="Coerce output type"
+            value={coerce}
+            onChange={(e) => setCoerce(e.target.value as CoerceTarget)}
+            title="Preview data coerced to a different type"
+          >
+            <option value="none">as-is</option>
+            <option value="string">→ string</option>
+            <option value="number">→ number</option>
+            <option value="boolean">→ boolean</option>
+            <option value="json">→ JSON parse</option>
+          </select>
+        )}
         <div className="data-view-toggle">
           {canVisual && (
             <button

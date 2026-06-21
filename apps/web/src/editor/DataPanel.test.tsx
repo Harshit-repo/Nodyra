@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { DataPanel } from "./DataPanel";
@@ -119,5 +119,32 @@ describe("DataPanel schema view", () => {
     // The key "meta" appears but no inline value preview for objects
     expect(screen.getByText("meta")).toBeTruthy();
     expect(screen.queryByText('{"x":1}')).toBeNull();
+  });
+});
+
+describe("DataPanel coerce preview (output panel)", () => {
+  it("shows coerce selector when title starts with Output and data is present", () => {
+    render(<DataPanel title="Output" data={{ score: "42" }} />);
+    expect(screen.getByRole("combobox", { name: /coerce/i })).toBeTruthy();
+  });
+
+  it("does not show coerce selector when dragPrefix is set (input panel)", () => {
+    render(
+      <DataPanel title="Output" data={{ score: "42" }} dragPrefix="$json" />,
+    );
+    expect(screen.queryByRole("combobox", { name: /coerce/i })).toBeNull();
+  });
+
+  it("does not show coerce selector when data is empty", () => {
+    render(<DataPanel title="Output" data={undefined} />);
+    expect(screen.queryByRole("combobox", { name: /coerce/i })).toBeNull();
+  });
+
+  it("shows numeric coerced value when 'number' coerce is selected", async () => {
+    render(<DataPanel title="Output" data="99.5" />);
+    const sel = screen.getByRole("combobox", { name: /coerce/i });
+    fireEvent.change(sel, { target: { value: "number" } });
+    // The coerced value (99.5) should now appear in the view
+    expect(screen.getByText("99.5")).toBeTruthy();
   });
 });
