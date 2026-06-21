@@ -20,6 +20,8 @@ import { isBrandIconName, NodeIcon } from "../NodeIcon";
 import { useCredentialTypes } from "../queries";
 import { useModalA11y } from "../useModalA11y";
 import { useToast } from "../ToastProvider";
+import { safeGetItem, safeSetItem } from "../safeStorage";
+import { useTimeout } from "../hooks/useTimeout";
 import type {
   Credential,
   LintDiagnostic,
@@ -1599,6 +1601,7 @@ function HighlightedTextarea({
   const [acItems, setAcItems] = useState<string[]>([]);
   const [acSel, setAcSel] = useState(0);
   const [acOpen, setAcOpen] = useState(false);
+  const scheduleTimeout = useTimeout();
   // A3 lint diagnostics.
   const [diags, setDiags] = useState<LintDiagnostic[]>([]);
 
@@ -1873,7 +1876,7 @@ function HighlightedTextarea({
         }}
         onSelect={updateCaret}
         onScroll={syncScroll}
-        onBlur={() => window.setTimeout(() => setAcOpen(false), 120)}
+        onBlur={() => scheduleTimeout(() => setAcOpen(false), 120)}
         onKeyDown={(e) => {
           if (codeMode && acOpen && acItems.length > 0) {
             if (e.key === "ArrowDown") {
@@ -1957,7 +1960,7 @@ const EXPR_HISTORY_KEY = "noodle_expr_history";
 
 function readExprHistory(fieldKey: string): string[] {
   try {
-    const data = JSON.parse(localStorage.getItem(EXPR_HISTORY_KEY) ?? "{}") as Record<string, unknown>;
+    const data = JSON.parse(safeGetItem(EXPR_HISTORY_KEY) ?? "{}") as Record<string, unknown>;
     const arr = data[fieldKey];
     return Array.isArray(arr) ? (arr as string[]) : [];
   } catch {
@@ -1968,10 +1971,10 @@ function readExprHistory(fieldKey: string): string[] {
 function appendExprHistory(fieldKey: string, value: string): void {
   if (!value.trim()) return;
   try {
-    const data = JSON.parse(localStorage.getItem(EXPR_HISTORY_KEY) ?? "{}") as Record<string, string[]>;
+    const data = JSON.parse(safeGetItem(EXPR_HISTORY_KEY) ?? "{}") as Record<string, string[]>;
     const existing = Array.isArray(data[fieldKey]) ? data[fieldKey] : [];
     const deduped = [value, ...existing.filter((v) => v !== value)].slice(0, 10);
-    localStorage.setItem(EXPR_HISTORY_KEY, JSON.stringify({ ...data, [fieldKey]: deduped }));
+    safeSetItem(EXPR_HISTORY_KEY, JSON.stringify({ ...data, [fieldKey]: deduped }));
   } catch {
     /* ignore */
   }
@@ -2022,7 +2025,7 @@ function ExpressionEditorModal({
 
   // Sidebar state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    try { return localStorage.getItem("noodle_expr_sidebar_collapsed") === "1"; } catch { return false; }
+    return safeGetItem("noodle_expr_sidebar_collapsed") === "1";
   });
   const allNodes = useEditor((s) => s.nodes);
   const allEdges = useEditor((s) => s.edges);
@@ -2070,7 +2073,7 @@ function ExpressionEditorModal({
   function toggleSidebar() {
     setSidebarCollapsed((c) => {
       const next = !c;
-      try { localStorage.setItem("noodle_expr_sidebar_collapsed", next ? "1" : "0"); } catch { /* */ }
+      safeSetItem("noodle_expr_sidebar_collapsed", next ? "1" : "0");
       return next;
     });
   }
@@ -2512,41 +2515,51 @@ function LoadOptionsField({
   const [highlight, setHighlight] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const requestGenerationRef = useRef(0);
 
   // Keep the input text in sync with external value changes (e.g. preset selects).
   useEffect(() => { setQuery(current); }, [current]);
 
-  function fetchOptions(): void {
-    if (!spec.load_options) return;
+  const loader = spec.load_options ?? "";
+  const loadParamsKey = JSON.stringify(
+    buildLoadOptionsParams(credential, params, spec.depends_on ?? []),
+  );
+  const fetchOptions = useCallback((): void => {
+    if (!loader) return;
+    const generation = ++requestGenerationRef.current;
     setLoading(true);
     setErr("");
     api
       .dynamicOptions(
-        spec.load_options,
-        buildLoadOptionsParams(credential, params, spec.depends_on ?? []),
+        loader,
+        JSON.parse(loadParamsKey) as Record<string, string>,
       )
-      .then((res) => setFetched(res.options.map((o) => o.value)))
-      .catch(() => setErr("Couldn't load list — type a value or retry."))
-      .finally(() => setLoading(false));
-  }
+      .then((res) => {
+        if (requestGenerationRef.current === generation) {
+          setFetched(res.options.map((o) => o.value));
+        }
+      })
+      .catch(() => {
+        if (requestGenerationRef.current === generation) {
+          setErr("Couldn't load list — type a value or retry.");
+        }
+      })
+      .finally(() => {
+        if (requestGenerationRef.current === generation) setLoading(false);
+      });
+  }, [loader, loadParamsKey]);
 
   // Auto-fetch on mount and whenever an input the loader keys off changes:
   // the credential, the selected provider, or a custom base_url. Without the
   // provider dependency the model list would stay stale after switching e.g.
   // openai → openrouter. Public catalogues (OpenRouter) load even with no
   // credential; keyed ones fall back to the curated list until a key is set.
-  const credentialId = credential?.id;
-  const providerKey = typeof params.provider === "string" ? params.provider : "";
-  const baseUrlKey = typeof params.base_url === "string" ? params.base_url : "";
-  // Refetch when any depends_on field changes too — e.g. choosing a different
-  // spreadsheet must reload that spreadsheet's sheet list.
-  const dependsKey = JSON.stringify(
-    (spec.depends_on ?? []).map((dep) => params[dep] ?? null),
-  );
   useEffect(() => {
     fetchOptions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [credentialId, providerKey, baseUrlKey, dependsKey]);
+    return () => {
+      requestGenerationRef.current += 1;
+    };
+  }, [fetchOptions]);
 
   const options = mergeOptions(fetched, current);
   const filtered = query.trim()
@@ -3298,6 +3311,7 @@ export function ParamField({
 
 function UrlRow({ url }: { url: string }) {
   const [copied, setCopied] = useState(false);
+  const scheduleTimeout = useTimeout();
   return (
     <div className="webhook-url">
       <code>{url}</code>
@@ -3306,7 +3320,7 @@ function UrlRow({ url }: { url: string }) {
         onClick={() => {
           void navigator.clipboard.writeText(url);
           setCopied(true);
-          window.setTimeout(() => setCopied(false), 1500);
+          scheduleTimeout(() => setCopied(false), 1500);
         }}
       >
         {copied ? "Copied" : "Copy"}
