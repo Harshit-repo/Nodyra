@@ -559,10 +559,10 @@ def if_node(
     field: str = "",
     operator: str = "is true",
     value: str = "",
-    conditions: Any = None,
+    conditions: dict | None = None,
 ) -> dict:
     """Route the input to the true or false branch based on a condition."""
-    if conditions:
+    if conditions is not None:
         matched = _eval_conditions(input, conditions)
     else:
         matched = _matches(_field(input, field), operator, value)
@@ -622,7 +622,7 @@ def filter_node(
     field: str = "",
     operator: str = "is not empty",
     value: str = "",
-    conditions: Any = None,
+    conditions: dict | None = None,
 ) -> Any:
     """Keep only the input items that satisfy a condition.
 
@@ -632,7 +632,7 @@ def filter_node(
     the output is always a list (possibly empty).
     """
     input_was_list = isinstance(input, list)
-    if conditions:
+    if conditions is not None:
         results = [it for it in _as_list(input) if _eval_conditions(it, conditions)]
     else:
         results = [it for it in _as_list(input) if _matches(_field(it, field), operator, value)]
