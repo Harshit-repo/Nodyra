@@ -16,9 +16,12 @@ from noodle.ai_runtime import (
     MemoryAdapter,
     MessageRole,
     OutputParserAdapter,
+    RetrieverAdapter,
+    ToolAdapter,
     ToolSchema,
 )
 from noodle.sdk import node
+from noodle_nodes.ai_v2.agent_tools import RetrieverToolAdapter, subagent_tool_adapters
 from noodle_nodes.ai_v2.tools import collect_tool_adapters
 
 AI_CATEGORY = "AI"
@@ -133,6 +136,39 @@ def _tool_schemas(tool_value: Any) -> list[ToolSchema]:
         seen.add(name)
         schemas.append(adapter.schema)
     return schemas
+
+
+def _assemble_tools(
+    *,
+    tool: Any,
+    retriever: Any,
+    subagents: list[Any],
+    builtins: list[ToolAdapter],
+    retriever_cfg: dict[str, Any],
+) -> list[ToolAdapter]:
+    """Merge builtins, retriever auto-tool, sub-agents, and external tools.
+
+    Order = builtins, retriever, sub-agents, external. Dedup by schema.name
+    with LAST WINS so external tools override built-ins of the same name.
+    """
+    ordered: list[ToolAdapter] = list(builtins)
+    if isinstance(retriever, RetrieverAdapter):
+        ordered.append(RetrieverToolAdapter(
+            retriever=retriever,
+            name=retriever_cfg["name"],
+            description=retriever_cfg["description"],
+            top_k=retriever_cfg["top_k"],
+            max_doc_chars=2000,
+            include_metadata=True,
+        ))
+    ordered.extend(subagent_tool_adapters(*subagents))
+    ordered.extend(collect_tool_adapters(tool))
+    deduped: dict[str, ToolAdapter] = {}
+    for adapter in ordered:
+        name = str(adapter.schema.name or "").strip()
+        if name:
+            deduped[name] = adapter  # last wins
+    return list(deduped.values())
 
 
 def _tool_argument_summary(schema: ToolSchema) -> str:
@@ -334,11 +370,17 @@ def _final_output(
     category=AI_CATEGORY,
     role="executable",
     icon="ai",
-    inputs=["input", "model", "tool", "memory", "parser", "guardrail"],
+    inputs=["input", "model", "fast_model", "tool", "retriever",
+             "subagent_1", "subagent_2", "subagent_3", "memory", "parser", "guardrail"],
     input_kinds={
         "input": "main",
         "model": "ai_language_model",
+        "fast_model": "ai_language_model",
         "tool": "ai_tool",
+        "retriever": "ai_retriever",
+        "subagent_1": "ai_subagent",
+        "subagent_2": "ai_subagent",
+        "subagent_3": "ai_subagent",
         "memory": "ai_memory",
         "parser": "ai_output_parser",
         "guardrail": "ai_guardrail",
@@ -355,6 +397,11 @@ def _final_output(
             "response_format",
             "return_tool_trace",
             "timeout_seconds",
+        ],
+        "Retriever": [
+            "retriever_tool_name",
+            "retriever_tool_description",
+            "retriever_top_k",
         ],
     },
     params={
@@ -420,12 +467,30 @@ def _final_output(
             "description": "HTTP timeout per model call.",
             "group": "Options",
         },
+        "retriever_tool_name": {
+            "description": "Tool name exposed to the model for the connected retriever.",
+            "group": "Retriever",
+        },
+        "retriever_tool_description": {
+            "widget": "textarea",
+            "description": "Describe the knowledge base so the model knows when to search it.",
+            "group": "Retriever",
+        },
+        "retriever_top_k": {
+            "description": "Default number of documents to retrieve.",
+            "group": "Retriever",
+        },
     },
 )
 def ai_agent_v2(
     input: Any = None,
     model: Any = None,
+    fast_model: Any = None,
     tool: Any = None,
+    retriever: Any = None,
+    subagent_1: Any = None,
+    subagent_2: Any = None,
+    subagent_3: Any = None,
     memory: Any = None,
     parser: Any = None,
     guardrail: Any = None,
@@ -442,6 +507,9 @@ def ai_agent_v2(
     side_effect_approval: str = "require_approval",
     return_tool_trace: bool = True,
     timeout_seconds: int = 75,
+    retriever_tool_name: str = "search_knowledge_base",
+    retriever_tool_description: str = "Search the knowledge base for relevant information.",
+    retriever_top_k: int = 5,
     **runtime: Any,
 ) -> dict[str, Any] | AgentActionRequest:
     """Run an AI agent loop whose tool calls are dispatched by the engine."""
@@ -449,7 +517,18 @@ def ai_agent_v2(
         raise ValueError("ai_agent_v2: connect an AI Chat Model to the model port")
 
     steps_limit = max(1, min(25, int(max_steps or 4)))
-    tool_schemas = _tool_schemas(tool)
+    assembled_tools = _assemble_tools(
+        tool=tool,
+        retriever=retriever,
+        subagents=[subagent_1, subagent_2, subagent_3],
+        builtins=[],  # populated in Task 12
+        retriever_cfg={
+            "name": retriever_tool_name,
+            "description": retriever_tool_description,
+            "top_k": int(retriever_top_k or 5),
+        },
+    )
+    tool_schemas = _tool_schemas(assembled_tools)
     resume = runtime.get("agent_resume")
     resume_allows_side_effects = False
     if isinstance(resume, AgentResumeInput):
