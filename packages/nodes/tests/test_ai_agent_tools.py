@@ -211,3 +211,43 @@ def test_web_search_truncates_snippet() -> None:
                return_value=_FakeHttpResponse(payload)):
         out = json.loads(_tavily_adapter().invoke({"query": "x"}))
     assert len(out["results"][0]["snippet"]) <= 500
+
+
+# ---------------------------------------------------------------------------
+# Browser Tool tests
+# ---------------------------------------------------------------------------
+
+import asyncio  # noqa: E402
+
+from noodle_nodes.ai_v2.agent_tools import BrowserToolAdapter  # noqa: E402
+
+
+def _browser(**kw):
+    defaults = dict(name="browse_web", description="",
+                    allowed_actions="navigate,extract,get_links",
+                    wait_strategy="load", timeout_seconds=30, max_content_chars=20000)
+    defaults.update(kw)
+    return BrowserToolAdapter(**defaults)
+
+
+def test_browser_ssrf_blocked() -> None:
+    out = json.loads(asyncio.run(_browser().invoke_async(
+        {"action": "navigate", "url": "http://192.168.1.1"})))
+    assert "error" in out
+
+
+def test_browser_disallowed_action() -> None:
+    out = json.loads(asyncio.run(_browser().invoke_async(
+        {"action": "fill_and_submit", "url": "https://example.com",
+         "fields": {}, "submit_selector": "x"})))
+    assert "error" in out and "allowed" in out["error"].lower()
+
+
+def test_browser_invoke_sync_raises() -> None:
+    with pytest.raises(RuntimeError):
+        _browser().invoke({"action": "navigate", "url": "https://example.com"})
+
+
+def test_browser_missing_url() -> None:
+    out = json.loads(asyncio.run(_browser().invoke_async({"action": "navigate"})))
+    assert "error" in out

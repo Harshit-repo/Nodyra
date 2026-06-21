@@ -21,7 +21,7 @@ from typing import Any
 
 import httpx
 
-from noodle_nodes.http_security import safe_request
+from noodle_nodes.http_security import assert_public_http_url, safe_request
 
 from noodle.ai_runtime import ToolAdapter, ToolParameterSchema, ToolSchema
 from noodle.sdk import node
@@ -506,4 +506,141 @@ def ai_web_search_tool(
         provider=provider, credentials=credentials, name=name, description=description,
         max_results=max_results, search_depth=search_depth,
         include_content=include_content, timeout_seconds=timeout_seconds,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Browser Tool
+# ---------------------------------------------------------------------------
+
+_BROWSER_READ_ACTIONS = {"navigate", "extract", "get_links", "screenshot"}
+_BROWSER_WRITE_ACTIONS = {"fill_and_submit"}
+
+
+class BrowserToolAdapter(ToolAdapter):
+    """Playwright-backed browser tool. Async-only (invoke_async)."""
+
+    def __init__(self, *, name: str, description: str, allowed_actions: str,
+                 wait_strategy: str, timeout_seconds: int, max_content_chars: int) -> None:
+        self._name = name or "browse_web"
+        self._description = description or "Navigate and extract content from web pages."
+        self._allowed = {a.strip() for a in str(allowed_actions or "").split(",") if a.strip()}
+        self._wait = wait_strategy if wait_strategy in {"load", "networkidle", "domcontentloaded"} else "load"
+        self._timeout_ms = max(1, min(120, int(timeout_seconds or 30))) * 1000
+        self._max_chars = max(500, int(max_content_chars or 20000))
+
+    @property
+    def schema(self) -> ToolSchema:
+        return ToolSchema(
+            name=self._name,
+            description=self._description,
+            parameters=ToolParameterSchema(
+                properties={
+                    "action": {"type": "string", "description": f"One of: {sorted(self._allowed)}"},
+                    "url": {"type": "string", "description": "Target URL."},
+                    "selector": {"type": "string", "description": "Optional CSS selector for extract."},
+                },
+                required=["action", "url"],
+            ),
+        )
+
+    @property
+    def side_effecting(self) -> bool:
+        return bool(self._allowed & _BROWSER_WRITE_ACTIONS)
+
+    def invoke(self, arguments: dict[str, Any]) -> str:
+        raise RuntimeError(f"{self._name}: browser tool is async-only (invoke_async)")
+
+    async def invoke_async(self, arguments: dict[str, Any]) -> str:
+        action = str((arguments or {}).get("action") or "navigate")
+        url = str((arguments or {}).get("url") or "").strip()
+        if action not in self._allowed:
+            return json.dumps({"error": f"Action '{action}' is not allowed. Allowed: {sorted(self._allowed)}"})
+        if not url:
+            return json.dumps({"error": "url is required"})
+        try:
+            assert_public_http_url(url, context=f"{self._name} browser navigation")
+        except Exception as exc:  # noqa: BLE001 - SSRF guard raises provider-specific errors
+            return json.dumps({"error": f"Blocked URL: {exc}"})
+        try:
+            from playwright.async_api import async_playwright
+            from playwright.async_api import Error as PlaywrightError
+            from playwright.async_api import TimeoutError as PlaywrightTimeout
+        except ImportError as exc:
+            raise RuntimeError(
+                "AI Browser Tool requires playwright. Add playwright>=1.40 to the "
+                "environment and run 'playwright install chromium'."
+            ) from exc
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(headless=True)
+                try:
+                    page = await browser.new_page()
+                    await page.goto(url, wait_until=self._wait, timeout=self._timeout_ms)
+                    final_url = page.url
+                    assert_public_http_url(final_url, context=f"{self._name} post-redirect")
+                    return await self._dispatch(action, page, arguments)
+                finally:
+                    await browser.close()
+        except PlaywrightTimeout:
+            return json.dumps({"error": f"Page timed out after {self._timeout_ms // 1000}s", "url": url})
+        except PlaywrightError as exc:
+            message = str(exc)
+            if "Executable doesn't exist" in message:
+                return json.dumps({"error": "Browser not installed. Run: playwright install chromium"})
+            return json.dumps({"error": f"Browser error: {message}"})
+
+    async def _dispatch(self, action: str, page: Any, arguments: dict[str, Any]) -> str:
+        title = await page.title()
+        if action in {"navigate", "extract"}:
+            selector = str(arguments.get("selector") or "").strip()
+            if selector:
+                el = await page.query_selector(selector)
+                if el is None:
+                    return json.dumps({"error": f"Selector '{selector}' not found", "url": page.url})
+                text = await el.inner_text()
+            else:
+                text = await page.inner_text("body")
+            truncated = len(text) > self._max_chars
+            return json.dumps({"action": action, "url": page.url, "title": title,
+                               "content": text[: self._max_chars], "truncated": truncated})
+        if action == "get_links":
+            hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.href)")
+            return json.dumps({"action": action, "url": page.url, "title": title, "links": hrefs[:200]})
+        return json.dumps({"error": f"Action '{action}' not implemented"})
+
+
+@node(
+    name="AI Browser Tool",
+    id="ai_browser_tool",
+    category=AI_CATEGORY,
+    role="tool",
+    icon="ai",
+    outputs=["tool"],
+    output_kinds={"tool": "ai_tool"},
+    requirements=["playwright>=1.40"],
+    param_groups={"Options": ["wait_strategy", "max_content_chars"]},
+    params={
+        "name": {"description": "Tool name exposed to the model (snake_case)."},
+        "description": {"widget": "textarea", "description": "What the tool does."},
+        "allowed_actions": {"description": "Comma-separated: navigate, extract, get_links, screenshot."},
+        "wait_strategy": {"choices": ["load", "networkidle", "domcontentloaded"],
+                          "description": "When the page is considered ready.", "group": "Options"},
+        "timeout_seconds": {"description": "Page load timeout (1-120)."},
+        "max_content_chars": {"description": "Truncate extracted text above this.", "group": "Options"},
+    },
+)
+def ai_browser_tool(
+    name: str = "browse_web",
+    description: str = "Navigate and extract content from web pages.",
+    allowed_actions: str = "navigate,extract,get_links",
+    wait_strategy: str = "load",
+    timeout_seconds: int = 30,
+    max_content_chars: int = 20000,
+) -> ToolAdapter:
+    """Supply a headless-browser tool to a downstream AI Agent."""
+    return BrowserToolAdapter(
+        name=name, description=description, allowed_actions=allowed_actions,
+        wait_strategy=wait_strategy, timeout_seconds=timeout_seconds,
+        max_content_chars=max_content_chars,
     )
