@@ -1,8 +1,9 @@
 ﻿import { CaretDown, CaretLeft, CaretRight, MagnifyingGlass, Star, X } from "@phosphor-icons/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CATEGORY_ORDER, categoryColor } from "../categories";
 import { isBrandIconName, NodeIcon } from "../NodeIcon";
+import { safeGetItem, safeSetItem } from "../safeStorage";
 import type { NodeManifest } from "../types";
 import { isTriggerManifest, useEditor } from "./store";
 
@@ -12,7 +13,7 @@ const MAX_RECENTS = 8;
 
 function readStoredList(key: string): string[] {
   try {
-    const parsed = JSON.parse(localStorage.getItem(key) ?? "[]") as unknown;
+    const parsed = JSON.parse(safeGetItem(key) ?? "[]") as unknown;
     return Array.isArray(parsed)
       ? parsed.filter((item): item is string => typeof item === "string")
       : [];
@@ -141,7 +142,7 @@ function browseSort(a: NodeManifest, b: NodeManifest): number {
   return a.name.localeCompare(b.name);
 }
 
-function PaletteItem({
+const PaletteItem = memo(function PaletteItem({
   node,
   favorite,
   active,
@@ -206,7 +207,7 @@ function PaletteItem({
       </button>
     </div>
   );
-}
+});
 
 const COLLAPSED_KEY = "noodle_palette_collapsed";
 const EXPANDED_GROUPS_KEY = "noodle_palette_expanded_groups";
@@ -215,8 +216,9 @@ const DEFAULT_EXPANDED_GROUPS: string[] = [];
 
 export function NodePalette() {
   const manifests = useEditor((s) => s.manifests);
-  const nodes = useEditor((s) => s.nodes);
-  const selectedId = useEditor((s) => s.selectedId);
+  const selectedManifest = useEditor((s) =>
+    s.nodes.find((node) => node.id === s.selectedId)?.data?.manifest ?? null,
+  );
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [favorites, setFavorites] = useState<string[]>(() =>
@@ -224,18 +226,18 @@ export function NodePalette() {
   );
   const [recent, setRecent] = useState<string[]>(() => readStoredList(RECENTS_KEY));
   const [collapsed, setCollapsed] = useState(() => {
-    try { return localStorage.getItem(COLLAPSED_KEY) === "1"; } catch { return false; }
+    return safeGetItem(COLLAPSED_KEY) === "1";
   });
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
     try {
-      const stored = JSON.parse(localStorage.getItem(EXPANDED_GROUPS_KEY) ?? "[]") as unknown;
+      const stored = JSON.parse(safeGetItem(EXPANDED_GROUPS_KEY) ?? "[]") as unknown;
       const values = Array.isArray(stored) ? stored.filter((x): x is string => typeof x === "string") : [];
       return new Set([...DEFAULT_EXPANDED_GROUPS, ...values]);
     } catch { return new Set(DEFAULT_EXPANDED_GROUPS); }
   });
   const [collapsedQuick, setCollapsedQuick] = useState<Set<string>>(() => {
     try {
-      const stored = JSON.parse(localStorage.getItem(COLLAPSED_QUICK_KEY) ?? "[]") as unknown;
+      const stored = JSON.parse(safeGetItem(COLLAPSED_QUICK_KEY) ?? "[]") as unknown;
       return new Set(Array.isArray(stored) ? stored.filter((x): x is string => typeof x === "string") : []);
     } catch { return new Set(); }
   });
@@ -245,7 +247,7 @@ export function NodePalette() {
   function toggleCollapsed(): void {
     setCollapsed((v) => {
       const next = !v;
-      try { localStorage.setItem(COLLAPSED_KEY, next ? "1" : "0"); } catch { /* */ }
+      safeSetItem(COLLAPSED_KEY, next ? "1" : "0");
       return next;
     });
   }
@@ -255,7 +257,7 @@ export function NodePalette() {
       const next = new Set(prev);
       if (next.has(category)) next.delete(category);
       else next.add(category);
-      try { localStorage.setItem(EXPANDED_GROUPS_KEY, JSON.stringify([...next])); } catch { /* */ }
+      safeSetItem(EXPANDED_GROUPS_KEY, JSON.stringify([...next]));
       return next;
     });
   }
@@ -265,7 +267,7 @@ export function NodePalette() {
       const next = new Set(prev);
       if (next.has(title)) next.delete(title);
       else next.add(title);
-      try { localStorage.setItem(COLLAPSED_QUICK_KEY, JSON.stringify([...next])); } catch { /* */ }
+      safeSetItem(COLLAPSED_QUICK_KEY, JSON.stringify([...next]));
       return next;
     });
   }
@@ -280,22 +282,19 @@ export function NodePalette() {
     [visibleManifests],
   );
 
-  const selectedManifest =
-    nodes.find((node) => node.id === selectedId)?.data?.manifest ?? null;
-
   useEffect(() => {
-    localStorage.setItem(FAVORITES_KEY, JSON.stringify(favorites));
+    safeSetItem(FAVORITES_KEY, JSON.stringify(favorites));
   }, [favorites]);
 
   useEffect(() => {
-    localStorage.setItem(RECENTS_KEY, JSON.stringify(recent));
+    safeSetItem(RECENTS_KEY, JSON.stringify(recent));
   }, [recent]);
 
   useEffect(() => {
     function focusSearch(): void {
       if (collapsed) {
         setCollapsed(false);
-        try { localStorage.setItem(COLLAPSED_KEY, "0"); } catch { /* */ }
+        safeSetItem(COLLAPSED_KEY, "0");
         window.setTimeout(() => searchRef.current?.focus(), 0);
         return;
       }
@@ -309,7 +308,7 @@ export function NodePalette() {
     function toggleNodePalette(): void {
       setCollapsed((v) => {
         const next = !v;
-        try { localStorage.setItem(COLLAPSED_KEY, next ? "1" : "0"); } catch { /* */ }
+        safeSetItem(COLLAPSED_KEY, next ? "1" : "0");
         return next;
       });
     }
@@ -436,15 +435,15 @@ export function NodePalette() {
     .filter((node, index, rows) => rows.findIndex((item) => item.id === node.id) === index);
   const showQuickSections = !query.trim() && categoryFilter === "all";
 
-  function toggleFavorite(id: string): void {
+  const toggleFavorite = useCallback(function toggleFavorite(id: string): void {
     setFavorites((items) =>
       items.includes(id) ? items.filter((item) => item !== id) : [id, ...items],
     );
-  }
+  }, []);
 
-  function recordRecent(id: string): void {
+  const recordRecent = useCallback(function recordRecent(id: string): void {
     setRecent((items) => [id, ...items.filter((item) => item !== id)].slice(0, MAX_RECENTS));
-  }
+  }, []);
 
   if (collapsed) {
     return (
@@ -512,7 +511,7 @@ export function NodePalette() {
             setQuery("");
             setCategoryFilter("all");
             setExpandedGroups(new Set());
-            try { localStorage.setItem(EXPANDED_GROUPS_KEY, "[]"); } catch { /* */ }
+            safeSetItem(EXPANDED_GROUPS_KEY, "[]");
           }}
         >
           All
@@ -529,7 +528,7 @@ export function NodePalette() {
                 if (prev.has(category)) return prev;
                 const next = new Set(prev);
                 next.add(category);
-                try { localStorage.setItem(EXPANDED_GROUPS_KEY, JSON.stringify([...next])); } catch { /* */ }
+                safeSetItem(EXPANDED_GROUPS_KEY, JSON.stringify([...next]));
                 return next;
               });
             }}
