@@ -1135,6 +1135,18 @@ textarea:focus-visible {
 .confirm-modal {
   width: min(420px, calc(100vw - 34px));
 }
+.prompt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.prompt-field label {
+  font-size: 13px;
+  color: var(--ink-2, #aab1bd);
+}
 .shortcuts-modal {
   width: min(520px, calc(100vw - 34px));
 }
