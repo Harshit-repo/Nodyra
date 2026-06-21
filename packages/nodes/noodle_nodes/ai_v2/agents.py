@@ -15,6 +15,7 @@ from noodle.ai_runtime import (
     GuardrailAdapter,
     MemoryAdapter,
     MessageRole,
+    ModelUsage,
     OutputParserAdapter,
     RetrieverAdapter,
     ToolAdapter,
@@ -31,6 +32,24 @@ USAGE_PREFIX = "__noodle_usage__"
 COMPRESSED_PREFIX = "__noodle_compressed__"
 _CONTROL_PREFIXES = (TOOL_SYSTEM_PREFIX, PLAN_PREFIX, USAGE_PREFIX, COMPRESSED_PREFIX)
 _UNSET = object()  # sentinel for "not pre-parsed"
+
+
+def _load_usage(messages: list[AIMessage]) -> ModelUsage:
+    """Parse the accumulated usage from a ``__noodle_usage__`` control message."""
+    for message in messages:
+        content = str(message.content or "")
+        if message.role == MessageRole.system and content.startswith(USAGE_PREFIX):
+            try:
+                payload = json.loads(content.split("\n", 1)[1])
+                return ModelUsage(**payload)
+            except (ValueError, IndexError, TypeError, KeyError):
+                return ModelUsage()
+    return ModelUsage()
+
+
+def _usage_message(total: ModelUsage) -> AIMessage:
+    """Serialize accumulated usage into a system control message."""
+    return AIMessage.system(f"{USAGE_PREFIX}\n{json.dumps(total.model_dump(mode='json'))}")
 
 PERSONA_TEMPLATES: dict[str, str] = {
     "research_assistant": (
@@ -359,6 +378,9 @@ def _final_output(
     messages: list[AIMessage] | None = None,
     include_steps: bool = True,
     pre_parsed: Any = _UNSET,
+    total_usage: ModelUsage | None = None,
+    strategy: str = "react",
+    persona: str = "none",
 ) -> dict[str, Any]:
     checked = response
     parsed: Any = None
@@ -384,6 +406,12 @@ def _final_output(
         steps = _intermediate_steps(messages or [])
         output["intermediate_steps"] = steps
         output["tool_calls_count"] = len(steps)
+    if total_usage is not None:
+        output["total_usage"] = total_usage.model_dump(mode="json")
+        output["total_cost_usd"] = total_usage.estimated_cost_usd
+    output["steps_taken"] = step + 1
+    output["strategy"] = strategy
+    output["persona"] = persona
     return output
 
 
@@ -588,7 +616,21 @@ def ai_agent_v2(
     active = _active_model(model, fast_model, step)
     response = _complete_with_fallback(active, model, request)
 
+    # Accumulate token usage across all steps (carry-forward via control message).
+    running_usage = _load_usage(messages) + response.usage
+
     if response.tool_calls:
+        # Remove any prior usage control message, then inject the fresh one
+        # before the new assistant message so messages_so_far[-1] stays the
+        # assistant tool-call message (important for downstream callers).
+        messages = [
+            m for m in messages
+            if not (
+                m.role == MessageRole.system
+                and str(m.content or "").startswith(USAGE_PREFIX)
+            )
+        ]
+        messages.append(_usage_message(running_usage))
         messages.append(
             AIMessage.assistant(response.text, tool_calls=response.tool_calls)
         )
@@ -600,6 +642,9 @@ def ai_agent_v2(
                 stopped_reason="max_steps",
                 messages=messages,
                 include_steps=return_tool_trace,
+                total_usage=running_usage,
+                strategy=strategy,
+                persona=persona,
             )
         legacy_allow = bool(runtime.get("allow_side_effects"))
         auto_approve_side_effects = (
@@ -643,6 +688,16 @@ def ai_agent_v2(
     if isinstance(guardrail, GuardrailAdapter):
         response = guardrail.check(response)
 
+    # Try to attach pricing info if the model exposes its config.
+    try:
+        cfg = model.as_config()
+        running_usage = running_usage.with_estimated_cost(
+            prompt_price_per_1m_tokens=cfg.get("prompt_price_per_1m_tokens"),
+            completion_price_per_1m_tokens=cfg.get("completion_price_per_1m_tokens"),
+        )
+    except Exception:  # noqa: BLE001 - pricing is optional
+        pass
+
     messages.append(AIMessage.assistant(response.text))
     sid = _session_id(input, session_id)
     if isinstance(memory, MemoryAdapter):
@@ -654,4 +709,7 @@ def ai_agent_v2(
         messages=messages,
         include_steps=return_tool_trace,
         pre_parsed=pre_parsed,
+        total_usage=running_usage,
+        strategy=strategy,
+        persona=persona,
     )

@@ -156,3 +156,79 @@ def test_dual_model_fast_failure_falls_back(monkeypatch) -> None:
     )
     out = ai_agent_v2(model=main, fast_model=fast, prompt="hi", agent_resume=resume)
     assert out["answer"] == "recovered"
+
+
+# ---------------------------------------------------------------------------
+# Task 11: accumulated usage + cost tracking
+# ---------------------------------------------------------------------------
+
+from noodle.ai_runtime import ModelUsage
+
+
+def _resp(text="", tool_calls=None, prompt=10, completion=5):
+    return ChatResponse(
+        text=text,
+        tool_calls=tool_calls or [],
+        usage=ModelUsage(
+            prompt_tokens=prompt,
+            completion_tokens=completion,
+            total_tokens=prompt + completion,
+        ),
+    )
+
+
+def test_total_usage_single_step() -> None:
+    model = ScriptedChatModel([_resp(text="done", prompt=10, completion=5)])
+    out = ai_agent_v2(model=model, prompt="hi")
+    assert out["total_usage"]["prompt_tokens"] == 10
+    assert out["total_usage"]["completion_tokens"] == 5
+    assert out["steps_taken"] == 1
+    assert out["strategy"] == "react"
+
+
+def test_usage_message_not_sent_to_model() -> None:
+    model = ScriptedChatModel([_resp(text="done")])
+    ai_agent_v2(model=model, prompt="hi")
+    for msg in model.requests[0].messages:
+        assert not str(msg.content or "").startswith("__noodle_usage__")
+
+
+def test_usage_accumulates_across_resume() -> None:
+    # First call returns a tool call → AgentActionRequest carries usage forward.
+    model = ScriptedChatModel(
+        [_resp(tool_calls=[ToolCall(id="c1", name="lookup", arguments={})], prompt=10, completion=5)]
+    )
+    action = ai_agent_v2(model=model, tool=DummyTool("lookup"), prompt="hi", max_steps=4)
+    usage_msgs = [
+        m for m in action.messages_so_far
+        if str(m.content or "").startswith("__noodle_usage__")
+    ]
+    assert usage_msgs, "usage carried in messages_so_far"
+    payload = json.loads(usage_msgs[0].content.split("\n", 1)[1])
+    assert payload["prompt_tokens"] == 10
+
+
+def test_total_usage_accumulates_multi_step() -> None:
+    """Tokens from two steps sum correctly in the final output."""
+    main = ScriptedChatModel([ChatResponse(text="should not be called")])
+    fast = ScriptedChatModel([_resp(text="final answer", prompt=20, completion=8)])
+    # Build a resume input that already carries step-1 usage (15 prompt + 7 completion).
+    prior_usage = ModelUsage(prompt_tokens=15, completion_tokens=7, total_tokens=22)
+    from noodle_nodes.ai_v2.agents import _usage_message
+    resume = AgentResumeInput(
+        tool_results=[ToolResult(tool_call_id="c1", name="lookup", content="r")],
+        messages_so_far=[AIMessage.user("hi"), _usage_message(prior_usage)],
+        step=1,
+        max_steps=4,
+    )
+    out = ai_agent_v2(model=main, fast_model=fast, prompt="hi", agent_resume=resume)
+    # 15 + 20 = 35 prompt, 7 + 8 = 15 completion
+    assert out["total_usage"]["prompt_tokens"] == 35
+    assert out["total_usage"]["completion_tokens"] == 15
+    assert out["steps_taken"] == 2
+
+
+def test_persona_in_output() -> None:
+    model = ScriptedChatModel([_resp(text="done")])
+    out = ai_agent_v2(model=model, prompt="hi", persona="data_analyst")
+    assert out["persona"] == "data_analyst"
