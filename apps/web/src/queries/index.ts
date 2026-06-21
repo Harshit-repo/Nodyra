@@ -25,7 +25,7 @@ import { queryKeys } from "./keys";
 
 type QueryControls<TData> = Pick<
   UseQueryOptions<TData, Error, TData, QueryKey>,
-  "enabled" | "refetchInterval" | "staleTime"
+  "enabled" | "refetchInterval" | "staleTime" | "placeholderData" | "gcTime"
 >;
 
 export interface AllRunsFilters {
@@ -187,6 +187,8 @@ export function useNodes(options?: QueryControls<Awaited<ReturnType<typeof api.n
   return useQuery({
     queryKey: queryKeys.nodes,
     queryFn: api.nodes,
+    staleTime: Infinity,
+    gcTime: 30 * 60 * 1000,
     ...options,
   });
 }
