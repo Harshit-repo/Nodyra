@@ -26,6 +26,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import type { Connection, Edge } from "@xyflow/react";
+import { useShallow } from "zustand/react/shallow";
 
 import { categoryColor } from "../categories";
 import { NodeIcon } from "../NodeIcon";
@@ -37,7 +38,11 @@ import { LOOP_FRAME_ID_PREFIX, computeLoopFrames } from "./loopFrames";
 import { MapGroupNode } from "./MapGroupNode";
 import { MetaBar } from "./MetaBar";
 import { MetanodeBreadcrumb } from "./MetanodeBreadcrumb";
-import { MiniMapNoodleNode } from "./MiniMapNoodleNode";
+import {
+  MiniMapNoodleNode,
+  miniMapNodeClassName,
+  miniMapNodeColor,
+} from "./MiniMapNoodleNode";
 import { NodeCard } from "./NodeCard";
 import { NodeGroup } from "./NodeGroup";
 import { NoodleEdge } from "./NoodleEdge";
@@ -55,6 +60,7 @@ const nodeTypes = {
   metaBar: MetaBar,
 };
 const edgeTypes = { default: NoodleEdge };
+const defaultEdgeOptions = { type: "default" };
 const CANVAS_QUICK_ADD_LIMIT = 8;
 const CANVAS_QUICK_ADD_WIDTH = 252;
 const CANVAS_QUICK_ADD_MAX_HEIGHT = 300;
@@ -203,9 +209,18 @@ function DatasetConnectionBanner({
 }
 
 function DatasetConnectionHealth() {
-  const nodes = useEditor((s) => s.nodes);
+  // Position-only updates preserve these values, so dragging does not rerun
+  // validation. Structural or node-data changes still invalidate the result.
+  const nodeValidationInputs = useEditor(
+    useShallow((s) =>
+      s.nodes.flatMap((node) => [node.id, node.parentId ?? "", node.data]),
+    ),
+  );
   const edges = useEditor((s) => s.edges);
-  const issues = useMemo(() => datasetConnectionIssues(nodes, edges), [nodes, edges]);
+  const issues = useMemo(
+    () => datasetConnectionIssues(useEditor.getState().nodes, edges),
+    [nodeValidationInputs, edges],
+  );
   if (issues.length === 0) return null;
   return (
     <div className="connection-health" role="status">
@@ -224,15 +239,32 @@ function CanvasControls() {
   const showLoopFrames = useEditor((s) => s.showLoopFrames);
   const toggleLoopFrames = useEditor((s) => s.toggleLoopFrames);
   const collapseToMetanode = useEditor((s) => s.collapseToMetanode);
-  const hasLoop = useEditor((s) =>
-    s.nodes.some((n) => n.data?.manifest?.id === "loop_start"),
-  );
-  const nodes = useEditor((s) => s.nodes);
+  const [hasLoop, hasTrigger, selectedCount, selectedMetanodeCandidateCount] =
+    useEditor(
+      useShallow((s) => {
+        let loop = false;
+        let selected = 0;
+        let metanodeCandidates = 0;
+        for (const node of s.nodes) {
+          if (node.data?.manifest?.id === "loop_start") loop = true;
+          if (!node.selected) continue;
+          selected += 1;
+          if (node.data?.manifest && node.data.manifest.id !== "meta_node") {
+            metanodeCandidates += 1;
+          }
+        }
+        const runNodes = s.drillStack.length > 0 ? s.drillStack[0]!.nodes : s.nodes;
+        return [
+          loop,
+          pickEditorRunTrigger(runNodes) !== null,
+          selected || (s.selectedId ? 1 : 0),
+          metanodeCandidates,
+        ] as const;
+      }),
+    );
+  const nodeCount = useEditor((s) => s.nodes.length);
   const running = useEditor((s) => s.running);
   const runHandler = useEditor((s) => s.runHandler);
-  const hasTrigger = useEditor((s) =>
-    pickEditorRunTrigger(s.drillStack.length > 0 ? s.drillStack[0]!.nodes : s.nodes) !== null,
-  );
   const undo = useEditor((s) => s.undo);
   const redo = useEditor((s) => s.redo);
   const copySelection = useEditor((s) => s.copySelection);
@@ -241,18 +273,6 @@ function CanvasControls() {
   const canUndo = useEditor((s) => s._past.length > 0);
   const canRedo = useEditor((s) => s._future.length > 0);
   const clipboardNodeCount = useEditor((s) => s.clipboardNodeCount);
-  const selectedCount = useEditor((s) => {
-    const selected = s.nodes.filter((node) => node.selected).length;
-    return selected || (s.selectedId ? 1 : 0);
-  });
-  const selectedMetanodeCandidates = useMemo(
-    () =>
-      nodes
-        .filter((node) => node.selected && node.data?.manifest && node.data.manifest.id !== "meta_node")
-        .map((node) => node.id),
-    [nodes],
-  );
-
   const [expanded, setExpanded] = useState(true);
 
   function copiedLabel(count: number): string {
@@ -290,9 +310,9 @@ function CanvasControls() {
       </button>
       <button
         type="button"
-        title={nodes.length < 2 ? "Auto-layout requires at least 2 nodes" : "Auto layout (Shift+L)"}
+        title={nodeCount < 2 ? "Auto-layout requires at least 2 nodes" : "Auto layout (Shift+L)"}
         aria-label="Auto layout"
-        disabled={nodes.length < 2}
+        disabled={nodeCount < 2}
         onClick={() => {
           autoLayout();
           window.setTimeout(() => void fitView({ padding: 0.24, duration: 220 }), 30);
@@ -366,13 +386,22 @@ function CanvasControls() {
         <button
           type="button"
           title={
-            selectedMetanodeCandidates.length >= 2
-              ? `Group ${selectedMetanodeCandidates.length} selected nodes into metanode`
+            selectedMetanodeCandidateCount >= 2
+              ? `Group ${selectedMetanodeCandidateCount} selected nodes into metanode`
               : "Select at least 2 nodes to create a metanode"
           }
           aria-label="Group selected nodes into metanode"
-          disabled={selectedMetanodeCandidates.length < 2}
+          disabled={selectedMetanodeCandidateCount < 2}
           onClick={() => {
+            const selectedMetanodeCandidates = useEditor
+              .getState()
+              .nodes.filter(
+                (node) =>
+                  node.selected &&
+                  node.data?.manifest &&
+                  node.data.manifest.id !== "meta_node",
+              )
+              .map((node) => node.id);
             const id = collapseToMetanode(selectedMetanodeCandidates);
             if (id) notify(`Grouped ${selectedMetanodeCandidates.length} nodes into a metanode.`, "success");
             else notify("Can't group: that selection would create a cycle.", "error");
@@ -427,7 +456,6 @@ export function Canvas() {
   const collapseToMetanode = useEditor((s) => s.collapseToMetanode);
   const ungroupMetanode = useEditor((s) => s.ungroupMetanode);
   const toggleDisabled = useEditor((s) => s.toggleDisabled);
-  const autoEnableAgentDependencies = useEditor((s) => s.autoEnableAgentDependencies);
   const deleteNode = useEditor((s) => s.deleteNode);
   const copySelection = useEditor((s) => s.copySelection);
   const cutSelection = useEditor((s) => s.cutSelection);
@@ -439,10 +467,6 @@ export function Canvas() {
     connection: Connection;
     check: ConnectionCheck;
   } | null>(null);
-
-  useEffect(() => {
-    autoEnableAgentDependencies();
-  }, [autoEnableAgentDependencies, nodes, edges]);
 
   interface CtxMenu { x: number; y: number; nodeId?: string }
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
@@ -828,15 +852,21 @@ export function Canvas() {
     [labeledEdges, childWorkflows],
   );
 
-  const selectedMetanodeIds = useMemo(
-    () =>
-      nodes
-        .filter((node) => node.selected && node.data?.manifest && node.data.manifest.id !== "meta_node")
-        .map((node) => node.id),
-    [nodes],
-  );
+  const canvasSelection = useMemo(() => {
+    let count = 0;
+    const metanodeIds: string[] = [];
+    for (const node of nodes) {
+      if (!node.selected) continue;
+      count += 1;
+      if (node.data?.manifest && node.data.manifest.id !== "meta_node") {
+        metanodeIds.push(node.id);
+      }
+    }
+    return { count, metanodeIds };
+  }, [nodes]);
+  const selectedMetanodeIds = canvasSelection.metanodeIds;
 
-  const contextMenuItems = ctxMenu
+  const contextMenuItems = useMemo(() => ctxMenu
     ? ctxMenu.nodeId
       ? [
           {
@@ -954,7 +984,7 @@ export function Canvas() {
             },
           },
         ]
-    : [];
+    : [], [ctxMenu, nodes, selectedMetanodeIds, openNdv, ungroupMetanode, collapseToMetanode, notify, copySelection, pasteSelection, toggleDisabled, cutSelection, deleteNode, openQuickAddAt, fitView, setCtxMenu]);
 
   function focusContextItem(index: number): void {
     const buttons = Array.from(
@@ -1061,11 +1091,12 @@ export function Canvas() {
         onPaneContextMenu={onPaneContextMenu}
         selectionOnDrag={!spaceDown}
         panOnDrag={spaceDown ? [0, 1, 2] : [1, 2]}
+        onlyRenderVisibleElements
         colorMode="dark"
         fitView
         minZoom={0.2}
         maxZoom={2}
-        defaultEdgeOptions={{ type: "default" }}
+        defaultEdgeOptions={defaultEdgeOptions}
       >
         <MetanodeBreadcrumb />
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} />
@@ -1073,6 +1104,8 @@ export function Canvas() {
           pannable
           zoomable
           nodeComponent={MiniMapNoodleNode}
+          nodeColor={miniMapNodeColor}
+          nodeClassName={miniMapNodeClassName}
           bgColor="#0b0e14"
           maskColor="rgba(11,14,20,0.72)"
           nodeStrokeWidth={0}
@@ -1112,12 +1145,9 @@ export function Canvas() {
         )}
       </ReactFlow>
 
-      {(() => {
-        const batchCount = nodes.filter((n) => n.selected).length;
-        return batchCount >= 2 ? (
-          <div className="canvas-batch-count">{batchCount} selected</div>
-        ) : null;
-      })()}
+      {canvasSelection.count >= 2 ? (
+        <div className="canvas-batch-count">{canvasSelection.count} selected</div>
+      ) : null}
 
       {ctxMenu && (
         <div
