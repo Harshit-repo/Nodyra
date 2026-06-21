@@ -1217,6 +1217,13 @@ def ai_agent_v2(
     # ---------------------------------------------------------------------------
     # Final answer assembly
     # ---------------------------------------------------------------------------
+
+    # Reflexion runs first so the output parser sees the post-reflection text.
+    if strategy == "reflexion" and not response.tool_calls:
+        reflected = _reflect(model, messages, response.text, reflection_rounds)
+        if reflected != response.text:
+            response = response.model_copy(update={"text": reflected})
+
     pre_parsed: Any = _UNSET
     if isinstance(parser, OutputParserAdapter):
         try:
@@ -1243,11 +1250,6 @@ def ai_agent_v2(
                     }
                 )
             )
-
-    if strategy == "reflexion" and not response.tool_calls:
-        reflected = _reflect(model, messages, response.text, reflection_rounds)
-        if reflected != response.text:
-            response = response.model_copy(update={"text": reflected})
 
     if isinstance(guardrail, GuardrailAdapter):
         response = guardrail.check(response)

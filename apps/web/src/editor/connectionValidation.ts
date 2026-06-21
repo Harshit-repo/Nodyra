@@ -27,6 +27,7 @@ const AI_PORT_KINDS = new Set<PortDataKind>([
   "ai_vector_store",
   "ai_document_loader",
   "ai_guardrail",
+  "ai_subagent",
 ]);
 
 export function findInputPort(manifest: NodeManifest, name: string | null | undefined): PortSpec | undefined {
@@ -54,6 +55,7 @@ function kindLabel(kind: PortDataKind): string {
   if (kind === "ai_vector_store") return "AI vector store";
   if (kind === "ai_document_loader") return "AI document loader";
   if (kind === "ai_guardrail") return "AI guardrail";
+  if (kind === "ai_subagent") return "AI Sub-Agent";
   return "any data";
 }
 
@@ -138,6 +140,14 @@ export function validateConnection(
 ): ConnectionCheck {
   const sourceNode = nodes.find((node) => node.id === connection.source);
   const targetNode = nodes.find((node) => node.id === connection.target);
+  return validateResolvedConnection(sourceNode, targetNode, connection);
+}
+
+function validateResolvedConnection(
+  sourceNode: NoodleNode | undefined,
+  targetNode: NoodleNode | undefined,
+  connection: Connection,
+): ConnectionCheck {
   if (!sourceNode || !targetNode) {
     return { ok: false, severity: "error", message: "Connection endpoint is missing." };
   }
@@ -187,15 +197,20 @@ export function datasetConnectionIssues(nodes: NoodleNode[], edges: Edge[]): Arr
   edge: Edge;
   check: ConnectionCheck;
 }> {
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
   return edges
     .map((edge) => ({
       edge,
-      check: validateConnection(nodes, {
+      check: validateResolvedConnection(
+        nodesById.get(edge.source),
+        nodesById.get(edge.target),
+        {
         source: edge.source,
         sourceHandle: edge.sourceHandle ?? null,
         target: edge.target,
         targetHandle: edge.targetHandle ?? null,
-      }),
+        },
+      ),
     }))
     .filter((item) => !item.check.ok);
 }

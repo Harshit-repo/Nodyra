@@ -494,3 +494,33 @@ def test_backwards_compatible_default_run() -> None:
     assert out["answer"] == "hello"
     assert out["strategy"] == "react"
     assert out["context_compressed"] is False
+
+
+# ---------------------------------------------------------------------------
+# Reflexion-before-parse ordering: parsed must reflect the post-reflection text
+# ---------------------------------------------------------------------------
+
+
+def test_reflexion_and_parser_consistent() -> None:
+    """Parser must see the post-reflection answer, not the pre-reflection draft."""
+    from noodle.sdk import registry as _registry
+
+    # Two model calls: [0] initial draft, [1] improved answer from reflection.
+    model = ScriptedChatModel([
+        ChatResponse(text='{"value": "rough draft"}'),
+        ChatResponse(text='{"value": "polished answer"}'),
+    ])
+    parser = _registry.get("ai_structured_output_parser").func(
+        schema='{"required": ["value"]}'
+    )
+    out = ai_agent_v2(
+        model=model,
+        prompt="q",
+        strategy="reflexion",
+        reflection_rounds=1,
+        parser=parser,
+    )
+    # answer must be the reflected (polished) text
+    assert out["answer"] == '{"value": "polished answer"}'
+    # parsed must be derived from the same post-reflection text, not the draft
+    assert out.get("parsed") == {"value": "polished answer"}

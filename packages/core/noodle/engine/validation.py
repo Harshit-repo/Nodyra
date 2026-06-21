@@ -20,6 +20,7 @@ AI_PORT_KINDS: frozenset[str] = frozenset(
         "ai_vector_store",
         "ai_document_loader",
         "ai_guardrail",
+        "ai_subagent",
     }
 )
 
@@ -56,6 +57,7 @@ def _kind_label(kind: str) -> str:
         "ai_vector_store": "AI vector store",
         "ai_document_loader": "AI document loader",
         "ai_guardrail": "AI guardrail",
+        "ai_subagent": "AI Sub-Agent",
     }
     return labels.get(kind, kind)
 

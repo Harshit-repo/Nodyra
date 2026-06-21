@@ -759,6 +759,7 @@ const AI_INPUT_PORT_KINDS = new Set([
   "ai_vector_store",
   "ai_document_loader",
   "ai_guardrail",
+  "ai_subagent",
 ]);
 
 function shouldEnableSourceForConnection(
@@ -777,20 +778,32 @@ function disabledAgentDependencySourceIds(
   nodes: NoodleNode[],
   edges: Edge[],
 ): Set<string> {
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
   const ids = new Set<string>();
   for (const edge of edges) {
-    if (
-      shouldEnableSourceForConnection(nodes, {
-        source: edge.source,
-        sourceHandle: edge.sourceHandle ?? null,
-        target: edge.target,
-        targetHandle: edge.targetHandle ?? null,
-      })
-    ) {
-      ids.add(edge.source);
-    }
+    const source = nodesById.get(edge.source);
+    const target = nodesById.get(edge.target);
+    if (!source?.data.disabled || !target?.data.manifest) continue;
+    const targetPort = findInputPort(target.data.manifest, edge.targetHandle);
+    if (AI_INPUT_PORT_KINDS.has(targetPort?.data_kind ?? "any")) ids.add(edge.source);
   }
   return ids;
+}
+
+function enableAgentDependencies(
+  nodes: NoodleNode[],
+  edges: Edge[],
+): { nodes: NoodleNode[]; changed: number } {
+  const ids = disabledAgentDependencySourceIds(nodes, edges);
+  if (ids.size === 0) return { nodes, changed: 0 };
+  return {
+    nodes: nodes.map((node) =>
+      ids.has(node.id)
+        ? { ...node, data: { ...node.data, disabled: false } }
+        : node,
+    ),
+    changed: ids.size,
+  };
 }
 
 export type NoodleNode = Node<NoodleNodeData, string>;
@@ -1164,12 +1177,52 @@ function cloneParams(params: Record<string, unknown>): Record<string, unknown> {
   return cloneValue(params) as Record<string, unknown>;
 }
 
-function cloneValue<T>(value: T): T {
-  try {
-    return structuredClone(value) as T;
-  } catch {
-    return JSON.parse(JSON.stringify(value)) as T;
+function cloneFallback<T>(value: T, seen = new WeakMap<object, object>()): T {
+  if (value === null || typeof value !== "object") return value;
+  if (value instanceof Date) return new Date(value.getTime()) as T;
+  if (value instanceof RegExp) return new RegExp(value.source, value.flags) as T;
+  if (seen.has(value)) return seen.get(value) as T;
+
+  if (value instanceof Map) {
+    const copy = new Map();
+    seen.set(value, copy);
+    for (const [key, entry] of value) {
+      copy.set(cloneFallback(key, seen), cloneFallback(entry, seen));
+    }
+    return copy as T;
   }
+  if (value instanceof Set) {
+    const copy = new Set();
+    seen.set(value, copy);
+    for (const entry of value) copy.add(cloneFallback(entry, seen));
+    return copy as T;
+  }
+
+  const copy = (Array.isArray(value)
+    ? []
+    : Object.create(Object.getPrototypeOf(value))) as object;
+  seen.set(value, copy);
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) continue;
+    if ("value" in descriptor) {
+      descriptor.value = cloneFallback(descriptor.value, seen);
+    }
+    Object.defineProperty(copy, key, descriptor);
+  }
+  return copy as T;
+}
+
+function cloneValue<T>(value: T): T {
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(value) as T;
+    } catch {
+      // Functions and other non-cloneable members can exist in React Flow node
+      // metadata. Preserve those members while recursively cloning containers.
+    }
+  }
+  return cloneFallback(value);
 }
 
 function cloneNode(node: NoodleNode): NoodleNode {
@@ -1361,11 +1414,12 @@ export const useEditor = create<EditorStore>((set, get) => ({
       target: e.target,
       targetHandle: e.target_input,
     }));
+    const normalized = enableAgentDependencies(nodes, edges);
     set({
-      nodes,
+      nodes: normalized.nodes,
       edges,
       selectedId: null,
-      dirty: Boolean(opts?.dirty),
+      dirty: Boolean(opts?.dirty) || normalized.changed > 0,
       _past: [],
       _future: [],
       childWorkflows: {},
@@ -2413,12 +2467,14 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
   toggleDisabled: (id) => {
     const state = get();
+    const toggled = state.nodes.map((n) =>
+      n.id === id
+        ? { ...n, data: { ...n.data, disabled: !n.data.disabled } }
+        : n,
+    );
+    const normalized = enableAgentDependencies(toggled, state.edges);
     set({
-      nodes: state.nodes.map((n) =>
-        n.id === id
-          ? { ...n, data: { ...n.data, disabled: !n.data.disabled } }
-          : n,
-      ),
+      nodes: normalized.nodes,
       dirty: true,
       _past: [...state._past, { nodes: state.nodes, edges: state.edges }].slice(-HISTORY_LIMIT),
       _future: [],
@@ -2427,17 +2483,13 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
   autoEnableAgentDependencies: () => {
     const state = get();
-    const ids = disabledAgentDependencySourceIds(state.nodes, state.edges);
-    if (ids.size === 0) return 0;
+    const normalized = enableAgentDependencies(state.nodes, state.edges);
+    if (normalized.changed === 0) return 0;
     set({
-      nodes: state.nodes.map((node) =>
-        ids.has(node.id)
-          ? { ...node, data: { ...node.data, disabled: false } }
-          : node,
-      ),
+      nodes: normalized.nodes,
       dirty: true,
     });
-    return ids.size;
+    return normalized.changed;
   },
 
   updateNodeSettings: (id, patch) => {
@@ -2905,10 +2957,11 @@ export const useEditor = create<EditorStore>((set, get) => ({
     const { _past, _future, nodes, edges } = get();
     if (_past.length === 0) return;
     const prev = _past[_past.length - 1];
+    const normalized = enableAgentDependencies(prev.nodes, prev.edges);
     set({
       _past: _past.slice(0, -1),
       _future: [..._future, { nodes, edges }].slice(-HISTORY_LIMIT),
-      nodes: prev.nodes,
+      nodes: normalized.nodes,
       edges: prev.edges,
       dirty: true,
     });
@@ -2917,10 +2970,11 @@ export const useEditor = create<EditorStore>((set, get) => ({
     const { _past, _future, nodes, edges } = get();
     if (_future.length === 0) return;
     const next = _future[_future.length - 1];
+    const normalized = enableAgentDependencies(next.nodes, next.edges);
     set({
       _future: _future.slice(0, -1),
       _past: [..._past, { nodes, edges }].slice(-HISTORY_LIMIT),
-      nodes: next.nodes,
+      nodes: normalized.nodes,
       edges: next.edges,
       dirty: true,
     });

@@ -29,7 +29,8 @@ export type PortDataKind =
   | "ai_retriever"
   | "ai_vector_store"
   | "ai_document_loader"
-  | "ai_guardrail";
+  | "ai_guardrail"
+  | "ai_subagent";
 
 export interface ParamSpec {
   name: string;
