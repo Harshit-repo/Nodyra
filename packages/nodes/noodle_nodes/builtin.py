@@ -532,14 +532,40 @@ def chat_trigger(initial_message: str = "", input_placeholder: str = "",
 
 @node(name="If", id="if", category="Logic", icon="branch", outputs=["true", "false"],
       params={
-          "field": {"placeholder": "status", "description": "Field to test (blank = whole input)."},
-          "operator": {"choices": OPERATORS},
-          "value": {"placeholder": "expected value"},
+          "conditions": {
+              "widget": "conditions_builder",
+              "description": (
+                  "Typed multi-condition test. Each row specifies a field path, "
+                  "data type, operator, and comparison value. Use the logic toggle "
+                  "to require ALL (AND) or ANY (OR) conditions to match."
+              ),
+          },
+          "field": {
+              "placeholder": "status",
+              "description": "Field to test (blank = whole input). Legacy: use Conditions above.",
+              "group": "Legacy condition",
+          },
+          "operator": {
+              "choices": OPERATORS,
+              "group": "Legacy condition",
+          },
+          "value": {
+              "placeholder": "expected value",
+              "group": "Legacy condition",
+          },
       })
-def if_node(input: Any = None, field: str = "", operator: str = "is true",
-            value: str = "") -> dict:
+def if_node(
+    input: Any = None,
+    field: str = "",
+    operator: str = "is true",
+    value: str = "",
+    conditions: Any = None,
+) -> dict:
     """Route the input to the true or false branch based on a condition."""
-    matched = _matches(_field(input, field), operator, value)
+    if conditions:
+        matched = _eval_conditions(input, conditions)
+    else:
+        matched = _matches(_field(input, field), operator, value)
     return {"true": input} if matched else {"false": input}
 
 
@@ -569,13 +595,35 @@ def switch_node(
     return {"fallback": input}
 
 
-@node(name="Filter", id="filter", category="Logic", icon="filter", params={
-    "field": {"placeholder": "status"},
-    "operator": {"choices": OPERATORS},
-    "value": {"placeholder": "expected value"},
-})
-def filter_node(input: Any = None, field: str = "", operator: str = "is not empty",
-                value: str = "") -> Any:
+@node(name="Filter", id="filter", category="Logic", icon="filter",
+      params={
+          "conditions": {
+              "widget": "conditions_builder",
+              "description": (
+                  "Typed multi-condition filter. Items passing all (AND) or any "
+                  "(OR) conditions flow through; others are dropped."
+              ),
+          },
+          "field": {
+              "placeholder": "status",
+              "group": "Legacy condition",
+          },
+          "operator": {
+              "choices": OPERATORS,
+              "group": "Legacy condition",
+          },
+          "value": {
+              "placeholder": "expected value",
+              "group": "Legacy condition",
+          },
+      })
+def filter_node(
+    input: Any = None,
+    field: str = "",
+    operator: str = "is not empty",
+    value: str = "",
+    conditions: Any = None,
+) -> Any:
     """Keep only the input items that satisfy a condition.
 
     When the upstream input is a single object (not a list), a passing filter
@@ -584,7 +632,10 @@ def filter_node(input: Any = None, field: str = "", operator: str = "is not empt
     the output is always a list (possibly empty).
     """
     input_was_list = isinstance(input, list)
-    results = [it for it in _as_list(input) if _matches(_field(it, field), operator, value)]
+    if conditions:
+        results = [it for it in _as_list(input) if _eval_conditions(it, conditions)]
+    else:
+        results = [it for it in _as_list(input) if _matches(_field(it, field), operator, value)]
     if not input_was_list and len(results) == 1:
         return results[0]
     return results

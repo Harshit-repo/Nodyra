@@ -1,5 +1,9 @@
 """Tests for typed multi-condition evaluation (_matches_typed, _eval_conditions)."""
 import pytest
+import noodle_nodes  # noqa: F401
+from noodle.engine import execute
+from noodle.models import Edge, GraphNode, NodeStatus, WorkflowGraph
+from noodle.sdk import registry
 from noodle_nodes.builtin import _matches_typed, _eval_conditions
 
 
@@ -261,3 +265,157 @@ def test_eval_conditions_skips_non_dict_entries():
     }
     # All entries skipped → vacuously true
     assert _eval_conditions({"x": 1}, cond) is True
+
+
+# ---------------------------------------------------------------------------
+# Integration: full graph execution via if_node / filter_node
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_if_node_typed_conditions_true_branch():
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="t", type="manual_trigger", params={"data": {"age": 25}}),
+            GraphNode(
+                id="i",
+                type="if",
+                params={
+                    "conditions": {
+                        "logic": "AND",
+                        "conditions": [
+                            {"id": "c1", "field": "age", "type": "number",
+                             "operator": "greater than or equal", "value": "18"},
+                        ],
+                    }
+                },
+            ),
+            GraphNode(id="yes", type="no_op"),
+        ],
+        edges=[
+            Edge(source="t", target="i"),
+            Edge(source="i", source_output="true", target="yes"),
+        ],
+    )
+    result = await execute(graph, registry)
+    assert result.nodes["yes"].status == NodeStatus.success
+    assert result.nodes["yes"].outputs["main"] == {"age": 25}
+
+
+@pytest.mark.asyncio
+async def test_if_node_typed_conditions_false_branch():
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="t", type="manual_trigger", params={"data": {"age": 10}}),
+            GraphNode(
+                id="i",
+                type="if",
+                params={
+                    "conditions": {
+                        "logic": "AND",
+                        "conditions": [
+                            {"id": "c1", "field": "age", "type": "number",
+                             "operator": "greater than or equal", "value": "18"},
+                        ],
+                    }
+                },
+            ),
+            GraphNode(id="no", type="no_op"),
+        ],
+        edges=[
+            Edge(source="t", target="i"),
+            Edge(source="i", source_output="false", target="no"),
+        ],
+    )
+    result = await execute(graph, registry)
+    assert result.nodes["no"].status == NodeStatus.success
+
+
+@pytest.mark.asyncio
+async def test_if_node_legacy_params_still_work():
+    """Existing saved workflows with field/operator/value must keep working."""
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="t", type="manual_trigger", params={"data": {"status": "open"}}),
+            GraphNode(
+                id="i",
+                type="if",
+                params={"field": "status", "operator": "equals", "value": "open"},
+            ),
+            GraphNode(id="yes", type="no_op"),
+        ],
+        edges=[
+            Edge(source="t", target="i"),
+            Edge(source="i", source_output="true", target="yes"),
+        ],
+    )
+    result = await execute(graph, registry)
+    assert result.nodes["yes"].status == NodeStatus.success
+
+
+@pytest.mark.asyncio
+async def test_filter_node_typed_conditions():
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(
+                id="t",
+                type="manual_trigger",
+                params={"data": [{"score": 90}, {"score": 40}, {"score": 75}]},
+            ),
+            GraphNode(
+                id="f",
+                type="filter",
+                params={
+                    "conditions": {
+                        "logic": "AND",
+                        "conditions": [
+                            {"id": "c1", "field": "score", "type": "number",
+                             "operator": "greater than or equal", "value": "70"},
+                        ],
+                    }
+                },
+            ),
+        ],
+        edges=[Edge(source="t", target="f")],
+    )
+    result = await execute(graph, registry)
+    out = result.nodes["f"].outputs["main"]
+    assert isinstance(out, list)
+    assert len(out) == 2
+    assert all(row["score"] >= 70 for row in out)
+
+
+@pytest.mark.asyncio
+async def test_filter_node_or_logic():
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(
+                id="t",
+                type="manual_trigger",
+                params={"data": [
+                    {"status": "open", "priority": "low"},
+                    {"status": "closed", "priority": "high"},
+                    {"status": "closed", "priority": "low"},
+                ]},
+            ),
+            GraphNode(
+                id="f",
+                type="filter",
+                params={
+                    "conditions": {
+                        "logic": "OR",
+                        "conditions": [
+                            {"id": "c1", "field": "status", "type": "string",
+                             "operator": "equals", "value": "open"},
+                            {"id": "c2", "field": "priority", "type": "string",
+                             "operator": "equals", "value": "high"},
+                        ],
+                    }
+                },
+            ),
+        ],
+        edges=[Edge(source="t", target="f")],
+    )
+    result = await execute(graph, registry)
+    out = result.nodes["f"].outputs["main"]
+    assert len(out) == 2  # "open/low" and "closed/high" pass; "closed/low" fails
