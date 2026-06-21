@@ -411,3 +411,16 @@ def test_subagent_node_requires_model() -> None:
 def test_subagent_node_output_kind() -> None:
     manifest = registry.get("ai_sub_agent").manifest
     assert any(o.name == "subagent" and o.data_kind == "ai_subagent" for o in manifest.outputs)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 Registration Sweep
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("node_id", [
+    "ai_calculator_tool", "ai_code_execution_tool", "ai_web_search_tool",
+    "ai_browser_tool", "ai_rag_tool", "ai_sub_agent",
+])
+def test_all_phase1_nodes_registered(node_id) -> None:
+    assert node_id in registry
