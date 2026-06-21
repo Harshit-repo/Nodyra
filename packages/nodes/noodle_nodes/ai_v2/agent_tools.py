@@ -8,6 +8,7 @@ Heavy deps (simpleeval, playwright) are lazy-imported with friendly errors.
 from __future__ import annotations
 
 import ast
+import asyncio
 import html
 import json
 import math
@@ -17,14 +18,27 @@ import signal
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 
 from noodle_nodes.http_security import assert_public_http_url, safe_request
 
-from noodle.ai_runtime import RetrievedDocument, RetrieverAdapter, ToolAdapter, ToolParameterSchema, ToolSchema
+from noodle.ai_runtime import (
+    AIMessage,
+    ChatModelAdapter,
+    ChatRequest,
+    ChatResponse,
+    RetrievedDocument,
+    RetrieverAdapter,
+    ToolAdapter,
+    ToolCall,
+    ToolParameterSchema,
+    ToolSchema,
+)
 from noodle.sdk import node
+from noodle_nodes.ai_v2.tools import collect_tool_adapters
 
 AI_CATEGORY = "AI"
 
@@ -747,4 +761,187 @@ def ai_rag_tool(
     return RetrieverToolAdapter(
         retriever=retriever, name=name, description=description,
         top_k=top_k, max_doc_chars=max_doc_chars, include_metadata=include_metadata,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sub-Agent adapter + node
+# ---------------------------------------------------------------------------
+
+
+def _model_name(model: ChatModelAdapter) -> str:
+    try:
+        config = model.as_config()
+    except Exception:  # noqa: BLE001 - config optional
+        return ""
+    return str(config.get("model") or config.get("deployment") or "")
+
+
+@dataclass
+class SubAgentAdapter:
+    """Configuration captured by the AI Sub-Agent supplier node.
+
+    NOT a ToolAdapter — the parent agent wraps it in a SubAgentToolAdapter.
+    """
+
+    name: str
+    description: str
+    system: str
+    model: ChatModelAdapter
+    tools: list[ToolAdapter] = field(default_factory=list)
+    max_steps: int = 6
+    temperature: float = 0.2
+    max_tokens: int | None = None
+    side_effecting: bool = True
+
+
+class SubAgentToolAdapter(ToolAdapter):
+    """Runs a nested agent loop and returns its final answer + trace."""
+
+    def __init__(self, sub: SubAgentAdapter) -> None:
+        self._sub = sub
+        self._tool_map = {t.schema.name: t for t in sub.tools}
+
+    @property
+    def schema(self) -> ToolSchema:
+        return ToolSchema(
+            name=f"delegate_to_{self._sub.name}",
+            description=self._sub.description or f"Delegate a task to the {self._sub.name} specialist.",
+            parameters=ToolParameterSchema(
+                properties={
+                    "task": {"type": "string", "description": "The specific task to delegate."},
+                    "context": {"type": "string", "description": "Optional context or data for the sub-agent."},
+                },
+                required=["task"],
+            ),
+        )
+
+    @property
+    def side_effecting(self) -> bool:
+        return self._sub.side_effecting
+
+    def invoke(self, arguments: dict[str, Any]) -> str:
+        raise RuntimeError(f"delegate_to_{self._sub.name}: sub-agent is async-only (invoke_async)")
+
+    async def invoke_async(self, arguments: dict[str, Any]) -> str:
+        task = str((arguments or {}).get("task") or "").strip()
+        context = str((arguments or {}).get("context") or "").strip()
+        if context:
+            task = f"{task}\n\nContext provided:\n{context}"
+        if not task:
+            return json.dumps({"error": "No task provided", "sub_agent": self._sub.name})
+
+        messages: list[AIMessage] = []
+        if self._sub.system.strip():
+            messages.append(AIMessage.system(self._sub.system.strip()))
+        messages.append(AIMessage.user(task))
+        tool_schemas = [t.schema for t in self._sub.tools]
+        steps: list[dict[str, Any]] = []
+
+        try:
+            for step in range(self._sub.max_steps):
+                request = ChatRequest(
+                    messages=messages,
+                    model=_model_name(self._sub.model),
+                    temperature=self._sub.temperature,
+                    max_tokens=self._sub.max_tokens,
+                    tools=tool_schemas,
+                )
+                response: ChatResponse = await asyncio.to_thread(self._sub.model.complete, request)
+                if not response.tool_calls:
+                    return json.dumps({
+                        "answer": response.text, "sub_agent": self._sub.name,
+                        "steps_taken": step, "intermediate_steps": steps,
+                    }, ensure_ascii=False, default=str)
+                messages.append(AIMessage.assistant(response.text, tool_calls=response.tool_calls))
+                for call in response.tool_calls:
+                    tool = self._tool_map.get(call.name)
+                    try:
+                        if tool is None:
+                            result = f"Tool '{call.name}' is not available to this sub-agent."
+                        else:
+                            result = await tool.invoke_async(dict(call.arguments))
+                    except Exception as exc:  # noqa: BLE001 - surface tool error to sub-agent
+                        result = f"Tool error: {exc}"
+                    messages.append(AIMessage.tool_result(
+                        tool_call_id=call.id, name=call.name, content=result))
+                    steps.append({"tool": call.name, "arguments": dict(call.arguments), "result": result})
+            return json.dumps({
+                "answer": "Sub-agent reached max steps without a final answer.",
+                "sub_agent": self._sub.name, "steps_taken": self._sub.max_steps,
+                "intermediate_steps": steps,
+            }, ensure_ascii=False, default=str)
+        except Exception as exc:  # noqa: BLE001 - never propagate into parent dispatch
+            return json.dumps({"error": str(exc), "sub_agent": self._sub.name,
+                               "intermediate_steps": steps})
+
+
+def _collect_subagents(value: Any) -> list[SubAgentAdapter]:
+    if isinstance(value, SubAgentAdapter):
+        return [value]
+    if isinstance(value, (list, tuple, set, frozenset)):
+        out: list[SubAgentAdapter] = []
+        for item in value:
+            out.extend(_collect_subagents(item))
+        return out
+    return []
+
+
+def subagent_tool_adapters(*values: Any) -> list[SubAgentToolAdapter]:
+    """Wrap each connected SubAgentAdapter as a SubAgentToolAdapter (dedup by name)."""
+    adapters: list[SubAgentToolAdapter] = []
+    seen: set[str] = set()
+    for value in values:
+        for sub in _collect_subagents(value):
+            tool_name = f"delegate_to_{sub.name}"
+            if tool_name in seen:
+                raise ValueError(f"duplicate sub-agent name: {sub.name}")
+            seen.add(tool_name)
+            adapters.append(SubAgentToolAdapter(sub))
+    return adapters
+
+
+@node(
+    name="AI Sub-Agent",
+    id="ai_sub_agent",
+    category=AI_CATEGORY,
+    role="supplier",
+    icon="ai",
+    inputs=["model", "tool"],
+    input_kinds={"model": "ai_language_model", "tool": "ai_tool"},
+    outputs=["subagent"],
+    output_kinds={"subagent": "ai_subagent"},
+    param_groups={"Options": ["max_steps", "temperature", "max_tokens", "side_effecting"]},
+    params={
+        "name": {"description": "Specialist name. Parent calls delegate_to_{name} (snake_case)."},
+        "description": {"widget": "textarea",
+                        "description": "What this specialist does — tells the parent when to delegate."},
+        "system": {"widget": "textarea", "description": "Sub-agent system prompt / persona."},
+        "max_steps": {"description": "Sub-agent tool-iteration budget.", "group": "Options"},
+        "temperature": {"description": "Sub-agent sampling temperature.", "group": "Options"},
+        "max_tokens": {"description": "Sub-agent max response tokens.", "group": "Options"},
+        "side_effecting": {"widget": "toggle",
+                           "description": "Require parent approval before delegating.", "group": "Options"},
+    },
+)
+def ai_sub_agent(
+    model: Any = None,
+    tool: Any = None,
+    name: str = "sub_agent",
+    description: str = "",
+    system: str = "",
+    max_steps: int = 6,
+    temperature: float = 0.2,
+    max_tokens: int | None = None,
+    side_effecting: bool = True,
+) -> SubAgentAdapter:
+    """Supply a specialist sub-agent to a parent AI Agent's subagent port."""
+    if not isinstance(model, ChatModelAdapter):
+        raise ValueError("ai_sub_agent: connect an AI Chat Model to the sub-agent model port")
+    return SubAgentAdapter(
+        name=name or "sub_agent", description=description, system=system,
+        model=model, tools=collect_tool_adapters(tool),
+        max_steps=max(1, min(25, int(max_steps or 6))),
+        temperature=float(temperature), max_tokens=max_tokens,
+        side_effecting=bool(side_effecting),
     )

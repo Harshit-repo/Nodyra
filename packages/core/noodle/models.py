@@ -101,6 +101,7 @@ class PortDataKind(StrEnum):
     ai_document_loader = "ai_document_loader"
     ai_guardrail = "ai_guardrail"
     ai_stream = "ai_stream"
+    ai_subagent = "ai_subagent"
 
 
 class NodeRole(StrEnum):

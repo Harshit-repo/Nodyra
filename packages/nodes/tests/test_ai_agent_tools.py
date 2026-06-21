@@ -315,3 +315,99 @@ def test_rag_node_registered() -> None:
     manifest = registry.get("ai_rag_tool").manifest
     assert any(i.name == "retriever" and i.data_kind == "ai_retriever" for i in manifest.inputs)
     assert any(o.name == "tool" and o.data_kind == "ai_tool" for o in manifest.outputs)
+
+
+# ---------------------------------------------------------------------------
+# Sub-Agent adapter tests
+# ---------------------------------------------------------------------------
+
+from noodle.ai_runtime import AIMessage, ChatResponse, ToolCall  # noqa: E402
+from noodle_nodes.ai_v2.agent_tools import (  # noqa: E402
+    SubAgentAdapter,
+    SubAgentToolAdapter,
+    subagent_tool_adapters,
+)
+from tests.test_ai_v2_nodes import DummyTool, ScriptedChatModel  # noqa: E402
+
+
+def _subagent(model, tools=(), **kw):
+    defaults = dict(name="researcher", description="Finds facts.", system="You research.",
+                    model=model, tools=list(tools), max_steps=4, temperature=0.2,
+                    max_tokens=None, side_effecting=True)
+    defaults.update(kw)
+    return SubAgentAdapter(**defaults)
+
+
+def test_subagent_tool_schema_name() -> None:
+    model = ScriptedChatModel([ChatResponse(text="done")])
+    tool = SubAgentToolAdapter(_subagent(model))
+    assert tool.schema.name == "delegate_to_researcher"
+
+
+def test_subagent_runs_to_final_answer() -> None:
+    model = ScriptedChatModel([ChatResponse(text="the answer is 42")])
+    tool = SubAgentToolAdapter(_subagent(model))
+    out = json.loads(asyncio.run(tool.invoke_async({"task": "find the answer"})))
+    assert out["answer"] == "the answer is 42"
+    assert out["sub_agent"] == "researcher"
+
+
+def test_subagent_executes_tool_then_answers() -> None:
+    model = ScriptedChatModel([
+        ChatResponse(text="", tool_calls=[ToolCall(id="c1", name="lookup", arguments={"query": "x"})]),
+        ChatResponse(text="found it"),
+    ])
+    tool = SubAgentToolAdapter(_subagent(model, tools=[DummyTool("lookup")]))
+    out = json.loads(asyncio.run(tool.invoke_async({"task": "go"})))
+    assert out["answer"] == "found it"
+    assert out["intermediate_steps"][0]["tool"] == "lookup"
+
+
+def test_subagent_max_steps_caps_loop() -> None:
+    looping = [ChatResponse(text="", tool_calls=[ToolCall(id=f"c{i}", name="lookup", arguments={"query": "x"})])
+               for i in range(10)]
+    model = ScriptedChatModel(looping)
+    tool = SubAgentToolAdapter(_subagent(model, tools=[DummyTool("lookup")], max_steps=2))
+    out = json.loads(asyncio.run(tool.invoke_async({"task": "go"})))
+    assert out["steps_taken"] == 2
+
+
+def test_subagent_tool_error_caught() -> None:
+    class _Boom(DummyTool):
+        def invoke(self, arguments):
+            raise RuntimeError("kaboom")
+    model = ScriptedChatModel([
+        ChatResponse(text="", tool_calls=[ToolCall(id="c1", name="lookup", arguments={})]),
+        ChatResponse(text="recovered"),
+    ])
+    tool = SubAgentToolAdapter(_subagent(model, tools=[_Boom("lookup")]))
+    out = json.loads(asyncio.run(tool.invoke_async({"task": "go"})))
+    assert "kaboom" in out["intermediate_steps"][0]["result"]
+
+
+def test_subagent_context_appended_to_task() -> None:
+    model = ScriptedChatModel([ChatResponse(text="ok")])
+    captured = model.requests
+    tool = SubAgentToolAdapter(_subagent(model))
+    asyncio.run(tool.invoke_async({"task": "do it", "context": "extra data"}))
+    user_msg = captured[0].messages[-1].content
+    assert "extra data" in user_msg
+
+
+def test_subagent_dup_names_raise() -> None:
+    m = ScriptedChatModel([ChatResponse(text="x")])
+    a = _subagent(m, name="dup")
+    b = _subagent(ScriptedChatModel([ChatResponse(text="y")]), name="dup")
+    with pytest.raises(ValueError):
+        subagent_tool_adapters(a, b)
+
+
+def test_subagent_node_requires_model() -> None:
+    from noodle_nodes.ai_v2.agent_tools import ai_sub_agent
+    with pytest.raises(ValueError):
+        ai_sub_agent(model=None)
+
+
+def test_subagent_node_output_kind() -> None:
+    manifest = registry.get("ai_sub_agent").manifest
+    assert any(o.name == "subagent" and o.data_kind == "ai_subagent" for o in manifest.outputs)
