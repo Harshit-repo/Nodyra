@@ -189,7 +189,7 @@ export function FunctionsPanel({
   }
 
   return (
-    <div className="functions-panel" role="dialog" aria-label="Workflow functions">
+    <div className="functions-panel" role="dialog" aria-modal="true" aria-label="Workflow functions">
       <header className="functions-panel-head">
         <h2>Functions</h2>
         <button type="button" className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">

@@ -1178,6 +1178,7 @@ export function Canvas() {
         <div
           className="canvas-quick-add"
           role="dialog"
+          aria-modal="true"
           aria-label={quickAdd.insertEdgeId ? "Insert node into connection" : "Quick add node"}
           style={{ left: quickAdd.x, top: quickAdd.y }}
           onClick={(event) => event.stopPropagation()}
@@ -1197,6 +1198,7 @@ export function Canvas() {
             ref={quickAddInputRef}
             className="canvas-quick-add-input"
             placeholder={quickAdd.insertEdgeId ? "Search compatible nodes..." : "Search nodes..."}
+            aria-label={quickAdd.insertEdgeId ? "Search compatible nodes" : "Search nodes"}
             value={quickAdd.query}
             onChange={(event) => updateQuickAddQuery(event.target.value)}
             onKeyDown={handleQuickAddKeyDown}

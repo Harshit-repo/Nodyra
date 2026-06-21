@@ -70,6 +70,7 @@ export function VariablePickerPopover({ nodeId, onInsert, onClose }: Props) {
       className="var-picker-popover"
       ref={containerRef}
       role="dialog"
+      aria-modal="true"
       aria-label="Pick a variable"
     >
       <div className="var-picker-head">
@@ -81,6 +82,7 @@ export function VariablePickerPopover({ nodeId, onInsert, onClose }: Props) {
         className="var-picker-search"
         type="search"
         placeholder="Search all nodes…"
+        aria-label="Search variables"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />

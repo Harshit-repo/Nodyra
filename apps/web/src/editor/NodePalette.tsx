@@ -487,6 +487,7 @@ export function NodePalette() {
         <input
           ref={searchRef}
           className="palette-search"
+          aria-label="Search nodes"
           placeholder="Search nodes…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
