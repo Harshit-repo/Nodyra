@@ -174,7 +174,7 @@ def test_agent_v2_registered_with_typed_ports() -> None:
         "auto_approve",
     ]
     assert params["side_effect_approval"].display_name == "Tool approval"
-    assert params["side_effect_approval"].group is None
+    assert params["side_effect_approval"].group == "Options"
 
 
 def test_output_parser_registered_with_typed_port() -> None:

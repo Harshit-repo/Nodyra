@@ -466,3 +466,31 @@ def test_reflexion_rounds_capped_at_two() -> None:
     ai_agent_v2(model=model, prompt="q", strategy="reflexion", reflection_rounds=2)
     # 1 initial + 2 reflection = 3 requests max
     assert len(model.requests) == 3
+
+
+# ---------------------------------------------------------------------------
+# Task 17: param-group wiring verification + untrusted-tool-result notice
+# ---------------------------------------------------------------------------
+
+from noodle.ai_runtime import ToolParameterSchema
+
+
+def test_param_groups_present() -> None:
+    manifest = registry.get("ai_agent_v2").manifest
+    groups = {p.group for p in manifest.params if p.group}
+    assert {"Strategy", "Context", "Built-in Tools", "Retriever", "Options"} <= groups
+
+
+def test_tool_instruction_warns_about_untrusted_results() -> None:
+    from noodle_nodes.ai_v2.agents import _tool_instruction
+    from noodle.ai_runtime import ToolSchema, ToolParameterSchema
+    msg = _tool_instruction([ToolSchema(name="x", description="d", parameters=ToolParameterSchema())])
+    assert "untrusted" in msg.content.lower()
+
+
+def test_backwards_compatible_default_run() -> None:
+    model = ScriptedChatModel([ChatResponse(text="hello")])
+    out = ai_agent_v2(model=model, prompt="hi")
+    assert out["answer"] == "hello"
+    assert out["strategy"] == "react"
+    assert out["context_compressed"] is False
