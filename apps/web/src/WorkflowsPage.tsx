@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { DotsThreeVertical, Rows, SquaresFour } from "@phosphor-icons/react";
+import { keepPreviousData } from "@tanstack/react-query";
 
 import { api, errorMessage } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -221,10 +222,11 @@ export function WorkflowsPage() {
       query.state.data?.some((wf) => wf.last_run_status === "running")
         ? 3000
         : false,
+    placeholderData: keepPreviousData,
   });
-  const deploymentsQuery = useDeployments();
-  const credentialsQuery = useCredentials();
-  const environmentsQuery = useEnvironments();
+  const deploymentsQuery = useDeployments(undefined, { placeholderData: keepPreviousData });
+  const credentialsQuery = useCredentials({ placeholderData: keepPreviousData });
+  const environmentsQuery = useEnvironments({ placeholderData: keepPreviousData });
   const providerTriggersQuery = useWorkflowProviderTriggers(
     providerModalWorkflow?.id ?? null,
     { enabled: providerModalWorkflow !== null },
