@@ -2167,3 +2167,46 @@ def convert_fields_node(
         f"convert_fields: expected an object or list of objects, got "
         f"{type(input).__name__}"
     )
+
+
+@node(
+    name="Set Field Type",
+    id="set_field_type",
+    category="Data Types",
+    icon="braces",
+    params={
+        "field": {
+            "placeholder": "price",
+            "description": (
+                "Dot-path of the field to convert (e.g. 'price' or 'meta.count'). "
+                "One level of nesting is supported. Leave blank to pass through unchanged."
+            ),
+        },
+        "to": {
+            "choices": CONVERSION_TARGETS,
+            "description": "Target type for the field.",
+        },
+    },
+)
+def set_field_type_node(input: Any = None, field: str = "", to: str = "string") -> Any:
+    """Convert a single named field of the input object to the specified type.
+
+    The rest of the input passes through unchanged.  Supports one level of
+    dot-notation for nested fields (e.g. ``meta.count``).  If the field is
+    absent or the input is not a dict, the input is returned as-is.
+    """
+    if not field or not isinstance(input, dict):
+        return input
+    result = dict(input)
+    parts = field.split(".", 1)
+    if len(parts) == 1:
+        if field in result:
+            result[field] = _convert_value(result[field], to)
+    else:
+        parent, child = parts
+        if parent in result and isinstance(result[parent], dict):
+            result[parent] = {
+                **result[parent],
+                child: _convert_value(result[parent].get(child), to),
+            }
+    return result
