@@ -66,6 +66,125 @@ def _as_list(value: Any) -> list:
     return [] if value is None else [value]
 
 
+import re as _re
+from datetime import datetime as _datetime
+
+
+def _matches_typed(actual: Any, dtype: str, operator: str, value: str = "") -> bool:
+    """Evaluate a single typed condition against a value.
+
+    dtype must be one of: string, number, boolean, array, object, date, any.
+    operator must be valid for the given dtype.  Returns False for unknown
+    dtype/operator combinations rather than raising.
+    """
+    if dtype == "string":
+        s = str(actual) if actual is not None else ""
+        v = str(value)
+        if operator == "equals":           return s == v
+        if operator == "not equals":       return s != v
+        if operator == "contains":         return v.lower() in s.lower()
+        if operator == "does not contain": return v.lower() not in s.lower()
+        if operator == "starts with":      return s.lower().startswith(v.lower())
+        if operator == "ends with":        return s.lower().endswith(v.lower())
+        if operator == "is empty":         return s == ""
+        if operator == "is not empty":     return s != ""
+        if operator == "matches regex":
+            try:
+                return bool(_re.search(v, s))
+            except _re.error:
+                return False
+
+    elif dtype == "number":
+        try:
+            n = float(actual)
+            v_num = float(value)
+        except (TypeError, ValueError):
+            return False
+        if operator == "equals":                 return n == v_num
+        if operator == "not equals":             return n != v_num
+        if operator == "greater than":           return n > v_num
+        if operator == "greater than or equal":  return n >= v_num
+        if operator == "less than":              return n < v_num
+        if operator == "less than or equal":     return n <= v_num
+
+    elif dtype == "boolean":
+        # Coerce: the string literals "false"/"0"/"no"/"off"/"" are falsy.
+        if isinstance(actual, bool):
+            b = actual
+        elif isinstance(actual, str):
+            b = actual.lower() not in ("false", "0", "no", "off", "")
+        else:
+            b = bool(actual)
+        if operator == "is true":  return b
+        if operator == "is false": return not b
+
+    elif dtype == "array":
+        arr = actual if isinstance(actual, list) else []
+        if operator == "is empty":         return len(arr) == 0
+        if operator == "is not empty":     return len(arr) > 0
+        if operator == "contains":         return str(value) in [str(x) for x in arr]
+        if operator == "does not contain": return str(value) not in [str(x) for x in arr]
+        try:
+            v_len = int(value)
+        except (TypeError, ValueError):
+            return False
+        if operator == "length equals":       return len(arr) == v_len
+        if operator == "length not equals":   return len(arr) != v_len
+        if operator == "length greater than": return len(arr) > v_len
+        if operator == "length less than":    return len(arr) < v_len
+
+    elif dtype == "object":
+        obj = actual if isinstance(actual, dict) else {}
+        if operator == "has key":           return str(value) in obj
+        if operator == "does not have key": return str(value) not in obj
+        if operator == "is empty":          return len(obj) == 0
+        if operator == "is not empty":      return len(obj) > 0
+
+    elif dtype == "date":
+        try:
+            d_actual = _datetime.fromisoformat(str(actual))
+            d_value = _datetime.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            return False
+        if operator == "before": return d_actual < d_value
+        if operator == "after":  return d_actual > d_value
+        if operator == "equals": return d_actual.date() == d_value.date()
+
+    elif dtype == "any":
+        if operator == "exists":         return actual is not None
+        if operator == "does not exist": return actual is None
+        if operator == "is empty":       return actual in (None, "", [], {})
+        if operator == "is not empty":   return actual not in (None, "", [], {})
+
+    return False
+
+
+def _eval_conditions(input_data: Any, conditions_param: Any) -> bool:
+    """Evaluate a conditions_builder param value against input_data.
+
+    conditions_param must be ``{"logic": "AND"|"OR", "conditions": [...]}``.
+    Returns False if conditions_param is not a dict.  Returns True for an
+    empty conditions list (vacuous truth — no constraint means pass all).
+    """
+    if not isinstance(conditions_param, dict):
+        return False
+    logic = str(conditions_param.get("logic", "AND")).upper()
+    conditions = conditions_param.get("conditions") or []
+    results: list[bool] = []
+    for cond in conditions:
+        if not isinstance(cond, dict):
+            continue
+        field = str(cond.get("field", ""))
+        dtype = str(cond.get("type", "any"))
+        operator = str(cond.get("operator", "exists"))
+        value = str(cond.get("value", ""))
+        actual = _field(input_data, field) if field else input_data
+        results.append(_matches_typed(actual, dtype, operator, value))
+    if not results:
+        return True  # empty conditions list — pass everything
+    return all(results) if logic == "AND" else any(results)
+
+
 # ==========================================================================
 # Triggers — entry points. They have no wired input; the runtime supplies the
 # event that starts a run.
