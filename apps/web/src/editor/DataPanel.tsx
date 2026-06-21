@@ -111,7 +111,7 @@ export function coercePreview(value: unknown, target: CoerceTarget): unknown {
     : value;
   const s = v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
   if (target === "string") return s;
-  if (target === "number") { const n = Number(s); return n; }
+  if (target === "number") { const n = Number(s); return isNaN(n) ? "NaN" : n; }
   if (target === "boolean") {
     if (s === "" || s === "0" || s.toLowerCase() === "false" || s.toLowerCase() === "no") return false;
     return true;

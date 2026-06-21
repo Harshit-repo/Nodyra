@@ -2,7 +2,7 @@
 import pytest
 import noodle_nodes  # noqa: F401
 from noodle.engine import execute
-from noodle.models import Edge, GraphNode, NodeStatus, WorkflowGraph
+from noodle.models import Edge, GraphNode, WorkflowGraph
 from noodle.sdk import registry
 
 

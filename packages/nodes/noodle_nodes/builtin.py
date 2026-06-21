@@ -160,8 +160,6 @@ def _eval_conditions(input_data: Any, conditions_param: Any) -> bool:
     conditions = conditions_param.get("conditions") or []
 
     def _check(cond):
-        if not isinstance(cond, dict):
-            return True  # Skip invalid conditions (vacuous truth)
         field = str(cond.get("field", ""))
         dtype = str(cond.get("type", "any"))
         operator = str(cond.get("operator", "exists"))
@@ -169,11 +167,12 @@ def _eval_conditions(input_data: Any, conditions_param: Any) -> bool:
         actual = _field(input_data, field) if field else input_data
         return _matches_typed(actual, dtype, operator, value)
 
-    if not conditions:
-        return True  # empty conditions list — pass everything
+    valid = [c for c in conditions if isinstance(c, dict)]
+    if not valid:
+        return True  # vacuous true on no valid conditions
     if logic == "AND":
-        return all(_check(c) for c in conditions)
-    return any(_check(c) for c in conditions)
+        return all(_check(c) for c in valid)
+    return any(_check(c) for c in valid)
 
 
 # ==========================================================================
@@ -2204,9 +2203,9 @@ def set_field_type_node(input: Any = None, field: str = "", to: str = "string") 
             result[field] = _convert_value(result[field], to)
     else:
         parent, child = parts
-        if parent in result and isinstance(result[parent], dict):
+        if parent in result and isinstance(result[parent], dict) and child in result[parent]:
             result[parent] = {
                 **result[parent],
-                child: _convert_value(result[parent].get(child), to),
+                child: _convert_value(result[parent][child], to),
             }
     return result
