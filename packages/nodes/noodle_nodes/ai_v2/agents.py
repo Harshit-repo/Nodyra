@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import json
 from typing import Any
 
@@ -22,7 +24,14 @@ from noodle.ai_runtime import (
     ToolSchema,
 )
 from noodle.sdk import node
-from noodle_nodes.ai_v2.agent_tools import RetrieverToolAdapter, subagent_tool_adapters
+from noodle_nodes.ai_v2.agent_tools import (
+    BrowserToolAdapter,
+    CalculatorToolAdapter,
+    CodeExecToolAdapter,
+    RetrieverToolAdapter,
+    WebSearchToolAdapter,
+    subagent_tool_adapters,
+)
 from noodle_nodes.ai_v2.tools import collect_tool_adapters
 
 AI_CATEGORY = "AI"
@@ -180,6 +189,132 @@ def _tool_schemas(tool_value: Any) -> list[ToolSchema]:
     return schemas
 
 
+def _builtin_tool_adapters(
+    *,
+    enable_code_execution: bool,
+    code_execution_timeout: int,
+    enable_calculator: bool,
+    enable_web_search: bool,
+    web_search_provider: str,
+    web_search_credentials: Any,
+    web_search_max_results: int,
+    enable_browser: bool,
+    browser_timeout_seconds: int,
+) -> list[ToolAdapter]:
+    """Instantiate and return the enabled built-in tool adapters."""
+    builtins: list[ToolAdapter] = []
+    if enable_calculator:
+        builtins.append(CalculatorToolAdapter(
+            name="calculate",
+            description="Evaluate a mathematical expression safely.",
+            precision=10,
+            allow_complex=False,
+        ))
+    if enable_code_execution:
+        builtins.append(CodeExecToolAdapter(
+            name="run_code",
+            description="Run Python code and return stdout.",
+            language="python",
+            allowed_modules="",
+            timeout_seconds=int(code_execution_timeout or 30),
+            max_output_chars=8000,
+        ))
+    if enable_web_search:
+        builtins.append(WebSearchToolAdapter(
+            provider=web_search_provider,
+            credentials=web_search_credentials,
+            name="web_search",
+            description="Search the web for current information.",
+            max_results=int(web_search_max_results or 5),
+            search_depth="basic",
+            include_content=False,
+            timeout_seconds=15,
+        ))  # raises ValueError if creds missing and provider requires a key
+    if enable_browser:
+        builtins.append(BrowserToolAdapter(
+            name="browse_web",
+            description="Navigate and extract content from web pages.",
+            allowed_actions="navigate,extract,get_links",
+            wait_strategy="load",
+            timeout_seconds=int(browser_timeout_seconds or 30),
+            max_content_chars=20000,
+        ))
+    return builtins
+
+
+def _internal_adapter_map(
+    *,
+    builtins: list[ToolAdapter],
+    retriever_tool: ToolAdapter | None,
+    subagent_tools: list[ToolAdapter],
+    external_names: set[str],
+) -> dict[str, ToolAdapter]:
+    """Build a name→adapter map for every node-constructed (non-engine-mediated) tool.
+
+    External tools (on the ``tool`` port) win on collision — they remain
+    engine-mediated so the approval gate and observability events are preserved.
+    """
+    mapping: dict[str, ToolAdapter] = {}
+    pool: list[ToolAdapter] = list(builtins)
+    if retriever_tool is not None:
+        pool.append(retriever_tool)
+    pool.extend(subagent_tools)
+    for adapter in pool:
+        name = str(adapter.schema.name or "").strip()
+        if name and name not in external_names:
+            mapping[name] = adapter
+    return mapping
+
+
+def _run_internal_tool(
+    adapter: ToolAdapter,
+    arguments: dict[str, Any],
+    *,
+    allow_side_effects: bool,
+) -> str:
+    """Invoke an internal tool adapter synchronously, respecting the side-effect gate."""
+    if adapter.side_effecting and not allow_side_effects:
+        return json.dumps({
+            "error": (
+                "This tool is side-effecting and requires approval. "
+                "Enable auto-approve or approve the call to proceed."
+            )
+        })
+    try:
+        # Try sync invoke first (most built-ins implement it).
+        return adapter.invoke(dict(arguments))
+    except (RuntimeError, NotImplementedError):
+        # Async-only adapter (e.g. BrowserToolAdapter, SubAgentToolAdapter).
+        pass
+    except Exception as exc:  # noqa: BLE001 - surface tool error to the model
+        return json.dumps({"error": f"Tool error: {exc}"})
+    # Fall through: run invoke_async on a fresh event loop.
+    try:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None:
+            # Already inside an event loop — run in a worker thread to avoid re-entrancy.
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(
+                    lambda: asyncio.run(adapter.invoke_async(dict(arguments)))
+                ).result()
+        return asyncio.run(adapter.invoke_async(dict(arguments)))
+    except Exception as exc:  # noqa: BLE001 - surface tool error to the model
+        return json.dumps({"error": f"Tool error: {exc}"})
+
+
+def _partition_tool_calls(
+    tool_calls: list[Any],
+    internal_names: set[str],
+) -> tuple[list[Any], list[Any]]:
+    """Split tool calls into (internal, external) lists."""
+    internal = [c for c in tool_calls if c.name in internal_names]
+    external = [c for c in tool_calls if c.name not in internal_names]
+    return internal, external
+
+
 def _assemble_tools(
     *,
     tool: Any,
@@ -187,30 +322,37 @@ def _assemble_tools(
     subagents: list[Any],
     builtins: list[ToolAdapter],
     retriever_cfg: dict[str, Any],
-) -> list[ToolAdapter]:
+) -> tuple[list[ToolAdapter], ToolAdapter | None, list[ToolAdapter]]:
     """Merge builtins, retriever auto-tool, sub-agents, and external tools.
 
     Order = builtins, retriever, sub-agents, external. Dedup by schema.name
     with LAST WINS so external tools override built-ins of the same name.
+
+    Returns (all_tools, retriever_tool_or_None, subagent_tools) so callers
+    can build the internal-adapter map without re-doing the construction.
     """
-    ordered: list[ToolAdapter] = list(builtins)
+    retriever_tool: ToolAdapter | None = None
     if isinstance(retriever, RetrieverAdapter):
-        ordered.append(RetrieverToolAdapter(
+        retriever_tool = RetrieverToolAdapter(
             retriever=retriever,
             name=retriever_cfg["name"],
             description=retriever_cfg["description"],
             top_k=retriever_cfg["top_k"],
             max_doc_chars=2000,
             include_metadata=True,
-        ))
-    ordered.extend(subagent_tool_adapters(*subagents))
+        )
+    subagent_tools: list[ToolAdapter] = list(subagent_tool_adapters(*subagents))
+    ordered: list[ToolAdapter] = list(builtins)
+    if retriever_tool is not None:
+        ordered.append(retriever_tool)
+    ordered.extend(subagent_tools)
     ordered.extend(collect_tool_adapters(tool))
     deduped: dict[str, ToolAdapter] = {}
     for adapter in ordered:
         name = str(adapter.schema.name or "").strip()
         if name:
             deduped[name] = adapter  # last wins
-    return list(deduped.values())
+    return list(deduped.values()), retriever_tool, subagent_tools
 
 
 def _tool_argument_summary(schema: ToolSchema) -> str:
@@ -454,6 +596,17 @@ def _final_output(
             "retriever_tool_description",
             "retriever_top_k",
         ],
+        "Built-in Tools": [
+            "enable_calculator",
+            "enable_code_execution",
+            "code_execution_timeout",
+            "enable_web_search",
+            "web_search_provider",
+            "web_search_credentials",
+            "web_search_max_results",
+            "enable_browser",
+            "browser_timeout_seconds",
+        ],
     },
     params={
         "prompt": {
@@ -531,6 +684,57 @@ def _final_output(
             "description": "Default number of documents to retrieve.",
             "group": "Retriever",
         },
+        # Built-in Tools toggles
+        "enable_calculator": {
+            "widget": "toggle",
+            "description": "Add a safe math-expression evaluator tool.",
+            "group": "Built-in Tools",
+        },
+        "enable_code_execution": {
+            "widget": "toggle",
+            "description": "Add a sandboxed Python code-execution tool.",
+            "group": "Built-in Tools",
+        },
+        "code_execution_timeout": {
+            "description": "Code-execution hard-kill timeout in seconds.",
+            "display_when": {"enable_code_execution": True},
+            "group": "Built-in Tools",
+        },
+        "enable_web_search": {
+            "widget": "toggle",
+            "description": "Add a web-search tool.",
+            "group": "Built-in Tools",
+        },
+        "web_search_provider": {
+            "choices": ["tavily", "serpapi", "brave", "duckduckgo"],
+            "description": "Search provider to use.",
+            "display_when": {"enable_web_search": True},
+            "group": "Built-in Tools",
+        },
+        "web_search_credentials": {
+            "type": "search_api_key",
+            "label": "Search API key",
+            "multi": True,
+            "fields": ["api_key"],
+            "description": "API key for the search provider (not needed for duckduckgo).",
+            "display_when": {"enable_web_search": True},
+            "group": "Built-in Tools",
+        },
+        "web_search_max_results": {
+            "description": "Max search results to return (1-20).",
+            "display_when": {"enable_web_search": True},
+            "group": "Built-in Tools",
+        },
+        "enable_browser": {
+            "widget": "toggle",
+            "description": "Add a headless-browser navigation tool (requires playwright).",
+            "group": "Built-in Tools",
+        },
+        "browser_timeout_seconds": {
+            "description": "Browser page-load timeout in seconds.",
+            "display_when": {"enable_browser": True},
+            "group": "Built-in Tools",
+        },
     },
 )
 def ai_agent_v2(
@@ -561,6 +765,16 @@ def ai_agent_v2(
     retriever_tool_name: str = "search_knowledge_base",
     retriever_tool_description: str = "Search the knowledge base for relevant information.",
     retriever_top_k: int = 5,
+    # Built-in tool toggles (Task 12)
+    enable_calculator: bool = False,
+    enable_code_execution: bool = False,
+    code_execution_timeout: int = 30,
+    enable_web_search: bool = False,
+    web_search_provider: str = "tavily",
+    web_search_credentials: Any = None,
+    web_search_max_results: int = 5,
+    enable_browser: bool = False,
+    browser_timeout_seconds: int = 30,
     **runtime: Any,
 ) -> dict[str, Any] | AgentActionRequest:
     """Run an AI agent loop whose tool calls are dispatched by the engine."""
@@ -568,22 +782,59 @@ def ai_agent_v2(
         raise ValueError("ai_agent_v2: connect an AI Chat Model to the model port")
 
     steps_limit = max(1, min(25, int(max_steps or 4)))
-    assembled_tools = _assemble_tools(
+
+    # Build enabled built-in adapters (Task 12). May raise ValueError for bad creds.
+    builtins = _builtin_tool_adapters(
+        enable_calculator=enable_calculator,
+        enable_code_execution=enable_code_execution,
+        code_execution_timeout=code_execution_timeout,
+        enable_web_search=enable_web_search,
+        web_search_provider=web_search_provider,
+        web_search_credentials=web_search_credentials,
+        web_search_max_results=web_search_max_results,
+        enable_browser=enable_browser,
+        browser_timeout_seconds=browser_timeout_seconds,
+    )
+
+    retriever_cfg = {
+        "name": retriever_tool_name,
+        "description": retriever_tool_description,
+        "top_k": int(retriever_top_k or 5),
+    }
+    assembled_tools, retriever_tool, subagent_tools = _assemble_tools(
         tool=tool,
         retriever=retriever,
         subagents=[subagent_1, subagent_2, subagent_3],
-        builtins=[],  # populated in Task 12
-        retriever_cfg={
-            "name": retriever_tool_name,
-            "description": retriever_tool_description,
-            "top_k": int(retriever_top_k or 5),
-        },
+        builtins=builtins,
+        retriever_cfg=retriever_cfg,
     )
     tool_schemas = _tool_schemas(assembled_tools)
+
+    # Compute side-effect approval once (used by both the main path and internal dispatch).
+    legacy_allow = bool(runtime.get("allow_side_effects"))
     resume = runtime.get("agent_resume")
     resume_allows_side_effects = False
     if isinstance(resume, AgentResumeInput):
         resume_allows_side_effects = bool(resume.allow_side_effects)
+    auto_approve_side_effects = (
+        str(side_effect_approval or "").strip() == "auto_approve"
+    ) or legacy_allow or resume_allows_side_effects
+
+    # Build the internal-adapter map: tools the node will dispatch itself.
+    # External (tool-port) adapters remain engine-mediated.
+    external_names: set[str] = {
+        str(a.schema.name or "").strip()
+        for a in collect_tool_adapters(tool)
+        if str(a.schema.name or "").strip()
+    }
+    internal_map = _internal_adapter_map(
+        builtins=builtins,
+        retriever_tool=retriever_tool,
+        subagent_tools=subagent_tools,
+        external_names=external_names,
+    )
+
+    if isinstance(resume, AgentResumeInput):
         messages = _with_tool_instruction(
             _messages_from_resume(resume),
             tool_schemas,
@@ -604,25 +855,30 @@ def ai_agent_v2(
         messages.append(AIMessage.user(task))
         step = 0
 
-    request = ChatRequest(
-        messages=messages,
-        model=_model_name(model),
-        temperature=float(temperature),
-        max_tokens=max_tokens,
-        tools=tool_schemas,
-        response_format="json_object" if response_format == "json_object" else "text",
-        timeout_seconds=int(timeout_seconds or 75),
-    )
-    active = _active_model(model, fast_model, step)
-    response = _complete_with_fallback(active, model, request)
+    # ---------------------------------------------------------------------------
+    # Main agent loop: iterate internally for built-in/retriever/subagent calls;
+    # return to the engine only for external (tool-port) calls.
+    # ---------------------------------------------------------------------------
+    while True:
+        request = ChatRequest(
+            messages=messages,
+            model=_model_name(_active_model(model, fast_model, step)),
+            temperature=float(temperature),
+            max_tokens=max_tokens,
+            tools=tool_schemas,
+            response_format="json_object" if response_format == "json_object" else "text",
+            timeout_seconds=int(timeout_seconds or 75),
+        )
+        active = _active_model(model, fast_model, step)
+        response = _complete_with_fallback(active, model, request)
 
-    # Accumulate token usage across all steps (carry-forward via control message).
-    running_usage = _load_usage(messages) + response.usage
+        # Accumulate token usage across all steps (carry-forward via control message).
+        running_usage = _load_usage(messages) + response.usage
 
-    if response.tool_calls:
-        # Remove any prior usage control message, then inject the fresh one
-        # before the new assistant message so messages_so_far[-1] stays the
-        # assistant tool-call message (important for downstream callers).
+        if not response.tool_calls:
+            break  # final answer — fall through to output assembly
+
+        # Remove any prior usage control message, inject fresh one.
         messages = [
             m for m in messages
             if not (
@@ -631,9 +887,8 @@ def ai_agent_v2(
             )
         ]
         messages.append(_usage_message(running_usage))
-        messages.append(
-            AIMessage.assistant(response.text, tool_calls=response.tool_calls)
-        )
+        messages.append(AIMessage.assistant(response.text, tool_calls=response.tool_calls))
+
         if step >= steps_limit:
             return _final_output(
                 response,
@@ -646,18 +901,39 @@ def ai_agent_v2(
                 strategy=strategy,
                 persona=persona,
             )
-        legacy_allow = bool(runtime.get("allow_side_effects"))
-        auto_approve_side_effects = (
-            str(side_effect_approval or "").strip() == "auto_approve"
-        ) or legacy_allow or resume_allows_side_effects
-        return AgentActionRequest(
-            tool_calls=response.tool_calls,
-            messages_so_far=messages,
-            step=step,
-            max_steps=steps_limit,
-            allow_side_effects=auto_approve_side_effects,
+
+        # Partition calls: internal (dispatched here) vs external (dispatched by engine).
+        internal_calls, external_calls = _partition_tool_calls(
+            response.tool_calls, set(internal_map)
         )
 
+        # Execute all internal calls and append results to messages.
+        for call in internal_calls:
+            result = _run_internal_tool(
+                internal_map[call.name],
+                dict(call.arguments),
+                allow_side_effects=auto_approve_side_effects,
+            )
+            messages.append(
+                AIMessage.tool_result(tool_call_id=call.id, name=call.name, content=result)
+            )
+
+        if external_calls:
+            # Hand external calls to the engine; internal results are already in messages.
+            return AgentActionRequest(
+                tool_calls=external_calls,
+                messages_so_far=messages,
+                step=step,
+                max_steps=steps_limit,
+                allow_side_effects=auto_approve_side_effects,
+            )
+
+        # All calls were internal — loop again inside the node.
+        step += 1
+
+    # ---------------------------------------------------------------------------
+    # Final answer assembly
+    # ---------------------------------------------------------------------------
     pre_parsed: Any = _UNSET
     if isinstance(parser, OutputParserAdapter):
         try:

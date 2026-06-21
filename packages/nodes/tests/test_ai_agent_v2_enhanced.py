@@ -232,3 +232,103 @@ def test_persona_in_output() -> None:
     model = ScriptedChatModel([_resp(text="done")])
     out = ai_agent_v2(model=model, prompt="hi", persona="data_analyst")
     assert out["persona"] == "data_analyst"
+
+
+# ---------------------------------------------------------------------------
+# Task 12: built-in tool toggles
+# ---------------------------------------------------------------------------
+
+
+def test_enable_calculator_adds_tool() -> None:
+    model = ScriptedChatModel([ChatResponse(text="hi")])
+    ai_agent_v2(model=model, prompt="hi", enable_calculator=True)
+    assert any(t.name == "calculate" for t in model.requests[0].tools)
+
+
+def test_enable_code_execution_adds_tool() -> None:
+    model = ScriptedChatModel([ChatResponse(text="hi")])
+    ai_agent_v2(model=model, prompt="hi", enable_code_execution=True)
+    assert any(t.name == "run_code" for t in model.requests[0].tools)
+
+
+def test_enable_web_search_missing_creds_raises() -> None:
+    model = ScriptedChatModel([ChatResponse(text="hi")])
+    with pytest.raises(ValueError):
+        ai_agent_v2(model=model, prompt="hi", enable_web_search=True,
+                    web_search_provider="tavily", web_search_credentials=None)
+
+
+def test_builtin_overridden_by_external() -> None:
+    model = ScriptedChatModel([ChatResponse(text="hi")])
+    ai_agent_v2(model=model, prompt="hi", enable_calculator=True, tool=DummyTool("calculate"))
+    names = [t.name for t in model.requests[0].tools]
+    assert names.count("calculate") == 1
+
+
+def test_disabled_builtins_absent() -> None:
+    model = ScriptedChatModel([ChatResponse(text="hi")])
+    ai_agent_v2(model=model, prompt="hi")
+    names = [t.name for t in model.requests[0].tools]
+    assert "calculate" not in names
+    assert "run_code" not in names
+    assert "web_search" not in names
+
+
+# ---------------------------------------------------------------------------
+# Task 12a: hybrid tool dispatch (internal vs engine-mediated)
+# ---------------------------------------------------------------------------
+
+
+def test_internal_calculator_dispatched_in_node() -> None:
+    # Model calls calculate, then answers. No external tool port, so the engine
+    # never runs — the node must dispatch the calculator itself and return a dict.
+    model = ScriptedChatModel([
+        ChatResponse(text="", tool_calls=[ToolCall(id="c1", name="calculate", arguments={"expression": "6*7"})]),
+        ChatResponse(text="The answer is 42."),
+    ])
+    out = ai_agent_v2(model=model, prompt="what is 6*7", enable_calculator=True,
+                      side_effect_approval="auto_approve")
+    assert not hasattr(out, "tool_calls")  # not an AgentActionRequest
+    assert out["answer"] == "The answer is 42."
+    steps = out["intermediate_steps"]
+    assert any(s["tool"] == "calculate" and '"result": 42' in (s["result"] or "") for s in steps)
+
+
+def test_external_tool_still_engine_mediated() -> None:
+    # An external tool-port call must still return an AgentActionRequest.
+    model = ScriptedChatModel([
+        ChatResponse(text="", tool_calls=[ToolCall(id="c1", name="lookup", arguments={"query": "x"})]),
+    ])
+    out = ai_agent_v2(model=model, tool=DummyTool("lookup"), prompt="go",
+                      side_effect_approval="auto_approve")
+    assert hasattr(out, "tool_calls")  # AgentActionRequest
+    assert out.tool_calls[0].name == "lookup"
+
+
+def test_mixed_internal_external_returns_external_only() -> None:
+    model = ScriptedChatModel([
+        ChatResponse(text="", tool_calls=[
+            ToolCall(id="c1", name="calculate", arguments={"expression": "1+1"}),
+            ToolCall(id="c2", name="lookup", arguments={"query": "x"}),
+        ]),
+    ])
+    out = ai_agent_v2(model=model, tool=DummyTool("lookup"), prompt="go",
+                      enable_calculator=True, side_effect_approval="auto_approve")
+    assert hasattr(out, "tool_calls")
+    # Only the external call is handed to the engine; the calculator result is
+    # already in messages_so_far as a tool result.
+    assert [c.name for c in out.tool_calls] == ["lookup"]
+    assert any(m.role.value == "tool" and m.name == "calculate" for m in out.messages_so_far)
+
+
+def test_internal_side_effect_requires_approval() -> None:
+    # Code execution is side-effecting; without approval the node returns an
+    # approval-required tool result rather than running code.
+    model = ScriptedChatModel([
+        ChatResponse(text="", tool_calls=[ToolCall(id="c1", name="run_code", arguments={"code": "print(1)"})]),
+        ChatResponse(text="ok"),
+    ])
+    out = ai_agent_v2(model=model, prompt="run", enable_code_execution=True,
+                      side_effect_approval="require_approval")
+    steps = out["intermediate_steps"]
+    assert any("approval" in (s["result"] or "").lower() for s in steps)
