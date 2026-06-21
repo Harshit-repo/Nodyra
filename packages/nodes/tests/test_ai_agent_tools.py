@@ -251,3 +251,67 @@ def test_browser_invoke_sync_raises() -> None:
 def test_browser_missing_url() -> None:
     out = json.loads(asyncio.run(_browser().invoke_async({"action": "navigate"})))
     assert "error" in out
+
+
+# ---------------------------------------------------------------------------
+# RAG Tool tests
+# ---------------------------------------------------------------------------
+
+from noodle.ai_runtime import RetrievedDocument, RetrieverAdapter  # noqa: E402
+from noodle_nodes.ai_v2.agent_tools import RetrieverToolAdapter  # noqa: E402
+
+
+class _FakeRetriever(RetrieverAdapter):
+    def __init__(self, docs, *, raises=False):
+        self._docs = docs
+        self._raises = raises
+        self.calls = []
+
+    def retrieve(self, query, *, top_k=5):
+        self.calls.append((query, top_k))
+        if self._raises:
+            raise RuntimeError("backend down")
+        return self._docs[:top_k]
+
+
+def _rag(retriever, **kw):
+    defaults = dict(retriever=retriever, name="search_knowledge_base", description="",
+                    top_k=5, max_doc_chars=2000, include_metadata=True)
+    defaults.update(kw)
+    return RetrieverToolAdapter(**defaults)
+
+
+def test_rag_tool_formats_docs() -> None:
+    docs = [RetrievedDocument(text="alpha", score=0.9, metadata={"source": "a.pdf"})]
+    out = json.loads(_rag(_FakeRetriever(docs)).invoke({"query": "q"}))
+    assert out["count"] == 1
+    assert out["documents"][0]["index"] == 1
+    assert out["documents"][0]["source"] == "a.pdf"
+
+
+def test_rag_tool_empty_results() -> None:
+    out = json.loads(_rag(_FakeRetriever([])).invoke({"query": "q"}))
+    assert out == {"documents": [], "count": 0, "query": "q"}
+
+
+def test_rag_tool_truncates_long_doc() -> None:
+    docs = [RetrievedDocument(text="z" * 5000, score=0.1)]
+    out = json.loads(_rag(_FakeRetriever(docs), max_doc_chars=100).invoke({"query": "q"}))
+    assert len(out["documents"][0]["text"]) <= 120  # 100 + " [truncated]"
+
+
+def test_rag_tool_retriever_failure_graceful() -> None:
+    out = json.loads(_rag(_FakeRetriever([], raises=True)).invoke({"query": "q"}))
+    assert "error" in out
+
+
+def test_rag_tool_top_k_override() -> None:
+    retr = _FakeRetriever([RetrievedDocument(text=str(i)) for i in range(20)])
+    _rag(retr).invoke({"query": "q", "top_k": 7})
+    assert retr.calls[-1][1] == 7
+
+
+def test_rag_node_registered() -> None:
+    manifest = registry.get("ai_rag_tool").manifest
+    assert any(i.name == "retriever" and i.data_kind == "ai_retriever" for i in manifest.inputs)
+    assert any(o.name == "tool" and o.data_kind == "ai_tool" for o in manifest.outputs)

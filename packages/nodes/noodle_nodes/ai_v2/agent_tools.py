@@ -23,7 +23,7 @@ import httpx
 
 from noodle_nodes.http_security import assert_public_http_url, safe_request
 
-from noodle.ai_runtime import ToolAdapter, ToolParameterSchema, ToolSchema
+from noodle.ai_runtime import RetrievedDocument, RetrieverAdapter, ToolAdapter, ToolParameterSchema, ToolSchema
 from noodle.sdk import node
 
 AI_CATEGORY = "AI"
@@ -643,4 +643,108 @@ def ai_browser_tool(
         name=name, description=description, allowed_actions=allowed_actions,
         wait_strategy=wait_strategy, timeout_seconds=timeout_seconds,
         max_content_chars=max_content_chars,
+    )
+
+
+# ---------------------------------------------------------------------------
+# RAG Tool
+# ---------------------------------------------------------------------------
+
+_MAX_RETRIEVER_TOP_K = 100
+
+
+class RetrieverToolAdapter(ToolAdapter):
+    """Wraps a RetrieverAdapter as an agent-callable knowledge-base search tool."""
+
+    def __init__(self, *, retriever: RetrieverAdapter, name: str, description: str,
+                 top_k: int, max_doc_chars: int, include_metadata: bool) -> None:
+        if not isinstance(retriever, RetrieverAdapter):
+            raise ValueError("ai_rag_tool: connect an AI Retriever to the retriever port")
+        self._retriever = retriever
+        self._name = name or "search_knowledge_base"
+        self._description = description or "Search the knowledge base for relevant information."
+        self._top_k = max(1, min(_MAX_RETRIEVER_TOP_K, int(top_k or 5)))
+        self._max_doc_chars = max(100, int(max_doc_chars or 2000))
+        self._include_metadata = bool(include_metadata)
+
+    @property
+    def schema(self) -> ToolSchema:
+        return ToolSchema(
+            name=self._name,
+            description=self._description,
+            parameters=ToolParameterSchema(
+                properties={
+                    "query": {"type": "string", "description": "What to search for."},
+                    "top_k": {"type": "integer", "description": "Optional number of documents."},
+                },
+                required=["query"],
+            ),
+        )
+
+    @property
+    def side_effecting(self) -> bool:
+        return False
+
+    def invoke(self, arguments: dict[str, Any]) -> str:
+        query = str((arguments or {}).get("query") or "").strip()
+        if not query:
+            return json.dumps({"documents": [], "count": 0, "query": ""})
+        top_k = self._top_k
+        req = arguments.get("top_k")
+        if isinstance(req, (int, float)) and 0 < int(req) <= _MAX_RETRIEVER_TOP_K:
+            top_k = int(req)
+        try:
+            docs = self._retriever.retrieve(query, top_k=top_k)
+        except Exception as exc:  # noqa: BLE001 - never crash the agent on a KB failure
+            return json.dumps({"error": f"Knowledge base query failed: {exc}", "query": query})
+        return json.dumps({"documents": self._format(docs), "count": len(docs), "query": query})
+
+    def _format(self, docs: list[RetrievedDocument]) -> list[dict[str, Any]]:
+        formatted: list[dict[str, Any]] = []
+        for idx, doc in enumerate(docs):
+            text = doc.text or ""
+            if len(text) > self._max_doc_chars:
+                text = text[: self._max_doc_chars] + " [truncated]"
+            entry: dict[str, Any] = {"index": idx + 1, "text": text}
+            if self._include_metadata:
+                entry["score"] = doc.score
+                source = (doc.metadata or {}).get("source")
+                if source:
+                    entry["source"] = source
+            formatted.append(entry)
+        return formatted
+
+
+@node(
+    name="AI RAG Tool",
+    id="ai_rag_tool",
+    category=AI_CATEGORY,
+    role="tool",
+    icon="ai",
+    inputs=["retriever"],
+    input_kinds={"retriever": "ai_retriever"},
+    outputs=["tool"],
+    output_kinds={"tool": "ai_tool"},
+    param_groups={"Options": ["max_doc_chars", "include_metadata"]},
+    params={
+        "name": {"description": "Tool name exposed to the model (snake_case)."},
+        "description": {"widget": "textarea",
+                        "description": "Describe the knowledge base so the model knows when to search it."},
+        "top_k": {"description": "Default number of documents to retrieve."},
+        "max_doc_chars": {"description": "Truncate each document at this length.", "group": "Options"},
+        "include_metadata": {"widget": "toggle", "description": "Include score and source.", "group": "Options"},
+    },
+)
+def ai_rag_tool(
+    retriever: Any = None,
+    name: str = "search_knowledge_base",
+    description: str = "Search the knowledge base for relevant information.",
+    top_k: int = 5,
+    max_doc_chars: int = 2000,
+    include_metadata: bool = True,
+) -> ToolAdapter:
+    """Supply a knowledge-base search tool wrapping a connected AI Retriever."""
+    return RetrieverToolAdapter(
+        retriever=retriever, name=name, description=description,
+        top_k=top_k, max_doc_chars=max_doc_chars, include_metadata=include_metadata,
     )
