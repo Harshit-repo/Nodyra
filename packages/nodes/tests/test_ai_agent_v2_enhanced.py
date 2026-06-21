@@ -409,3 +409,33 @@ def test_tool_selection_fallback_when_all_zero() -> None:
     ai_agent_v2(model=model, tool=tools, prompt="zzzzz qqqqq",
                 tool_selection="top_k", tool_selection_top_k=1)
     assert len(model.requests[0].tools) == 3  # no overlap → send all
+
+
+# ---------------------------------------------------------------------------
+# Task 15: plan-and-execute strategy
+# ---------------------------------------------------------------------------
+
+
+def test_plan_and_execute_injects_plan() -> None:
+    plan_json = json.dumps({"plan": ["step 1: search", "step 2: summarize"]})
+    model = ScriptedChatModel([ChatResponse(text=plan_json), ChatResponse(text="final answer")])
+    out = ai_agent_v2(model=model, prompt="research X", strategy="plan_and_execute")
+    # Second request (execution) should contain the plan text.
+    exec_request = model.requests[1]
+    joined = " ".join(str(m.content or "") for m in exec_request.messages)
+    assert "step 1: search" in joined
+    assert out["answer"] == "final answer"
+
+
+def test_plan_and_execute_bad_json_falls_back() -> None:
+    model = ScriptedChatModel([ChatResponse(text="not json at all"), ChatResponse(text="final")])
+    out = ai_agent_v2(model=model, prompt="do X", strategy="plan_and_execute")
+    assert out["answer"] == "final"  # ran as react, no crash
+
+
+def test_plan_message_not_sent_as_user() -> None:
+    plan_json = json.dumps({"plan": ["a", "b"]})
+    model = ScriptedChatModel([ChatResponse(text=plan_json), ChatResponse(text="final")])
+    ai_agent_v2(model=model, prompt="x", strategy="plan_and_execute")
+    for m in model.requests[1].messages:
+        assert not str(m.content or "").startswith("__noodle_plan__")

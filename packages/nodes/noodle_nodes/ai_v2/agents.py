@@ -41,6 +41,9 @@ PLAN_PREFIX = "__noodle_plan__"
 USAGE_PREFIX = "__noodle_usage__"
 COMPRESSED_PREFIX = "__noodle_compressed__"
 _CONTROL_PREFIXES = (TOOL_SYSTEM_PREFIX, PLAN_PREFIX, USAGE_PREFIX, COMPRESSED_PREFIX)
+# Prefixes stripped before sending to the model (internal bookkeeping only).
+# TOOL_SYSTEM_PREFIX and COMPRESSED_PREFIX stay in the outbound request.
+_OUTBOUND_STRIP = (PLAN_PREFIX, USAGE_PREFIX)
 _UNSET = object()  # sentinel for "not pre-parsed"
 
 
@@ -111,6 +114,68 @@ def _strip_control_messages(messages: list[AIMessage]) -> list[AIMessage]:
             and str(m.content or "").startswith(_CONTROL_PREFIXES)
         )
     ]
+
+
+def _strip_for_request(messages: list[AIMessage]) -> list[AIMessage]:
+    """Strip internal bookkeeping messages before sending to the model.
+
+    Removes PLAN_PREFIX and USAGE_PREFIX markers (internal state), but keeps
+    TOOL_SYSTEM_PREFIX (the model needs tool descriptions) and COMPRESSED_PREFIX
+    (summarised history the model should see).
+    """
+    return [
+        m for m in messages
+        if not (
+            m.role == MessageRole.system
+            and str(m.content or "").startswith(_OUTBOUND_STRIP)
+        )
+    ]
+
+
+def _generate_plan(model: ChatModelAdapter, task: str) -> list[str]:
+    """Call the model once to produce a step-by-step plan for *task*.
+
+    Returns a list of plan steps on success, or an empty list on any failure
+    (the caller falls back to the react strategy in that case).
+    """
+    try:
+        response = model.complete(ChatRequest(
+            messages=[
+                AIMessage.system("You are a planning assistant. Output ONLY a JSON object."),
+                AIMessage.user(
+                    f"Task: {task}\n\nRespond with ONLY this JSON:\n"
+                    '{"plan": ["step 1: ...", "step 2: ..."]}\nNo prose.'
+                ),
+            ],
+            model=_model_name(model),
+            temperature=0.0,
+            response_format="json_object",
+        ))
+        data = json.loads(response.text)
+        plan = data.get("plan") if isinstance(data, dict) else None
+        return [str(s) for s in plan] if isinstance(plan, list) and plan else []
+    except Exception:  # noqa: BLE001 - planning failure → fall back to react
+        return []
+
+
+def _inject_plan(messages: list[AIMessage], plan: list[str]) -> list[AIMessage]:
+    """Inject the plan into the message list.
+
+    Prepends a ``__noodle_plan__`` system marker (stripped before outbound
+    requests by ``_strip_for_request``) and appends the numbered plan to the
+    last user message so the model sees it as execution guidance.
+    """
+    numbered = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(plan))
+    plan_marker = AIMessage.system(f"{PLAN_PREFIX}\n{json.dumps(plan)}")
+    out = [plan_marker, *messages]
+    for i in range(len(out) - 1, -1, -1):
+        if out[i].role == MessageRole.user:
+            out[i] = AIMessage.user(
+                f"{out[i].content}\n\nYour plan:\n{numbered}\n\n"
+                "Execute it step by step using the available tools."
+            )
+            break
+    return out
 
 
 def _as_text(value: Any) -> str:
@@ -995,6 +1060,13 @@ def ai_agent_v2(
             tool_schemas,
         )
         messages.append(AIMessage.user(task))
+
+        if strategy == "plan_and_execute":
+            plan = _generate_plan(model, task)
+            if plan:
+                plan = plan[: steps_limit - 1] if steps_limit > 1 else plan
+                messages = _inject_plan(messages, plan)
+
         step = 0
 
     # ---------------------------------------------------------------------------
@@ -1030,7 +1102,7 @@ def ai_agent_v2(
             )
 
         request = ChatRequest(
-            messages=messages,
+            messages=_strip_for_request(messages),
             model=_model_name(_active_model(model, fast_model, step)),
             temperature=float(temperature),
             max_tokens=max_tokens,
