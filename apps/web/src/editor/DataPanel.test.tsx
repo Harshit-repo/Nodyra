@@ -147,4 +147,16 @@ describe("DataPanel coerce preview (output panel)", () => {
     // The coerced value (99.5) should now appear in the view
     expect(screen.getByText("99.5")).toBeTruthy();
   });
+
+  it("resets coerce to empty string when data changes", async () => {
+    const { rerender } = render(<DataPanel title="Output" data="42" />);
+    const sel = screen.getByRole("combobox", { name: /coerce/i });
+    fireEvent.change(sel, { target: { value: "number" } });
+    // Verify coerce is set to "number"
+    expect((sel as HTMLSelectElement).value).toBe("number");
+    // Change data
+    rerender(<DataPanel title="Output" data="99" />);
+    // Coerce should reset to ""
+    expect((sel as HTMLSelectElement).value).toBe("");
+  });
 });

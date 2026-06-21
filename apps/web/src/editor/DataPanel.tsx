@@ -99,10 +99,9 @@ function formatCell(value: unknown): string {
 // and balloon the DOM — clamp the rendered text so the panel stays responsive.
 const MAX_JSON_CHARS = 100_000;
 
-type CoerceTarget = "none" | "string" | "number" | "boolean" | "json";
+export type CoerceTarget = "string" | "number" | "boolean" | "json";
 
-function coercePreview(value: unknown, to: CoerceTarget): unknown {
-  if (to === "none") return value;
+export function coercePreview(value: unknown, target: CoerceTarget): unknown {
   // Flatten single-output wrapper first (mirrors unwrapSingleOutput)
   const v = value !== null && typeof value === "object" && !Array.isArray(value)
     ? (() => {
@@ -111,15 +110,15 @@ function coercePreview(value: unknown, to: CoerceTarget): unknown {
       })()
     : value;
   const s = v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
-  if (to === "string") return s;
-  if (to === "number") { const n = Number(s); return isNaN(n) ? `(cannot convert "${s}" to number)` : n; }
-  if (to === "boolean") {
+  if (target === "string") return s;
+  if (target === "number") { const n = Number(s); return n; }
+  if (target === "boolean") {
     if (s === "" || s === "0" || s.toLowerCase() === "false" || s.toLowerCase() === "no") return false;
     return true;
   }
-  if (to === "json") {
+  if (target === "json") {
     try { return JSON.parse(s); }
-    catch { return `(invalid JSON: ${s.slice(0, 60)})`; }
+    catch { return "[not serialisable]"; }
   }
   return v;
 }
@@ -1329,11 +1328,11 @@ export function DataPanel({
   startedAt?: number | null;
   finishedAt?: number | null;
 }) {
-  const [coerce, setCoerce] = useState<CoerceTarget>("none");
-  useEffect(() => { setCoerce("none"); }, [data]);
+  const [coerce, setCoerce] = useState<CoerceTarget | "">("");
+  useEffect(() => { setCoerce(""); }, [data]);
 
   const rawDisplay = unwrapSingleOutput(data);
-  const display = coerce !== "none" ? coercePreview(data, coerce) : rawDisplay;
+  const display = coerce !== "" ? coercePreview(data, coerce) : rawDisplay;
   const chart = asChartRef(display);
   const report = asReportRef(display);
   const canVisual = Boolean(chart || report);
@@ -1456,10 +1455,10 @@ export function DataPanel({
             className="data-coerce-select"
             aria-label="Coerce output type"
             value={coerce}
-            onChange={(e) => setCoerce(e.target.value as CoerceTarget)}
+            onChange={(e) => setCoerce(e.target.value as CoerceTarget | "")}
             title="Preview data coerced to a different type"
           >
-            <option value="none">as-is</option>
+            <option value="">as-is</option>
             <option value="string">→ string</option>
             <option value="number">→ number</option>
             <option value="boolean">→ boolean</option>
