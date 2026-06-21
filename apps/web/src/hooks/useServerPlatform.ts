@@ -14,7 +14,9 @@ export function useServerPlatform(): string | null {
         cached = d.platform ?? null;
         setPlatform(cached);
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        console.error("Failed to detect server platform:", err);
+      });
   }, []);
 
   return platform;
