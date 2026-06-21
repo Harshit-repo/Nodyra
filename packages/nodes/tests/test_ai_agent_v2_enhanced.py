@@ -439,3 +439,30 @@ def test_plan_message_not_sent_as_user() -> None:
     ai_agent_v2(model=model, prompt="x", strategy="plan_and_execute")
     for m in model.requests[1].messages:
         assert not str(m.content or "").startswith("__noodle_plan__")
+
+
+# ---------------------------------------------------------------------------
+# Task 16: reflexion strategy (self-critique rounds)
+# ---------------------------------------------------------------------------
+
+
+def test_reflexion_lgtm_keeps_original() -> None:
+    model = ScriptedChatModel([ChatResponse(text="my answer"), ChatResponse(text="LGTM")])
+    out = ai_agent_v2(model=model, prompt="q", strategy="reflexion", reflection_rounds=1)
+    assert out["answer"] == "my answer"
+
+
+def test_reflexion_improves_answer() -> None:
+    model = ScriptedChatModel([ChatResponse(text="rough draft"), ChatResponse(text="polished answer")])
+    out = ai_agent_v2(model=model, prompt="q", strategy="reflexion", reflection_rounds=1)
+    assert out["answer"] == "polished answer"
+
+
+def test_reflexion_rounds_capped_at_two() -> None:
+    model = ScriptedChatModel([
+        ChatResponse(text="v0"), ChatResponse(text="v1"), ChatResponse(text="v2"),
+        ChatResponse(text="v3 should never be requested"),
+    ])
+    ai_agent_v2(model=model, prompt="q", strategy="reflexion", reflection_rounds=2)
+    # 1 initial + 2 reflection = 3 requests max
+    assert len(model.requests) == 3

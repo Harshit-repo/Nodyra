@@ -680,6 +680,40 @@ def _compress_history(
     return rebuilt, True
 
 
+_REFLECTION_PROMPT = (
+    "Review your answer above. Ask yourself:\n"
+    "1. Did I fully address every part of the task?\n"
+    "2. Are any claims unverified or potentially wrong?\n"
+    "3. Did I miss any tools I should have called?\n\n"
+    "If the answer is complete and correct, reply with exactly: LGTM\n"
+    "Otherwise, provide a corrected and improved answer."
+)
+
+
+def _reflect(model: ChatModelAdapter, messages: list[AIMessage], answer: str, rounds: int) -> str:
+    """Run up to `rounds` self-critique cycles (capped at 2).
+
+    Returns the original answer if the critique replies LGTM, else the improved
+    answer. Falls back to the current answer on any model error.
+    """
+    current = answer
+    convo = list(messages)
+    for _ in range(max(1, min(2, int(rounds or 1)))):
+        convo = [*convo, AIMessage.assistant(current), AIMessage.user(_REFLECTION_PROMPT)]
+        try:
+            critique = model.complete(ChatRequest(
+                messages=_strip_for_request(convo),
+                model=_model_name(model),
+                temperature=0.0,
+            )).text
+        except Exception:  # noqa: BLE001 - reflection is best-effort
+            return current
+        if critique.strip().upper().startswith("LGTM"):
+            return current
+        current = critique
+    return current
+
+
 def _final_output(
     response: ChatResponse,
     *,
@@ -1202,6 +1236,11 @@ def ai_agent_v2(
                     }
                 )
             )
+
+    if strategy == "reflexion" and not response.tool_calls:
+        reflected = _reflect(model, messages, response.text, reflection_rounds)
+        if reflected != response.text:
+            response = response.model_copy(update={"text": reflected})
 
     if isinstance(guardrail, GuardrailAdapter):
         response = guardrail.check(response)
