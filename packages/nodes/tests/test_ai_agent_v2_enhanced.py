@@ -332,3 +332,47 @@ def test_internal_side_effect_requires_approval() -> None:
                       side_effect_approval="require_approval")
     steps = out["intermediate_steps"]
     assert any("approval" in (s["result"] or "").lower() for s in steps)
+
+
+# ---------------------------------------------------------------------------
+# Task 13: context compression
+# ---------------------------------------------------------------------------
+
+
+def test_compression_disabled_by_default() -> None:
+    model = ScriptedChatModel([ChatResponse(text="done")])
+    out = ai_agent_v2(model=model, prompt="hi")
+    assert out["context_compressed"] is False
+
+
+def test_compression_triggers_over_threshold() -> None:
+    # Long resumed history + tiny threshold → compression model call happens.
+    long_history = [AIMessage.user("x" * 4000) for _ in range(8)]
+    resume = AgentResumeInput(
+        tool_results=[ToolResult(tool_call_id="c1", name="lookup", content="r")],
+        messages_so_far=long_history, step=1, max_steps=4,
+    )
+    # 2 responses: [0] compression summary, [1] final answer
+    model = ScriptedChatModel([ChatResponse(text="SUMMARY"), ChatResponse(text="final")])
+    out = ai_agent_v2(model=model, prompt="hi", agent_resume=resume, max_history_tokens=100)
+    assert out["context_compressed"] is True
+
+
+def test_compression_failure_graceful() -> None:
+    class _FailFirst(ScriptedChatModel):
+        def __init__(self):
+            super().__init__([ChatResponse(text="final")])
+            self._first = True
+        def complete(self, request):
+            if self._first:
+                self._first = False
+                raise RuntimeError("compress failed")
+            return super().complete(request)
+    long_history = [AIMessage.user("x" * 4000) for _ in range(8)]
+    resume = AgentResumeInput(
+        tool_results=[ToolResult(tool_call_id="c1", name="lookup", content="r")],
+        messages_so_far=long_history, step=1, max_steps=4,
+    )
+    out = ai_agent_v2(model=_FailFirst(), prompt="hi", agent_resume=resume, max_history_tokens=100)
+    assert out["answer"] == "final"
+    assert out["context_compressed"] is False

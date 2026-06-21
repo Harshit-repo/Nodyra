@@ -511,6 +511,59 @@ def _intermediate_steps(messages: list[AIMessage]) -> list[dict[str, Any]]:
     return steps
 
 
+def _estimate_tokens(messages: list[AIMessage]) -> int:
+    """Approximate token count for a list of messages (4 chars ≈ 1 token)."""
+    return sum(len(str(m.content or "")) for m in messages) // 4
+
+
+def _compress_history(
+    messages: list[AIMessage], *, model: ChatModelAdapter, max_history_tokens: int
+) -> tuple[list[AIMessage], bool]:
+    """Summarise compressible middle messages when estimated tokens exceed threshold.
+
+    Always protects: system messages, control messages, and the last 6 messages.
+    Returns (possibly-compressed messages, was_compressed).
+    """
+    if max_history_tokens <= 0:
+        return messages, False
+    if _estimate_tokens(messages) <= int(max_history_tokens * 0.8):
+        return messages, False
+
+    def _protected(idx: int, m: AIMessage) -> bool:
+        if m.role == MessageRole.system:
+            return True
+        if str(m.content or "").startswith(_CONTROL_PREFIXES):
+            return True
+        return idx >= len(messages) - 6  # keep last 6
+
+    compressible = [m for i, m in enumerate(messages) if not _protected(i, m)]
+    if not compressible:
+        return messages, False
+    serialized = "\n".join(f"{m.role.value}: {m.content}" for m in compressible)
+    try:
+        summary = model.complete(ChatRequest(
+            messages=[
+                AIMessage.system(
+                    "Summarize the following conversation history concisely. Preserve key "
+                    "facts discovered, tool results, decisions, and errors. Max 400 words."),
+                AIMessage.user(serialized),
+            ],
+            model=_model_name(model),
+            temperature=0.0,
+        )).text
+    except Exception:  # noqa: BLE001 - compression is best-effort
+        return messages, False
+    rebuilt: list[AIMessage] = []
+    inserted = False
+    for i, m in enumerate(messages):
+        if _protected(i, m):
+            rebuilt.append(m)
+        elif not inserted:
+            rebuilt.append(AIMessage.system(f"{COMPRESSED_PREFIX}\nConversation summary:\n{summary}"))
+            inserted = True
+    return rebuilt, True
+
+
 def _final_output(
     response: ChatResponse,
     *,
@@ -523,6 +576,7 @@ def _final_output(
     total_usage: ModelUsage | None = None,
     strategy: str = "react",
     persona: str = "none",
+    context_compressed: bool = False,
 ) -> dict[str, Any]:
     checked = response
     parsed: Any = None
@@ -554,6 +608,7 @@ def _final_output(
     output["steps_taken"] = step + 1
     output["strategy"] = strategy
     output["persona"] = persona
+    output["context_compressed"] = context_compressed
     return output
 
 
@@ -606,6 +661,9 @@ def _final_output(
             "web_search_max_results",
             "enable_browser",
             "browser_timeout_seconds",
+        ],
+        "Context": [
+            "max_history_tokens",
         ],
     },
     params={
@@ -735,6 +793,14 @@ def _final_output(
             "display_when": {"enable_browser": True},
             "group": "Built-in Tools",
         },
+        "max_history_tokens": {
+            "description": (
+                "Approximate token limit for conversation history. When the history "
+                "exceeds this limit, older messages are summarised automatically. "
+                "0 disables compression (default)."
+            ),
+            "group": "Context",
+        },
     },
 )
 def ai_agent_v2(
@@ -775,6 +841,8 @@ def ai_agent_v2(
     web_search_max_results: int = 5,
     enable_browser: bool = False,
     browser_timeout_seconds: int = 30,
+    # Context compression (Task 13)
+    max_history_tokens: int = 0,
     **runtime: Any,
 ) -> dict[str, Any] | AgentActionRequest:
     """Run an AI agent loop whose tool calls are dispatched by the engine."""
@@ -859,7 +927,15 @@ def ai_agent_v2(
     # Main agent loop: iterate internally for built-in/retriever/subagent calls;
     # return to the engine only for external (tool-port) calls.
     # ---------------------------------------------------------------------------
+    context_compressed = False
     while True:
+        # Context compression (Task 13): summarise middle messages when history is large.
+        compression_model = fast_model if isinstance(fast_model, ChatModelAdapter) else model
+        messages, was_compressed = _compress_history(
+            messages, model=compression_model, max_history_tokens=int(max_history_tokens or 0)
+        )
+        context_compressed = context_compressed or was_compressed
+
         request = ChatRequest(
             messages=messages,
             model=_model_name(_active_model(model, fast_model, step)),
@@ -900,6 +976,7 @@ def ai_agent_v2(
                 total_usage=running_usage,
                 strategy=strategy,
                 persona=persona,
+                context_compressed=context_compressed,
             )
 
         # Partition calls: internal (dispatched here) vs external (dispatched by engine).
@@ -988,4 +1065,5 @@ def ai_agent_v2(
         total_usage=running_usage,
         strategy=strategy,
         persona=persona,
+        context_compressed=context_compressed,
     )
