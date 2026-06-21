@@ -71,12 +71,6 @@ from datetime import datetime as _datetime
 
 
 def _matches_typed(actual: Any, dtype: str, operator: str, value: str = "") -> bool:
-    """Evaluate a single typed condition against a value.
-
-    dtype must be one of: string, number, boolean, array, object, date, any.
-    operator must be valid for the given dtype.  Returns False for unknown
-    dtype/operator combinations rather than raising.
-    """
     if dtype == "string":
         s = str(actual) if actual is not None else ""
         v = str(value)
@@ -160,29 +154,26 @@ def _matches_typed(actual: Any, dtype: str, operator: str, value: str = "") -> b
 
 
 def _eval_conditions(input_data: Any, conditions_param: Any) -> bool:
-    """Evaluate a conditions_builder param value against input_data.
-
-    conditions_param must be ``{"logic": "AND"|"OR", "conditions": [...]}``.
-    Returns False if conditions_param is not a dict.  Returns True for an
-    empty conditions list (vacuous truth — no constraint means pass all).
-    """
     if not isinstance(conditions_param, dict):
         return False
     logic = str(conditions_param.get("logic", "AND")).upper()
     conditions = conditions_param.get("conditions") or []
-    results: list[bool] = []
-    for cond in conditions:
+
+    def _check(cond):
         if not isinstance(cond, dict):
-            continue
+            return True  # Skip invalid conditions (vacuous truth)
         field = str(cond.get("field", ""))
         dtype = str(cond.get("type", "any"))
         operator = str(cond.get("operator", "exists"))
         value = str(cond.get("value", ""))
         actual = _field(input_data, field) if field else input_data
-        results.append(_matches_typed(actual, dtype, operator, value))
-    if not results:
+        return _matches_typed(actual, dtype, operator, value)
+
+    if not conditions:
         return True  # empty conditions list — pass everything
-    return all(results) if logic == "AND" else any(results)
+    if logic == "AND":
+        return all(_check(c) for c in conditions)
+    return any(_check(c) for c in conditions)
 
 
 # ==========================================================================
