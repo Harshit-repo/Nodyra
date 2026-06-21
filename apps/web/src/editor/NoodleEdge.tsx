@@ -3,6 +3,17 @@ import { Plus, X } from "@phosphor-icons/react";
 
 import { useEditor } from "./store";
 
+export function deriveEdgeType(value: unknown): { icon: string; label: string } {
+  if (value === undefined) return { icon: "", label: "" };
+  if (value === null) return { icon: "∅", label: "null" };
+  if (Array.isArray(value)) return { icon: "[]", label: `array · ${value.length}` };
+  if (typeof value === "object") return { icon: "{}", label: "object" };
+  if (typeof value === "string") return { icon: "T", label: "string" };
+  if (typeof value === "number") return { icon: "#", label: "number" };
+  if (typeof value === "boolean") return { icon: "⊤", label: "boolean" };
+  return { icon: "?", label: typeof value };
+}
+
 const AGENT_FLOW_TARGETS = new Set(["ai_agent", "ai_agent_v2"]);
 const AGENT_FLOW_HANDLES = new Set(["model", "memory", "tool"]);
 
@@ -20,7 +31,21 @@ export function getAgentEdgeFlowClass(
     targetHandleId?: string | null;
   },
 ): string | undefined {
-  const edge = state.edges.find((item) => item.id === edgeInfo.id);
+  // Nearly every edge is a regular data edge. Reject it before touching the
+  // graph so large workflows do not perform per-edge linear scans on every
+  // store update.
+  if (
+    edgeInfo.targetHandleId !== null &&
+    edgeInfo.targetHandleId !== undefined &&
+    !AGENT_FLOW_HANDLES.has(edgeInfo.targetHandleId)
+  ) {
+    return undefined;
+  }
+  const needsEdgeLookup =
+    !edgeInfo.source || !edgeInfo.target || edgeInfo.targetHandleId == null;
+  const edge = needsEdgeLookup
+    ? state.edges.find((item) => item.id === edgeInfo.id)
+    : undefined;
   const sourceNodeId = edgeInfo.source || edge?.source;
   const targetNodeId = edgeInfo.target || edge?.target;
   if (!sourceNodeId || !targetNodeId) return undefined;
@@ -55,6 +80,7 @@ export function getAgentEdgeFlowClass(
 export function NoodleEdge({
   id,
   source,
+  sourceHandleId,
   target,
   sourceX,
   sourceY,
@@ -78,6 +104,13 @@ export function NoodleEdge({
   });
 
   const onEdgesChange = useEditor((s) => s.onEdgesChange);
+  const edgeType = useEditor((s) => {
+    if (!source) return { icon: "", label: "" };
+    const outputs = s.runOutputs[source];
+    if (!outputs || typeof outputs !== "object") return { icon: "", label: "" };
+    const portValue = (outputs as Record<string, unknown>)[sourceHandleId ?? "main"];
+    return deriveEdgeType(portValue);
+  });
   // While an agent uses a connected sub-node, animate the wire so data appears
   // to flow from the model / memory / tool into the agent (n8n-style).
   const agentFlowClass = useEditor((s) =>
@@ -111,6 +144,12 @@ export function NoodleEdge({
           }}
         >
           {label && <span className="noodle-edge-label">{String(label)}</span>}
+          {edgeType.icon && (
+            <div className="noodle-edge-type-badge" title={edgeType.label}>
+              <span className="noodle-edge-type-icon">{edgeType.icon}</span>
+              <span className="noodle-edge-type-label">{edgeType.label}</span>
+            </div>
+          )}
           <div className="noodle-edge-actions">
             <button
               type="button"

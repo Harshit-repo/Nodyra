@@ -2820,6 +2820,39 @@ body.is-resizing-vertical {
   color: #ff9c9c;
 }
 
+/* Edge data-type badge — visible on hover alongside the action buttons */
+.noodle-edge-type-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 140ms ease;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.noodle-edge-mid:hover .noodle-edge-type-badge {
+  opacity: 1;
+}
+.noodle-edge-type-icon {
+  font-size: 9px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--ink-3);
+  background: var(--surface-2);
+  border-radius: 3px;
+  padding: 0 3px;
+  line-height: 14px;
+}
+.noodle-edge-type-label {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--ink-3);
+}
+
 /* ---- port legend ---- */
 .port-legend {
   opacity: 0.42;

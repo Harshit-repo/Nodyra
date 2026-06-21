@@ -2,7 +2,7 @@ import type { Edge } from "@xyflow/react";
 import { describe, expect, it } from "vitest";
 
 import type { NodeManifest, PortSpec } from "../types";
-import { getAgentEdgeFlowClass } from "./NoodleEdge";
+import { deriveEdgeType, getAgentEdgeFlowClass } from "./NoodleEdge";
 import type { AgentActivityStatus, NoodleNode } from "./store";
 
 function port(name: string, data_kind: PortSpec["data_kind"] = "any"): PortSpec {
@@ -76,7 +76,58 @@ function state(overrides: {
   };
 }
 
+describe("deriveEdgeType", () => {
+  it("returns string icon for a string value", () => {
+    expect(deriveEdgeType("hello")).toEqual({ icon: "T", label: "string" });
+  });
+
+  it("returns number icon for a number value", () => {
+    expect(deriveEdgeType(42)).toEqual({ icon: "#", label: "number" });
+  });
+
+  it("returns boolean icon for a boolean value", () => {
+    expect(deriveEdgeType(true)).toEqual({ icon: "⊤", label: "boolean" });
+  });
+
+  it("returns array icon with count for arrays", () => {
+    expect(deriveEdgeType([1, 2, 3])).toEqual({ icon: "[]", label: "array · 3" });
+  });
+
+  it("returns object icon for plain objects", () => {
+    expect(deriveEdgeType({ a: 1 })).toEqual({ icon: "{}", label: "object" });
+  });
+
+  it("returns null icon for null", () => {
+    expect(deriveEdgeType(null)).toEqual({ icon: "∅", label: "null" });
+  });
+
+  it("returns empty string when value is undefined (no run yet)", () => {
+    expect(deriveEdgeType(undefined)).toEqual({ icon: "", label: "" });
+  });
+});
+
 describe("agent edge flow class", () => {
+  it("rejects ordinary data edges without scanning graph state", () => {
+    const inaccessible = new Proxy([], {
+      get() {
+        throw new Error("ordinary edges must not inspect graph collections");
+      },
+    });
+
+    expect(getAgentEdgeFlowClass({
+      agentActive: {},
+      agentToolCalls: {},
+      edges: inaccessible as Edge[],
+      nodes: inaccessible as NoodleNode[],
+      runStatus: {},
+    }, {
+      id: "ordinary",
+      source: "source",
+      target: "target",
+      targetHandleId: "input",
+    })).toBeUndefined();
+  });
+
   it("animates model and memory provider edges while the agent node is running", () => {
     const edges: Edge[] = [
       { id: "model-agent", source: "model", target: "agent", targetHandle: "model" },
