@@ -376,3 +376,36 @@ def test_compression_failure_graceful() -> None:
     out = ai_agent_v2(model=_FailFirst(), prompt="hi", agent_resume=resume, max_history_tokens=100)
     assert out["answer"] == "final"
     assert out["context_compressed"] is False
+
+
+# ---------------------------------------------------------------------------
+# Task 14: semantic tool selection (top-K lexical scoring)
+# ---------------------------------------------------------------------------
+
+
+def test_tool_selection_all_sends_everything() -> None:
+    model = ScriptedChatModel([ChatResponse(text="hi")])
+    tools = [DummyTool(f"tool_{i}") for i in range(8)]
+    ai_agent_v2(model=model, tool=tools, prompt="anything", tool_selection="all")
+    assert len(model.requests[0].tools) == 8
+
+
+def test_tool_selection_top_k_limits() -> None:
+    model = ScriptedChatModel([ChatResponse(text="hi")])
+    # Names chosen so only some overlap the task wording.
+    tools = [DummyTool("weather_lookup"), DummyTool("stock_price"),
+             DummyTool("translate_text"), DummyTool("send_email"),
+             DummyTool("calendar_create")]
+    ai_agent_v2(model=model, tool=tools, prompt="what is the weather and stock price today",
+                tool_selection="top_k", tool_selection_top_k=2)
+    sent = {t.name for t in model.requests[0].tools}
+    assert len(sent) <= 4  # top_k plus zero-overlap fallback cap
+    assert "weather_lookup" in sent or "stock_price" in sent
+
+
+def test_tool_selection_fallback_when_all_zero() -> None:
+    model = ScriptedChatModel([ChatResponse(text="hi")])
+    tools = [DummyTool("alpha"), DummyTool("beta"), DummyTool("gamma")]
+    ai_agent_v2(model=model, tool=tools, prompt="zzzzz qqqqq",
+                tool_selection="top_k", tool_selection_top_k=1)
+    assert len(model.requests[0].tools) == 3  # no overlap → send all

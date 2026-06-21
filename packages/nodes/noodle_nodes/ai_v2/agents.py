@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
+import re
 from typing import Any
 
 from noodle.ai_runtime import (
@@ -187,6 +188,56 @@ def _tool_schemas(tool_value: Any) -> list[ToolSchema]:
         seen.add(name)
         schemas.append(adapter.schema)
     return schemas
+
+
+def _tokenize(text: str) -> set[str]:
+    """Split text into lowercase word tokens, treating underscores as separators."""
+    return set(re.findall(r"[a-z0-9]+", text.lower().replace("_", " ")))
+
+
+def _score_tool(schema: ToolSchema, context_words: set[str]) -> float:
+    """Score a tool schema by lexical overlap with context words."""
+    tool_words = _tokenize(f"{schema.name} {schema.description}")
+    if not tool_words:
+        return 0.0
+    return len(context_words & tool_words) / len(tool_words)
+
+
+def _select_tools(
+    schemas: list[ToolSchema],
+    *,
+    task: str,
+    recent_messages: list[AIMessage],
+    top_k: int,
+    already_called: set[str],
+) -> list[ToolSchema]:
+    """Return the top-K most relevant tools by lexical overlap with the task+recent context.
+
+    Falls back to returning all schemas when:
+    - len(schemas) <= top_k (no filtering needed)
+    - all scores are zero (no signal, don't filter blindly)
+    Always includes tools already called (to keep them available for follow-up).
+
+    Only non-system messages are used for recent context to avoid polluting the
+    context words with tool descriptions embedded in the tool-instruction message.
+    """
+    if len(schemas) <= top_k:
+        return schemas
+    # Exclude system messages to avoid the tool-instruction message polluting context.
+    user_messages = [m for m in recent_messages if m.role != MessageRole.system]
+    context = task + " " + " ".join(str(m.content or "") for m in user_messages[-3:])
+    context_words = _tokenize(context)
+    scored = [(s, _score_tool(s, context_words)) for s in schemas]
+    if all(score == 0 for _, score in scored):
+        return schemas  # no signal → don't filter
+    selected: list[ToolSchema] = []
+    seen: set[str] = set()
+    for schema, score in sorted(scored, key=lambda p: p[1], reverse=True):
+        if schema.name in already_called or (score > 0 and len(selected) < top_k * 2):
+            if schema.name not in seen and (len(selected) < top_k or schema.name in already_called):
+                selected.append(schema)
+                seen.add(schema.name)
+    return selected or schemas
 
 
 def _builtin_tool_adapters(
@@ -664,6 +715,8 @@ def _final_output(
         ],
         "Context": [
             "max_history_tokens",
+            "tool_selection",
+            "tool_selection_top_k",
         ],
     },
     params={
@@ -801,6 +854,24 @@ def _final_output(
             ),
             "group": "Context",
         },
+        "tool_selection": {
+            "choices": ["all", "top_k"],
+            "description": (
+                "How to select tools for each model call. "
+                "'all' sends every connected tool (default). "
+                "'top_k' scores tools by keyword overlap with the task and sends "
+                "only the top-K most relevant ones (set tool_selection_top_k)."
+            ),
+            "group": "Context",
+        },
+        "tool_selection_top_k": {
+            "description": (
+                "Number of top-scoring tools to include when tool_selection='top_k'. "
+                "Default 5. Ignored when tool_selection='all'."
+            ),
+            "display_when": {"tool_selection": "top_k"},
+            "group": "Context",
+        },
     },
 )
 def ai_agent_v2(
@@ -843,6 +914,9 @@ def ai_agent_v2(
     browser_timeout_seconds: int = 30,
     # Context compression (Task 13)
     max_history_tokens: int = 0,
+    # Semantic tool selection (Task 14)
+    tool_selection: str = "all",
+    tool_selection_top_k: int = 5,
     **runtime: Any,
 ) -> dict[str, Any] | AgentActionRequest:
     """Run an AI agent loop whose tool calls are dispatched by the engine."""
@@ -936,12 +1010,31 @@ def ai_agent_v2(
         )
         context_compressed = context_compressed or was_compressed
 
+        # Semantic tool selection (Task 14): optionally limit tools sent to the model.
+        active_tool_schemas = tool_schemas
+        if str(tool_selection or "all") == "top_k" and tool_schemas:
+            already_called: set[str] = {
+                c.name for m in messages for c in (m.tool_calls or [])
+            }
+            task_text = (
+                _task_text(input, prompt)
+                if not isinstance(resume, AgentResumeInput)
+                else ""
+            )
+            active_tool_schemas = _select_tools(
+                tool_schemas,
+                task=task_text,
+                recent_messages=messages,
+                top_k=max(1, int(tool_selection_top_k or 5)),
+                already_called=already_called,
+            )
+
         request = ChatRequest(
             messages=messages,
             model=_model_name(_active_model(model, fast_model, step)),
             temperature=float(temperature),
             max_tokens=max_tokens,
-            tools=tool_schemas,
+            tools=active_tool_schemas,
             response_format="json_object" if response_format == "json_object" else "text",
             timeout_seconds=int(timeout_seconds or 75),
         )
