@@ -36,3 +36,88 @@ describe("DataPanel", () => {
     expect(screen.getByText("hello")).toBeTruthy();
   });
 });
+
+describe("DataPanel schema view", () => {
+  it("shows type icon T for string fields", () => {
+    render(
+      <DataPanel
+        title="Input"
+        data={{ name: "Alice", age: 30 }}
+        dragPrefix="$json"
+      />,
+    );
+    // Switch to schema view — it's the default when dragPrefix is set and data is an object
+    expect(screen.getByText("T")).toBeTruthy();
+  });
+
+  it("shows type icon # for number fields", () => {
+    // Two keys required so unwrapSingleOutput does not collapse the object to
+    // a bare primitive (which would bypass schema view entirely).
+    render(
+      <DataPanel
+        title="Input"
+        data={{ count: 42, _type: "num" }}
+        dragPrefix="$json"
+      />,
+    );
+    expect(screen.getByText("#")).toBeTruthy();
+  });
+
+  it("shows type icon ⊤ for boolean fields", () => {
+    render(
+      <DataPanel
+        title="Input"
+        data={{ active: true, _type: "bool" }}
+        dragPrefix="$json"
+      />,
+    );
+    expect(screen.getByText("⊤")).toBeTruthy();
+  });
+
+  it("shows inline value for primitive string fields", () => {
+    render(
+      <DataPanel
+        title="Input"
+        data={{ city: "London", _type: "str" }}
+        dragPrefix="$json"
+      />,
+    );
+    expect(screen.getByText("London")).toBeTruthy();
+  });
+
+  it("shows inline value for number fields", () => {
+    render(
+      <DataPanel
+        title="Input"
+        data={{ score: 99, _type: "num" }}
+        dragPrefix="$json"
+      />,
+    );
+    expect(screen.getByText("99")).toBeTruthy();
+  });
+
+  it("truncates long string values to 40 chars with ellipsis", () => {
+    const longStr = "a".repeat(60);
+    render(
+      <DataPanel
+        title="Input"
+        data={{ note: longStr, _type: "str" }}
+        dragPrefix="$json"
+      />,
+    );
+    expect(screen.getByText("a".repeat(40) + "…")).toBeTruthy();
+  });
+
+  it("does not show inline value for object fields", () => {
+    render(
+      <DataPanel
+        title="Input"
+        data={{ meta: { x: 1 }, _type: "obj" }}
+        dragPrefix="$json"
+      />,
+    );
+    // The key "meta" appears but no inline value preview for objects
+    expect(screen.getByText("meta")).toBeTruthy();
+    expect(screen.queryByText('{"x":1}')).toBeNull();
+  });
+});

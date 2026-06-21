@@ -451,6 +451,34 @@ function JsonTree({
   );
 }
 
+function schemaRawType(value: unknown): string {
+  if (value === null || value === undefined) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value; // "string" | "number" | "boolean" | "object"
+}
+
+function schemaTypeIcon(value: unknown): string {
+  const t = schemaRawType(value);
+  if (t === "string") return "T";
+  if (t === "number") return "#";
+  if (t === "boolean") return "⊤";
+  if (t === "array") return "[]";
+  if (t === "object") return "{}";
+  return "∅"; // null / undefined
+}
+
+function schemaValuePreview(value: unknown): string | null {
+  if (value === null) return "null";
+  if (value === undefined) return null;
+  if (Array.isArray(value)) return null;
+  if (typeof value === "object") return null;
+  if (typeof value === "string") {
+    return value.length > 40 ? value.slice(0, 40) + "…" : value;
+  }
+  return String(value);
+}
+
+// Keep schemaType for legacy display_name (still used in aria-label and title attributes)
 function schemaType(value: unknown): string {
   if (value === null) return "null";
   if (value === undefined) return "undefined";
@@ -474,18 +502,22 @@ function SchemaRow({
   value: unknown;
   path: (string | number)[];
   dragPrefix?: string;
-}) {
+}): JSX.Element {
   const expandable =
     isPlainObject(value) || (Array.isArray(value) && value.length > 0);
   const [open, setOpen] = useState(path.length <= 1);
   const expr = dragPrefix ? buildExpression(dragPrefix, path) : undefined;
+  const rawType = schemaRawType(value);
+  const icon = schemaTypeIcon(value);
+  const preview = schemaValuePreview(value);
+
   return (
     <div className="schema-node">
       <div
         className="schema-row"
         draggable={Boolean(expr)}
         onDragStart={expr ? (e) => startExpressionDrag(e, expr) : undefined}
-        title={expr ? `Drag to insert ${expr}` : undefined}
+        title={expr ? `Drag to insert ${expr} (${schemaType(value)})` : schemaType(value)}
       >
         {expandable ? (
           <button
@@ -504,8 +536,22 @@ function SchemaRow({
             ⠿
           </span>
         )}
+        <span
+          className="schema-type-icon"
+          data-type={rawType}
+          aria-label={schemaType(value)}
+        >
+          {icon}
+        </span>
         <span className="schema-key">{label}</span>
-        <span className="schema-type">{schemaType(value)}</span>
+        {preview !== null && (
+          <span className="schema-value" data-type={rawType}>
+            {preview}
+          </span>
+        )}
+        {expandable && (
+          <span className="schema-type">{schemaType(value)}</span>
+        )}
       </div>
       {expandable && open && (
         <div className="schema-children">
