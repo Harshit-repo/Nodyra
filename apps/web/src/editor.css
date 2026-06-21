@@ -8531,3 +8531,128 @@ select.field-input:hover {
   transition: all 0.15s;
 }
 .run-exec-banner-exit:hover { color: var(--ink); }
+
+/* ---- Conditions builder ---- */
+.conditions-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.conditions-legacy-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--surface-2);
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--ink-3);
+  flex-wrap: wrap;
+}
+
+.conditions-logic-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.conditions-logic-btn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--line-2);
+  background: var(--surface-2);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.conditions-logic-btn:hover {
+  background: var(--surface-3);
+}
+
+.conditions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.condition-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.condition-logic-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  width: 26px;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.condition-field-input {
+  flex: 1;
+  min-width: 80px;
+}
+
+.condition-type-select {
+  width: 110px;
+  flex-shrink: 0;
+}
+
+.condition-op-select {
+  flex: 1.2;
+  min-width: 120px;
+}
+
+.condition-value-input {
+  flex: 1;
+  min-width: 80px;
+}
+
+.condition-remove-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  border-radius: 4px;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.condition-remove-btn:hover {
+  color: #f08c8c;
+  background: var(--surface-2);
+}
+
+.conditions-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--ink-3);
+  background: none;
+  border: 1px dashed var(--line-2);
+  border-radius: 5px;
+  padding: 5px 8px;
+  cursor: pointer;
+  width: 100%;
+}
+
+.conditions-add-btn:hover {
+  color: var(--ink);
+  border-color: var(--line-1);
+  background: var(--surface-2);
+}
