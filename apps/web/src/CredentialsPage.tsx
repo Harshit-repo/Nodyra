@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useQueryClient } from "@tanstack/react-query";
+
 import { api, errorMessage } from "./api";
 import { useConfirm } from "./ConfirmProvider";
 import {
@@ -19,6 +21,7 @@ import {
   visibleCredentialFields,
 } from "./llmProviders";
 import {
+  queryKeys,
   useCredentialTypes,
   useCredentials,
   useDeleteCredentialMutation,
@@ -619,6 +622,7 @@ export function CredentialsPage() {
   >({});
   const { notify } = useToast();
   const confirm = useConfirm();
+  const queryClient = useQueryClient();
   const credentialsQuery = useCredentials();
   const credentialTypesQuery = useCredentialTypes();
   const deleteCredentialMutation = useDeleteCredentialMutation();
@@ -875,7 +879,7 @@ export function CredentialsPage() {
           onClose={() => setModal(false)}
           onCreated={() => {
             setModal(false);
-            void credentialsQuery.refetch();
+            void queryClient.invalidateQueries({ queryKey: queryKeys.credentials });
           }}
         />
       )}
