@@ -860,7 +860,10 @@ class SubAgentToolAdapter(ToolAdapter):
                         if tool is None:
                             result = f"Tool '{call.name}' is not available to this sub-agent."
                         else:
-                            result = await tool.invoke_async(dict(call.arguments))
+                            try:
+                                result = await asyncio.to_thread(tool.invoke, dict(call.arguments))
+                            except (RuntimeError, NotImplementedError):
+                                result = await tool.invoke_async(dict(call.arguments))
                     except Exception as exc:  # noqa: BLE001 - surface tool error to sub-agent
                         result = f"Tool error: {exc}"
                     messages.append(AIMessage.tool_result(

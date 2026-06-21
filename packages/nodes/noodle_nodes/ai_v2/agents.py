@@ -528,7 +528,7 @@ def _with_tool_instruction(
         return messages
     if any(
         message.role == MessageRole.system
-        and message.content.startswith(TOOL_SYSTEM_PREFIX)
+        and str(message.content or "").startswith(TOOL_SYSTEM_PREFIX)
         for message in messages
     ):
         return messages
