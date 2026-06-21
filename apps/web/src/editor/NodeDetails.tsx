@@ -28,6 +28,7 @@ import type {
   ParamSpec,
 } from "../types";
 import { DataPanel } from "./DataPanel";
+import { ConditionsField } from "./ConditionsField";
 import { VariablePickerPopover } from "./VariablePickerPopover";
 import { TimezoneSelect } from "./fields/TimezoneSelect";
 import { fromAiExpr, isFromAiExpr, paramArgType } from "./toolParam";
@@ -3113,6 +3114,15 @@ export function ParamField({
   }
   if (spec.widget === "routes_table") {
     return <RoutesField value={value} onChange={onChange} />;
+  }
+  if (spec.widget === "conditions_builder") {
+    return (
+      <ConditionsField
+        value={value}
+        onChange={onChange}
+        allParams={credentialContext}
+      />
+    );
   }
   if (spec.key_value) {
     return (
