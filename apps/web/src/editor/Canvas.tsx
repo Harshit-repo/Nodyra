@@ -461,6 +461,7 @@ export function Canvas() {
   const cutSelection = useEditor((s) => s.cutSelection);
   const pasteSelection = useEditor((s) => s.pasteSelection);
   const autoLayout = useEditor((s) => s.autoLayout);
+  const autoEnableAgentDependencies = useEditor((s) => s.autoEnableAgentDependencies);
   const { fitView, screenToFlowPosition, getNodes } = useReactFlow();
   const { notify } = useToast();
   const [blockedConnection, setBlockedConnection] = useState<{
@@ -749,6 +750,10 @@ export function Canvas() {
     }, 0);
   }, [ctxMenu]);
 
+  useEffect(() => {
+    autoEnableAgentDependencies();
+  }, [autoEnableAgentDependencies, nodes, edges]);
+
   const onNodeContextMenu = useCallback((e: React.MouseEvent, node: { id: string }) => {
     e.preventDefault();
     setSelected(node.id);
@@ -984,7 +989,7 @@ export function Canvas() {
             },
           },
         ]
-    : [], [ctxMenu, nodes, selectedMetanodeIds, openNdv, ungroupMetanode, collapseToMetanode, notify, copySelection, pasteSelection, toggleDisabled, cutSelection, deleteNode, openQuickAddAt, fitView, setCtxMenu]);
+    : [], [ctxMenu, nodes, openNdv, ungroupMetanode, collapseToMetanode, notify, copySelection, pasteSelection, toggleDisabled, cutSelection, deleteNode, openQuickAddAt, fitView, setCtxMenu]);
 
   function focusContextItem(index: number): void {
     const buttons = Array.from(

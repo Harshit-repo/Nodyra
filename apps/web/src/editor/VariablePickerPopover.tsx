@@ -70,7 +70,6 @@ export function VariablePickerPopover({ nodeId, onInsert, onClose }: Props) {
       className="var-picker-popover"
       ref={containerRef}
       role="dialog"
-      aria-modal="true"
       aria-label="Pick a variable"
     >
       <div className="var-picker-head">
