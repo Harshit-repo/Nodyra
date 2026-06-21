@@ -23,7 +23,62 @@ from noodle_nodes.ai_v2.tools import collect_tool_adapters
 
 AI_CATEGORY = "AI"
 TOOL_SYSTEM_PREFIX = "Noodle tools available in this run:"
+PLAN_PREFIX = "__noodle_plan__"
+USAGE_PREFIX = "__noodle_usage__"
+COMPRESSED_PREFIX = "__noodle_compressed__"
+_CONTROL_PREFIXES = (TOOL_SYSTEM_PREFIX, PLAN_PREFIX, USAGE_PREFIX, COMPRESSED_PREFIX)
 _UNSET = object()  # sentinel for "not pre-parsed"
+
+PERSONA_TEMPLATES: dict[str, str] = {
+    "research_assistant": (
+        "You are a meticulous research assistant. Cite sources, verify claims with "
+        "multiple tool results, flag uncertainty explicitly, and structure findings "
+        "as clear numbered points."
+    ),
+    "data_analyst": (
+        "You are a precise data analyst. Prefer quantitative reasoning. Use the code "
+        "execution tool to verify calculations. Present findings with specific numbers, "
+        "percentages, and trends."
+    ),
+    "code_assistant": (
+        "You are a senior software engineer. Write clean, correct, production-grade code. "
+        "Always test logic with the code execution tool before presenting it. Explain "
+        "implementation decisions."
+    ),
+    "customer_support": (
+        "You are an empathetic customer support agent. Be concise and solution-focused. "
+        "Never promise what you cannot deliver. Escalate clearly when you need more "
+        "information."
+    ),
+    "senior_engineer": (
+        "You are a principal engineer focused on correctness and simplicity. Think step "
+        "by step. Surface edge cases. Prefer simple solutions over clever ones. Be direct."
+    ),
+    "creative_writer": (
+        "You are a skilled creative writer. Adapt your voice to the user's request. Be "
+        "imaginative but coherent. Ask one clarifying question before undertaking long "
+        "creative tasks."
+    ),
+}
+
+
+def _apply_persona(system: str, persona: str) -> str:
+    template = PERSONA_TEMPLATES.get(persona or "", "")
+    if not template:
+        return system
+    if system.strip():
+        return f"{template}\n\n{system.strip()}"
+    return template
+
+
+def _strip_control_messages(messages: list[AIMessage]) -> list[AIMessage]:
+    return [
+        m for m in messages
+        if not (
+            m.role == MessageRole.system
+            and str(m.content or "").startswith(_CONTROL_PREFIXES)
+        )
+    ]
 
 
 def _as_text(value: Any) -> str:
@@ -146,14 +201,7 @@ def _with_tool_instruction(
 
 
 def _without_tool_instruction(messages: list[AIMessage]) -> list[AIMessage]:
-    return [
-        message
-        for message in messages
-        if not (
-            message.role == MessageRole.system
-            and message.content.startswith(TOOL_SYSTEM_PREFIX)
-        )
-    ]
+    return _strip_control_messages(messages)
 
 
 def _memory_messages(
@@ -314,6 +362,20 @@ def _final_output(
             "widget": "textarea",
             "description": "Agent task. Blank uses input.task, input.prompt, or input.",
         },
+        "strategy": {
+            "choices": ["react", "plan_and_execute", "reflexion"],
+            "description": "How the agent executes: ReAct loop, Plan-then-Execute, or Reflexion (self-critique).",
+        },
+        "persona": {
+            "choices": ["none", "research_assistant", "data_analyst", "code_assistant",
+                        "customer_support", "senior_engineer", "creative_writer"],
+            "description": "Pre-built expert persona (sets a system-prompt template).",
+        },
+        "reflection_rounds": {
+            "description": "Reflexion only: self-critique rounds (1-2).",
+            "display_when": {"strategy": "reflexion"},
+            "group": "Strategy",
+        },
         "system": {
             "widget": "textarea",
             "description": "Optional system instruction.",
@@ -368,6 +430,9 @@ def ai_agent_v2(
     parser: Any = None,
     guardrail: Any = None,
     prompt: str = "",
+    strategy: str = "react",
+    persona: str = "none",
+    reflection_rounds: int = 1,
     system: str = "",
     session_id: str = "",
     max_steps: int = 4,
@@ -401,6 +466,7 @@ def ai_agent_v2(
             raise ValueError("ai_agent_v2: prompt or input task is required")
         if isinstance(parser, OutputParserAdapter) and parser.format_instructions:
             task = f"{task}\n\n{parser.format_instructions}"
+        system = _apply_persona(system, persona)
         messages = _with_tool_instruction(
             _memory_messages(memory, session_id=sid, system=system),
             tool_schemas,
