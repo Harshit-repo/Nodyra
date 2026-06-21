@@ -118,6 +118,29 @@ def _session_id(input_value: Any, configured: str) -> str:
     return "default"
 
 
+def _active_model(
+    model: ChatModelAdapter, fast_model: Any, step: int
+) -> ChatModelAdapter:
+    """Return fast_model for intermediate steps (step > 0), else model."""
+    if isinstance(fast_model, ChatModelAdapter) and step > 0:
+        return fast_model
+    return model
+
+
+def _complete_with_fallback(
+    primary: ChatModelAdapter,
+    fallback: ChatModelAdapter,
+    request: ChatRequest,
+) -> ChatResponse:
+    """Call primary.complete; on any error fall back to fallback."""
+    if primary is fallback:
+        return primary.complete(request)
+    try:
+        return primary.complete(request)
+    except Exception:  # noqa: BLE001 - fast model may not support tools etc.
+        return fallback.complete(request)
+
+
 def _model_name(model: ChatModelAdapter) -> str:
     try:
         config = model.as_config()
@@ -562,7 +585,8 @@ def ai_agent_v2(
         response_format="json_object" if response_format == "json_object" else "text",
         timeout_seconds=int(timeout_seconds or 75),
     )
-    response = model.complete(request)
+    active = _active_model(model, fast_model, step)
+    response = _complete_with_fallback(active, model, request)
 
     if response.tool_calls:
         messages.append(

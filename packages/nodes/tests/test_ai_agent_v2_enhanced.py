@@ -114,3 +114,45 @@ def test_new_ports_registered() -> None:
     assert names["subagent_1"] == "ai_subagent"
     assert names["subagent_2"] == "ai_subagent"
     assert names["subagent_3"] == "ai_subagent"
+
+
+# ---------------------------------------------------------------------------
+# Task 10: dual-model routing
+# ---------------------------------------------------------------------------
+
+from noodle.ai_runtime import AgentResumeInput, ToolResult
+
+
+def test_dual_model_step0_uses_main() -> None:
+    main = ScriptedChatModel([ChatResponse(text="final")])
+    fast = ScriptedChatModel([ChatResponse(text="fast")])
+    ai_agent_v2(model=main, fast_model=fast, prompt="hi")
+    assert len(main.requests) == 1 and len(fast.requests) == 0
+
+
+def test_dual_model_step_gt0_uses_fast() -> None:
+    main = ScriptedChatModel([ChatResponse(text="should not be called")])
+    fast = ScriptedChatModel([ChatResponse(text="fast answer")])
+    resume = AgentResumeInput(
+        tool_results=[ToolResult(tool_call_id="c1", name="lookup", content="r")],
+        messages_so_far=[AIMessage.user("hi")],
+        step=1, max_steps=4,
+    )
+    out = ai_agent_v2(model=main, fast_model=fast, prompt="hi", agent_resume=resume)
+    assert len(fast.requests) == 1
+    assert out["answer"] == "fast answer"
+
+
+def test_dual_model_fast_failure_falls_back(monkeypatch) -> None:
+    class _BoomModel(ScriptedChatModel):
+        def complete(self, request):
+            raise RuntimeError("fast model down")
+    main = ScriptedChatModel([ChatResponse(text="recovered")])
+    fast = _BoomModel([ChatResponse(text="never")])
+    resume = AgentResumeInput(
+        tool_results=[ToolResult(tool_call_id="c1", name="lookup", content="r")],
+        messages_so_far=[AIMessage.user("hi")],
+        step=1, max_steps=4,
+    )
+    out = ai_agent_v2(model=main, fast_model=fast, prompt="hi", agent_resume=resume)
+    assert out["answer"] == "recovered"
