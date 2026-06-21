@@ -34,6 +34,7 @@ import {
   useWorkflowCustomNodeManifests,
 } from "./queries";
 import { RunApprovalsPanel } from "./RunApprovalsPanel";
+import { useConfirm } from "./ConfirmProvider";
 import { useToast } from "./ToastProvider";
 import { A11yModal } from "./editor/A11yModal";
 import { deriveBarStatus } from "./editor/barStatus";
@@ -319,6 +320,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   const openChat = useEditor((s) => s.openChat);
   const closeChat = useEditor((s) => s.closeChat);
   const { notify } = useToast();
+  const confirm = useConfirm();
   const wsRef = useRef<RunStreamHandle | null>(null);
   const webhookTimerRef = useRef<number | null>(null);
   const listenPathRef = useRef<string | null>(null);
@@ -803,7 +805,14 @@ const aiAbortRef = useRef<AbortController | null>(null);
     // eagerly (optimistic) so there's no separate save step; roll back the
     // switch if the request fails. Pausing keeps version history intact.
     if (!id || togglingActive) return;
-    if (!next && !window.confirm("Pause this workflow? It stops running in production until you switch it back on. Version history is kept.")) return;
+    if (
+      !next &&
+      !(await confirm({
+        title: "Pause this workflow?",
+        body: "It stops running in production until you switch it back on. Version history is kept.",
+        confirmLabel: "Pause",
+      }))
+    ) return;
     setActive(next);
     setTogglingActive(true);
     try {

@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 
 import { api, errorMessage, getOrgId, getUser, setOrgId } from "./api";
+import { usePrompt } from "./ConfirmProvider";
 import { Logo } from "./Logo";
+import { useToast } from "./ToastProvider";
 import type { OrgInfo } from "./types";
 
 /** Org switcher — rendered only when the backend reports multi-tenancy on
@@ -12,6 +14,8 @@ function OrgSwitcher() {
   const [orgs, setOrgs] = useState<OrgInfo[] | null>(null);
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const prompt = usePrompt();
+  const { notify } = useToast();
 
   useEffect(() => {
     let cancelled = false;
@@ -54,14 +58,19 @@ function OrgSwitcher() {
   }
 
   async function createOrg(): Promise<void> {
-    const name = window.prompt("Organization name");
+    const name = await prompt({
+      title: "New organization",
+      label: "Name",
+      placeholder: "Acme Inc.",
+      confirmLabel: "Create",
+    });
     if (!name?.trim()) return;
     try {
       const created = await api.createOrg({ name: name.trim() });
       setOrgId(created.id);
       window.location.assign("/");
     } catch (err) {
-      window.alert(errorMessage(err));
+      notify(errorMessage(err), "error");
     }
   }
 
