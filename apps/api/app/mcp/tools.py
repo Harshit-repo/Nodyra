@@ -911,6 +911,262 @@ async def _toggle_schedule(session: AsyncSession, user: User | None, args: dict)
 
 
 # ---------------------------------------------------------------------------
+# New handlers: workflow config, graph inspection, code nodes, ops
+# ---------------------------------------------------------------------------
+
+
+async def _rename_workflow(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    name = str(args.get("name") or "").strip()
+    if not name:
+        raise McpToolError("name is required.")
+    old_name = workflow.name
+    workflow.name = name
+    await log_audit(
+        session, "mcp_rename_workflow", "workflow", workflow.id, f"{old_name} → {name}",
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
+    )
+    await enqueue_github_push(session, workflow, "mcp")
+    await session.commit()
+    notify_sync_workers()
+    return {"workflow_id": workflow.id, "name": name}
+
+
+async def _get_node(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    node_id = str(args.get("node_id") or "").strip()
+    if not node_id:
+        raise McpToolError("node_id is required.")
+    graph = _draft_graph(workflow)
+    for node in graph.get("nodes", []):
+        if node.get("id") == node_id:
+            return node
+    raise McpToolError(f"Node not found in draft graph: {node_id!r}")
+
+
+async def _rename_node(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    node_id = str(args.get("node_id") or "").strip()
+    label = str(args.get("label") or "").strip()
+    if not node_id:
+        raise McpToolError("node_id is required.")
+    if not label:
+        raise McpToolError("label is required.")
+    graph = _draft_graph(workflow)
+    nodes = list(graph.get("nodes", []))
+    for i, node in enumerate(nodes):
+        if node.get("id") == node_id:
+            nodes[i] = {**node, "label": label}
+            workflow.draft_graph = {**graph, "nodes": nodes}
+            await log_audit(
+                session, "mcp_rename_node", "workflow", workflow.id, workflow.name,
+                actor_id=user.id if user else None,
+                actor_email=user.email if user else None,
+            )
+            await session.commit()
+            return {"workflow_id": workflow.id, "node_id": node_id, "label": label}
+    raise McpToolError(f"Node not found in draft graph: {node_id!r}")
+
+
+async def _move_node(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    node_id = str(args.get("node_id") or "").strip()
+    if not node_id:
+        raise McpToolError("node_id is required.")
+    x = args.get("x")
+    y = args.get("y")
+    if x is None or y is None:
+        raise McpToolError("x and y are required.")
+    try:
+        x, y = float(x), float(y)
+    except (TypeError, ValueError):
+        raise McpToolError("x and y must be numbers.")
+    graph = _draft_graph(workflow)
+    nodes = list(graph.get("nodes", []))
+    for i, node in enumerate(nodes):
+        if node.get("id") == node_id:
+            pos = {**node.get("position", {}), "x": x, "y": y}
+            nodes[i] = {**node, "position": pos}
+            workflow.draft_graph = {**graph, "nodes": nodes}
+            await session.commit()
+            return {"workflow_id": workflow.id, "node_id": node_id, "position": pos}
+    raise McpToolError(f"Node not found in draft graph: {node_id!r}")
+
+
+async def _create_code_node(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    node_id = str(args.get("node_id") or "").strip()
+    code = str(args.get("code") or "output = input")
+    label = str(args.get("label") or "").strip() or None
+    x = float(args.get("x") or 0)
+    y = float(args.get("y") or 0)
+    if not node_id:
+        raise McpToolError("node_id is required.")
+    graph = _draft_graph(workflow)
+    nodes = list(graph.get("nodes", []))
+    if any(n.get("id") == node_id for n in nodes):
+        raise McpToolError(f"Node id already exists: {node_id!r}")
+    entry: dict = {"id": node_id, "type": "code", "params": {"code": code}, "position": {"x": x, "y": y}}
+    if label:
+        entry["label"] = label
+    nodes.append(entry)
+    workflow.draft_graph = {**graph, "nodes": nodes}
+    await log_audit(
+        session, "mcp_create_code_node", "workflow", workflow.id, workflow.name,
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
+    )
+    await session.commit()
+    return {"workflow_id": workflow.id, "node_id": node_id, "node_count": len(nodes)}
+
+
+async def _update_code(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    node_id = str(args.get("node_id") or "").strip()
+    code = args.get("code")
+    if not node_id:
+        raise McpToolError("node_id is required.")
+    if not isinstance(code, str):
+        raise McpToolError("code must be a string.")
+    graph = _draft_graph(workflow)
+    nodes = list(graph.get("nodes", []))
+    for i, node in enumerate(nodes):
+        if node.get("id") == node_id:
+            if node.get("type") != "code":
+                raise McpToolError(f"Node {node_id!r} is type {node.get('type')!r}, not 'code'.")
+            nodes[i] = {**node, "params": {**node.get("params", {}), "code": code}}
+            workflow.draft_graph = {**graph, "nodes": nodes}
+            await log_audit(
+                session, "mcp_update_code", "workflow", workflow.id, workflow.name,
+                actor_id=user.id if user else None,
+                actor_email=user.email if user else None,
+            )
+            await session.commit()
+            return {"workflow_id": workflow.id, "node_id": node_id}
+    raise McpToolError(f"Node not found in draft graph: {node_id!r}")
+
+
+async def _retry_run(session: AsyncSession, user: User | None, args: dict) -> Any:
+    from app.routers.runs import retry_from_failure as _retry_route
+
+    run_id = str(args.get("run_id") or "").strip()
+    if not run_id:
+        raise McpToolError("run_id is required.")
+    try:
+        result = await _retry_route(run_id, session)
+    except Exception as exc:
+        raise McpToolError(str(exc)) from exc
+    return {"new_run_id": result.run_id, "retried_from": run_id}
+
+
+async def _list_environments(session: AsyncSession, user: User | None, args: dict) -> Any:
+    from app.models import Environment, RunnerPool
+
+    rows = (
+        await session.scalars(
+            select(Environment).order_by(Environment.is_global.desc(), Environment.name)
+        )
+    ).all()
+    return {
+        "environments": [
+            {
+                "id": e.id,
+                "name": e.name,
+                "is_global": e.is_global,
+                "python_version": e.python_version,
+                "packages": e.packages,
+                "status": e.status,
+                "backend": getattr(e, "backend", "venv"),
+            }
+            for e in rows
+        ]
+    }
+
+
+async def _list_credentials(session: AsyncSession, user: User | None, args: dict) -> Any:
+    from app.models import Credential
+
+    rows = (
+        await session.scalars(select(Credential).order_by(Credential.name).limit(500))
+    ).all()
+    return {
+        "credentials": [
+            {
+                "id": c.id,
+                "name": c.name,
+                "type": c.type,
+                "scope": c.scope,
+                "description": getattr(c, "description", "") or "",
+                "workflow_id": c.workflow_id,
+                "environment_id": c.environment_id,
+            }
+            for c in rows
+        ]
+    }
+
+
+async def _set_error_handler(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    error_workflow_id = str(args.get("error_workflow_id") or "").strip() or None
+    if error_workflow_id:
+        if error_workflow_id == workflow.id:
+            raise McpToolError("A workflow cannot use itself as its error handler.")
+        err_wf = await session.get(Workflow, error_workflow_id)
+        if err_wf is None:
+            raise McpToolError(f"Error handler workflow not found: {error_workflow_id}")
+    workflow.error_workflow_id = error_workflow_id
+    await log_audit(
+        session, "mcp_set_error_handler", "workflow", workflow.id, workflow.name,
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
+    )
+    await session.commit()
+    return {"workflow_id": workflow.id, "error_workflow_id": error_workflow_id}
+
+
+async def _enable_mcp_tool(session: AsyncSession, user: User | None, args: dict) -> Any:
+    import re
+
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    tool_name = str(args.get("tool_name") or "").strip()
+    description = str(args.get("description") or "").strip() or None
+    if tool_name and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", tool_name):
+        raise McpToolError("tool_name must match [A-Za-z0-9_-]{1,64}.")
+    workflow.mcp_enabled = True
+    if tool_name:
+        workflow.mcp_tool_name = tool_name
+    if description:
+        workflow.mcp_description = description
+    await log_audit(
+        session, "mcp_enable_mcp_tool", "workflow", workflow.id, workflow.name,
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
+    )
+    await session.commit()
+    notify_sync_workers()
+    return {
+        "workflow_id": workflow.id,
+        "mcp_enabled": True,
+        "tool_name": workflow.mcp_tool_name or workflow.name,
+        "description": workflow.mcp_description,
+    }
+
+
+async def _disable_mcp_tool(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    workflow.mcp_enabled = False
+    await log_audit(
+        session, "mcp_disable_mcp_tool", "workflow", workflow.id, workflow.name,
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
+    )
+    await session.commit()
+    notify_sync_workers()
+    return {"workflow_id": workflow.id, "mcp_enabled": False}
+
+
+# ---------------------------------------------------------------------------
 # Static tool list
 # ---------------------------------------------------------------------------
 
@@ -1362,6 +1618,187 @@ STATIC_TOOLS: list[McpTool] = [
         },
         permission="workflow:write",
         handler=_toggle_schedule,
+    ),
+    # --- new tools ---
+    McpTool(
+        name="rename_workflow",
+        description="Rename a workflow.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "name": {"type": "string", "description": "New workflow name."},
+            },
+            "required": ["workflow_id", "name"],
+        },
+        permission="workflow:write",
+        handler=_rename_workflow,
+    ),
+    McpTool(
+        name="get_node",
+        description="Return a single node object (id, type, params, label, position) from the draft graph.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "node_id": {"type": "string"},
+            },
+            "required": ["workflow_id", "node_id"],
+        },
+        permission=None,
+        handler=_get_node,
+    ),
+    McpTool(
+        name="rename_node",
+        description="Set the display label of a node in the draft graph.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "node_id": {"type": "string"},
+                "label": {"type": "string", "description": "Human-readable display name for the node."},
+            },
+            "required": ["workflow_id", "node_id", "label"],
+        },
+        permission="workflow:write",
+        handler=_rename_node,
+    ),
+    McpTool(
+        name="move_node",
+        description="Update a node's canvas position (x, y) in the draft graph.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "node_id": {"type": "string"},
+                "x": {"type": "number"},
+                "y": {"type": "number"},
+            },
+            "required": ["workflow_id", "node_id", "x", "y"],
+        },
+        permission="workflow:write",
+        handler=_move_node,
+    ),
+    McpTool(
+        name="create_code_node",
+        description=(
+            "Add a Code node to the draft graph. Use this when no built-in node type covers the task — "
+            "the LLM writes Python; `input` is the upstream value, assign result to `output`. "
+            "For multiple output ports use `output_<name>` variables."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "node_id": {"type": "string", "description": "Unique id for the new node."},
+                "code": {"type": "string", "description": "Python body. Assign result to `output`."},
+                "label": {"type": "string", "description": "Display name shown on the canvas."},
+                "x": {"type": "number", "description": "Canvas x position (default 0)."},
+                "y": {"type": "number", "description": "Canvas y position (default 0)."},
+            },
+            "required": ["workflow_id", "node_id", "code"],
+        },
+        permission="workflow:write",
+        handler=_create_code_node,
+    ),
+    McpTool(
+        name="update_code",
+        description="Replace the Python code on an existing Code node.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "node_id": {"type": "string"},
+                "code": {"type": "string", "description": "New Python body. Assign result to `output`."},
+            },
+            "required": ["workflow_id", "node_id", "code"],
+        },
+        permission="workflow:write",
+        handler=_update_code,
+    ),
+    McpTool(
+        name="retry_run",
+        description=(
+            "Re-run only the failed nodes and their descendants, reusing all successful node outputs. "
+            "Returns a new run_id."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {"run_id": {"type": "string"}},
+            "required": ["run_id"],
+        },
+        permission="workflow:run",
+        handler=_retry_run,
+    ),
+    McpTool(
+        name="list_environments",
+        description="List all Python environments (id, name, python_version, packages, status, backend).",
+        input_schema={"type": "object", "properties": {}},
+        permission=None,
+        handler=_list_environments,
+    ),
+    McpTool(
+        name="list_credentials",
+        description=(
+            "List all credential sets by name and type (no secret values returned). "
+            "Use to discover what credentials are available to reference in node params."
+        ),
+        input_schema={"type": "object", "properties": {}},
+        permission=None,
+        handler=_list_credentials,
+    ),
+    McpTool(
+        name="set_error_handler",
+        description=(
+            "Set or clear the error-handler workflow for a workflow. "
+            "When a run fails, Noodle will trigger error_workflow_id with the error details. "
+            "Pass error_workflow_id=null to remove the handler."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "error_workflow_id": {
+                    "type": ["string", "null"],
+                    "description": "Id of the error-handler workflow, or null to clear.",
+                },
+            },
+            "required": ["workflow_id"],
+        },
+        permission="workflow:write",
+        handler=_set_error_handler,
+    ),
+    McpTool(
+        name="enable_mcp_tool",
+        description=(
+            "Expose a workflow as an MCP tool so other agents can call it by name. "
+            "Sets mcp_enabled=true and optionally sets the tool name and description."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "tool_name": {
+                    "type": "string",
+                    "description": "Tool name (alphanumeric/underscore/dash, max 64 chars). Defaults to workflow name.",
+                },
+                "description": {"type": "string", "description": "What this tool does (shown to calling models)."},
+            },
+            "required": ["workflow_id"],
+        },
+        permission="workflow:write",
+        handler=_enable_mcp_tool,
+    ),
+    McpTool(
+        name="disable_mcp_tool",
+        description="Remove a workflow from the MCP tool surface (sets mcp_enabled=false).",
+        input_schema={
+            "type": "object",
+            "properties": {"workflow_id": {"type": "string"}},
+            "required": ["workflow_id"],
+        },
+        permission="workflow:write",
+        handler=_disable_mcp_tool,
     ),
 ]
 

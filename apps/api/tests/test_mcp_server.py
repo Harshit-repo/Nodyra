@@ -973,3 +973,119 @@ async def test_mcp_rate_limit(client: AsyncClient, monkeypatch) -> None:
 
     r2 = await client.post("/mcp", json=rpc("ping"))
     assert r2.status_code == 429
+
+
+# ---------------------------------------------------------------------------
+# New tool smoke tests
+# ---------------------------------------------------------------------------
+
+
+async def _tool(client: AsyncClient, name: str, args: dict) -> dict:
+    resp = await client.post("/mcp", json=rpc("tools/call", {"name": name, "arguments": args}))
+    assert resp.status_code == 200
+    return resp.json()["result"]
+
+
+async def test_rename_workflow(client: AsyncClient) -> None:
+    wf_id = await make_workflow(client, "Old Name")
+    result = await _tool(client, "rename_workflow", {"workflow_id": wf_id, "name": "New Name"})
+    assert result["content"][0]["text"]
+    data = json.loads(result["content"][0]["text"])
+    assert data["name"] == "New Name"
+
+
+async def test_get_node(client: AsyncClient) -> None:
+    wf_id = await make_workflow(client)
+    result = await _tool(client, "get_node", {"workflow_id": wf_id, "node_id": "t"})
+    data = json.loads(result["content"][0]["text"])
+    assert data["id"] == "t"
+    assert data["type"] == "manual_trigger"
+
+
+async def test_get_node_missing(client: AsyncClient) -> None:
+    wf_id = await make_workflow(client)
+    result = await _tool(client, "get_node", {"workflow_id": wf_id, "node_id": "no_such"})
+    assert result["isError"] is True
+
+
+async def test_rename_node(client: AsyncClient) -> None:
+    wf_id = await make_workflow(client)
+    result = await _tool(client, "rename_node", {"workflow_id": wf_id, "node_id": "t", "label": "Start"})
+    data = json.loads(result["content"][0]["text"])
+    assert data["label"] == "Start"
+    # Confirm label persisted
+    node = json.loads((await _tool(client, "get_node", {"workflow_id": wf_id, "node_id": "t"}))["content"][0]["text"])
+    assert node["label"] == "Start"
+
+
+async def test_move_node(client: AsyncClient) -> None:
+    wf_id = await make_workflow(client)
+    result = await _tool(client, "move_node", {"workflow_id": wf_id, "node_id": "t", "x": 100.0, "y": 200.0})
+    data = json.loads(result["content"][0]["text"])
+    assert data["position"]["x"] == 100.0
+    assert data["position"]["y"] == 200.0
+
+
+async def test_create_code_node(client: AsyncClient) -> None:
+    wf_id = await make_workflow(client)
+    result = await _tool(client, "create_code_node", {
+        "workflow_id": wf_id, "node_id": "transform", "code": "output = input * 2", "label": "Double",
+    })
+    data = json.loads(result["content"][0]["text"])
+    assert data["node_id"] == "transform"
+    assert data["node_count"] == 2  # manual_trigger + transform
+    # confirm it's actually a code node
+    node = json.loads((await _tool(client, "get_node", {"workflow_id": wf_id, "node_id": "transform"}))["content"][0]["text"])
+    assert node["type"] == "code"
+    assert node["label"] == "Double"
+
+
+async def test_update_code(client: AsyncClient) -> None:
+    wf_id = await make_workflow(client)
+    await _tool(client, "create_code_node", {"workflow_id": wf_id, "node_id": "fn", "code": "output = 1"})
+    result = await _tool(client, "update_code", {"workflow_id": wf_id, "node_id": "fn", "code": "output = 42"})
+    data = json.loads(result["content"][0]["text"])
+    assert data["node_id"] == "fn"
+    node = json.loads((await _tool(client, "get_node", {"workflow_id": wf_id, "node_id": "fn"}))["content"][0]["text"])
+    assert node["params"]["code"] == "output = 42"
+
+
+async def test_update_code_on_non_code_node(client: AsyncClient) -> None:
+    wf_id = await make_workflow(client)
+    result = await _tool(client, "update_code", {"workflow_id": wf_id, "node_id": "t", "code": "output = 1"})
+    assert result["isError"] is True
+
+
+async def test_list_environments(client: AsyncClient) -> None:
+    result = await _tool(client, "list_environments", {})
+    data = json.loads(result["content"][0]["text"])
+    assert "environments" in data
+
+
+async def test_list_credentials(client: AsyncClient) -> None:
+    result = await _tool(client, "list_credentials", {})
+    data = json.loads(result["content"][0]["text"])
+    assert "credentials" in data
+
+
+async def test_set_error_handler(client: AsyncClient) -> None:
+    wf_id = await make_workflow(client, "Main WF")
+    err_wf_id = await make_workflow(client, "Error WF")
+    result = await _tool(client, "set_error_handler", {"workflow_id": wf_id, "error_workflow_id": err_wf_id})
+    data = json.loads(result["content"][0]["text"])
+    assert data["error_workflow_id"] == err_wf_id
+    # clear it
+    result2 = await _tool(client, "set_error_handler", {"workflow_id": wf_id, "error_workflow_id": None})
+    data2 = json.loads(result2["content"][0]["text"])
+    assert data2["error_workflow_id"] is None
+
+
+async def test_enable_disable_mcp_tool(client: AsyncClient) -> None:
+    wf_id = await make_workflow(client, "My Agent")
+    en = await _tool(client, "enable_mcp_tool", {"workflow_id": wf_id, "tool_name": "my_agent", "description": "Does stuff"})
+    en_data = json.loads(en["content"][0]["text"])
+    assert en_data["mcp_enabled"] is True
+    assert en_data["tool_name"] == "my_agent"
+    dis = await _tool(client, "disable_mcp_tool", {"workflow_id": wf_id})
+    dis_data = json.loads(dis["content"][0]["text"])
+    assert dis_data["mcp_enabled"] is False
