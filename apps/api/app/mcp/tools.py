@@ -559,6 +559,68 @@ async def _patch_node(session: AsyncSession, user: User | None, args: dict) -> A
     raise McpToolError(f"Node not found in draft graph: {node_id}")
 
 
+async def _add_node(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    node = args.get("node")
+    if not isinstance(node, dict):
+        raise McpToolError("node must be a JSON object with id, type, params.")
+    node_id = str(node.get("id") or "").strip()
+    node_type = str(node.get("type") or "").strip()
+    if not node_id or not node_type:
+        raise McpToolError("node.id and node.type are required.")
+
+    graph = _draft_graph(workflow)
+    nodes = list(graph.get("nodes", []))
+    if any(n.get("id") == node_id for n in nodes):
+        raise McpToolError(f"Node id already exists in draft graph: {node_id!r}")
+
+    known = {m.id for m in node_registry.manifests()}
+    if (
+        node_type not in known
+        and node_type not in STRUCTURAL_NODE_TYPES
+        and not node_type.startswith("user:")
+    ):
+        raise McpToolError(
+            f"Unknown node type: {node_type!r}. Use list_node_types to discover valid ids."
+        )
+
+    nodes.append(node)
+    workflow.draft_graph = {**graph, "nodes": nodes}
+    await log_audit(
+        session, "mcp_add_node", "workflow", workflow.id, workflow.name,
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
+    )
+    await session.commit()
+    return {"workflow_id": workflow.id, "node_id": node_id, "node_count": len(nodes)}
+
+
+async def _remove_node(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    node_id = str(args.get("node_id") or "").strip()
+    if not node_id:
+        raise McpToolError("node_id is required.")
+
+    graph = _draft_graph(workflow)
+    original_count = len(graph.get("nodes", []))
+    nodes = [n for n in graph.get("nodes", []) if n.get("id") != node_id]
+    if len(nodes) == original_count:
+        raise McpToolError(f"Node not found in draft graph: {node_id!r}")
+
+    edges = [
+        e for e in graph.get("edges", [])
+        if e.get("source") != node_id and e.get("target") != node_id
+    ]
+    workflow.draft_graph = {**graph, "nodes": nodes, "edges": edges}
+    await log_audit(
+        session, "mcp_remove_node", "workflow", workflow.id, workflow.name,
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
+    )
+    await session.commit()
+    return {"workflow_id": workflow.id, "node_id": node_id, "removed": True}
+
+
 # ---------------------------------------------------------------------------
 # Static tool list
 # ---------------------------------------------------------------------------
@@ -792,6 +854,46 @@ STATIC_TOOLS: list[McpTool] = [
         },
         permission="workflow:write",
         handler=_patch_node,
+    ),
+    McpTool(
+        name="add_node",
+        description=(
+            "Add a single node to the draft graph. node = {id, type, params, position?}. "
+            "node.type must be a valid id from list_node_types."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "node": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "type": {"type": "string"},
+                        "params": {"type": "object"},
+                        "position": {"type": "object"},
+                    },
+                    "required": ["id", "type"],
+                },
+            },
+            "required": ["workflow_id", "node"],
+        },
+        permission="workflow:write",
+        handler=_add_node,
+    ),
+    McpTool(
+        name="remove_node",
+        description="Remove a node and all its connected edges from the draft graph.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "node_id": {"type": "string"},
+            },
+            "required": ["workflow_id", "node_id"],
+        },
+        permission="workflow:write",
+        handler=_remove_node,
     ),
 ]
 
