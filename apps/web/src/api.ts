@@ -1,3 +1,4 @@
+import { safeGetItem, safeRemoveItem, safeSetItem } from "./safeStorage";
 import type {
   AuditEvent,
   AuthState,
@@ -11,6 +12,8 @@ import type {
   CredentialTestResponse,
   CredentialTypeInfo,
   Environment,
+  FolderInfo,
+  GithubSyncConfig,
   LicenseInfo,
   NodeManifest,
   NodeSource,
@@ -61,22 +64,22 @@ function _getCookie(name: string): string | null {
 /** Selected organization (multi-tenancy). Sent as X-Org-Id on every request;
  *  null means the server default org. */
 export function getOrgId(): string | null {
-  return localStorage.getItem(ORG_KEY);
+  return safeGetItem(ORG_KEY);
 }
 export function setOrgId(orgId: string | null): void {
-  if (orgId) localStorage.setItem(ORG_KEY, orgId);
-  else localStorage.removeItem(ORG_KEY);
+  if (orgId) safeSetItem(ORG_KEY, orgId);
+  else safeRemoveItem(ORG_KEY);
 }
 
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return safeGetItem(TOKEN_KEY);
 }
 export function setToken(token: string | null): void {
-  if (token) localStorage.setItem(TOKEN_KEY, token);
-  else localStorage.removeItem(TOKEN_KEY);
+  if (token) safeSetItem(TOKEN_KEY, token);
+  else safeRemoveItem(TOKEN_KEY);
 }
 export function getUser(): UserInfo | null {
-  const raw = localStorage.getItem(USER_KEY);
+  const raw = safeGetItem(USER_KEY);
   if (!raw) return null;
   try {
     return JSON.parse(raw) as UserInfo;
@@ -85,8 +88,8 @@ export function getUser(): UserInfo | null {
   }
 }
 export function setUser(user: UserInfo | null): void {
-  if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
-  else localStorage.removeItem(USER_KEY);
+  if (user) safeSetItem(USER_KEY, JSON.stringify(user));
+  else safeRemoveItem(USER_KEY);
 }
 
 let unauthorizedHandler: (() => void) | null = null;
@@ -248,6 +251,7 @@ export interface WorkflowPatch {
   mcp_tool_name?: string | null;
   mcp_description?: string | null;
   mcp_parameters_schema?: Record<string, unknown> | null;
+  folder_id?: string | null;
 }
 
 type Page<T> = { items: T[]; total: number; limit: number; offset: number };
@@ -259,11 +263,47 @@ async function requestList<T>(path: string, init?: RequestInit): Promise<T[]> {
   return [];
 }
 
+/** Fetches a complete paginated collection. The workflows dashboard performs
+ * client-side search/status aggregation, so silently dropping records after
+ * the API's default page would make every count and filter incorrect. */
+async function requestAllPages<T>(path: string, pageSize = 500): Promise<T[]> {
+  const separator = path.includes("?") ? "&" : "?";
+  const first = await request<T[] | Page<T>>(
+    `${path}${separator}limit=${pageSize}&offset=0`,
+  );
+  if (Array.isArray(first)) return first;
+  if (!first || !Array.isArray(first.items)) return [];
+  if (first.items.length >= first.total) return first.items;
+
+  const offsets: number[] = [];
+  const step = Math.max(1, first.limit || pageSize);
+  for (let offset = step; offset < first.total; offset += step) offsets.push(offset);
+  const pages = await Promise.all(
+    offsets.map((offset) =>
+      request<T[] | Page<T>>(`${path}${separator}limit=${step}&offset=${offset}`),
+    ),
+  );
+  const all = [
+    ...first.items,
+    ...pages.flatMap((page) => Array.isArray(page) ? page : page.items),
+  ];
+  return Array.from(
+    new Map(
+      all.map((item, index) => [
+        typeof item === "object" && item && "id" in item
+          ? String((item as { id: unknown }).id)
+          : String(index),
+        item,
+      ]),
+    ).values(),
+  );
+}
+
 export const api = {
   nodes: () => request<NodeManifest[]>("/nodes"),
   nodeSource: (nodeType: string) =>
     request<NodeSource>(`/nodes/${encodeURIComponent(nodeType)}/source`),
-  listWorkflows: () => requestList<WorkflowSummary>("/workflows"),
+  listWorkflows: () => requestAllPages<WorkflowSummary>("/workflows"),
   createWorkflow: (name: string) =>
     request<WorkflowDetail>("/workflows", {
       method: "POST",
@@ -291,6 +331,21 @@ export const api = {
     }),
   deleteWorkflow: (id: string) =>
     request<void>(`/workflows/${id}`, { method: "DELETE" }),
+
+  listFolders: () => request<FolderInfo[]>("/folders"),
+  createFolder: (name: string) =>
+    request<FolderInfo>("/folders", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  updateFolder: (id: string, patch: { name?: string; color?: string | null }) =>
+    request<FolderInfo>(`/folders/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
+  deleteFolder: (id: string) =>
+    request<void>(`/folders/${id}`, { method: "DELETE" }),
+
   listWorkflowVersions: (workflowId: string) =>
     request<WorkflowVersionInfo[]>(`/workflows/${workflowId}/versions`),
   listWorkflowProviderTriggers: (workflowId: string, includeDeleted = true) =>
@@ -718,6 +773,39 @@ export const api = {
     request<void>(`/workflows/${workflowId}/pinned/${nodeId}`, {
       method: "DELETE",
     }),
+  // --- GitHub sync ----------------------------------------------------------
+  getGithubSyncConfig: (): Promise<GithubSyncConfig | null> =>
+    request<GithubSyncConfig | null>("/github-sync/config"),
+
+  upsertGithubSyncConfig: (body: {
+    repo: string;
+    base_path?: string;
+    main_branch?: string;
+    credential_id?: string | null;
+  }): Promise<GithubSyncConfig> =>
+    request<GithubSyncConfig>("/github-sync/config", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  deleteGithubSyncConfig: (): Promise<void> =>
+    request<void>("/github-sync/config", { method: "DELETE" }),
+
+  getGithubWebhookSecret: (): Promise<{ webhook_secret: string }> =>
+    request<{ webhook_secret: string }>("/github-sync/config/webhook-secret"),
+
+  triggerManualPull: (workflowId: string): Promise<{ status: string; job_id: string }> =>
+    request<{ status: string; job_id: string }>(
+      `/workflows/${workflowId}/github-pull`,
+      { method: "POST", body: JSON.stringify({}) },
+    ),
+
+  resolveGithubConflict: (workflowId: string, side: "noodle" | "github"): Promise<void> =>
+    request<void>(`/workflows/${workflowId}/github-conflict/resolve`, {
+      method: "POST",
+      body: JSON.stringify({ side }),
+    }),
+
   // --- Ops dashboard --------------------------------------------------------
   runtimeMode: () => request<RuntimeModeStatus>("/ops/runtime-mode"),
   queueStats: () => request<QueueStats>("/ops/queue"),

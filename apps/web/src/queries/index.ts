@@ -13,6 +13,7 @@ import type {
   CredentialTestResponse,
   DeploymentCreate,
   DeploymentUpdate,
+  GithubSyncConfig,
   OrgMemberInfo,
   OrgSettingsInfo,
   RegistrationTokenResponse,
@@ -25,7 +26,7 @@ import { queryKeys } from "./keys";
 
 type QueryControls<TData> = Pick<
   UseQueryOptions<TData, Error, TData, QueryKey>,
-  "enabled" | "refetchInterval" | "staleTime" | "placeholderData" | "gcTime"
+  "enabled" | "refetchInterval" | "refetchOnWindowFocus" | "staleTime" | "placeholderData" | "gcTime"
 >;
 
 export interface AllRunsFilters {
@@ -40,6 +41,46 @@ export interface AllRunsFilters {
 
 export { queryClient } from "./client";
 export { queryKeys } from "./keys";
+
+export function useFolders(options?: QueryControls<Awaited<ReturnType<typeof api.listFolders>>>) {
+  return useQuery({
+    queryKey: queryKeys.folders,
+    queryFn: api.listFolders,
+    ...options,
+  });
+}
+
+export function useCreateFolderMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => api.createFolder(name),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.folders });
+    },
+  });
+}
+
+export function useUpdateFolderMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name, color }: { id: string; name?: string; color?: string | null }) =>
+      api.updateFolder(id, { name, color }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.folders });
+    },
+  });
+}
+
+export function useDeleteFolderMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteFolder(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.folders });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.workflows });
+    },
+  });
+}
 
 export function useWorkflows(options?: QueryControls<Awaited<ReturnType<typeof api.listWorkflows>>>) {
   return useQuery({
@@ -816,5 +857,56 @@ export function useUpdateOrgSettingsMutation() {
       body: Record<string, number>;
     }): Promise<OrgSettingsInfo> => api.updateOrgSettings(orgId, body),
     onSuccess: (_settings, vars) => invalidateOrg(queryClient, vars.orgId),
+  });
+}
+
+export function useGithubSyncConfig(options?: QueryControls<GithubSyncConfig | null>) {
+  return useQuery({
+    queryKey: queryKeys.githubSyncConfig,
+    queryFn: api.getGithubSyncConfig,
+    ...options,
+  });
+}
+
+export function useUpsertGithubSyncConfigMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Parameters<typeof api.upsertGithubSyncConfig>[0]) =>
+      api.upsertGithubSyncConfig(body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.githubSyncConfig });
+    },
+  });
+}
+
+export function useDeleteGithubSyncConfigMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.deleteGithubSyncConfig(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.githubSyncConfig });
+    },
+  });
+}
+
+export function useTriggerManualPullMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (workflowId: string) => api.triggerManualPull(workflowId),
+    onSuccess: (_, workflowId) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.workflow(workflowId) });
+    },
+  });
+}
+
+export function useResolveGithubConflictMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ workflowId, side }: { workflowId: string; side: "noodle" | "github" }) =>
+      api.resolveGithubConflict(workflowId, side),
+    onSuccess: (_, { workflowId }) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.workflow(workflowId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.workflows });
+    },
   });
 }

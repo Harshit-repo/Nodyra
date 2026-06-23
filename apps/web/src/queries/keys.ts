@@ -1,6 +1,7 @@
 import type { AllRunsFilters } from "./index";
 
 export const queryKeys = {
+  folders: ["folders"] as const,
   workflows: ["workflows"] as const,
   workflow: (workflowId: string) => ["workflows", workflowId] as const,
   workflowProviderTriggers: (workflowId: string) =>
@@ -51,4 +52,6 @@ export const queryKeys = {
   orgSettings: (orgId: string) => ["orgs", orgId, "settings"] as const,
   orgUsage: (orgId: string, days: number) =>
     ["orgs", orgId, "usage", days] as const,
+
+  githubSyncConfig: ["github-sync-config"] as const,
 };

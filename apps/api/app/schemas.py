@@ -122,6 +122,7 @@ class WorkflowSummary(BaseModel):
     )
     folder_id: str | None = None
     updated_at: datetime
+    github_sync_status: str | None = None
 
 
 class WorkflowDetail(BaseModel):
@@ -148,6 +149,7 @@ class WorkflowDetail(BaseModel):
     graph: WorkflowGraph
     created_at: datetime
     updated_at: datetime
+    github_sync_status: str | None = None
 
 
 class WorkflowVersionInfo(BaseModel):

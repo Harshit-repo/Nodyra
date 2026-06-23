@@ -224,6 +224,7 @@ def _summary_from(
         ),
         folder_id=workflow.folder_id,
         updated_at=workflow.updated_at,
+        github_sync_status=workflow.github_sync_status,
     )
 
 
@@ -260,6 +261,7 @@ async def _detail(session: AsyncSession, workflow: Workflow) -> WorkflowDetail:
         graph=WorkflowGraph.model_validate(_draft_graph(workflow)),
         created_at=workflow.created_at,
         updated_at=workflow.updated_at,
+        github_sync_status=workflow.github_sync_status,
     )
 
 

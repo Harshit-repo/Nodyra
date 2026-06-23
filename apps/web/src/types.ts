@@ -199,6 +199,27 @@ export interface ProviderTriggerSubscription {
   updated_at: string;
 }
 
+export interface FolderInfo {
+  id: string;
+  name: string;
+  color?: string | null;
+  workflow_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type GithubSyncStatus = "synced" | "pending" | "conflict" | "error" | null;
+
+export interface GithubSyncConfig {
+  id: string;
+  org_id: string;
+  repo: string;
+  base_path: string;
+  main_branch: string;
+  credential_id: string | null;
+  webhook_url: string;
+}
+
 export interface WorkflowSummary {
   id: string;
   name: string;
@@ -208,6 +229,7 @@ export interface WorkflowSummary {
   has_unpublished_changes: boolean;
   node_count: number;
   environment_id: string | null;
+  folder_id?: string | null;
   error_workflow_id?: string | null;
   last_run_id?: string | null;
   last_run_status?: string | null;
@@ -215,6 +237,7 @@ export interface WorkflowSummary {
   last_run_finished_at?: string | null;
   provider_trigger_counts?: ProviderTriggerStatusCounts;
   updated_at: string;
+  github_sync_status?: GithubSyncStatus;
 }
 
 export interface WorkflowDetail {
@@ -237,6 +260,7 @@ export interface WorkflowDetail {
   graph: WorkflowGraph;
   created_at: string;
   updated_at: string;
+  github_sync_status?: GithubSyncStatus;
 }
 
 export interface WorkflowPublishResponse {

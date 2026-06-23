@@ -30,9 +30,12 @@ import {
   useNodes,
   usePinned,
   useRunnerPools,
+  useTriggerManualPullMutation,
   useWorkflow,
   useWorkflowCustomNodeManifests,
 } from "./queries";
+import { GitHubSyncBadge } from "./editor/GitHubSyncBadge";
+import { GitHubConflictModal } from "./editor/GitHubConflictModal";
 import { RunApprovalsPanel } from "./RunApprovalsPanel";
 import { useConfirm } from "./ConfirmProvider";
 import { useToast } from "./ToastProvider";
@@ -316,6 +319,8 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   // banner with inline approve/reject instead of relying on a transient toast.
   const [waitingRunId, setWaitingRunId] = useState<string | null>(null);
   const [cmdOpen, setCmdOpen] = useState(false);
+  const [conflictOpen, setConflictOpen] = useState(false);
+  const triggerPull = useTriggerManualPullMutation();
   const chatOpen = useEditor((s) => s.chatOpen);
   const openChat = useEditor((s) => s.openChat);
   const closeChat = useEditor((s) => s.closeChat);
@@ -1336,6 +1341,9 @@ const aiAbortRef = useRef<AbortController | null>(null);
         </div>
         <div className="toolbar-right">
           <SaveIndicator state={saveState} onRetry={() => { void save({ notifySuccess: false }); }} />
+          {workflow?.github_sync_status && (
+            <GitHubSyncBadge status={workflow.github_sync_status} />
+          )}
 
           <RunSettingsChip
             environments={environments}
@@ -1428,10 +1436,24 @@ const aiAbortRef = useRef<AbortController | null>(null);
               { id: "export-module", label: "Export · Python module (.py)", onSelect: () => void triggerExport(`/api/workflows/${id}/export.module.py`, `${name || "workflow"}_module.py`) },
               { id: "settings", label: "Workflow settings", dividerBefore: true, onSelect: () => setSettingsOpen(true) },
               { id: "shortcuts", label: "Keyboard shortcuts", onSelect: () => setShortcutsOpen(true) },
+              { id: "github-pull", label: "Pull from GitHub", dividerBefore: true, onSelect: () => { if (id) void triggerPull.mutateAsync(id); } },
+              workflow?.github_sync_status === "conflict" && {
+                id: "github-conflict",
+                label: "Resolve GitHub conflict",
+                onSelect: () => setConflictOpen(true),
+              },
             ] as (OverflowItem | null | false)[]}
           />
         </div>
       </header>
+
+      {conflictOpen && workflow && (
+        <GitHubConflictModal
+          workflowId={workflow.id}
+          workflowName={workflow.name}
+          onClose={() => setConflictOpen(false)}
+        />
+      )}
 
       {message && <div className="toolbar-message">{message}</div>}
       {active && (dirty || workflow?.has_unpublished_changes) && (

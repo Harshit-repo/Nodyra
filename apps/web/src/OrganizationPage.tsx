@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { errorMessage, getOrgId, getUser } from "./api";
 import { useConfirm } from "./ConfirmProvider";
+import { GitHubSyncSettings } from "./GitHubSyncSettings";
 import {
   useAddOrgMemberMutation,
   useMyOrgs,
@@ -316,6 +317,8 @@ export function OrganizationPage() {
             </div>
           </section>
         )}
+
+        <GitHubSyncSettings />
       </main>
     </div>
   );
