@@ -23,7 +23,7 @@ from app.db import SessionLocal
 from app.models import NodeRun, Run, RunEvent, User, Workflow, WorkflowVersion
 from app.routers.workflows import STRUCTURAL_NODE_TYPES
 from app.services.audit import log_audit
-from app.services.runner import start_run
+from app.services.runner import cancel_run as _runner_cancel_run, start_run
 from app.services.triggers import _await_run_terminal, _last_node_output
 from noodle.models import WorkflowGraph
 from noodle.sdk import registry as node_registry
@@ -387,6 +387,17 @@ async def _run_workflow(session: AsyncSession, user: User | None, args: dict) ->
     )
 
 
+async def _cancel_run(session: AsyncSession, user: User | None, args: dict) -> Any:
+    run_id = str(args.get("run_id") or "").strip()
+    if not run_id:
+        raise McpToolError("run_id is required.")
+    run = await session.get(Run, run_id)
+    if run is None:
+        raise McpToolError(f"Run not found: {run_id}")
+    status = await _runner_cancel_run(run_id)
+    return {"run_id": run_id, "status": status or run.status}
+
+
 # ---------------------------------------------------------------------------
 # Builder tools
 # ---------------------------------------------------------------------------
@@ -628,6 +639,17 @@ STATIC_TOOLS: list[McpTool] = [
         },
         permission="workflow:run",
         handler=_run_workflow,
+    ),
+    McpTool(
+        name="cancel_run",
+        description="Cancel a running or queued workflow run. Returns the resulting status.",
+        input_schema={
+            "type": "object",
+            "properties": {"run_id": {"type": "string"}},
+            "required": ["run_id"],
+        },
+        permission="workflow:run",
+        handler=_cancel_run,
     ),
     McpTool(
         name="create_workflow",

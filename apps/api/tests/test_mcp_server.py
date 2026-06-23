@@ -297,6 +297,33 @@ class _LoopbackSession:
         )
 
 
+async def test_cancel_run(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "Cancel WF")
+    run_data = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc("tools/call", {"name": "run_workflow", "arguments": {"workflow_id": workflow_id}}),
+        )
+    )
+    # Run already finished (success) — cancel returns its terminal status
+    data = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc("tools/call", {"name": "cancel_run", "arguments": {"run_id": run_data["run_id"]}}),
+        )
+    )
+    assert data["run_id"] == run_data["run_id"]
+    assert data["status"] in {"success", "cancelled", "error"}
+
+
+async def test_cancel_run_missing(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/mcp",
+        json=rpc("tools/call", {"name": "cancel_run", "arguments": {"run_id": "ghost"}}),
+    )
+    assert resp.json()["result"]["isError"] is True
+
+
 async def test_client_nodes_loopback_against_own_server(
     client: AsyncClient, monkeypatch
 ) -> None:
