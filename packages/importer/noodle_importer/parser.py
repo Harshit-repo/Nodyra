@@ -89,7 +89,7 @@ def import_module(source: str) -> WorkflowGraph:
     nodes: list[dict] = []
     edges: list[dict] = []
 
-    for stmt in ast.walk(tree):
+    for stmt in tree.body:
         if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         dec = _node_decorator(stmt)
