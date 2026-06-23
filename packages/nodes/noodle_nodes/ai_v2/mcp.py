@@ -297,3 +297,70 @@ async def mcp_list_tools(input: Any = None, credentials: Any = None) -> list[dic
         }
         for tool in listing.tools
     ]
+
+
+@node(
+    name="MCP List Resources",
+    id="mcp_list_resources",
+    category=AI_CATEGORY,
+    icon="ai",
+    tool_side_effecting=False,
+    params={"credentials": _CREDENTIAL_META},
+)
+async def mcp_list_resources(input: Any = None, credentials: Any = None) -> list[dict]:
+    """List the resources an external MCP server exposes."""
+    config = _config_from_credentials(credentials)
+    async with _mcp_session(config) as session:
+        listing = await session.list_resources()
+    return [
+        {
+            "uri": str(r.uri),
+            "name": getattr(r, "name", "") or "",
+            "description": getattr(r, "description", "") or "",
+            "mime_type": getattr(r, "mimeType", "") or "",
+        }
+        for r in listing.resources
+    ]
+
+
+@node(
+    name="MCP Read Resource",
+    id="mcp_read_resource",
+    category=AI_CATEGORY,
+    icon="ai",
+    tool_side_effecting=False,
+    params={
+        "credentials": _CREDENTIAL_META,
+        "resource_uri": {
+            "description": "URI of the resource to read (e.g. noodle://workflow/abc123).",
+        },
+    },
+)
+async def mcp_read_resource(
+    input: Any = None,
+    credentials: Any = None,
+    resource_uri: str = "",
+) -> Any:
+    """Read a resource from an external MCP server by URI."""
+    uri = str(resource_uri or "").strip()
+    if not uri and isinstance(input, str):
+        uri = input.strip()
+    if not uri:
+        raise ValueError("mcp_read_resource: resource_uri is required")
+    config = _config_from_credentials(credentials)
+    async with _mcp_session(config) as session:
+        result = await session.read_resource(uri)
+    contents = getattr(result, "contents", None) or []
+    if not contents:
+        return None
+    item = contents[0]
+    text = getattr(item, "text", None)
+    if text is not None:
+        try:
+            return json.loads(text)
+        except ValueError:
+            return text
+    blob = getattr(item, "blob", None)
+    if blob is not None:
+        return {"_blob": True, "data": blob, "mime_type": getattr(item, "mimeType", "") or ""}
+    return None

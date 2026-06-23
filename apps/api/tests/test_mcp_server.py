@@ -296,6 +296,37 @@ class _LoopbackSession:
             isError=result["isError"],
         )
 
+    async def list_resources(self):
+        from types import SimpleNamespace
+        result = await self._post("resources/list", {})
+        return SimpleNamespace(
+            resources=[
+                SimpleNamespace(
+                    uri=r["uri"],
+                    name=r.get("name", ""),
+                    description=r.get("description", ""),
+                    mimeType=r.get("mimeType", ""),
+                )
+                for r in result["resources"]
+            ]
+        )
+
+    async def read_resource(self, uri: str):
+        from types import SimpleNamespace
+        result = await self._post("resources/read", {"uri": uri})
+        contents = result.get("contents", [])
+        return SimpleNamespace(
+            contents=[
+                SimpleNamespace(
+                    uri=c.get("uri", ""),
+                    mimeType=c.get("mimeType", ""),
+                    text=c.get("text"),
+                    blob=c.get("blob"),
+                )
+                for c in contents
+            ]
+        )
+
 
 async def test_cancel_run(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "Cancel WF")
@@ -791,3 +822,32 @@ async def test_client_nodes_loopback_against_own_server(
         arguments={"workflow_id": workflow_id},
     )
     assert out["status"] == "success"
+
+
+async def test_mcp_list_resources_loopback(client: AsyncClient, monkeypatch) -> None:
+    from noodle_nodes.ai_v2 import mcp as mcp_module
+
+    @asynccontextmanager
+    async def _loopback(config):
+        yield _LoopbackSession(client)
+
+    monkeypatch.setattr(mcp_module, "_mcp_session", _loopback)
+
+    creds = {"url": "https://loopback.invalid/mcp"}
+    resources = await mcp_module.mcp_list_resources(credentials=creds)
+    assert any(r["uri"] == "noodle://node-types" for r in resources)
+
+
+async def test_mcp_read_resource_loopback(client: AsyncClient, monkeypatch) -> None:
+    from noodle_nodes.ai_v2 import mcp as mcp_module
+
+    @asynccontextmanager
+    async def _loopback(config):
+        yield _LoopbackSession(client)
+
+    monkeypatch.setattr(mcp_module, "_mcp_session", _loopback)
+
+    creds = {"url": "https://loopback.invalid/mcp"}
+    data = await mcp_module.mcp_read_resource(credentials=creds, resource_uri="noodle://node-types")
+    assert isinstance(data, dict)
+    assert "node_types" in data
