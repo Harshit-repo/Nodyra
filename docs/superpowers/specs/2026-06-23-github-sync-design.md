@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-23  
 **Status:** Approved  
-**Scope:** Bidirectional sync between Noodle workflows and a GitHub repository, using Python code-first format, async queue jobs, and conflict detection.
+**Scope:** Bidirectional sync between Noodle workflows and a GitHub repository, using Python code-first format, async queue jobs, and conflict detection. MCP-created and MCP-modified workflows are first-class sync participants.
 
 ---
 
@@ -53,11 +53,52 @@ The GitHub OAuth2 credential used for sync is stored as an org-scoped credential
 
 ---
 
-## 3. Push Path (Noodle → GitHub)
+## 3. Sync Trigger (Source-Agnostic)
+
+### Origin tracking
+
+Any code that writes `draft_graph` — UI autosave, a direct API call, or an MCP tool — must call the shared helper after committing:
+
+```python
+async def enqueue_github_push(
+    workflow: Workflow,
+    origin: Literal["ui", "mcp", "api", "publish"],
+) -> None: ...
+```
+
+This is the **only** place a push job is enqueued. It checks whether the org has a `github_sync_configs` row before doing anything, so it is safe to call unconditionally from every write path.
+
+### Write sites (exhaustive list)
+
+| Write site | File | Origin |
+|---|---|---|
+| `PATCH /workflows/{id}` (graph field) | `routers/workflows.py` | `"ui"` |
+| `POST /workflows` (new workflow) | `routers/workflows.py` | `"ui"` |
+| `POST /workflows/{id}/publish` | `routers/workflows.py` | `"publish"` (enqueues `github_push_publish`) |
+| MCP `create_workflow` | `mcp/tools.py` | `"mcp"` |
+| MCP `set_workflow_graph` | `mcp/tools.py` | `"mcp"` |
+| Any future MCP tool writing `draft_graph` | `mcp/tools.py` | `"mcp"` |
+
+New MCP tools that write `draft_graph` **must** call `enqueue_github_push()` — this is the extensibility contract. Because all write paths go through the same helper, adding a new MCP tool automatically gets sync support by following this pattern.
+
+### Commit messages per origin
+
+| Origin | Commit message |
+|---|---|
+| `"ui"` | `draft: {workflow.name}` |
+| `"mcp"` | `mcp: {workflow.name}` |
+| `"api"` | `api: {workflow.name}` |
+| `"publish"` | `publish: {workflow.name} v{version}` |
+
+This gives GitHub commit history a clear audit trail showing whether changes came from a human in the UI, an AI agent via MCP, or an external API call.
+
+---
+
+## 4. Push Path (Noodle → GitHub)
 
 ### `github_push_draft` job
 
-Triggered on every autosave of `draft_graph`. Payload: `{ org_id, workflow_id }`.
+Triggered by `enqueue_github_push()` on any write to `draft_graph`. Payload: `{ org_id, workflow_id, origin }`.
 
 1. Load `github_sync_configs` for the org — skip if none
 2. Load workflow, generate `{base_path}/{slug}.py` content via `workflow_to_module()`
@@ -68,7 +109,7 @@ Triggered on every autosave of `draft_graph`. Payload: `{ org_id, workflow_id }`
 
 ### `github_push_publish` job
 
-Same as `github_push_draft` but targets `main_branch`. Commit message: `publish: {workflow.name} v{version}`. On success, also updates `github_sync_sha`.
+Same as `github_push_draft` but targets `main_branch`. Commit message comes from the origin table above (`publish: {workflow.name} v{version}`). On success, also updates `github_sync_sha`.
 
 ### Retry policy
 
@@ -76,7 +117,7 @@ Jobs retry up to 3 times with exponential backoff (1s, 4s, 16s) on transient Git
 
 ---
 
-## 4. Pull Path (GitHub → Noodle)
+## 5. Pull Path (GitHub → Noodle)
 
 ### Webhook endpoint
 
@@ -107,7 +148,7 @@ Payload: `{ org_id, workflow_id, file_sha: str | None }`. `file_sha` is the blob
 
 ---
 
-## 5. Python Importer (`noodle_importer`)
+## 6. Python Importer (`noodle_importer`)
 
 New package at `packages/importer/noodle_importer/`. Single public function:
 
@@ -132,7 +173,7 @@ def import_module(source: str) -> WorkflowGraph: ...
 
 ---
 
-## 6. Conflict Resolution
+## 7. Conflict Resolution
 
 When `github_sync_status = "conflict"`:
 
@@ -151,7 +192,7 @@ Both actions are logged to the audit trail as `github_conflict_resolved` with `{
 
 ---
 
-## 7. UI
+## 8. UI
 
 ### Org Settings — "GitHub Sync" tab
 
@@ -184,7 +225,7 @@ No new pages required — all surfaces live within existing settings and editor 
 
 ---
 
-## 8. Multi-Tenancy
+## 9. Multi-Tenancy
 
 ### Org isolation
 
@@ -216,7 +257,7 @@ GitHub sync is gated behind a `github_sync` entitlement. Checked:
 
 ---
 
-## 9. Out of Scope
+## 10. Out of Scope
 
 - Per-workflow repo overrides (org-level repo only)
 - GitHub App authentication (PAT/OAuth2 only for now)
