@@ -22,7 +22,10 @@ INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
 
 SERVER_INFO = {"name": "noodle", "version": "0.0.1"}
-SERVER_CAPABILITIES: dict[str, Any] = {"tools": {"listChanged": False}}
+SERVER_CAPABILITIES: dict[str, Any] = {
+    "tools": {"listChanged": True},
+    "resources": {"subscribe": False, "listChanged": False},
+}
 
 
 def jsonrpc_result(req_id: Any, result: dict) -> dict:

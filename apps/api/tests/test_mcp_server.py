@@ -659,6 +659,67 @@ async def test_create_schedule_missing_workflow(client: AsyncClient) -> None:
     assert resp.json()["result"]["isError"] is True
 
 
+# ---------------------------------------------------------------------------
+# Resources capability (Task 10)
+# ---------------------------------------------------------------------------
+
+
+async def test_resources_in_capabilities(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/mcp",
+        json=rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}),
+    )
+    caps = resp.json()["result"]["capabilities"]
+    assert "resources" in caps
+
+
+async def test_resources_list(client: AsyncClient) -> None:
+    resp = await client.post("/mcp", json=rpc("resources/list"))
+    result = resp.json()["result"]
+    assert "resources" in result
+    uris = {r["uri"] for r in result["resources"]}
+    assert "noodle://node-types" in uris
+
+
+async def test_resources_list_includes_workflows(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "Resource WF")
+    resp = await client.post("/mcp", json=rpc("resources/list"))
+    uris = {r["uri"] for r in resp.json()["result"]["resources"]}
+    assert f"noodle://workflow/{workflow_id}" in uris
+
+
+async def test_resources_read_node_types(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/mcp",
+        json=rpc("resources/read", {"uri": "noodle://node-types"}),
+    )
+    result = resp.json()["result"]
+    assert "contents" in result
+    text = result["contents"][0]["text"]
+    data = json.loads(text)
+    assert "node_types" in data
+
+
+async def test_resources_read_workflow(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "ReadRes WF")
+    resp = await client.post(
+        "/mcp",
+        json=rpc("resources/read", {"uri": f"noodle://workflow/{workflow_id}"}),
+    )
+    result = resp.json()["result"]
+    data = json.loads(result["contents"][0]["text"])
+    assert data["id"] == workflow_id
+    assert "graph" in data
+
+
+async def test_resources_read_unknown_uri(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/mcp",
+        json=rpc("resources/read", {"uri": "noodle://nonexistent"}),
+    )
+    assert resp.json()["error"]["code"] == -32601
+
+
 async def test_client_nodes_loopback_against_own_server(
     client: AsyncClient, monkeypatch
 ) -> None:

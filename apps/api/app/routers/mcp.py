@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import get_session
 from app.mcp.protocol import (
-    INTERNAL_ERROR,
     INVALID_REQUEST,
     METHOD_NOT_FOUND,
     PARSE_ERROR,
@@ -29,6 +28,7 @@ from app.mcp.protocol import (
     jsonrpc_result,
     tool_result,
 )
+from app.mcp.resources import list_resources, read_resource
 from app.mcp.tools import (
     STATIC_TOOLS,
     McpToolError,
@@ -162,6 +162,20 @@ async def mcp_post(
                     tool_result(f"{type(exc).__name__}: {exc}", is_error=True),
                 )
             )
+
+    if method == "resources/list":
+        resources = await list_resources(session)
+        return JSONResponse(jsonrpc_result(req_id, {"resources": resources}))
+
+    if method == "resources/read":
+        uri = str(params.get("uri") or "")
+        if not uri:
+            return JSONResponse(jsonrpc_error(req_id, INVALID_REQUEST, "uri is required."))
+        try:
+            content = await read_resource(session, uri)
+        except ValueError as exc:
+            return JSONResponse(jsonrpc_error(req_id, METHOD_NOT_FOUND, str(exc)))
+        return JSONResponse(jsonrpc_result(req_id, {"contents": [content]}))
 
     return JSONResponse(
         jsonrpc_error(req_id, METHOD_NOT_FOUND, f"Unknown method: {method}")
