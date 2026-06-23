@@ -720,6 +720,55 @@ async def test_resources_read_unknown_uri(client: AsyncClient) -> None:
     assert resp.json()["error"]["code"] == -32601
 
 
+# ---------------------------------------------------------------------------
+# Prompts capability (Task 11)
+# ---------------------------------------------------------------------------
+
+
+async def test_prompts_in_capabilities(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/mcp",
+        json=rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}),
+    )
+    assert "prompts" in resp.json()["result"]["capabilities"]
+
+
+async def test_prompts_list(client: AsyncClient) -> None:
+    resp = await client.post("/mcp", json=rpc("prompts/list"))
+    result = resp.json()["result"]
+    assert "prompts" in result
+    names = {p["name"] for p in result["prompts"]}
+    assert {"build_workflow", "debug_run", "optimize_workflow"} <= names
+
+
+async def test_prompts_get_build_workflow(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/mcp",
+        json=rpc("prompts/get", {"name": "build_workflow", "arguments": {"description": "send a daily email"}}),
+    )
+    result = resp.json()["result"]
+    assert "messages" in result
+    assert len(result["messages"]) >= 1
+    assert "send a daily email" in result["messages"][0]["content"]["text"]
+
+
+async def test_prompts_get_debug_run(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/mcp",
+        json=rpc("prompts/get", {"name": "debug_run", "arguments": {"run_id": "abc123"}}),
+    )
+    result = resp.json()["result"]
+    assert "abc123" in result["messages"][0]["content"]["text"]
+
+
+async def test_prompts_get_unknown(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/mcp",
+        json=rpc("prompts/get", {"name": "nonexistent_prompt", "arguments": {}}),
+    )
+    assert resp.json()["error"]["code"] == -32601
+
+
 async def test_client_nodes_loopback_against_own_server(
     client: AsyncClient, monkeypatch
 ) -> None:

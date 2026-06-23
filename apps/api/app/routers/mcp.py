@@ -28,6 +28,7 @@ from app.mcp.protocol import (
     jsonrpc_result,
     tool_result,
 )
+from app.mcp.prompts import get_prompt, list_prompts
 from app.mcp.resources import list_resources, read_resource
 from app.mcp.tools import (
     STATIC_TOOLS,
@@ -176,6 +177,20 @@ async def mcp_post(
         except ValueError as exc:
             return JSONResponse(jsonrpc_error(req_id, METHOD_NOT_FOUND, str(exc)))
         return JSONResponse(jsonrpc_result(req_id, {"contents": [content]}))
+
+    if method == "prompts/list":
+        return JSONResponse(jsonrpc_result(req_id, {"prompts": list_prompts()}))
+
+    if method == "prompts/get":
+        name = str(params.get("name") or "")
+        arguments = params.get("arguments")
+        arguments = arguments if isinstance(arguments, dict) else {}
+        result = get_prompt(name, {str(k): str(v) for k, v in arguments.items()})
+        if result is None:
+            return JSONResponse(
+                jsonrpc_error(req_id, METHOD_NOT_FOUND, f"Unknown prompt: {name!r}")
+            )
+        return JSONResponse(jsonrpc_result(req_id, result))
 
     return JSONResponse(
         jsonrpc_error(req_id, METHOD_NOT_FOUND, f"Unknown method: {method}")

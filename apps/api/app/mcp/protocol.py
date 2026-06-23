@@ -25,6 +25,7 @@ SERVER_INFO = {"name": "noodle", "version": "0.0.1"}
 SERVER_CAPABILITIES: dict[str, Any] = {
     "tools": {"listChanged": True},
     "resources": {"subscribe": False, "listChanged": False},
+    "prompts": {"listChanged": False},
 }
 
 
