@@ -17,6 +17,7 @@ dependencies = [
     "noodle-core",
     "noodle-nodes",
     "noodle-exporter",
+    "noodle-importer",
     "cryptography>=42.0",
     "psutil>=5.9",
     "asyncssh>=2.14",
