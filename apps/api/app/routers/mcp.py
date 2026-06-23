@@ -29,6 +29,7 @@ from app.mcp.protocol import (
     tool_result,
 )
 from app.mcp.prompts import get_prompt, list_prompts
+from app.services.rate_limit import allow as _rate_allow
 from app.mcp.resources import list_resources, read_resource
 from app.mcp.tools import (
     STATIC_TOOLS,
@@ -100,6 +101,11 @@ async def mcp_post(
             )
     elif settings.auth_required:
         return Response(status_code=401, headers={"WWW-Authenticate": "Bearer"})
+
+    # --- rate limiting ---
+    identifier = user.id if user else (request.client.host if request.client else "anon")
+    if not _rate_allow("mcp", identifier, limit=120, window_seconds=60):
+        return Response(status_code=429, headers={"Retry-After": "60"})
 
     # --- parse ---
     try:

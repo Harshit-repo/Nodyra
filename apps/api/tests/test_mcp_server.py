@@ -914,3 +914,23 @@ async def test_mcp_call_tool_image_result(client: AsyncClient, monkeypatch) -> N
     assert result["_image"] is True
     assert result["data"] == "abc123=="
     assert result["mime_type"] == "image/png"
+
+
+async def test_mcp_rate_limit(client: AsyncClient, monkeypatch) -> None:
+    """After exceeding the per-IP rate limit, /mcp returns 429."""
+    import app.routers.mcp as mcp_router
+
+    call_count = 0
+
+    def _deny_after_one(bucket, identifier, *, limit, window_seconds):
+        nonlocal call_count
+        call_count += 1
+        return call_count <= 1  # first call allowed, rest denied
+
+    monkeypatch.setattr(mcp_router, "_rate_allow", _deny_after_one)
+
+    r1 = await client.post("/mcp", json=rpc("ping"))
+    assert r1.status_code == 200
+
+    r2 = await client.post("/mcp", json=rpc("ping"))
+    assert r2.status_code == 429
