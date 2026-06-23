@@ -1,5 +1,4 @@
 import json
-import re
 from contextlib import asynccontextmanager
 
 from httpx import AsyncClient
@@ -192,6 +191,60 @@ async def test_unknown_tool_is_method_not_found(client: AsyncClient) -> None:
         "/mcp", json=rpc("tools/call", {"name": "nope_tool", "arguments": {}})
     )
     assert resp.json()["error"]["code"] == -32601
+
+
+async def test_list_runs_empty(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/mcp",
+        json=rpc("tools/call", {"name": "list_runs", "arguments": {"limit": 5}}),
+    )
+    data = _tool_payload(resp)
+    assert "runs" in data
+    assert isinstance(data["runs"], list)
+
+
+async def test_list_runs_filtered_by_workflow(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "ListRuns WF")
+    # trigger a run
+    await client.post(
+        "/mcp",
+        json=rpc("tools/call", {"name": "run_workflow", "arguments": {"workflow_id": workflow_id}}),
+    )
+    data = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc("tools/call", {"name": "list_runs", "arguments": {"workflow_id": workflow_id}}),
+        )
+    )
+    assert len(data["runs"]) >= 1
+    assert all(r["workflow_id"] == workflow_id for r in data["runs"])
+
+
+async def test_get_run_events(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "Events WF")
+    run_data = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc("tools/call", {"name": "run_workflow", "arguments": {"workflow_id": workflow_id}}),
+        )
+    )
+    run_id = run_data["run_id"]
+    data = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc("tools/call", {"name": "get_run_events", "arguments": {"run_id": run_id}}),
+        )
+    )
+    assert data["run_id"] == run_id
+    assert isinstance(data["events"], list)
+
+
+async def test_get_run_events_missing_run(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/mcp",
+        json=rpc("tools/call", {"name": "get_run_events", "arguments": {"run_id": "doesnotexist"}}),
+    )
+    assert resp.json()["result"]["isError"] is True
 
 
 # ---------------------------------------------------------------------------

@@ -103,9 +103,7 @@ def _draft_graph(workflow: Workflow) -> dict:
 # ---------------------------------------------------------------------------
 
 
-async def _list_workflows(
-    session: AsyncSession, user: User | None, args: dict
-) -> Any:
+async def _list_workflows(session: AsyncSession, user: User | None, args: dict) -> Any:
     limit = max(1, min(int(args.get("limit") or 50), 200))
     search = str(args.get("search") or "").strip().lower()
     # Filter and cap in SQL, and don't eager-load every workflow's full
@@ -146,9 +144,7 @@ async def _list_workflows(
     return {"workflows": out}
 
 
-async def _get_workflow(
-    session: AsyncSession, user: User | None, args: dict
-) -> Any:
+async def _get_workflow(session: AsyncSession, user: User | None, args: dict) -> Any:
     workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
     return {
         "id": workflow.id,
@@ -159,9 +155,7 @@ async def _get_workflow(
     }
 
 
-async def _list_node_types(
-    session: AsyncSession, user: User | None, args: dict
-) -> Any:
+async def _list_node_types(session: AsyncSession, user: User | None, args: dict) -> Any:
     category = str(args.get("category") or "").strip()
     search = str(args.get("search") or "").strip().lower()
     out: list[dict] = []
@@ -183,16 +177,12 @@ async def _list_node_types(
     return {"node_types": out, "total": len(out)}
 
 
-async def _get_node_type(
-    session: AsyncSession, user: User | None, args: dict
-) -> Any:
+async def _get_node_type(session: AsyncSession, user: User | None, args: dict) -> Any:
     node_type = str(args.get("node_type") or "")
     for manifest in node_registry.manifests():
         if manifest.id == node_type:
             return manifest.model_dump(mode="json")
-    raise McpToolError(
-        f"Unknown node type: {node_type!r}. Use list_node_types to discover ids."
-    )
+    raise McpToolError(f"Unknown node type: {node_type!r}. Use list_node_types to discover ids.")
 
 
 async def _get_run(session: AsyncSession, user: User | None, args: dict) -> Any:
@@ -230,6 +220,68 @@ async def _get_run(session: AsyncSession, user: User | None, args: dict) -> Any:
     return result
 
 
+async def _list_runs(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow_id = str(args.get("workflow_id") or "").strip()
+    status_filter = str(args.get("status") or "").strip()
+    limit = max(1, min(int(args.get("limit") or 20), 100))
+
+    stmt = select(Run).order_by(Run.started_at.desc()).limit(limit)
+    if workflow_id:
+        stmt = stmt.where(Run.workflow_id == workflow_id)
+    if status_filter:
+        stmt = stmt.where(Run.status == status_filter)
+
+    runs = (await session.scalars(stmt)).all()
+    return {
+        "runs": [
+            {
+                "run_id": r.id,
+                "workflow_id": r.workflow_id,
+                "status": r.status,
+                "trigger_type": r.trigger_type,
+                "mode": r.mode,
+                "started_at": str(r.started_at),
+                "finished_at": str(r.finished_at) if r.finished_at else None,
+            }
+            for r in runs
+        ]
+    }
+
+
+async def _get_run_events(session: AsyncSession, user: User | None, args: dict) -> Any:
+    run_id = str(args.get("run_id") or "").strip()
+    if not run_id:
+        raise McpToolError("run_id is required.")
+    limit = max(1, min(int(args.get("limit") or 50), 200))
+    after_seq = int(args.get("after_sequence") or 0)
+
+    run = await session.get(Run, run_id)
+    if run is None:
+        raise McpToolError(f"Run not found: {run_id}")
+
+    events = (
+        await session.scalars(
+            select(RunEvent)
+            .where(RunEvent.run_id == run_id, RunEvent.sequence > after_seq)
+            .order_by(RunEvent.sequence)
+            .limit(limit)
+        )
+    ).all()
+    return {
+        "run_id": run_id,
+        "events": [
+            {
+                "event_type": e.event_type,
+                "sequence": e.sequence,
+                "ts": str(e.ts),
+                "node_id": e.node_id,
+                "payload": _truncated(e.payload),
+            }
+            for e in events
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Run tools
 # ---------------------------------------------------------------------------
@@ -251,14 +303,10 @@ async def _run_outcome(run_id: str, wait_seconds: float) -> dict:
         else:
             rows = (
                 await session.scalars(
-                    select(NodeRun).where(
-                        NodeRun.run_id == run_id, NodeRun.status == "error"
-                    )
+                    select(NodeRun).where(NodeRun.run_id == run_id, NodeRun.status == "error")
                 )
             ).all()
-            node_errors = [
-                {"node_id": nr.node_id, "error": nr.error} for nr in rows
-            ]
+            node_errors = [{"node_id": nr.node_id, "error": nr.error} for nr in rows]
             if node_errors:
                 result["errors"] = node_errors
             else:
@@ -320,9 +368,7 @@ async def run_workflow_by_id(
     return await _run_outcome(run_id, wait_seconds)
 
 
-async def _run_workflow(
-    session: AsyncSession, user: User | None, args: dict
-) -> Any:
+async def _run_workflow(session: AsyncSession, user: User | None, args: dict) -> Any:
     parameters = args.get("parameters")
     if parameters is not None and not isinstance(parameters, dict):
         raise McpToolError("parameters must be a JSON object.")
@@ -373,9 +419,7 @@ def _validate_graph_payload(graph: Any) -> WorkflowGraph:
     return parsed
 
 
-async def _create_workflow(
-    session: AsyncSession, user: User | None, args: dict
-) -> Any:
+async def _create_workflow(session: AsyncSession, user: User | None, args: dict) -> Any:
     name = str(args.get("name") or "").strip()
     if not name:
         raise McpToolError("name is required.")
@@ -390,7 +434,10 @@ async def _create_workflow(
     workflow.versions.append(WorkflowVersion(version=1, graph=dict(EMPTY_GRAPH)))
     session.add(workflow)
     await log_audit(
-        session, "create", "workflow", detail=f"mcp: {name}",
+        session,
+        "create",
+        "workflow",
+        detail=f"mcp: {name}",
         actor_id=user.id if user else None,
         actor_email=user.email if user else None,
     )
@@ -398,14 +445,16 @@ async def _create_workflow(
     return {"workflow_id": workflow.id, "name": name}
 
 
-async def _set_workflow_graph(
-    session: AsyncSession, user: User | None, args: dict
-) -> Any:
+async def _set_workflow_graph(session: AsyncSession, user: User | None, args: dict) -> Any:
     workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
     parsed = _validate_graph_payload(args.get("graph"))
     workflow.draft_graph = parsed.model_dump()
     await log_audit(
-        session, "mcp_set_graph", "workflow", workflow.id, workflow.name,
+        session,
+        "mcp_set_graph",
+        "workflow",
+        workflow.id,
+        workflow.name,
         actor_id=user.id if user else None,
         actor_email=user.email if user else None,
     )
@@ -418,16 +467,12 @@ async def _set_workflow_graph(
     }
 
 
-async def _validate_graph(
-    session: AsyncSession, user: User | None, args: dict
-) -> Any:
+async def _validate_graph(session: AsyncSession, user: User | None, args: dict) -> Any:
     parsed = _validate_graph_payload(args.get("graph"))
     return {"valid": True, "node_count": len(parsed.nodes), "edge_count": len(parsed.edges)}
 
 
-async def _publish_workflow(
-    session: AsyncSession, user: User | None, args: dict
-) -> Any:
+async def _publish_workflow(session: AsyncSession, user: User | None, args: dict) -> Any:
     from app.routers.workflows import publish_workflow as publish_route
     from app.schemas import WorkflowPublishRequest
 
@@ -518,6 +563,41 @@ STATIC_TOOLS: list[McpTool] = [
         },
         permission=None,
         handler=_get_run,
+    ),
+    McpTool(
+        name="list_runs",
+        description=(
+            "List recent runs, optionally filtered by workflow_id and/or status. "
+            "status values: running, queued, waiting, success, error, cancelled."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string", "description": "Filter to one workflow."},
+                "status": {"type": "string", "description": "Filter by run status."},
+                "limit": {"type": "integer", "description": "Max results (1-100, default 20)."},
+            },
+        },
+        permission=None,
+        handler=_list_runs,
+    ),
+    McpTool(
+        name="get_run_events",
+        description=(
+            "Full event log for a run (run_started, node_started, node_finished, "
+            "run_error, etc.). Use after_sequence to page through large logs."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string"},
+                "limit": {"type": "integer", "description": "Max events (1-200, default 50)."},
+                "after_sequence": {"type": "integer", "description": "Skip events at or before this sequence."},
+            },
+            "required": ["run_id"],
+        },
+        permission=None,
+        handler=_get_run_events,
     ),
     McpTool(
         name="run_workflow",
@@ -633,9 +713,7 @@ async def _mcp_enabled_workflows(session: AsyncSession) -> list[Workflow]:
     # No version eager-load: descriptors only need the mcp_* columns, and the
     # call path re-loads the chosen workflow (with versions) by id anyway.
     rows = await session.scalars(
-        select(Workflow)
-        .where(Workflow.mcp_enabled.is_(True))
-        .order_by(Workflow.updated_at.desc())
+        select(Workflow).where(Workflow.mcp_enabled.is_(True)).order_by(Workflow.updated_at.desc())
     )
     return list(rows.all())
 
@@ -660,7 +738,9 @@ async def list_workflow_tool_descriptors(session: AsyncSession) -> list[dict]:
             {
                 "name": name,
                 "description": wf.mcp_description or f"Run the Noodle workflow '{wf.name}'.",
-                "inputSchema": schema if isinstance(schema, dict) and schema else _PERMISSIVE_SCHEMA,
+                "inputSchema": schema
+                if isinstance(schema, dict) and schema
+                else _PERMISSIVE_SCHEMA,
             }
         )
     return out
