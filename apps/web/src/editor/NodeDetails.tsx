@@ -1,4 +1,4 @@
-import { Info, MagnifyingGlass, Plus, WarningCircle, X } from "@phosphor-icons/react";
+import { Eye, EyeSlash, Info, MagnifyingGlass, Plus, PushPin, WarningCircle, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, errorMessage, uploadArtifact } from "../api";
@@ -10,7 +10,6 @@ import {
   visibleCredentialFields,
 } from "../llmProviders";
 import {
-  CredentialFieldInput,
   LLM_FIELD_DEFS,
   mergedCredentialPresets,
   type CredentialPreset,
@@ -178,12 +177,6 @@ function credentialFieldLabel(field: string): string {
   return CRED_FIELD_LABELS[field] ?? formatParamLabel(field);
 }
 
-function credentialFieldSummary(cred: Credential): string {
-  if (cred.keys.length === 0) return "No stored fields";
-  const visible = cred.keys.slice(0, 3).map(credentialFieldLabel).join(", ");
-  const extra = cred.keys.length > 3 ? ` +${cred.keys.length - 3}` : "";
-  return `${visible}${extra}`;
-}
 
 function credentialMatchesSearch(cred: Credential, query: string): boolean {
   const needle = query.trim().toLowerCase();
@@ -202,6 +195,51 @@ function credentialMatchesSearch(cred: Credential, query: string): boolean {
     .join(" ")
     .toLowerCase()
     .includes(needle);
+}
+
+const CRED_TYPE_COLORS: Record<string, string> = {
+  openai: "var(--cred-dot-ai)",
+  anthropic: "var(--cred-dot-ai)",
+  llm_provider: "var(--cred-dot-ai)",
+  cohere: "var(--cred-dot-ai)",
+  deepl: "var(--cred-dot-ai)",
+  slack_bot: "var(--cred-dot-messaging)",
+  discord_webhook: "var(--cred-dot-messaging)",
+  smtp: "var(--cred-dot-messaging)",
+  postgres: "var(--cred-dot-db)",
+  mysql: "var(--cred-dot-db)",
+  mongodb: "var(--cred-dot-db)",
+  redis: "var(--cred-dot-db)",
+  elasticsearch: "var(--cred-dot-db)",
+  aws: "var(--cred-dot-cloud)",
+  azure_blob: "var(--cred-dot-cloud)",
+  github: "var(--cred-dot-dev)",
+};
+
+function credTypeDotColor(type: string): string {
+  return CRED_TYPE_COLORS[type] ?? "var(--accent)";
+}
+
+function formatRelativeTime(iso: string | null | undefined): string {
+  if (!iso) return "never used";
+  const diff = Date.now() - new Date(iso).getTime();
+  if (diff < 0) return "just now";
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} day${days === 1 ? "" : "s"} ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} month${months === 1 ? "" : "s"} ago`;
+  return `${Math.floor(months / 12)}y ago`;
+}
+
+function getDaysUntilExpiry(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime() - Date.now();
+  return Math.ceil(ms / 86400000);
 }
 
 function JsonField({
@@ -653,6 +691,96 @@ const CRED_TYPE_LABELS: Record<string, string> = {
   mysql: "MySQL Account",
 };
 
+function CredentialModalField({
+  field,
+  value,
+  onChange,
+  error,
+}: {
+  field: import("../credentialPresets").CredentialFormField;
+  value: string;
+  onChange: (v: string) => void;
+  error?: string;
+}) {
+  const [showPassword, setShowPassword] = useState(false);
+  const isPassword = field.kind === "password";
+  const hasError = Boolean(error);
+
+  if (field.kind === "select") {
+    return (
+      <div className="cred-field">
+        <div className="cred-field-label">
+          <span className={`cred-field-label-text${hasError ? " has-error" : ""}`}>{field.label}</span>
+          {field.required && <span className="cred-field-required">required</span>}
+        </div>
+        <div className="cred-field-input-wrap">
+          <select
+            className="cred-field-input cred-field-select"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+          >
+            {(field.options ?? []).map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+          <span className="cred-field-select-caret" aria-hidden="true">▾</span>
+        </div>
+        {field.help && <span className="cred-field-help">{field.help}</span>}
+      </div>
+    );
+  }
+
+  if (field.kind === "textarea") {
+    return (
+      <div className="cred-field">
+        <div className="cred-field-label">
+          <span className={`cred-field-label-text${hasError ? " has-error" : ""}`}>{field.label}</span>
+          {field.required && <span className="cred-field-required">required</span>}
+        </div>
+        <textarea
+          className={`cred-field-input cred-field-textarea${hasError ? " has-error" : ""}`}
+          placeholder={field.placeholder}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        {error && <span className="cred-field-error">{error}</span>}
+        {field.help && <span className="cred-field-help">{field.help}</span>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="cred-field">
+      <div className="cred-field-label">
+        <span className={`cred-field-label-text${hasError ? " has-error" : ""}`}>{field.label}</span>
+        {field.required && <span className="cred-field-required">required</span>}
+      </div>
+      <div className="cred-field-input-wrap">
+        <input
+          className={`cred-field-input${isPassword ? " has-toggle" : ""}${hasError ? " has-error" : ""}`}
+          type={isPassword && !showPassword ? "password" : field.kind === "number" ? "number" : "text"}
+          placeholder={field.placeholder}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        {isPassword && (
+          <button
+            type="button"
+            className="cred-field-show-toggle"
+            onClick={() => setShowPassword((s) => !s)}
+            aria-label={showPassword ? "Hide" : "Show"}
+          >
+            {showPassword ? <EyeSlash size={11} /> : <Eye size={11} />}
+            {showPassword ? "Hide" : "Show"}
+          </button>
+        )}
+      </div>
+      {error && <span className="cred-field-error">{error}</span>}
+      {field.help && !error && <span className="cred-field-help">{field.help}</span>}
+    </div>
+  );
+}
+
 function CredentialCreateModal({
   credType,
   fields,
@@ -734,6 +862,7 @@ function CredentialCreateModal({
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [oauthStarted, setOauthStarted] = useState("");
   const oauthPopupRef = useRef<Window | null>(null);
   const { notify } = useToast();
@@ -816,36 +945,42 @@ function CredentialCreateModal({
     return true;
   }
 
-  /** Build the credential data dict. Returns null and sets an inline error when
-   *  a required field is missing. */
+  /** Build the credential data dict. Returns null and sets per-field errors when
+   *  required fields are missing. Non-field errors (network, scope) still use setError. */
   function collectData(): Record<string, string> | null {
+    const newErrors: Record<string, string> = {};
     const data: Record<string, string> = {};
     if (isLlm) {
       data.provider = fieldValues.provider || "openai";
       if (variant?.apiKey === "required" && !fieldValues.api_key?.trim()) {
-        setError("Enter API key.");
+        newErrors.api_key = "API key is required.";
+        setFieldErrors(newErrors);
         return null;
       }
       // Persist only the chosen provider's fields (advanced included if filled).
       for (const key of visibleCredentialFields(fieldValues.provider, true)) {
         if (fieldValues[key]?.trim()) data[key] = fieldValues[key].trim();
       }
+      setFieldErrors({});
       return data;
     }
     for (const field of preset.fields) {
       const value = fieldValues[field.key] ?? "";
       if (field.required && !value.trim()) {
-        setError(`Enter ${field.label}.`);
-        return null;
-      }
-      if (value.trim() || field.defaultValue !== undefined) {
+        newErrors[field.key] = `${field.label} is required.`;
+      } else if (value.trim() || field.defaultValue !== undefined) {
         data[field.key] = value.trim();
       }
     }
     if (credType === "google_sheets" && !data.api_key && !data.access_token) {
-      setError("Enter either API key or OAuth access token.");
+      newErrors.api_key = "Enter either API key or OAuth access token.";
+      newErrors.access_token = "Enter either API key or OAuth access token.";
+    }
+    if (Object.keys(newErrors).length > 0) {
+      setFieldErrors(newErrors);
       return null;
     }
+    setFieldErrors({});
     return data;
   }
 
@@ -879,6 +1014,7 @@ function CredentialCreateModal({
         description: displayLabel,
         data,
       });
+      setFieldErrors({});
       notify("Credential created.", "success");
       onCreated(created.id, refKey, created);
     } catch (err) {
@@ -964,92 +1100,126 @@ function CredentialCreateModal({
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="credential-modal-head cred-quick-modal-head">
-          <div>
-            <h2 id="cred-quick-modal-title">New credential</h2>
-            <p className="muted">
-              Create a {displayLabel} credential for this node.
-            </p>
+        {/* single-row header */}
+        <div className="cred-modal-header">
+          <span
+            className="credential-type-dot"
+            style={{ background: credTypeDotColor(credType) }}
+          />
+          <h2 id="cred-quick-modal-title" className="cred-modal-title">
+            New credential
+          </h2>
+          {preset.documentationUrl && (
+            <a
+              className="cred-modal-doc-link"
+              href={preset.documentationUrl}
+              target="_blank"
+              rel="noreferrer"
+              title="Documentation"
+            >
+              <Info size={13} />
+              Docs
+            </a>
+          )}
+          <span className="cred-modal-type-pill">{credType}</span>
+          <button
+            type="button"
+            className="cred-modal-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            <X size={13} weight="bold" />
+          </button>
+        </div>
+
+        {/* name field */}
+        <div className="cred-field">
+          <div className="cred-field-label">
+            <span className="cred-field-label-text">Name</span>
+            <span className="cred-field-required">required</span>
           </div>
-          <div className="cred-quick-head-actions">
-            <span className="cred-type">{credType}</span>
+          <input
+            className="cred-field-input"
+            placeholder="My credential"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !isOAuth) void handleCreate();
+              if (e.key === "Escape") onClose();
+            }}
+          />
+        </div>
+
+        {/* scope card tiles */}
+        <div>
+          <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--ink-2)", marginBottom: 8 }}>
+            Scope
+          </div>
+          <div className="cred-scope-tiles">
             <button
               type="button"
-              className="btn btn-ghost btn-sm cred-quick-close"
-              onClick={onClose}
-              aria-label="Close"
+              className={`cred-scope-tile${scope === "global" ? " is-selected" : ""}`}
+              onClick={() => setScope("global")}
             >
-              <X size={14} weight="bold" />
+              <span className="cred-scope-tile-label">Global</span>
+              <span className="cred-scope-tile-sub">All workflows</span>
+            </button>
+            {workflowId && (
+              <button
+                type="button"
+                className={`cred-scope-tile${scope === "workflow" ? " is-selected" : ""}`}
+                onClick={() => setScope("workflow")}
+              >
+                <span className="cred-scope-tile-label">This workflow</span>
+                <span className="cred-scope-tile-sub">Scoped only here</span>
+              </button>
+            )}
+            <button
+              type="button"
+              className={`cred-scope-tile${scope === "environment" ? " is-selected" : ""}`}
+              onClick={() => setScope("environment")}
+            >
+              <span className="cred-scope-tile-label">Environment</span>
+              <span className="cred-scope-tile-sub">Enter ID below</span>
+            </button>
+            <button
+              type="button"
+              className={`cred-scope-tile${scope === "runner_pool" ? " is-selected" : ""}`}
+              onClick={() => setScope("runner_pool")}
+            >
+              <span className="cred-scope-tile-label">Runner pool</span>
+              <span className="cred-scope-tile-sub">Enter ID below</span>
             </button>
           </div>
         </div>
 
-        <div className="cred-quick-summary">
-          <div>
-            <span>Type</span>
-            <strong>{displayLabel}</strong>
-          </div>
-          <div>
-            <span>Fields</span>
-            <strong>
-              {renderedFields.length > 0
-                ? renderedFields.map(credentialFieldLabel).join(", ")
-                : "Custom credential"}
-            </strong>
-          </div>
-        </div>
-
-        <div className="credential-form-grid cred-quick-grid">
-          <label className="credential-form-field">
-            <span>Name *</span>
-            <input
-              className="field-input"
-              placeholder="My credential"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !isOAuth) void handleCreate();
-                if (e.key === "Escape") onClose();
-              }}
-            />
-          </label>
-
-          <label className="credential-form-field">
-            <span>Scope</span>
-            <select
-              className="field-input"
-              value={scope}
-              onChange={(e) => setScope(e.target.value as CredentialScope)}
-            >
-              <option value="global">Global</option>
-              <option value="environment">Environment</option>
-              {workflowId && <option value="workflow">This workflow</option>}
-              <option value="runner_pool">Runner pool</option>
-            </select>
-          </label>
-        </div>
-
         {scope === "environment" && (
-          <label className="credential-form-field cred-quick-scope-id">
-            <span>Environment ID *</span>
+          <div className="cred-field">
+            <div className="cred-field-label">
+              <span className="cred-field-label-text">Environment ID</span>
+              <span className="cred-field-required">required</span>
+            </div>
             <input
-              className="field-input"
+              className="cred-field-input"
               placeholder="Environment ID"
               value={environmentId}
               onChange={(e) => setEnvironmentId(e.target.value)}
             />
-          </label>
+          </div>
         )}
         {scope === "runner_pool" && (
-          <label className="credential-form-field cred-quick-scope-id">
-            <span>Runner pool ID *</span>
+          <div className="cred-field">
+            <div className="cred-field-label">
+              <span className="cred-field-label-text">Runner pool ID</span>
+              <span className="cred-field-required">required</span>
+            </div>
             <input
-              className="field-input"
+              className="cred-field-input"
               placeholder="Runner pool ID"
               value={runnerPoolId}
               onChange={(e) => setRunnerPoolId(e.target.value)}
             />
-          </label>
+          </div>
         )}
 
         {isOAuth && (
@@ -1074,45 +1244,52 @@ function CredentialCreateModal({
           </div>
         )}
 
-        <div className="credential-form-grid cred-quick-grid">
+        {/* credential form fields */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {isLlm && (
-            <label className="credential-form-field">
-              <span>Provider</span>
-              <select
-                className="field-input"
-                value={fieldValues.provider}
-                onChange={(e) => onProviderChange(e.target.value)}
-              >
-                {LLM_PROVIDER_VARIANTS.map((v) => (
-                  <option key={v.value} value={v.value}>
-                    {v.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className="cred-field">
+              <div className="cred-field-label">
+                <span className="cred-field-label-text">Provider</span>
+              </div>
+              <div className="cred-field-input-wrap">
+                <select
+                  className="cred-field-input cred-field-select"
+                  value={fieldValues.provider}
+                  onChange={(e) => onProviderChange(e.target.value)}
+                >
+                  {LLM_PROVIDER_VARIANTS.map((v) => (
+                    <option key={v.value} value={v.value}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="cred-field-select-caret" aria-hidden="true">▾</span>
+              </div>
+            </div>
           )}
 
           {isLlm
             ? renderedFields.map((key) => {
                 const def = LLM_FIELD_DEFS[key];
                 if (!def) return null;
-                const required =
-                  key === "api_key" && variant?.apiKey === "required";
+                const required = key === "api_key" && variant?.apiKey === "required";
                 return (
-                  <CredentialFieldInput
+                  <CredentialModalField
                     key={key}
                     field={{ ...def, required }}
                     value={fieldValues[key] ?? ""}
                     onChange={(next) => setField(key, next)}
+                    error={fieldErrors[key]}
                   />
                 );
               })
             : preset.fields.map((field) => (
-                <CredentialFieldInput
+                <CredentialModalField
                   key={field.key}
                   field={field}
                   value={fieldValues[field.key] ?? ""}
                   onChange={(next) => setField(field.key, next)}
+                  error={fieldErrors[field.key]}
                 />
               ))}
         </div>
@@ -1123,24 +1300,24 @@ function CredentialCreateModal({
           variant.value !== "azure_openai" && (
             <button
               type="button"
-              className="btn btn-ghost btn-sm cred-advanced-toggle"
+              className="btn btn-ghost btn-sm"
+              style={{ alignSelf: "flex-start" }}
               onClick={() => setShowAdvanced((v) => !v)}
             >
               {showAdvanced ? "Hide advanced" : "Advanced options"}
             </button>
           )}
 
-        <div className="credential-security-note">
-          Secret values are encrypted at rest and are not returned by the API
-          after creation.
-        </div>
+        <p className="cred-security-note">
+          🔒 Secret values are encrypted at rest and are never returned by the API after creation.
+        </p>
 
         {error && <p className="error-text">{error}</p>}
 
-        <div className="modal-actions">
+        <div className="cred-modal-footer">
           <button
             type="button"
-            className="btn btn-ghost btn-sm"
+            className="cred-btn-cancel"
             onClick={onClose}
           >
             Cancel
@@ -1148,7 +1325,7 @@ function CredentialCreateModal({
           {!isOAuth && (
             <button
               type="button"
-              className="btn btn-ghost btn-sm"
+              className="cred-btn-test"
               disabled={testing}
               onClick={() => void handleTest()}
             >
@@ -1157,7 +1334,7 @@ function CredentialCreateModal({
           )}
           <button
             type="button"
-            className="btn btn-primary btn-sm"
+            className="cred-btn-create"
             disabled={busy || !name.trim()}
             onClick={() => void handleCreate()}
           >
@@ -1192,6 +1369,7 @@ function CredentialParamField({
   const [modalOpen, setModalOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [credentialQuery, setCredentialQuery] = useState("");
+  const [focusedIndex, setFocusedIndex] = useState(-1);
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState("");
@@ -1213,7 +1391,10 @@ function CredentialParamField({
   useEffect(load, []);
 
   useEffect(() => {
-    if (!pickerOpen) return;
+    if (!pickerOpen) {
+      setFocusedIndex(-1);
+      return;
+    }
     function closeOnOutside(event: MouseEvent): void {
       if (
         event.target instanceof Node &&
@@ -1233,6 +1414,10 @@ function CredentialParamField({
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [pickerOpen]);
+
+  useEffect(() => {
+    setFocusedIndex(-1);
+  }, [credentialQuery]);
 
   const matching = credentials.filter((cred) =>
     credentialMatchesParam(cred, meta, targetKey),
@@ -1319,22 +1504,25 @@ function CredentialParamField({
     setError("");
   }
 
-  const pickerTitle = loading
-    ? "Loading credentials..."
-    : selectedCredential
-      ? selectedCredential.name
-      : selectedMissing && selected
-        ? `Missing credential ${selected.id.slice(0, 8)}`
-        : "Select credential";
-  const pickerMeta = loading
-    ? "Fetching saved credentials"
-    : selectedCredential
-      ? `${credentialTypeLabel(selectedCredential.type)} · ${credentialScopeLabel(
-          selectedCredential,
-        )} · ${credentialFieldSummary(selectedCredential)}`
-      : matching.length === 0
-        ? `No saved ${credentialTypeLabel(meta?.type ?? spec.name)} credentials yet`
-        : `${matching.length} matching credential${matching.length === 1 ? "" : "s"}`;
+  const daysUntilExpiry = getDaysUntilExpiry(selectedCredential?.oauth_expires_at);
+  const isExpiringSoon = daysUntilExpiry !== null && daysUntilExpiry <= 7;
+  const isExpired = daysUntilExpiry !== null && daysUntilExpiry <= 0;
+
+  function handlePickerKeyDown(e: React.KeyboardEvent<HTMLDivElement>): void {
+    if (!pickerOpen) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setFocusedIndex((i) => Math.min(i + 1, visibleMatching.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setFocusedIndex((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter" && focusedIndex >= 0 && focusedIndex < visibleMatching.length) {
+      e.preventDefault();
+      selectCredential(visibleMatching[focusedIndex]);
+    } else if (e.key === "Tab") {
+      setPickerOpen(false);
+    }
+  }
 
   return (
     <div className="credential-param">
@@ -1342,157 +1530,222 @@ function CredentialParamField({
         <div className="credential-picker">
           <button
             type="button"
-            className={`credential-picker-trigger${
-              selectedCredential ? " has-selection" : ""
-            }${selectedMissing ? " is-warning" : ""}`}
+            className={[
+              "credential-picker-trigger",
+              selectedCredential ? "has-selection" : !selected ? "is-unset" : "",
+              (selectedMissing || isExpiringSoon) ? "is-warning" : "",
+            ].filter(Boolean).join(" ")}
             disabled={loading}
             aria-haspopup="listbox"
             aria-expanded={pickerOpen}
             onClick={() => setPickerOpen((open) => !open)}
           >
-            <span className="credential-picker-main">
-              <span className="credential-picker-title">{pickerTitle}</span>
-              <span className="credential-picker-meta">{pickerMeta}</span>
+            {/* type-colored dot */}
+            <span
+              className={`credential-type-dot${selectedMissing ? " is-hollow" : ""}`}
+              style={selectedCredential ? { background: credTypeDotColor(selectedCredential.type) } : undefined}
+            />
+
+            {/* name or placeholder */}
+            <span className={`credential-picker-name${!selectedCredential && !selectedMissing ? " is-placeholder" : ""}`}>
+              {loading
+                ? "Loading…"
+                : selectedCredential
+                  ? selectedCredential.name
+                  : selectedMissing && selected
+                    ? "Credential unavailable"
+                    : "Choose a credential…"}
             </span>
-            <span className="credential-picker-caret" aria-hidden="true">
-              ▾
-            </span>
+
+            {/* scope pill (only when credential is found) */}
+            {selectedCredential && (
+              <span className={`credential-scope-pill${isExpiringSoon ? " is-warning" : ""}`}>
+                {isExpired
+                  ? "expired"
+                  : isExpiringSoon
+                    ? `⚠ ${daysUntilExpiry}d`
+                    : credentialScopeLabel(selectedCredential)}
+              </span>
+            )}
+
+            {/* missing badge */}
+            {selectedMissing && selected && (
+              <span className="credential-scope-pill is-warning">missing</span>
+            )}
+
+            {/* unset +New pill */}
+            {!selected && !loading && (
+              <button
+                type="button"
+                className="credential-new-pill"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openCreateModal();
+                }}
+              >
+                + New
+              </button>
+            )}
+
+            {/* inline Test chip (only when credential exists) */}
+            {selectedCredential && (
+              <button
+                type="button"
+                className="credential-test-chip"
+                disabled={testing}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void testSelectedCredential();
+                }}
+              >
+                {testing ? "…" : "✓ Test"}
+              </button>
+            )}
+
+            <span className="credential-picker-caret" aria-hidden="true">▾</span>
           </button>
 
           {pickerOpen && (
-            <div className="credential-picker-menu">
-              <label className="credential-picker-search">
-                <MagnifyingGlass size={14} aria-hidden="true" />
+            <div
+              className="credential-picker-menu"
+              role="listbox"
+              onKeyDown={handlePickerKeyDown}
+            >
+              {/* search */}
+              <div className="credential-picker-search">
+                <MagnifyingGlass size={13} aria-hidden="true" />
                 <input
                   autoFocus
-                  placeholder="Search credentials"
+                  placeholder="Search credentials…"
                   value={credentialQuery}
                   onChange={(e) => setCredentialQuery(e.target.value)}
+                  aria-label="Search credentials"
                 />
-              </label>
+              </div>
 
-              <div className="credential-picker-list" role="listbox">
+              {/* list */}
+              <div className="credential-picker-list">
                 {visibleMatching.length > 0 ? (
-                  visibleMatching.map((cred) => {
+                  visibleMatching.map((cred, idx) => {
                     const isSelected = selected?.id === cred.id;
+                    const isFocused = idx === focusedIndex;
                     return (
                       <button
                         type="button"
-                        className={`credential-picker-option${
-                          isSelected ? " is-selected" : ""
-                        }`}
                         key={`${cred.id}:${targetKey}`}
+                        className={[
+                          "credential-picker-option",
+                          isSelected ? "is-selected" : "",
+                          isFocused ? "is-keyboard-focused" : "",
+                        ].filter(Boolean).join(" ")}
                         role="option"
                         aria-selected={isSelected}
                         onClick={() => selectCredential(cred)}
+                        onMouseEnter={() => setFocusedIndex(idx)}
                       >
-                        <span className="credential-picker-option-head">
-                          <strong>{cred.name}</strong>
-                          <span>{credentialScopeLabel(cred)}</span>
+                        <span className="credential-picker-check" aria-hidden="true">
+                          {isSelected ? "✓" : ""}
                         </span>
-                        <span className="credential-picker-option-meta">
-                          {credentialTypeLabel(cred.type)} ·{" "}
-                          {credentialFieldSummary(cred)}
+                        <span
+                          className="credential-type-dot"
+                          style={{ background: credTypeDotColor(cred.type) }}
+                        />
+                        <span className="credential-picker-option-body">
+                          <span className="credential-picker-option-name">{cred.name}</span>
+                          <span className="credential-picker-option-meta">
+                            {credentialTypeLabel(cred.type)} · {formatRelativeTime(cred.last_used_at)}
+                          </span>
+                        </span>
+                        <span className="credential-scope-pill">
+                          {credentialScopeLabel(cred)}
                         </span>
                       </button>
                     );
                   })
+                ) : matching.length === 0 ? (
+                  <div className="credential-picker-empty">
+                    <span className="credential-picker-empty-icon">🔑</span>
+                    <strong>No {credentialTypeLabel(meta?.type ?? spec.name)} credentials yet</strong>
+                    <span>Create one to connect this node.</span>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-primary"
+                      onClick={openCreateModal}
+                    >
+                      <Plus size={12} weight="bold" /> New credential
+                    </button>
+                  </div>
                 ) : (
                   <div className="credential-picker-empty">
-                    <strong>
-                      {matching.length === 0
-                        ? "No matching credentials"
-                        : "No search results"}
-                    </strong>
-                    <span>
-                      {matching.length === 0
-                        ? `Create a ${credentialTypeLabel(
-                            meta?.type ?? spec.name,
-                          )} credential for this node.`
-                        : "Try a different name, type, scope, or field."}
-                    </span>
+                    <strong>No results for "{credentialQuery}"</strong>
+                    <span>Try a different name, type, or scope.</span>
                   </div>
                 )}
               </div>
 
+              {/* footer */}
               <div className="credential-picker-foot">
                 {selected && (
                   <button
                     type="button"
-                    className="btn btn-sm btn-ghost"
+                    className="credential-picker-foot-clear"
                     onClick={() => {
                       onChange("");
                       setPickerOpen(false);
                     }}
                   >
-                    Clear selection
+                    Clear
                   </button>
                 )}
+                <span className="credential-picker-foot-spacer" />
                 <button
                   type="button"
                   className="btn btn-sm btn-primary"
                   onClick={openCreateModal}
                 >
-                  <Plus size={13} weight="bold" />
-                  New credential
+                  <Plus size={12} weight="bold" /> New credential
                 </button>
                 <a
-                  className="credentials-tab-link"
+                  className="credential-picker-foot-manage"
                   href="/credentials"
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Manage credentials
+                  Manage →
                 </a>
               </div>
             </div>
           )}
         </div>
-
-        {!pickerOpen && (
-          <button
-            type="button"
-            className="btn btn-sm btn-primary cred-add-btn"
-            onClick={openCreateModal}
-          >
-            <Plus size={13} weight="bold" />
-            New
-          </button>
-        )}
-
-        {selected && (
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost"
-            disabled={testing}
-            onClick={() => void testSelectedCredential()}
-          >
-            {testing ? "…" : "Test"}
-          </button>
-        )}
       </div>
 
       {selectedMissing && selected && (
-        <div className="credential-inline-warning">
-          <WarningCircle size={15} weight="fill" />
-          <span>
-            The selected credential is unavailable or no longer contains the
-            field this node needs.
+        <div className="credential-warning-banner">
+          <WarningCircle size={14} weight="fill" />
+          <span style={{ flex: 1 }}>
+            This credential was deleted or is no longer visible to this workflow.
           </span>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            onClick={() => { onChange(""); setError(""); }}
+          >
+            Clear
+          </button>
         </div>
       )}
 
       {inlineValue && !selected && (
-        <div className="credential-inline-warning">
-          <WarningCircle size={15} weight="fill" />
-          <span>Inline secret in workflow — move to credential store.</span>
+        <div className="credential-warning-banner">
+          <WarningCircle size={14} weight="fill" />
+          <span style={{ flex: 1 }}>Inline secret in workflow — move to credential store.</span>
           <button
             type="button"
-            className="btn btn-sm"
+            className="btn btn-sm btn-primary"
             disabled={busy}
             onClick={() => void moveInline()}
           >
-            Move
+            {busy ? "Moving…" : "Move"}
           </button>
           <button
             type="button"
@@ -1507,8 +1760,8 @@ function CredentialParamField({
       {error && <p className="error-text">{error}</p>}
 
       {missingScopes.length > 0 && (
-        <div className="credential-inline-warning">
-          <WarningCircle size={15} weight="fill" />
+        <div className="credential-warning-banner">
+          <WarningCircle size={14} weight="fill" />
           <span>Missing OAuth scopes: {missingScopes.join(", ")}</span>
         </div>
       )}
@@ -4603,7 +4856,7 @@ export function NodeDetails({
               style={{ marginTop: 8 }}
               onClick={() => void pin()}
             >
-              📌 Pin this output
+              <PushPin size={13} /> Pin this output
             </button>
           )}
         </div>
