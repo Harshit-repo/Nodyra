@@ -91,9 +91,45 @@ async def test_get_is_405(client: AsyncClient) -> None:
     assert (await client.get("/mcp")).status_code == 405
 
 
-async def test_batch_rejected(client: AsyncClient) -> None:
-    resp = await client.post("/mcp", json=[rpc("ping")])
-    assert resp.json()["error"]["code"] == -32600
+async def test_batch_requests(client: AsyncClient) -> None:
+    """Batch of two requests returns two responses."""
+    resp = await client.post(
+        "/mcp",
+        json=[
+            rpc("ping", req_id=1),
+            rpc("ping", req_id=2),
+        ],
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body, list)
+    assert len(body) == 2
+    ids = {item["id"] for item in body}
+    assert ids == {1, 2}
+
+
+async def test_batch_with_notification(client: AsyncClient) -> None:
+    """Notifications in a batch produce no response entry."""
+    resp = await client.post(
+        "/mcp",
+        json=[
+            rpc("ping", req_id=1),
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        ],
+    )
+    body = resp.json()
+    assert isinstance(body, list)
+    assert len(body) == 1
+    assert body[0]["id"] == 1
+
+
+async def test_batch_all_notifications(client: AsyncClient) -> None:
+    """A batch of only notifications returns 202."""
+    resp = await client.post(
+        "/mcp",
+        json=[{"jsonrpc": "2.0", "method": "notifications/initialized"}],
+    )
+    assert resp.status_code == 202
 
 
 async def test_tools_list_contains_static_tools(client: AsyncClient) -> None:
@@ -925,7 +961,7 @@ async def test_mcp_rate_limit(client: AsyncClient, monkeypatch) -> None:
 
     call_count = 0
 
-    def _deny_after_one(bucket, identifier, *, limit, window_seconds):
+    async def _deny_after_one(bucket, identifier, *, limit, window_seconds):
         nonlocal call_count
         call_count += 1
         return call_count <= 1  # first call allowed, rest denied

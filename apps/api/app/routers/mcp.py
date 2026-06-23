@@ -2,8 +2,9 @@
 
 A single JSON-RPC 2.0 message per POST; responses are plain JSON (the MCP
 spec allows servers to answer with ``application/json`` instead of an SSE
-stream and to operate sessionless). GET/DELETE are 405 because this server
-never opens server-initiated streams.
+stream and to operate sessionless). Batch arrays are supported per the
+JSON-RPC 2.0 spec. GET/DELETE are 405 because this server never opens
+server-initiated streams.
 
 Auth mirrors the rest of the API: optional bearer session token, required
 when ``settings.auth_required``. Tool-level failures come back as MCP tool
@@ -29,7 +30,6 @@ from app.mcp.protocol import (
     tool_result,
 )
 from app.mcp.prompts import get_prompt, list_prompts
-from app.services.rate_limit import allow as _rate_allow
 from app.mcp.resources import list_resources, read_resource
 from app.mcp.tools import (
     STATIC_TOOLS,
@@ -46,6 +46,7 @@ from app.security import (
     current_user,
     role_allows,
 )
+from app.services.rate_limit import allow as _rate_allow
 from app.tenancy import current_org_id
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,81 @@ async def _check_permission(
         raise McpToolError(f"This tool requires the {minimum} role or higher.")
 
 
+async def _dispatch_single(
+    body: dict,
+    session: AsyncSession,
+    user: User | None,
+    request: Request,
+) -> dict | None:
+    """Handle one JSON-RPC message. Returns response dict or None for notifications."""
+    if not isinstance(body, dict) or not isinstance(body.get("method"), str):
+        return jsonrpc_error(None, INVALID_REQUEST, "Expected a JSON-RPC request object.")
+
+    method = body["method"]
+    params = body.get("params") if isinstance(body.get("params"), dict) else {}
+
+    if "id" not in body:
+        return None  # notification — no response
+
+    req_id = body.get("id")
+
+    if method == "initialize":
+        return jsonrpc_result(req_id, initialize_result(params.get("protocolVersion")))
+    if method == "ping":
+        return jsonrpc_result(req_id, {})
+    if method == "tools/list":
+        tools = [tool.descriptor() for tool in STATIC_TOOLS]
+        tools.extend(await list_workflow_tool_descriptors(session))
+        return jsonrpc_result(req_id, {"tools": tools})
+    if method == "tools/call":
+        name = str(params.get("name") or "")
+        arguments = params.get("arguments")
+        arguments = arguments if isinstance(arguments, dict) else {}
+        try:
+            tool = get_tool(name)
+            if tool is not None:
+                await _check_permission(session, user, tool.permission)
+                payload = await tool.handler(session, user, arguments)
+                return jsonrpc_result(req_id, tool_result(payload))
+            # Dynamic per-workflow tool — running a workflow needs workflow:run.
+            await _check_permission(session, user, "workflow:run")
+            payload = await call_workflow_tool(session, user, name, arguments)
+            if payload is not None:
+                return jsonrpc_result(req_id, tool_result(payload))
+            return jsonrpc_error(req_id, METHOD_NOT_FOUND, f"Unknown tool: {name}")
+        except McpToolError as exc:
+            return jsonrpc_result(req_id, tool_result(str(exc), is_error=True))
+        except Exception as exc:  # noqa: BLE001 - tool failures go to the model
+            logger.exception("mcp tool %s failed", name)
+            return jsonrpc_result(
+                req_id, tool_result(f"{type(exc).__name__}: {exc}", is_error=True)
+            )
+    if method == "resources/list":
+        resources = await list_resources(session)
+        return jsonrpc_result(req_id, {"resources": resources})
+    if method == "resources/read":
+        uri = str(params.get("uri") or "")
+        if not uri:
+            return jsonrpc_error(req_id, INVALID_REQUEST, "uri is required.")
+        try:
+            content = await read_resource(session, uri)
+        except ValueError as exc:
+            return jsonrpc_error(req_id, METHOD_NOT_FOUND, str(exc))
+        return jsonrpc_result(req_id, {"contents": [content]})
+    if method == "prompts/list":
+        return jsonrpc_result(req_id, {"prompts": list_prompts()})
+    if method == "prompts/get":
+        name = str(params.get("name") or "")
+        arguments = params.get("arguments")
+        arguments = arguments if isinstance(arguments, dict) else {}
+        result = get_prompt(name, {str(k): str(v) for k, v in arguments.items()})
+        if result is None:
+            return jsonrpc_error(req_id, METHOD_NOT_FOUND, f"Unknown prompt: {name!r}")
+        return jsonrpc_result(req_id, result)
+
+    return jsonrpc_error(req_id, METHOD_NOT_FOUND, f"Unknown method: {method}")
+
+
 @router.post("/mcp")
 async def mcp_post(
     request: Request,
@@ -104,7 +180,7 @@ async def mcp_post(
 
     # --- rate limiting ---
     identifier = user.id if user else (request.client.host if request.client else "anon")
-    if not _rate_allow("mcp", identifier, limit=120, window_seconds=60):
+    if not await _rate_allow("mcp", identifier, limit=120, window_seconds=60):
         return Response(status_code=429, headers={"Retry-After": "60"})
 
     # --- parse ---
@@ -112,92 +188,23 @@ async def mcp_post(
         body = await request.json()
     except Exception:
         return JSONResponse(jsonrpc_error(None, PARSE_ERROR, "Invalid JSON."))
+
+    # --- batch ---
     if isinstance(body, list):
-        return JSONResponse(
-            jsonrpc_error(None, INVALID_REQUEST, "Batch requests are not supported.")
-        )
-    if not isinstance(body, dict) or not isinstance(body.get("method"), str):
-        return JSONResponse(
-            jsonrpc_error(None, INVALID_REQUEST, "Expected a JSON-RPC request object.")
-        )
+        if not body:
+            return Response(status_code=202)
+        responses: list[dict] = []
+        for item in body:
+            result = await _dispatch_single(item, session, user, request)
+            if result is not None:
+                responses.append(result)
+        if not responses:
+            return Response(status_code=202)
+        return JSONResponse(responses)
 
-    method = body["method"]
-    params = body.get("params") if isinstance(body.get("params"), dict) else {}
-
-    # Notifications (no id) are acknowledged and ignored.
+    # --- single ---
     if "id" not in body:
         return Response(status_code=202)
-    req_id = body.get("id")
 
-    if method == "initialize":
-        return JSONResponse(
-            jsonrpc_result(req_id, initialize_result(params.get("protocolVersion")))
-        )
-    if method == "ping":
-        return JSONResponse(jsonrpc_result(req_id, {}))
-    if method == "tools/list":
-        tools = [tool.descriptor() for tool in STATIC_TOOLS]
-        tools.extend(await list_workflow_tool_descriptors(session))
-        return JSONResponse(jsonrpc_result(req_id, {"tools": tools}))
-    if method == "tools/call":
-        name = str(params.get("name") or "")
-        arguments = params.get("arguments")
-        arguments = arguments if isinstance(arguments, dict) else {}
-        try:
-            tool = get_tool(name)
-            if tool is not None:
-                await _check_permission(session, user, tool.permission)
-                payload = await tool.handler(session, user, arguments)
-                return JSONResponse(jsonrpc_result(req_id, tool_result(payload)))
-            # Dynamic per-workflow tool — running a workflow needs workflow:run.
-            await _check_permission(session, user, "workflow:run")
-            payload = await call_workflow_tool(session, user, name, arguments)
-            if payload is not None:
-                return JSONResponse(jsonrpc_result(req_id, tool_result(payload)))
-            return JSONResponse(
-                jsonrpc_error(req_id, METHOD_NOT_FOUND, f"Unknown tool: {name}")
-            )
-        except McpToolError as exc:
-            return JSONResponse(
-                jsonrpc_result(req_id, tool_result(str(exc), is_error=True))
-            )
-        except Exception as exc:  # noqa: BLE001 - tool failures go to the model
-            logger.exception("mcp tool %s failed", name)
-            return JSONResponse(
-                jsonrpc_result(
-                    req_id,
-                    tool_result(f"{type(exc).__name__}: {exc}", is_error=True),
-                )
-            )
-
-    if method == "resources/list":
-        resources = await list_resources(session)
-        return JSONResponse(jsonrpc_result(req_id, {"resources": resources}))
-
-    if method == "resources/read":
-        uri = str(params.get("uri") or "")
-        if not uri:
-            return JSONResponse(jsonrpc_error(req_id, INVALID_REQUEST, "uri is required."))
-        try:
-            content = await read_resource(session, uri)
-        except ValueError as exc:
-            return JSONResponse(jsonrpc_error(req_id, METHOD_NOT_FOUND, str(exc)))
-        return JSONResponse(jsonrpc_result(req_id, {"contents": [content]}))
-
-    if method == "prompts/list":
-        return JSONResponse(jsonrpc_result(req_id, {"prompts": list_prompts()}))
-
-    if method == "prompts/get":
-        name = str(params.get("name") or "")
-        arguments = params.get("arguments")
-        arguments = arguments if isinstance(arguments, dict) else {}
-        result = get_prompt(name, {str(k): str(v) for k, v in arguments.items()})
-        if result is None:
-            return JSONResponse(
-                jsonrpc_error(req_id, METHOD_NOT_FOUND, f"Unknown prompt: {name!r}")
-            )
-        return JSONResponse(jsonrpc_result(req_id, result))
-
-    return JSONResponse(
-        jsonrpc_error(req_id, METHOD_NOT_FOUND, f"Unknown method: {method}")
-    )
+    result = await _dispatch_single(body, session, user, request)
+    return JSONResponse(result)
