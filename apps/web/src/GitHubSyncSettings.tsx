@@ -3,16 +3,21 @@ import { useState } from "react";
 import { api, errorMessage } from "./api";
 import { useConfirm } from "./ConfirmProvider";
 import {
+  useCreateGithubRepoMutation,
   useDeleteGithubSyncConfigMutation,
   useGithubSyncConfig,
   useUpsertGithubSyncConfigMutation,
+  useValidateGithubRepoMutation,
 } from "./queries";
 import { useToast } from "./ToastProvider";
+import type { GithubRepoValidation } from "./types";
 
 export function GitHubSyncSettings() {
   const { data: config, isLoading } = useGithubSyncConfig();
   const upsert = useUpsertGithubSyncConfigMutation();
   const remove = useDeleteGithubSyncConfigMutation();
+  const validateRepo = useValidateGithubRepoMutation();
+  const createRepo = useCreateGithubRepoMutation();
   const { notify } = useToast();
   const confirm = useConfirm();
 
@@ -20,16 +25,46 @@ export function GitHubSyncSettings() {
   const [basePath, setBasePath] = useState("workflows/");
   const [mainBranch, setMainBranch] = useState("main");
   const [secret, setSecret] = useState<string | null>(null);
+  const [validation, setValidation] = useState<GithubRepoValidation | null>(null);
 
   if (isLoading) return <div className="settings-loading">Loading…</div>;
 
   async function handleConnect(e: React.FormEvent) {
     e.preventDefault();
+    setValidation(null);
     try {
       await upsert.mutateAsync({ repo, base_path: basePath, main_branch: mainBranch });
-      notify("GitHub sync configured.", "success");
+      // Auto-validate immediately after saving
+      const result = await validateRepo.mutateAsync();
+      setValidation(result);
+      if (result.accessible) {
+        notify("GitHub sync configured and repository verified.", "success");
+      } else {
+        notify("GitHub sync saved — repository not yet accessible.", "warning");
+      }
     } catch (err) {
       notify(`Failed to save GitHub sync config. ${errorMessage(err)}`, "error");
+    }
+  }
+
+  async function handleRevalidate() {
+    try {
+      const result = await validateRepo.mutateAsync();
+      setValidation(result);
+    } catch (err) {
+      notify(`Validation failed. ${errorMessage(err)}`, "error");
+    }
+  }
+
+  async function handleCreateRepo() {
+    try {
+      const result = await createRepo.mutateAsync({ private: true });
+      notify(`Repository created: ${result.url}`, "success");
+      // Re-validate to confirm it's now accessible
+      const v = await validateRepo.mutateAsync();
+      setValidation(v);
+    } catch (err) {
+      notify(`Failed to create repository. ${errorMessage(err)}`, "error");
     }
   }
 
@@ -51,6 +86,7 @@ export function GitHubSyncSettings() {
     if (!ok) return;
     try {
       await remove.mutateAsync();
+      setValidation(null);
       notify("GitHub sync disconnected.", "success");
     } catch (err) {
       notify(`Failed to disconnect. ${errorMessage(err)}`, "error");
@@ -67,6 +103,14 @@ export function GitHubSyncSettings() {
             <code>{config.base_path}</code> on branch <code>{config.main_branch}</code>.
           </p>
         </div>
+
+        <RepoValidationBadge
+          validation={validation}
+          isValidating={validateRepo.isPending}
+          onRevalidate={() => void handleRevalidate()}
+          onCreateRepo={() => void handleCreateRepo()}
+          isCreating={createRepo.isPending}
+        />
 
         <div className="field-label">
           <span className="muted">Webhook URL</span>
@@ -136,7 +180,10 @@ export function GitHubSyncSettings() {
             className="field-input"
             placeholder="owner/repo"
             value={repo}
-            onChange={(e) => setRepo(e.target.value)}
+            onChange={(e) => {
+              setRepo(e.target.value);
+              setValidation(null);
+            }}
             required
           />
         </label>
@@ -156,10 +203,87 @@ export function GitHubSyncSettings() {
             onChange={(e) => setMainBranch(e.target.value)}
           />
         </label>
-        <button type="submit" className="btn btn-primary" disabled={upsert.isPending}>
-          {upsert.isPending ? "Saving…" : "Connect GitHub"}
+
+        {validation && (
+          <RepoValidationBadge
+            validation={validation}
+            isValidating={validateRepo.isPending}
+            onRevalidate={() => void handleRevalidate()}
+            onCreateRepo={() => void handleCreateRepo()}
+            isCreating={createRepo.isPending}
+          />
+        )}
+
+        <button
+          type="submit"
+          className="btn btn-primary"
+          disabled={upsert.isPending || validateRepo.isPending}
+        >
+          {upsert.isPending ? "Saving…" : validateRepo.isPending ? "Verifying…" : "Connect GitHub"}
         </button>
       </form>
     </section>
+  );
+}
+
+interface RepoValidationBadgeProps {
+  validation: GithubRepoValidation | null;
+  isValidating: boolean;
+  onRevalidate: () => void;
+  onCreateRepo: () => void;
+  isCreating: boolean;
+}
+
+function RepoValidationBadge({
+  validation,
+  isValidating,
+  onRevalidate,
+  onCreateRepo,
+  isCreating,
+}: RepoValidationBadgeProps) {
+  if (isValidating) {
+    return (
+      <p className="muted" style={{ fontSize: "0.9em" }}>
+        Checking repository access…
+      </p>
+    );
+  }
+  if (!validation) return null;
+
+  if (validation.accessible) {
+    return (
+      <p style={{ color: "var(--color-success, green)", fontSize: "0.9em" }}>
+        ✓ Repository accessible
+        {validation.private != null && (
+          <span className="muted"> — {validation.private ? "private" : "public"}</span>
+        )}
+      </p>
+    );
+  }
+
+  return (
+    <div style={{ fontSize: "0.9em" }}>
+      <p style={{ color: "var(--color-error, red)", marginBottom: 8 }}>
+        ✗ {validation.error ?? "Repository not accessible"}
+      </p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={onCreateRepo}
+          disabled={isCreating}
+        >
+          {isCreating ? "Creating…" : "Create this repo for me"}
+        </button>
+        <button
+          type="button"
+          className="btn"
+          onClick={onRevalidate}
+          disabled={isCreating}
+        >
+          Re-check
+        </button>
+      </div>
+    </div>
   );
 }

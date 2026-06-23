@@ -220,6 +220,19 @@ export interface GithubSyncConfig {
   webhook_url: string;
 }
 
+export interface GithubRepoValidation {
+  accessible: boolean;
+  error?: string | null;
+  private?: boolean | null;
+  default_branch?: string | null;
+}
+
+export interface GithubCreateRepoResponse {
+  created: boolean;
+  url: string;
+  default_branch: string;
+}
+
 export interface WorkflowSummary {
   id: string;
   name: string;

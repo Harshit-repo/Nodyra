@@ -14,6 +14,8 @@ import type {
   Environment,
   FolderInfo,
   GithubSyncConfig,
+  GithubRepoValidation,
+  GithubCreateRepoResponse,
   LicenseInfo,
   NodeManifest,
   NodeSource,
@@ -804,6 +806,15 @@ export const api = {
     request<void>(`/workflows/${workflowId}/github-conflict/resolve`, {
       method: "POST",
       body: JSON.stringify({ side }),
+    }),
+
+  validateGithubRepo: (): Promise<GithubRepoValidation> =>
+    request<GithubRepoValidation>("/github-sync/repo/validate"),
+
+  createGithubRepo: (body: { private?: boolean; description?: string }): Promise<GithubCreateRepoResponse> =>
+    request<GithubCreateRepoResponse>("/github-sync/repo", {
+      method: "POST",
+      body: JSON.stringify(body),
     }),
 
   // --- Ops dashboard --------------------------------------------------------

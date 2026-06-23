@@ -910,3 +910,14 @@ export function useResolveGithubConflictMutation() {
     },
   });
 }
+
+export function useValidateGithubRepoMutation() {
+  return useMutation({ mutationFn: () => api.validateGithubRepo() });
+}
+
+export function useCreateGithubRepoMutation() {
+  return useMutation({
+    mutationFn: (body: { private?: boolean; description?: string }) =>
+      api.createGithubRepo(body),
+  });
+}

@@ -12,12 +12,15 @@ from app.db import get_session
 from app.models import GithubSyncConfig, GithubSyncJob, Workflow
 from app.schemas import (
     GithubConflictResolveRequest,
+    GithubCreateRepoRequest,
+    GithubCreateRepoResponse,
+    GithubRepoValidation,
     GithubSyncConfigCreate,
     GithubSyncConfigInfo,
 )
 from app.security import require_permission
 from app.services.audit import log_audit
-from app.services.github_sync import enqueue_github_push
+from app.services.github_sync import create_github_repo, enqueue_github_push, validate_repo_access
 from app.services.github_sync_jobs import notify_sync_workers
 from app.services.licensing import Feature, require_feature
 from app.tenancy import active_org_id
@@ -106,6 +109,42 @@ async def get_webhook_secret(
     if cfg is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No sync config")
     return {"webhook_secret": cfg.webhook_secret}
+
+
+@router.get("/github-sync/repo/validate", response_model=GithubRepoValidation)
+async def validate_repo(
+    _: None = Depends(require_permission("workflow:write")),
+    session: AsyncSession = Depends(get_session),
+) -> GithubRepoValidation:
+    org_id = active_org_id() or "default"
+    cfg = await session.scalar(
+        select(GithubSyncConfig).where(GithubSyncConfig.org_id == org_id)
+    )
+    if cfg is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No sync config")
+    result = await validate_repo_access(session, cfg)
+    return GithubRepoValidation(**result)
+
+
+@router.post("/github-sync/repo", response_model=GithubCreateRepoResponse)
+async def create_repo(
+    body: GithubCreateRepoRequest,
+    _: None = Depends(require_permission("workflow:write")),
+    session: AsyncSession = Depends(get_session),
+) -> GithubCreateRepoResponse:
+    org_id = active_org_id() or "default"
+    cfg = await session.scalar(
+        select(GithubSyncConfig).where(GithubSyncConfig.org_id == org_id)
+    )
+    if cfg is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No sync config")
+    try:
+        result = await create_github_repo(session, cfg, private=body.private, description=body.description)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    await log_audit(session, "github_repo_created", "org", org_id, cfg.repo)
+    await session.commit()
+    return GithubCreateRepoResponse(**result)
 
 
 @router.delete("/github-sync/config", status_code=204)

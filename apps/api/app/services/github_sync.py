@@ -375,7 +375,7 @@ async def process_pull_job(job_id: str) -> None:
                 # Parse and apply
                 try:
                     new_graph = import_module(source)
-                except ImportError as exc:
+                except (ImportError, ValueError, SyntaxError) as exc:
                     workflow.github_sync_status = "error"
                     job.status = "failed"
                     job.error_message = f"Import failed: {exc}"
@@ -391,7 +391,8 @@ async def process_pull_job(job_id: str) -> None:
                 await session.commit()
 
             except httpx.HTTPStatusError as exc:
-                if job.attempts >= PULL_MAX_ATTEMPTS:
+                status_code = exc.response.status_code
+                if status_code in (401, 403, 404) or job.attempts >= PULL_MAX_ATTEMPTS:
                     workflow.github_sync_status = "error"
                     job.status = "failed"
                 else:
@@ -405,6 +406,86 @@ async def process_pull_job(job_id: str) -> None:
                 job.status = "failed"
                 job.error_message = str(exc)
                 await session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Repo validation and creation
+# ---------------------------------------------------------------------------
+
+
+async def validate_repo_access(session: AsyncSession, cfg: GithubSyncConfig) -> dict:
+    """Check whether the configured repo is reachable with the stored credential."""
+    token = await _get_token(session, cfg)
+    if not token:
+        return {"accessible": False, "error": "No GitHub credential configured"}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{GITHUB_API}/repos/{cfg.repo}",
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            )
+        if resp.status_code == 200:
+            data = resp.json()
+            return {
+                "accessible": True,
+                "private": data.get("private"),
+                "default_branch": data.get("default_branch"),
+            }
+        if resp.status_code == 404:
+            return {"accessible": False, "error": "Repository not found — create it first or check the name"}
+        if resp.status_code in (401, 403):
+            return {"accessible": False, "error": "Credential does not have access to this repository"}
+        return {"accessible": False, "error": f"GitHub returned HTTP {resp.status_code}"}
+    except httpx.TimeoutException:
+        return {"accessible": False, "error": "Timed out connecting to GitHub"}
+
+
+async def create_github_repo(
+    session: AsyncSession,
+    cfg: GithubSyncConfig,
+    private: bool = True,
+    description: str = "",
+) -> dict:
+    """Create the configured repo on GitHub using the stored credential."""
+    token = await _get_token(session, cfg)
+    if not token:
+        raise ValueError("No GitHub credential configured")
+    parts = cfg.repo.split("/", 1)
+    if len(parts) != 2:
+        raise ValueError(f"Invalid repo format: {cfg.repo!r} — expected owner/name")
+    owner, name = parts
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        org_resp = await client.get(
+            f"{GITHUB_API}/orgs/{owner}",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+        )
+        create_url = (
+            f"{GITHUB_API}/orgs/{owner}/repos"
+            if org_resp.status_code == 200
+            else f"{GITHUB_API}/user/repos"
+        )
+        resp = await client.post(
+            create_url,
+            json={
+                "name": name,
+                "private": private,
+                "auto_init": True,
+                "description": description or f"Noodle workflows — {owner}",
+            },
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+        )
+        if resp.status_code == 422:
+            data = resp.json()
+            msg = data.get("message", "Repository creation failed")
+            raise ValueError(msg)
+        resp.raise_for_status()
+        data = resp.json()
+        return {
+            "created": True,
+            "url": data.get("html_url", ""),
+            "default_branch": data.get("default_branch", "main"),
+        }
 
 
 # ---------------------------------------------------------------------------

@@ -662,6 +662,29 @@ class TokenResponse(BaseModel):
     user: UserInfo
 
 
+class ApiTokenCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    scopes: list[str] = Field(min_length=1, max_length=32)
+    expires_in_days: int = Field(default=90, ge=1, le=365)
+
+
+class ApiTokenInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    token_prefix: str
+    scopes: list[str]
+    expires_at: datetime | None
+    last_used_at: datetime | None
+    revoked_at: datetime | None
+    created_at: datetime
+
+
+class ApiTokenCreated(ApiTokenInfo):
+    token: str
+
+
 class WsTicketResponse(BaseModel):
     ticket: str
 
@@ -1230,3 +1253,21 @@ class GithubSyncConfigInfo(BaseModel):
 
 class GithubConflictResolveRequest(BaseModel):
     side: Literal["noodle", "github"]
+
+
+class GithubRepoValidation(BaseModel):
+    accessible: bool
+    error: str | None = None
+    private: bool | None = None
+    default_branch: str | None = None
+
+
+class GithubCreateRepoRequest(BaseModel):
+    private: bool = True
+    description: str = ""
+
+
+class GithubCreateRepoResponse(BaseModel):
+    created: bool
+    url: str
+    default_branch: str
