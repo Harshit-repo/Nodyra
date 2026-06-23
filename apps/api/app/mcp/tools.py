@@ -20,7 +20,7 @@ from sqlalchemy.orm import selectinload
 
 import noodle_nodes  # noqa: F401 - registers built-in nodes
 from app.db import SessionLocal
-from app.models import NodeRun, Run, RunEvent, User, Workflow, WorkflowVersion
+from app.models import Deployment, NodeRun, Run, RunEvent, User, Workflow, WorkflowVersion
 from app.routers.workflows import STRUCTURAL_NODE_TYPES
 from app.services.audit import log_audit
 from app.services.runner import cancel_run as _runner_cancel_run, start_run
@@ -801,6 +801,110 @@ async def _duplicate_workflow(session: AsyncSession, user: User | None, args: di
 
 
 # ---------------------------------------------------------------------------
+# Schedule tools
+# ---------------------------------------------------------------------------
+
+
+async def _list_schedules(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow_id = str(args.get("workflow_id") or "").strip()
+    active_filter = args.get("active")
+    limit = max(1, min(int(args.get("limit") or 50), 200))
+
+    stmt = select(Deployment).order_by(Deployment.updated_at.desc()).limit(limit)
+    if workflow_id:
+        stmt = stmt.where(Deployment.workflow_id == workflow_id)
+    if isinstance(active_filter, bool):
+        stmt = stmt.where(Deployment.active == active_filter)
+
+    deployments = (await session.scalars(stmt)).all()
+    return {
+        "schedules": [
+            {
+                "schedule_id": d.id,
+                "workflow_id": d.workflow_id,
+                "name": d.name,
+                "schedule_cron": d.schedule_cron,
+                "schedule_interval": d.schedule_interval,
+                "schedule_every": d.schedule_every,
+                "schedule_tz": d.schedule_tz,
+                "active": d.active,
+                "last_fired": str(d.last_fired) if d.last_fired else None,
+            }
+            for d in deployments
+        ]
+    }
+
+
+async def _create_schedule(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow_id = str(args.get("workflow_id") or "").strip()
+    if not workflow_id:
+        raise McpToolError("workflow_id is required.")
+    name = str(args.get("name") or "").strip()
+    if not name:
+        raise McpToolError("name is required.")
+
+    workflow = await session.get(Workflow, workflow_id)
+    if workflow is None:
+        raise McpToolError(f"Workflow not found: {workflow_id}")
+
+    default_parameters = args.get("default_parameters") or {}
+    if not isinstance(default_parameters, dict):
+        raise McpToolError("default_parameters must be a JSON object.")
+
+    deployment = Deployment(
+        workflow_id=workflow_id,
+        org_id=workflow.org_id,
+        name=name,
+        schedule_cron=str(args.get("schedule_cron") or ""),
+        schedule_interval=str(args.get("schedule_interval") or "hours"),
+        schedule_every=max(1, int(args.get("schedule_every") or 1)),
+        schedule_tz=str(args.get("schedule_tz") or ""),
+        default_parameters=default_parameters,
+        active=True,
+    )
+    session.add(deployment)
+    await log_audit(
+        session, "create_schedule", "deployment", deployment.id, name,
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
+    )
+    await session.commit()
+    return {"schedule_id": deployment.id, "workflow_id": workflow_id, "name": name}
+
+
+async def _delete_schedule(session: AsyncSession, user: User | None, args: dict) -> Any:
+    schedule_id = str(args.get("schedule_id") or "").strip()
+    if not schedule_id:
+        raise McpToolError("schedule_id is required.")
+    deployment = await session.get(Deployment, schedule_id)
+    if deployment is None:
+        raise McpToolError(f"Schedule not found: {schedule_id}")
+    await log_audit(
+        session, "delete_schedule", "deployment", schedule_id, deployment.name,
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
+    )
+    await session.delete(deployment)
+    await session.commit()
+    return {"deleted": True, "schedule_id": schedule_id}
+
+
+async def _toggle_schedule(session: AsyncSession, user: User | None, args: dict) -> Any:
+    schedule_id = str(args.get("schedule_id") or "").strip()
+    if not schedule_id:
+        raise McpToolError("schedule_id is required.")
+    active = args.get("active")
+    if not isinstance(active, bool):
+        raise McpToolError("active must be a boolean.")
+    deployment = await session.get(Deployment, schedule_id)
+    if deployment is None:
+        raise McpToolError(f"Schedule not found: {schedule_id}")
+    deployment.active = active
+    await session.commit()
+    return {"schedule_id": schedule_id, "active": active}
+
+
+# ---------------------------------------------------------------------------
 # Static tool list
 # ---------------------------------------------------------------------------
 
@@ -1190,6 +1294,68 @@ STATIC_TOOLS: list[McpTool] = [
         },
         permission="workflow:write",
         handler=_duplicate_workflow,
+    ),
+    McpTool(
+        name="list_schedules",
+        description="List cron schedules (deployments). Filter by workflow_id or active state.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "active": {"type": "boolean"},
+                "limit": {"type": "integer", "description": "Max results (1-200, default 50)."},
+            },
+        },
+        permission=None,
+        handler=_list_schedules,
+    ),
+    McpTool(
+        name="create_schedule",
+        description=(
+            "Create a cron schedule for a workflow. "
+            "Supply schedule_cron (e.g. '0 * * * *') OR schedule_interval+schedule_every. "
+            "The schedule starts active immediately."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "name": {"type": "string"},
+                "schedule_cron": {"type": "string", "description": "Full cron expression (overrides interval fields)."},
+                "schedule_interval": {"type": "string", "description": "minutes / hours / days / weeks."},
+                "schedule_every": {"type": "integer", "description": "Multiplier for schedule_interval."},
+                "schedule_tz": {"type": "string", "description": "IANA timezone, e.g. America/New_York."},
+                "default_parameters": {"type": "object", "description": "Default trigger payload."},
+            },
+            "required": ["workflow_id", "name"],
+        },
+        permission="workflow:write",
+        handler=_create_schedule,
+    ),
+    McpTool(
+        name="delete_schedule",
+        description="Permanently delete a cron schedule.",
+        input_schema={
+            "type": "object",
+            "properties": {"schedule_id": {"type": "string"}},
+            "required": ["schedule_id"],
+        },
+        permission="workflow:write",
+        handler=_delete_schedule,
+    ),
+    McpTool(
+        name="toggle_schedule",
+        description="Activate or deactivate a cron schedule without deleting it.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "schedule_id": {"type": "string"},
+                "active": {"type": "boolean"},
+            },
+            "required": ["schedule_id", "active"],
+        },
+        permission="workflow:write",
+        handler=_toggle_schedule,
     ),
 ]
 

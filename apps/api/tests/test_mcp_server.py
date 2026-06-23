@@ -600,6 +600,65 @@ async def test_rollback_workflow(client: AsyncClient) -> None:
     assert data["draft_restored_from_version"] == 1
 
 
+async def test_schedule_crud(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "Sched WF")
+
+    created = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc(
+                "tools/call",
+                {
+                    "name": "create_schedule",
+                    "arguments": {
+                        "workflow_id": workflow_id,
+                        "name": "Hourly run",
+                        "schedule_cron": "0 * * * *",
+                        "schedule_tz": "UTC",
+                    },
+                },
+            ),
+        )
+    )
+    assert "schedule_id" in created
+    schedule_id = created["schedule_id"]
+
+    # list
+    listing = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc("tools/call", {"name": "list_schedules", "arguments": {"workflow_id": workflow_id}}),
+        )
+    )
+    assert any(s["schedule_id"] == schedule_id for s in listing["schedules"])
+
+    # toggle off
+    toggled = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc("tools/call", {"name": "toggle_schedule", "arguments": {"schedule_id": schedule_id, "active": False}}),
+        )
+    )
+    assert toggled["active"] is False
+
+    # delete
+    deleted = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc("tools/call", {"name": "delete_schedule", "arguments": {"schedule_id": schedule_id}}),
+        )
+    )
+    assert deleted["deleted"] is True
+
+
+async def test_create_schedule_missing_workflow(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/mcp",
+        json=rpc("tools/call", {"name": "create_schedule", "arguments": {"workflow_id": "ghost", "name": "Bad"}}),
+    )
+    assert resp.json()["result"]["isError"] is True
+
+
 async def test_client_nodes_loopback_against_own_server(
     client: AsyncClient, monkeypatch
 ) -> None:
