@@ -505,6 +505,55 @@ async def test_remove_edge_not_found(client: AsyncClient) -> None:
     assert resp.json()["result"]["isError"] is True
 
 
+async def test_delete_workflow(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "ToDelete WF")
+    data = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc("tools/call", {"name": "delete_workflow", "arguments": {"workflow_id": workflow_id}}),
+        )
+    )
+    assert data["deleted"] is True
+    assert data["workflow_id"] == workflow_id
+    # verify gone
+    resp = await client.get(f"/workflows/{workflow_id}")
+    assert resp.status_code == 404
+
+
+async def test_duplicate_workflow(client: AsyncClient) -> None:
+    source_id = await make_workflow(client, "Source WF")
+    data = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc(
+                "tools/call",
+                {"name": "duplicate_workflow", "arguments": {"workflow_id": source_id, "name": "Copy WF"}},
+            ),
+        )
+    )
+    assert data["source_workflow_id"] == source_id
+    assert data["name"] == "Copy WF"
+    assert data["workflow_id"] != source_id
+
+    # copy should have the same graph
+    copy_data = _tool_payload(
+        await client.post("/mcp", json=rpc("tools/call", {"name": "get_workflow", "arguments": {"workflow_id": data["workflow_id"]}}))
+    )
+    assert len(copy_data["graph"]["nodes"]) == 1
+
+
+async def test_duplicate_workflow_default_name(client: AsyncClient) -> None:
+    source_id = await make_workflow(client, "Original WF")
+    data = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc("tools/call", {"name": "duplicate_workflow", "arguments": {"workflow_id": source_id}}),
+        )
+    )
+    assert "Original WF" in data["name"]
+    assert "(copy)" in data["name"]
+
+
 async def test_client_nodes_loopback_against_own_server(
     client: AsyncClient, monkeypatch
 ) -> None:

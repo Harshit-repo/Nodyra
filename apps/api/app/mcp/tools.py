@@ -687,6 +687,51 @@ async def _remove_edge(session: AsyncSession, user: User | None, args: dict) -> 
 
 
 # ---------------------------------------------------------------------------
+# Lifecycle tools
+# ---------------------------------------------------------------------------
+
+
+async def _delete_workflow(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    await log_audit(
+        session, "delete", "workflow", workflow.id, workflow.name,
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
+    )
+    await session.delete(workflow)
+    await session.commit()
+    return {"deleted": True, "workflow_id": workflow.id}
+
+
+async def _duplicate_workflow(session: AsyncSession, user: User | None, args: dict) -> Any:
+    from app.routers.workflows import _global_env_id
+
+    source = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    new_name = str(args.get("name") or "").strip() or f"{source.name} (copy)"
+    graph = _draft_graph(source)
+
+    new_wf = Workflow(
+        name=new_name,
+        environment_id=source.environment_id or await _global_env_id(session),
+        draft_graph=dict(graph),
+        published_version=1,
+    )
+    new_wf.versions.append(WorkflowVersion(version=1, graph=dict(graph)))
+    session.add(new_wf)
+    await log_audit(
+        session, "duplicate", "workflow", new_wf.id, new_name,
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
+    )
+    await session.commit()
+    return {
+        "workflow_id": new_wf.id,
+        "name": new_name,
+        "source_workflow_id": source.id,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Static tool list
 # ---------------------------------------------------------------------------
 
@@ -1006,6 +1051,34 @@ STATIC_TOOLS: list[McpTool] = [
         },
         permission="workflow:write",
         handler=_remove_edge,
+    ),
+    McpTool(
+        name="delete_workflow",
+        description="Permanently delete a workflow and all its runs, versions, and events.",
+        input_schema={
+            "type": "object",
+            "properties": {"workflow_id": {"type": "string"}},
+            "required": ["workflow_id"],
+        },
+        permission="workflow:write",
+        handler=_delete_workflow,
+    ),
+    McpTool(
+        name="duplicate_workflow",
+        description=(
+            "Clone a workflow's current draft graph into a new workflow. "
+            "Optionally specify a name; defaults to '{original} (copy)'."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "name": {"type": "string", "description": "Name for the new workflow."},
+            },
+            "required": ["workflow_id"],
+        },
+        permission="workflow:write",
+        handler=_duplicate_workflow,
     ),
 ]
 
