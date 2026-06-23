@@ -572,7 +572,7 @@ STATIC_TOOLS: list[McpTool] = [
             "properties": {"run_id": {"type": "string"}},
             "required": ["run_id"],
         },
-        permission=None,
+        permission="workflow:run",
         handler=_get_run,
     ),
     McpTool(
@@ -589,7 +589,7 @@ STATIC_TOOLS: list[McpTool] = [
                 "limit": {"type": "integer", "description": "Max results (1-100, default 20)."},
             },
         },
-        permission=None,
+        permission="workflow:run",
         handler=_list_runs,
     ),
     McpTool(
@@ -607,7 +607,7 @@ STATIC_TOOLS: list[McpTool] = [
             },
             "required": ["run_id"],
         },
-        permission=None,
+        permission="workflow:run",
         handler=_get_run_events,
     ),
     McpTool(
