@@ -75,6 +75,9 @@ async def test_initialize(client: AsyncClient) -> None:
     assert result["protocolVersion"] == "2025-06-18"
     assert result["serverInfo"]["name"] == "noodle"
     assert "tools" in result["capabilities"]
+    assert result["capabilities"]["tools"]["listChanged"] is True
+    assert "resources" in result["capabilities"]
+    assert "prompts" in result["capabilities"]
 
 
 async def test_notification_returns_202(client: AsyncClient) -> None:
