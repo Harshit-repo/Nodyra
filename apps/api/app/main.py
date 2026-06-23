@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app import tracing
 from app.config import settings
+from app.exceptions import ServiceError
 from app.logging import bind_request_context, configure_logging, reset_request_context
 
 # Install structured JSON logging before anything logs (H4). Operators can opt
@@ -34,6 +35,7 @@ from app.routers import (
     environments,
     export,
     expressions,
+    folders,
     health,
     internal,
     mcp,
@@ -64,6 +66,7 @@ from app.services.runner import (
 )
 from app.services.runtime_pool import idle_reaper_loop
 from app.services.runtime_pool import pool as runtime_pool
+from app.services.github_sync_jobs import github_sync_dispatch_loop
 from app.services.triggers import scheduler_loop
 
 
@@ -256,6 +259,10 @@ async def lifespan(app: FastAPI):
     for _warning in await reconcile_capabilities():
         logging.getLogger("noodle").warning("licensing: %s", _warning)
 
+    from app.tenancy import assert_safe_postgres_role
+
+    await assert_safe_postgres_role(engine)
+
     # Phase D: refuse unsafe MT configurations outright; probe the container
     # sandbox only where this process can dispatch runs.
     from app.services.sandbox_policy import enforce_sandbox_policy
@@ -345,6 +352,7 @@ async def lifespan(app: FastAPI):
     )
     cloud_idle = asyncio.create_task(_as_system(cloud_idle_terminate_loop)())
     heartbeat = asyncio.create_task(_as_system(runner_heartbeat_loop)())
+    github_sync = asyncio.create_task(github_sync_dispatch_loop())
     yield
     # Graceful drain on shutdown: stop the dispatch loop from leasing new
     # entries, give in-flight runs a bounded window to finish, then
@@ -354,7 +362,7 @@ async def lifespan(app: FastAPI):
     # (matters for tests that reuse the process).
     _prior_drain = settings.queue_drain
     settings.queue_drain = True
-    for task in (scheduler, retention, reaper, broker_reaper, queue_loop, cloud_idle, heartbeat):
+    for task in (scheduler, retention, reaper, broker_reaper, queue_loop, cloud_idle, heartbeat, github_sync):
         if task is None:
             continue
         task.cancel()
@@ -403,6 +411,7 @@ async def _gate_token_valid(token: str) -> bool:
     async with SessionLocal() as session:
         return await _user_from_session_token(token, session) is not None
 
+
 app = FastAPI(
     title="Noodle API",
     version="0.0.1",
@@ -424,9 +433,6 @@ tracing.instrument_sqlalchemy(engine)
 # Access-Control-Allow-Origin header — otherwise the browser reports an opaque
 # CORS failure instead of the real status and the SPA can't react (e.g. redirect
 # to login on session expiry).
-
-
-from app.exceptions import ServiceError
 
 
 @app.exception_handler(ServiceError)
@@ -459,29 +465,52 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
 
 
 _MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MiB — generous for graph payloads
+_MULTIPART_OVERHEAD_BYTES = 1024 * 1024
+
+
+def _request_body_limit(path: str) -> int:
+    if path in {"/artifacts/upload", "/runner-pools/artifact-upload"}:
+        artifact_limit = settings.max_artifact_bytes
+        if artifact_limit > 0:
+            return artifact_limit + _MULTIPART_OVERHEAD_BYTES
+    return _MAX_BODY_BYTES
 
 
 @app.middleware("http")
 async def _body_size_limit(request: Request, call_next):
-    """Reject requests whose Content-Length header exceeds the cap.
+    """Reject requests whose declared or streamed body exceeds the cap.
 
     Large unchecked bodies (e.g. a deeply-nested graph with huge embedded
-    blobs) could exhaust memory before FastAPI parses the JSON. This guard
-    uses the declared Content-Length; a chunked request with no
-    Content-Length header gets through but is still bounded by the OS
-    TCP receive buffer and the client's connection, so it's an acceptable
-    trade-off without adding streaming body inspection overhead.
+    blobs) could exhaust memory before FastAPI parses the JSON. Declared bodies
+    are rejected immediately; chunked bodies are consumed only up to the same
+    route-specific limit and then cached for FastAPI's downstream parser.
     """
+    limit = _request_body_limit(request.url.path)
     content_length = request.headers.get("content-length")
     if content_length is not None:
         try:
-            if int(content_length) > _MAX_BODY_BYTES:
+            if int(content_length) > limit:
                 return JSONResponse(
                     status_code=413,
                     content={"detail": "Request body too large"},
                 )
         except ValueError:
-            pass
+            content_length = None
+    if content_length is None:
+        # Transfer-Encoding: chunked has no declared size. Read only up to the
+        # route-specific cap, cache the bounded body for downstream parsers, and
+        # reject before request.body()/multipart parsing can grow without limit.
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in request.stream():
+            total += len(chunk)
+            if total > limit:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": "Request body too large"},
+                )
+            chunks.append(chunk)
+        request._body = b"".join(chunks)  # noqa: SLF001 - Starlette body cache
     return await call_next(request)
 
 
@@ -502,14 +531,18 @@ async def _security_headers(request: Request, call_next):
     response.headers["X-Request-ID"] = req_id
     # Tight CSP for the API (no HTML rendered here, only JSON).  Relaxed for
     # the docs UI so Swagger/ReDoc can load their CDN assets.
-    if request.url.path.startswith(("/docs", "/redoc")):
+    if "content-security-policy" in response.headers:
+        pass
+    elif request.url.path.startswith(("/docs", "/redoc")):
         response.headers["Content-Security-Policy"] = (
             "default-src 'self' https://cdn.jsdelivr.net https://unpkg.com; "
             "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; "
             "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com"
         )
     else:
-        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        )
     return response
 
 
@@ -527,6 +560,10 @@ _AUTH_EXEMPT_PREFIXES = (
     # param (see app.services.oauth.decode_oauth_state), so it is safe to exempt
     # — without this, OAuth credential connect is broken whenever auth_required.
     "/credentials/oauth/callback",
+    # Public chat performs its own open/secret-link/login policy from the
+    # published Chat Trigger. Keeping it behind the global gate would make
+    # open and secret-link chat pages unusable whenever AUTH_REQUIRED=true.
+    "/chat/p",
 )
 # Public surface: landing page + OpenAPI schema/docs (so unauthenticated users
 # can discover the API), and a favicon for browsers. /metrics and
@@ -690,6 +727,7 @@ app.include_router(webhooks.router)
 if settings.webhook_role != "disabled":
     app.include_router(webhooks.production_router)
     app.include_router(provider_webhooks.router)
+app.include_router(folders.router)
 app.include_router(workflows.router)
 app.include_router(runs.router)
 app.include_router(chat.router)
