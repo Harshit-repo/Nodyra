@@ -17,6 +17,7 @@ from app.schemas import (
 )
 from app.security import require_permission
 from app.services.audit import log_audit
+from app.services.github_sync import enqueue_github_push
 from app.services.github_sync_jobs import notify_sync_workers
 from app.services.licensing import Feature, require_feature
 from app.tenancy import active_org_id
@@ -171,17 +172,12 @@ async def resolve_github_conflict(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No sync config")
 
     if body.side == "noodle":
-        # Noodle wins: resolve conflict and enqueue a push to overwrite GitHub
+        # Noodle wins: reset SHA so next push overwrites GitHub, enqueue atomically
         workflow.github_sync_sha = workflow.github_sync_conflict_sha
         workflow.github_sync_status = "pending"
         workflow.github_sync_conflict_sha = None
         await log_audit(session, "github_conflict_resolved", "workflow", workflow_id, "noodle")
-        await session.commit()
-        # Enqueue a push job via the service
-        from app.services.github_sync import enqueue_github_push
-
-        async with session.begin_nested():
-            await enqueue_github_push(session, workflow, "ui")
+        await enqueue_github_push(session, workflow, "ui")
         await session.commit()
         notify_sync_workers()
     else:  # github wins

@@ -560,7 +560,9 @@ async def _patch_node(session: AsyncSession, user: User | None, args: dict) -> A
                 actor_id=user.id if user else None,
                 actor_email=user.email if user else None,
             )
+            await enqueue_github_push(session, workflow, "mcp")
             await session.commit()
+            notify_sync_workers()
             return {"workflow_id": workflow.id, "node_id": node_id, "params": merged}
     raise McpToolError(f"Node not found in draft graph: {node_id}")
 
@@ -597,7 +599,9 @@ async def _add_node(session: AsyncSession, user: User | None, args: dict) -> Any
         actor_id=user.id if user else None,
         actor_email=user.email if user else None,
     )
+    await enqueue_github_push(session, workflow, "mcp")
     await session.commit()
+    notify_sync_workers()
     return {"workflow_id": workflow.id, "node_id": node_id, "node_count": len(nodes)}
 
 
@@ -623,7 +627,9 @@ async def _remove_node(session: AsyncSession, user: User | None, args: dict) -> 
         actor_id=user.id if user else None,
         actor_email=user.email if user else None,
     )
+    await enqueue_github_push(session, workflow, "mcp")
     await session.commit()
+    notify_sync_workers()
     return {"workflow_id": workflow.id, "node_id": node_id, "removed": True}
 
 
@@ -652,7 +658,9 @@ async def _add_edge(session: AsyncSession, user: User | None, args: dict) -> Any
         actor_id=user.id if user else None,
         actor_email=user.email if user else None,
     )
+    await enqueue_github_push(session, workflow, "mcp")
     await session.commit()
+    notify_sync_workers()
     return {"workflow_id": workflow.id, "edge_count": len(edges)}
 
 
@@ -688,7 +696,9 @@ async def _remove_edge(session: AsyncSession, user: User | None, args: dict) -> 
         actor_id=user.id if user else None,
         actor_email=user.email if user else None,
     )
+    await enqueue_github_push(session, workflow, "mcp")
     await session.commit()
+    notify_sync_workers()
     return {"workflow_id": workflow.id, "removed_count": removed_count}
 
 
@@ -758,7 +768,9 @@ async def _rollback_workflow(session: AsyncSession, user: User | None, args: dic
         actor_id=user.id if user else None,
         actor_email=user.email if user else None,
     )
+    await enqueue_github_push(session, workflow, "mcp")
     await session.commit()
+    notify_sync_workers()
     return {
         "workflow_id": workflow.id,
         "draft_restored_from_version": version_num,
@@ -798,7 +810,9 @@ async def _duplicate_workflow(session: AsyncSession, user: User | None, args: di
         actor_id=user.id if user else None,
         actor_email=user.email if user else None,
     )
+    await enqueue_github_push(session, new_wf, "mcp")
     await session.commit()
+    notify_sync_workers()
     return {
         "workflow_id": new_wf.id,
         "name": new_name,
@@ -964,7 +978,9 @@ async def _rename_node(session: AsyncSession, user: User | None, args: dict) -> 
                 actor_id=user.id if user else None,
                 actor_email=user.email if user else None,
             )
+            await enqueue_github_push(session, workflow, "mcp")
             await session.commit()
+            notify_sync_workers()
             return {"workflow_id": workflow.id, "node_id": node_id, "label": label}
     raise McpToolError(f"Node not found in draft graph: {node_id!r}")
 
@@ -989,7 +1005,9 @@ async def _move_node(session: AsyncSession, user: User | None, args: dict) -> An
             pos = {**node.get("position", {}), "x": x, "y": y}
             nodes[i] = {**node, "position": pos}
             workflow.draft_graph = {**graph, "nodes": nodes}
+            await enqueue_github_push(session, workflow, "mcp")
             await session.commit()
+            notify_sync_workers()
             return {"workflow_id": workflow.id, "node_id": node_id, "position": pos}
     raise McpToolError(f"Node not found in draft graph: {node_id!r}")
 
@@ -1017,7 +1035,9 @@ async def _create_code_node(session: AsyncSession, user: User | None, args: dict
         actor_id=user.id if user else None,
         actor_email=user.email if user else None,
     )
+    await enqueue_github_push(session, workflow, "mcp")
     await session.commit()
+    notify_sync_workers()
     return {"workflow_id": workflow.id, "node_id": node_id, "node_count": len(nodes)}
 
 
@@ -1042,7 +1062,9 @@ async def _update_code(session: AsyncSession, user: User | None, args: dict) -> 
                 actor_id=user.id if user else None,
                 actor_email=user.email if user else None,
             )
+            await enqueue_github_push(session, workflow, "mcp")
             await session.commit()
+            notify_sync_workers()
             return {"workflow_id": workflow.id, "node_id": node_id}
     raise McpToolError(f"Node not found in draft graph: {node_id!r}")
 
