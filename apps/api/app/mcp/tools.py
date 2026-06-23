@@ -529,6 +529,36 @@ async def _publish_workflow(session: AsyncSession, user: User | None, args: dict
     return response.model_dump()
 
 
+async def _patch_node(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    node_id = str(args.get("node_id") or "").strip()
+    if not node_id:
+        raise McpToolError("node_id is required.")
+    params = args.get("params")
+    if not isinstance(params, dict):
+        raise McpToolError("params must be a JSON object.")
+
+    graph = _draft_graph(workflow)
+    nodes = list(graph.get("nodes", []))
+    for i, node in enumerate(nodes):
+        if node.get("id") == node_id:
+            merged = {**node.get("params", {}), **params}
+            nodes[i] = {**node, "params": merged}
+            workflow.draft_graph = {**graph, "nodes": nodes}
+            await log_audit(
+                session,
+                "mcp_patch_node",
+                "workflow",
+                workflow.id,
+                workflow.name,
+                actor_id=user.id if user else None,
+                actor_email=user.email if user else None,
+            )
+            await session.commit()
+            return {"workflow_id": workflow.id, "node_id": node_id, "params": merged}
+    raise McpToolError(f"Node not found in draft graph: {node_id}")
+
+
 # ---------------------------------------------------------------------------
 # Static tool list
 # ---------------------------------------------------------------------------
@@ -744,6 +774,24 @@ STATIC_TOOLS: list[McpTool] = [
         },
         permission="workflow:write",
         handler=_publish_workflow,
+    ),
+    McpTool(
+        name="patch_node",
+        description=(
+            "Merge params into a single node in the draft graph without replacing the whole graph. "
+            "Existing params not mentioned in the patch are preserved."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "node_id": {"type": "string"},
+                "params": {"type": "object", "description": "Partial params to merge into the node."},
+            },
+            "required": ["workflow_id", "node_id", "params"],
+        },
+        permission="workflow:write",
+        handler=_patch_node,
     ),
 ]
 

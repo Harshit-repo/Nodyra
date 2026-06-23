@@ -350,6 +350,41 @@ async def test_get_workflow_stats_missing_workflow(client: AsyncClient) -> None:
     assert resp.json()["result"]["isError"] is True
 
 
+async def test_patch_node(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "Patch WF")
+    # patch the trigger node's params
+    data = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc(
+                "tools/call",
+                {
+                    "name": "patch_node",
+                    "arguments": {
+                        "workflow_id": workflow_id,
+                        "node_id": "t",
+                        "params": {"label": "patched"},
+                    },
+                },
+            ),
+        )
+    )
+    assert data["node_id"] == "t"
+    assert data["params"]["label"] == "patched"
+
+
+async def test_patch_node_missing_node(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "PatchMiss WF")
+    resp = await client.post(
+        "/mcp",
+        json=rpc(
+            "tools/call",
+            {"name": "patch_node", "arguments": {"workflow_id": workflow_id, "node_id": "nope", "params": {}}},
+        ),
+    )
+    assert resp.json()["result"]["isError"] is True
+
+
 async def test_client_nodes_loopback_against_own_server(
     client: AsyncClient, monkeypatch
 ) -> None:
