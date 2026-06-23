@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -279,6 +279,33 @@ async def _get_run_events(session: AsyncSession, user: User | None, args: dict) 
             }
             for e in events
         ],
+    }
+
+
+async def _get_workflow_stats(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow_id = str(args.get("workflow_id") or "").strip()
+    if not workflow_id:
+        raise McpToolError("workflow_id is required.")
+    workflow = await session.get(Workflow, workflow_id)
+    if workflow is None:
+        raise McpToolError(f"Workflow not found: {workflow_id}")
+
+    row = (
+        await session.execute(
+            select(
+                func.count().label("total"),
+                func.sum(case((Run.status == "success", 1), else_=0)).label("success_count"),
+                func.sum(case((Run.status == "error", 1), else_=0)).label("error_count"),
+                func.max(Run.started_at).label("last_run_at"),
+            ).where(Run.workflow_id == workflow_id)
+        )
+    ).one()
+    return {
+        "workflow_id": workflow_id,
+        "total_runs": row.total or 0,
+        "success_count": row.success_count or 0,
+        "error_count": row.error_count or 0,
+        "last_run_at": str(row.last_run_at) if row.last_run_at else None,
     }
 
 
@@ -650,6 +677,17 @@ STATIC_TOOLS: list[McpTool] = [
         },
         permission="workflow:run",
         handler=_cancel_run,
+    ),
+    McpTool(
+        name="get_workflow_stats",
+        description="Aggregate stats for a workflow: total runs, success/error counts, last run time.",
+        input_schema={
+            "type": "object",
+            "properties": {"workflow_id": {"type": "string"}},
+            "required": ["workflow_id"],
+        },
+        permission=None,
+        handler=_get_workflow_stats,
     ),
     McpTool(
         name="create_workflow",

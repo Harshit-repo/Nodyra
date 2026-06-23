@@ -324,6 +324,32 @@ async def test_cancel_run_missing(client: AsyncClient) -> None:
     assert resp.json()["result"]["isError"] is True
 
 
+async def test_get_workflow_stats(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "Stats WF")
+    await client.post(
+        "/mcp",
+        json=rpc("tools/call", {"name": "run_workflow", "arguments": {"workflow_id": workflow_id}}),
+    )
+    data = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc("tools/call", {"name": "get_workflow_stats", "arguments": {"workflow_id": workflow_id}}),
+        )
+    )
+    assert data["workflow_id"] == workflow_id
+    assert data["total_runs"] >= 1
+    assert data["success_count"] >= 1
+    assert data["last_run_at"] is not None
+
+
+async def test_get_workflow_stats_missing_workflow(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/mcp",
+        json=rpc("tools/call", {"name": "get_workflow_stats", "arguments": {"workflow_id": "ghost"}}),
+    )
+    assert resp.json()["result"]["isError"] is True
+
+
 async def test_client_nodes_loopback_against_own_server(
     client: AsyncClient, monkeypatch
 ) -> None:
