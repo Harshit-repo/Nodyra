@@ -23,6 +23,8 @@ from app.db import SessionLocal
 from app.models import Deployment, NodeRun, Run, RunEvent, User, Workflow, WorkflowVersion
 from app.routers.workflows import STRUCTURAL_NODE_TYPES
 from app.services.audit import log_audit
+from app.services.github_sync import enqueue_github_push
+from app.services.github_sync_jobs import notify_sync_workers
 from app.services.runner import cancel_run as _runner_cancel_run, start_run
 from app.services.triggers import _await_run_terminal, _last_node_output
 from noodle.models import WorkflowGraph
@@ -479,7 +481,9 @@ async def _create_workflow(session: AsyncSession, user: User | None, args: dict)
         actor_id=user.id if user else None,
         actor_email=user.email if user else None,
     )
+    await enqueue_github_push(session, workflow, "mcp")
     await session.commit()
+    notify_sync_workers()
     return {"workflow_id": workflow.id, "name": name}
 
 
@@ -496,7 +500,9 @@ async def _set_workflow_graph(session: AsyncSession, user: User | None, args: di
         actor_id=user.id if user else None,
         actor_email=user.email if user else None,
     )
+    await enqueue_github_push(session, workflow, "mcp")
     await session.commit()
+    notify_sync_workers()
     return {
         "workflow_id": workflow.id,
         "node_count": len(parsed.nodes),

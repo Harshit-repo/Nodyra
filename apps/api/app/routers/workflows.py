@@ -9,8 +9,10 @@ import noodle_nodes  # noqa: F401 - registers built-in nodes
 from app.db import get_session
 from app.models import (
     Environment,
+    Folder,
     ProviderTriggerSubscription,
     Run,
+    RunnerPool,
     User,
     Workflow,
     WorkflowVersion,
@@ -32,6 +34,8 @@ from app.schemas import (
 from app.security import optional_current_user, require_permission
 from app.services.ai_builder import build_workflow_draft
 from app.services.audit import log_audit
+from app.services.github_sync import enqueue_github_push
+from app.services.github_sync_jobs import notify_sync_workers
 from app.services.provider_triggers import sync_workflow_provider_triggers
 from noodle.models import WorkflowGraph
 from noodle.sdk import registry as node_registry
@@ -218,6 +222,7 @@ def _summary_from(
         provider_trigger_counts=(
             provider_trigger_counts or ProviderTriggerStatusCounts()
         ),
+        folder_id=workflow.folder_id,
         updated_at=workflow.updated_at,
     )
 
@@ -238,6 +243,8 @@ async def _detail(session: AsyncSession, workflow: Workflow) -> WorkflowDetail:
         published_version=workflow.published_version,
         has_unpublished_changes=_has_unpublished_changes(workflow),
         environment_id=workflow.environment_id,
+        default_runner_pool_id=workflow.default_runner_pool_id,
+        folder_id=workflow.folder_id,
         error_workflow_id=workflow.error_workflow_id,
         error_alerts=workflow.error_alerts or {},
         allow_concurrent=workflow.allow_concurrent,
@@ -304,7 +311,9 @@ async def create_workflow(
     await log_audit(session, "create", "workflow", detail=body.name,
                     actor_id=actor.id if actor else None,
                     actor_email=actor.email if actor else None)
+    await enqueue_github_push(session, workflow, "ui")
     await session.commit()
+    notify_sync_workers()
     return await _detail(session, await _load(session, workflow.id))
 
 
@@ -370,9 +379,25 @@ async def update_workflow(
         workflow.name = body.name
     if body.active is not None:
         workflow.active = body.active
-    if body.environment_id is not None:
+    sent = body.model_fields_set
+    if "environment_id" in sent:
+        if body.environment_id is not None and await session.scalar(
+            select(Environment).where(Environment.id == body.environment_id)
+        ) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Environment not found")
         workflow.environment_id = body.environment_id
-    if body.error_workflow_id is not None:
+    if "default_runner_pool_id" in sent:
+        if body.default_runner_pool_id is not None and await session.scalar(
+            select(RunnerPool).where(RunnerPool.id == body.default_runner_pool_id)
+        ) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Runner pool not found")
+        from app.services.isolation import validate_pool_assignment
+
+        await validate_pool_assignment(
+            session, workflow.org_id, body.default_runner_pool_id
+        )
+        workflow.default_runner_pool_id = body.default_runner_pool_id
+    if "error_workflow_id" in sent and body.error_workflow_id is not None:
         if body.error_workflow_id == workflow.id:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
@@ -385,26 +410,35 @@ async def update_workflow(
         ) is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Error workflow not found")
         workflow.error_workflow_id = body.error_workflow_id
+    elif "error_workflow_id" in sent:
+        workflow.error_workflow_id = None
     if body.error_alerts is not None:
         workflow.error_alerts = body.error_alerts
     if body.allow_concurrent is not None:
         workflow.allow_concurrent = body.allow_concurrent
-    if body.run_timeout_seconds is not None:
+    if "run_timeout_seconds" in sent:
         workflow.run_timeout_seconds = body.run_timeout_seconds
     if body.mcp_enabled is not None:
         workflow.mcp_enabled = body.mcp_enabled
-    if body.mcp_tool_name is not None:
-        name_value = body.mcp_tool_name.strip()
+    if "mcp_tool_name" in sent:
+        name_value = (body.mcp_tool_name or "").strip()
         if name_value and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name_value):
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
                 "mcp_tool_name must match [A-Za-z0-9_-]{1,64}.",
             )
         workflow.mcp_tool_name = name_value or None
-    if body.mcp_description is not None:
-        workflow.mcp_description = body.mcp_description.strip() or None
-    if body.mcp_parameters_schema is not None:
+    if "mcp_description" in sent:
+        workflow.mcp_description = (body.mcp_description or "").strip() or None
+    if "mcp_parameters_schema" in sent:
         workflow.mcp_parameters_schema = body.mcp_parameters_schema
+    if "folder_id" in body.model_fields_set:
+        if body.folder_id is not None:
+            if await session.scalar(
+                select(Folder).where(Folder.id == body.folder_id)
+            ) is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Folder not found")
+        workflow.folder_id = body.folder_id
     if body.graph is not None:
         _validate_node_types(body.graph)
         workflow.draft_graph = body.graph.model_dump()
@@ -415,7 +449,11 @@ async def update_workflow(
             actor_id=actor.id if actor else None,
             actor_email=actor.email if actor else None,
         )
+    if body.graph is not None:
+        await enqueue_github_push(session, workflow, "ui")
     await session.commit()
+    if body.graph is not None:
+        notify_sync_workers()
     return await _detail(session, await _load(session, workflow_id))
 
 
@@ -520,7 +558,9 @@ async def publish_workflow(
             actor_id=actor.id if actor else None,
             actor_email=actor.email if actor else None,
         )
+    await enqueue_github_push(session, workflow, "publish")
     await session.commit()
+    notify_sync_workers()
     return WorkflowPublishResponse(
         workflow_id=workflow.id,
         workflow_version_id=version.id,

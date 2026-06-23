@@ -150,6 +150,13 @@ async def test_delete_github_sync_config(client: AsyncClient) -> None:
     assert get_resp.json() is None
 
 
+def test_github_sync_imports():
+    from app.services.github_sync import enqueue_github_push
+    from app.services.github_sync_jobs import notify_sync_workers
+    assert callable(enqueue_github_push)
+    assert callable(notify_sync_workers)
+
+
 @pytest.mark.asyncio
 async def test_github_webhook_invalid_signature(client: AsyncClient) -> None:
     # First create a config so the org lookup succeeds
