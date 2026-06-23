@@ -306,6 +306,89 @@ class RunBatch(Base):
     )
 
 
+class Folder(Base):
+    __tablename__ = "folders"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    color: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class GithubSyncConfig(Base):
+    """Per-org GitHub sync configuration. At most one row per org."""
+
+    __tablename__ = "github_sync_configs"
+    __table_args__ = (UniqueConstraint("org_id", name="uq_github_sync_configs_org_id"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
+    credential_id: Mapped[str | None] = mapped_column(
+        ForeignKey("credentials.id", ondelete="SET NULL"), nullable=True
+    )
+    repo: Mapped[str] = mapped_column(String(200), nullable=False)
+    base_path: Mapped[str] = mapped_column(String(200), nullable=False, default="workflows/")
+    main_branch: Mapped[str] = mapped_column(String(100), nullable=False, default="main")
+    webhook_secret: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class GithubSyncJob(Base):
+    """A durable queue entry for a GitHub sync push or pull operation."""
+
+    __tablename__ = "github_sync_jobs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
+    workflow_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workflows.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    job_type: Mapped[str] = mapped_column(
+        String(20), nullable=False
+    )  # push_draft | push_publish | pull
+    origin: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="ui"
+    )  # ui | mcp | api | publish
+    file_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending"
+    )  # pending | processing | done | failed
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class Workflow(Base):
     __tablename__ = "workflows"
 
@@ -332,6 +415,9 @@ class Workflow(Base):
     error_workflow_id: Mapped[str | None] = mapped_column(
         ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    folder_id: Mapped[str | None] = mapped_column(
+        ForeignKey("folders.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     error_alerts: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     allow_concurrent: Mapped[bool] = mapped_column(
         # ``true()`` renders the dialect-correct literal (``true`` on Postgres,
@@ -351,6 +437,11 @@ class Workflow(Base):
     mcp_tool_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     mcp_description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     mcp_parameters_schema: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    github_sync_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    github_sync_status: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )  # synced | pending | conflict | error | null
+    github_sync_conflict_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -16,6 +16,7 @@ noodle-core = { workspace = true }
 noodle-nodes = { workspace = true }
 noodle-exporter = { workspace = true }
 noodle-runtime = { workspace = true }
+noodle-importer = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -32,6 +33,11 @@ dev = [
     # Postgres (exercises the durable queue's SELECT ... FOR UPDATE SKIP LOCKED).
     "asyncpg>=0.29",
     "simpleeval>=0.9",
+    # Direct-node tests exercise requirement-bearing nodes without building a
+    # workflow environment; keep their lightweight/representative extras in CI.
+    "boto3>=1.34",
+    "pandas>=2.0",
+    "xmltodict>=0.13",
 ]
 
 [tool.ruff]
@@ -46,6 +52,11 @@ extend-exclude = [
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+# Ruff's formatter deliberately leaves long strings/URLs intact, so enforcing
+# E501 in the separate lint pass makes formatted code fail CI. Exception
+# chaining (B904) is advisory here because many node functions intentionally
+# replace optional-dependency/import errors with concise operator guidance.
+ignore = ["E501", "B904"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app", "noodle", "noodle_nodes", "noodle_runtime", "noodle_exporter"]
