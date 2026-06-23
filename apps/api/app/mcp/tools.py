@@ -691,6 +691,75 @@ async def _remove_edge(session: AsyncSession, user: User | None, args: dict) -> 
 # ---------------------------------------------------------------------------
 
 
+async def _toggle_workflow(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    active = args.get("active")
+    if not isinstance(active, bool):
+        raise McpToolError("active must be a boolean (true or false).")
+    workflow.active = active
+    await log_audit(
+        session, "toggle_active", "workflow", workflow.id, workflow.name,
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
+    )
+    await session.commit()
+    return {"workflow_id": workflow.id, "active": workflow.active}
+
+
+async def _list_workflow_versions(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow_id = str(args.get("workflow_id") or "").strip()
+    if not workflow_id:
+        raise McpToolError("workflow_id is required.")
+    workflow = await session.get(Workflow, workflow_id)
+    if workflow is None:
+        raise McpToolError(f"Workflow not found: {workflow_id}")
+
+    versions = (
+        await session.scalars(
+            select(WorkflowVersion)
+            .where(WorkflowVersion.workflow_id == workflow_id)
+            .order_by(WorkflowVersion.version.desc())
+        )
+    ).all()
+    return {
+        "workflow_id": workflow_id,
+        "current_published_version": workflow.published_version,
+        "versions": [
+            {"id": v.id, "version": v.version, "notes": v.notes, "created_at": str(v.created_at)}
+            for v in versions
+        ],
+    }
+
+
+async def _rollback_workflow(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    version_num = args.get("version")
+    if not isinstance(version_num, int):
+        raise McpToolError("version must be an integer.")
+
+    target = await session.scalar(
+        select(WorkflowVersion).where(
+            WorkflowVersion.workflow_id == workflow.id,
+            WorkflowVersion.version == version_num,
+        )
+    )
+    if target is None:
+        raise McpToolError(f"Version {version_num} not found for workflow {workflow.id!r}.")
+
+    workflow.draft_graph = dict(target.graph or EMPTY_GRAPH)
+    await log_audit(
+        session, "rollback", "workflow", workflow.id, workflow.name,
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
+    )
+    await session.commit()
+    return {
+        "workflow_id": workflow.id,
+        "draft_restored_from_version": version_num,
+        "hint": "Draft replaced. Use run_workflow (use_draft=true) to test, then publish_workflow.",
+    }
+
+
 async def _delete_workflow(session: AsyncSession, user: User | None, args: dict) -> Any:
     workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
     await log_audit(
@@ -1051,6 +1120,48 @@ STATIC_TOOLS: list[McpTool] = [
         },
         permission="workflow:write",
         handler=_remove_edge,
+    ),
+    McpTool(
+        name="toggle_workflow",
+        description="Activate or deactivate a workflow (controls whether scheduled triggers fire).",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "active": {"type": "boolean"},
+            },
+            "required": ["workflow_id", "active"],
+        },
+        permission="workflow:write",
+        handler=_toggle_workflow,
+    ),
+    McpTool(
+        name="list_workflow_versions",
+        description="List all published versions of a workflow, newest first.",
+        input_schema={
+            "type": "object",
+            "properties": {"workflow_id": {"type": "string"}},
+            "required": ["workflow_id"],
+        },
+        permission=None,
+        handler=_list_workflow_versions,
+    ),
+    McpTool(
+        name="rollback_workflow",
+        description=(
+            "Restore a published version's graph to the draft. Does not publish — "
+            "call publish_workflow afterwards to make it permanent."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "version": {"type": "integer", "description": "Version number from list_workflow_versions."},
+            },
+            "required": ["workflow_id", "version"],
+        },
+        permission="workflow:write",
+        handler=_rollback_workflow,
     ),
     McpTool(
         name="delete_workflow",

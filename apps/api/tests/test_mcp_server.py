@@ -554,6 +554,52 @@ async def test_duplicate_workflow_default_name(client: AsyncClient) -> None:
     assert "(copy)" in data["name"]
 
 
+async def test_toggle_workflow(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "Toggle WF")
+    data = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc("tools/call", {"name": "toggle_workflow", "arguments": {"workflow_id": workflow_id, "active": True}}),
+        )
+    )
+    assert data["active"] is True
+    data2 = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc("tools/call", {"name": "toggle_workflow", "arguments": {"workflow_id": workflow_id, "active": False}}),
+        )
+    )
+    assert data2["active"] is False
+
+
+async def test_list_workflow_versions(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "Versions WF")
+    await client.post(f"/workflows/{workflow_id}/publish", json={"notes": "v2"})
+    data = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc("tools/call", {"name": "list_workflow_versions", "arguments": {"workflow_id": workflow_id}}),
+        )
+    )
+    assert data["workflow_id"] == workflow_id
+    assert len(data["versions"]) >= 2
+    assert data["versions"][0]["version"] > data["versions"][-1]["version"]  # desc order
+
+
+async def test_rollback_workflow(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "Rollback WF")
+    # publish v2 with a different graph
+    await client.post(f"/workflows/{workflow_id}/publish", json={"notes": "v2"})
+
+    data = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc("tools/call", {"name": "rollback_workflow", "arguments": {"workflow_id": workflow_id, "version": 1}}),
+        )
+    )
+    assert data["draft_restored_from_version"] == 1
+
+
 async def test_client_nodes_loopback_against_own_server(
     client: AsyncClient, monkeypatch
 ) -> None:
