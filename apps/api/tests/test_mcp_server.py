@@ -444,26 +444,14 @@ async def test_add_node_unknown_type(client: AsyncClient) -> None:
 
 async def test_remove_node_also_removes_edges(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "EdgeClean WF")
-    # Set a graph with two nodes and an edge between them using set_workflow_graph
-    # (add_edge is Task 6 and not yet implemented)
+    # Add second node and an edge between them using add_node + add_edge
     await client.post(
         "/mcp",
-        json=rpc(
-            "tools/call",
-            {
-                "name": "set_workflow_graph",
-                "arguments": {
-                    "workflow_id": workflow_id,
-                    "graph": {
-                        "nodes": [
-                            {"id": "t", "type": "manual_trigger", "params": {}},
-                            {"id": "n2", "type": "manual_trigger", "params": {}},
-                        ],
-                        "edges": [{"source": "t", "target": "n2"}],
-                    },
-                },
-            },
-        ),
+        json=rpc("tools/call", {"name": "add_node", "arguments": {"workflow_id": workflow_id, "node": {"id": "n2", "type": "manual_trigger", "params": {}}}}),
+    )
+    await client.post(
+        "/mcp",
+        json=rpc("tools/call", {"name": "add_edge", "arguments": {"workflow_id": workflow_id, "edge": {"source": "t", "target": "n2"}}}),
     )
     await client.post(
         "/mcp",
@@ -473,6 +461,48 @@ async def test_remove_node_also_removes_edges(client: AsyncClient) -> None:
         await client.post("/mcp", json=rpc("tools/call", {"name": "get_workflow", "arguments": {"workflow_id": workflow_id}}))
     )
     assert all(e.get("target") != "n2" for e in graph_data["graph"]["edges"])
+
+
+async def test_add_and_remove_edge(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "EdgeCRUD WF")
+    await client.post(
+        "/mcp",
+        json=rpc("tools/call", {"name": "add_node", "arguments": {"workflow_id": workflow_id, "node": {"id": "n2", "type": "manual_trigger", "params": {}}}}),
+    )
+
+    add_data = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc("tools/call", {"name": "add_edge", "arguments": {"workflow_id": workflow_id, "edge": {"source": "t", "target": "n2"}}}),
+        )
+    )
+    assert add_data["edge_count"] == 1
+
+    rm_data = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc("tools/call", {"name": "remove_edge", "arguments": {"workflow_id": workflow_id, "source": "t", "target": "n2"}}),
+        )
+    )
+    assert rm_data["removed_count"] == 1
+
+
+async def test_add_edge_missing_source_node(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "EdgeBad WF")
+    resp = await client.post(
+        "/mcp",
+        json=rpc("tools/call", {"name": "add_edge", "arguments": {"workflow_id": workflow_id, "edge": {"source": "ghost", "target": "t"}}}),
+    )
+    assert resp.json()["result"]["isError"] is True
+
+
+async def test_remove_edge_not_found(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "EdgeNotFound WF")
+    resp = await client.post(
+        "/mcp",
+        json=rpc("tools/call", {"name": "remove_edge", "arguments": {"workflow_id": workflow_id, "source": "t", "target": "ghost"}}),
+    )
+    assert resp.json()["result"]["isError"] is True
 
 
 async def test_client_nodes_loopback_against_own_server(

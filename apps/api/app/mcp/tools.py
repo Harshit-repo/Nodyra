@@ -621,6 +621,71 @@ async def _remove_node(session: AsyncSession, user: User | None, args: dict) -> 
     return {"workflow_id": workflow.id, "node_id": node_id, "removed": True}
 
 
+async def _add_edge(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    edge = args.get("edge")
+    if not isinstance(edge, dict):
+        raise McpToolError("edge must be a JSON object with source and target.")
+    source = str(edge.get("source") or "").strip()
+    target = str(edge.get("target") or "").strip()
+    if not source or not target:
+        raise McpToolError("edge.source and edge.target are required.")
+
+    graph = _draft_graph(workflow)
+    node_ids = {n.get("id") for n in graph.get("nodes", [])}
+    if source not in node_ids:
+        raise McpToolError(f"Source node not found: {source!r}")
+    if target not in node_ids:
+        raise McpToolError(f"Target node not found: {target!r}")
+
+    edges = list(graph.get("edges", []))
+    edges.append(edge)
+    workflow.draft_graph = {**graph, "edges": edges}
+    await log_audit(
+        session, "mcp_add_edge", "workflow", workflow.id, workflow.name,
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
+    )
+    await session.commit()
+    return {"workflow_id": workflow.id, "edge_count": len(edges)}
+
+
+async def _remove_edge(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    source = str(args.get("source") or "").strip()
+    target = str(args.get("target") or "").strip()
+    if not source or not target:
+        raise McpToolError("source and target are required.")
+    source_output = args.get("source_output")
+    target_input = args.get("target_input")
+
+    graph = _draft_graph(workflow)
+    edges = list(graph.get("edges", []))
+
+    def _matches(e: dict) -> bool:
+        if e.get("source") != source or e.get("target") != target:
+            return False
+        if source_output is not None and e.get("source_output") != source_output:
+            return False
+        if target_input is not None and e.get("target_input") != target_input:
+            return False
+        return True
+
+    remaining = [e for e in edges if not _matches(e)]
+    removed_count = len(edges) - len(remaining)
+    if removed_count == 0:
+        raise McpToolError(f"No matching edge found: {source!r} → {target!r}")
+
+    workflow.draft_graph = {**graph, "edges": remaining}
+    await log_audit(
+        session, "mcp_remove_edge", "workflow", workflow.id, workflow.name,
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
+    )
+    await session.commit()
+    return {"workflow_id": workflow.id, "removed_count": removed_count}
+
+
 # ---------------------------------------------------------------------------
 # Static tool list
 # ---------------------------------------------------------------------------
@@ -894,6 +959,53 @@ STATIC_TOOLS: list[McpTool] = [
         },
         permission="workflow:write",
         handler=_remove_node,
+    ),
+    McpTool(
+        name="add_edge",
+        description=(
+            "Add an edge to the draft graph. "
+            "edge = {source, target, source_output?, target_input?}. "
+            "Both source and target node ids must already exist in the graph."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "edge": {
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string"},
+                        "target": {"type": "string"},
+                        "source_output": {"type": "string"},
+                        "target_input": {"type": "string"},
+                    },
+                    "required": ["source", "target"],
+                },
+            },
+            "required": ["workflow_id", "edge"],
+        },
+        permission="workflow:write",
+        handler=_add_edge,
+    ),
+    McpTool(
+        name="remove_edge",
+        description=(
+            "Remove an edge from the draft graph by source and target node ids. "
+            "Optionally narrow with source_output / target_input when multiple edges connect the same pair."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "source": {"type": "string"},
+                "target": {"type": "string"},
+                "source_output": {"type": "string"},
+                "target_input": {"type": "string"},
+            },
+            "required": ["workflow_id", "source", "target"],
+        },
+        permission="workflow:write",
+        handler=_remove_edge,
     ),
 ]
 
