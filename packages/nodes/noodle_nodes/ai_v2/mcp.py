@@ -96,16 +96,32 @@ def _to_param_schema(input_schema: Any) -> ToolParameterSchema:
     )
 
 
-def _result_to_text(result: Any) -> str:
+def _result_to_value(result: Any) -> Any:
+    """Convert an MCP tool result to a Python value.
+
+    Handles text, image content items, and structuredContent.
+    Returns image dicts for image content so callers don't silently lose data.
+    """
     structured = getattr(result, "structuredContent", None)
     if structured is not None:
-        return json.dumps(structured, ensure_ascii=False, default=str)
-    parts: list[str] = []
+        return structured
+    items: list[Any] = []
     for item in getattr(result, "content", None) or []:
-        text = getattr(item, "text", None)
-        if isinstance(text, str):
-            parts.append(text)
-    return "\n".join(parts)
+        if getattr(item, "type", None) == "image":
+            items.append(
+                {
+                    "_image": True,
+                    "data": getattr(item, "data", "") or "",
+                    "mime_type": getattr(item, "mimeType", "") or "",
+                }
+            )
+        else:
+            text = getattr(item, "text", None)
+            if isinstance(text, str):
+                items.append(text)
+    if len(items) == 1:
+        return items[0]
+    return items if items else ""
 
 
 class McpToolAdapter(ToolAdapter):
@@ -164,10 +180,12 @@ class McpToolAdapter(ToolAdapter):
             self._session = None
             self._exit_stack = None
             raise
-        text = _result_to_text(result)
         if getattr(result, "isError", False):
+            value = _result_to_value(result)
+            text = json.dumps(value, ensure_ascii=False, default=str) if not isinstance(value, str) else value
             raise RuntimeError(text or f"{self._schema.name}: tool returned an error")
-        return text
+        value = _result_to_value(result)
+        return json.dumps(value, ensure_ascii=False, default=str) if not isinstance(value, str) else value
 
 
 def _parse_arguments(arguments: Any) -> dict[str, Any]:
@@ -260,20 +278,13 @@ async def mcp_call_tool(
     args = _parse_arguments(arguments)
     if not args and isinstance(input, dict):
         args = input
-    schema = ToolSchema(name=name, description="", parameters=ToolParameterSchema())
-    adapter = McpToolAdapter(config=config, schema=schema)
-    try:
-        text = await adapter.invoke_async(args)
-    finally:
-        if adapter._exit_stack is not None:
-            try:
-                await adapter._exit_stack.aclose()
-            except Exception:
-                pass
-    try:
-        return json.loads(text)
-    except ValueError:
-        return text
+    async with _mcp_session(config) as session:
+        result = await session.call_tool(name, dict(args or {}))
+    value = _result_to_value(result)
+    if getattr(result, "isError", False):
+        text = json.dumps(value, ensure_ascii=False, default=str) if not isinstance(value, str) else value
+        raise RuntimeError(text or f"{name}: tool returned an error")
+    return value
 
 
 @node(
@@ -364,3 +375,48 @@ async def mcp_read_resource(
     if blob is not None:
         return {"_blob": True, "data": blob, "mime_type": getattr(item, "mimeType", "") or ""}
     return None
+
+
+@node(
+    name="MCP Get Prompt",
+    id="mcp_get_prompt",
+    category=AI_CATEGORY,
+    icon="ai",
+    tool_side_effecting=False,
+    params={
+        "credentials": _CREDENTIAL_META,
+        "prompt_name": {"description": "Name of the prompt to retrieve."},
+        "prompt_arguments": {
+            "widget": "code",
+            "description": "Prompt arguments as a JSON object.",
+        },
+    },
+)
+async def mcp_get_prompt(
+    input: Any = None,
+    credentials: Any = None,
+    prompt_name: str = "",
+    prompt_arguments: Any = None,
+) -> Any:
+    """Retrieve a named prompt template from an external MCP server."""
+    name = str(prompt_name or "").strip()
+    if not name:
+        raise ValueError("mcp_get_prompt: prompt_name is required")
+    config = _config_from_credentials(credentials)
+    args = _parse_arguments(prompt_arguments) if prompt_arguments else {}
+    async with _mcp_session(config) as session:
+        result = await session.get_prompt(name, args or None)
+    messages = getattr(result, "messages", None) or []
+    return {
+        "description": getattr(result, "description", "") or "",
+        "messages": [
+            {
+                "role": getattr(m, "role", "") or "",
+                "content": (
+                    getattr(getattr(m, "content", None), "text", None)
+                    or str(getattr(m, "content", "") or "")
+                ),
+            }
+            for m in messages
+        ],
+    }

@@ -327,6 +327,24 @@ class _LoopbackSession:
             ]
         )
 
+    async def get_prompt(self, name: str, arguments: dict | None = None):
+        from types import SimpleNamespace
+        result = await self._post("prompts/get", {"name": name, "arguments": arguments or {}})
+        messages = result.get("messages", [])
+        return SimpleNamespace(
+            description=result.get("description", ""),
+            messages=[
+                SimpleNamespace(
+                    role=m.get("role", ""),
+                    content=SimpleNamespace(
+                        type=m.get("content", {}).get("type", "text"),
+                        text=m.get("content", {}).get("text", ""),
+                    ),
+                )
+                for m in messages
+            ],
+        )
+
 
 async def test_cancel_run(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "Cancel WF")
@@ -851,3 +869,48 @@ async def test_mcp_read_resource_loopback(client: AsyncClient, monkeypatch) -> N
     data = await mcp_module.mcp_read_resource(credentials=creds, resource_uri="noodle://node-types")
     assert isinstance(data, dict)
     assert "node_types" in data
+
+
+async def test_mcp_get_prompt_loopback(client: AsyncClient, monkeypatch) -> None:
+    from noodle_nodes.ai_v2 import mcp as mcp_module
+
+    @asynccontextmanager
+    async def _loopback(config):
+        yield _LoopbackSession(client)
+
+    monkeypatch.setattr(mcp_module, "_mcp_session", _loopback)
+
+    creds = {"url": "https://loopback.invalid/mcp"}
+    data = await mcp_module.mcp_get_prompt(
+        credentials=creds,
+        prompt_name="build_workflow",
+        prompt_arguments={"description": "archive old files"},
+    )
+    assert "messages" in data
+    assert "archive old files" in data["messages"][0]["content"]
+
+
+async def test_mcp_call_tool_image_result(client: AsyncClient, monkeypatch) -> None:
+    """mcp_call_tool returns image dict when server responds with image content."""
+    from types import SimpleNamespace
+    from noodle_nodes.ai_v2 import mcp as mcp_module
+
+    @asynccontextmanager
+    async def _loopback(config):
+        class _ImageSession:
+            async def initialize(self): pass
+            async def call_tool(self, name, arguments):
+                return SimpleNamespace(
+                    content=[SimpleNamespace(type="image", data="abc123==", mimeType="image/png")],
+                    structuredContent=None,
+                    isError=False,
+                )
+        yield _ImageSession()
+
+    monkeypatch.setattr(mcp_module, "_mcp_session", _loopback)
+
+    creds = {"url": "https://loopback.invalid/mcp"}
+    result = await mcp_module.mcp_call_tool(credentials=creds, tool_name="screenshot", arguments={})
+    assert result["_image"] is True
+    assert result["data"] == "abc123=="
+    assert result["mime_type"] == "image/png"
