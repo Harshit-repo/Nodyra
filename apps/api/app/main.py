@@ -36,6 +36,7 @@ from app.routers import (
     export,
     expressions,
     folders,
+    github_sync as github_sync_router,
     health,
     internal,
     mcp,
@@ -749,6 +750,7 @@ app.include_router(system_settings.router)
 app.include_router(runner_pools.router)
 app.include_router(orgs.router)
 app.include_router(expressions.router)
+app.include_router(github_sync_router.router, prefix="/api")
 
 
 @app.get("/")

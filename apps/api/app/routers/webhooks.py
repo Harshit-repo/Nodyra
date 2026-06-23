@@ -30,8 +30,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from app.config import settings
+from app.db import get_session
 from app.security import get_client_ip, require_permission
 from app.services.triggers import dispatch_webhook, wait_for_webhook_result
+from app.tenancy import DEFAULT_ORG_ID, active_org_id, run_as_org
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +62,11 @@ WEBHOOK_CAPTURE_MAX_ENTRIES = 256
 # fallback (same degradation mode as the capture buffer above).
 WEBHOOK_LISTEN_TTL_SECONDS = 10 * 60  # 10 min — generous for Postman setup time
 _LISTEN_KEY_PREFIX = "noodle:webhook_listen:"
-_listening: dict[str, float] = {}  # path → monotonic expire_at (fallback store)
+_listening: dict[str, tuple[float, str]] = {}  # path → (expire_at, org_id)
+
+
+def _capture_key(org_id: str, path: str) -> str:
+    return f"{org_id}:{path}"
 
 
 def _listen_redis():
@@ -79,37 +85,45 @@ def _listen_redis():
         return None
 
 
-async def _is_listening(path: str) -> bool:
-    """Return True when there is a non-expired listen session for ``path``."""
+async def _listening_org(path: str) -> str | None:
+    """Return the org owning the active listen session for ``path``."""
     redis = _listen_redis()
     if redis is not None:
         try:
-            return bool(await redis.exists(_LISTEN_KEY_PREFIX + path))
+            value = await redis.get(_LISTEN_KEY_PREFIX + path)
+            if value:
+                return value.decode() if isinstance(value, bytes) else str(value)
         except Exception:  # noqa: BLE001 - Redis down → in-process fallback
             pass
-    expire_at = _listening.get(path)
-    if expire_at is None:
-        return False
+    entry = _listening.get(path)
+    if entry is None:
+        return None
+    expire_at, org_id = entry
     if time.monotonic() > expire_at:
         _listening.pop(path, None)
-        return False
-    return True
+        return None
+    return org_id
 
 
-async def _start_listening(path: str) -> None:
+async def _start_listening(path: str, org_id: str) -> None:
     redis = _listen_redis()
     if redis is not None:
         try:
             await redis.set(
-                _LISTEN_KEY_PREFIX + path, "1", ex=WEBHOOK_LISTEN_TTL_SECONDS
+                _LISTEN_KEY_PREFIX + path, org_id, ex=WEBHOOK_LISTEN_TTL_SECONDS
             )
             return
         except Exception:  # noqa: BLE001
             pass
-    _listening[path] = time.monotonic() + WEBHOOK_LISTEN_TTL_SECONDS
+    _listening[path] = (
+        time.monotonic() + WEBHOOK_LISTEN_TTL_SECONDS,
+        org_id,
+    )
 
 
-async def _stop_listening(path: str) -> None:
+async def _stop_listening(path: str, org_id: str) -> None:
+    if await _listening_org(path) != org_id:
+        return
     redis = _listen_redis()
     if redis is not None:
         try:
@@ -162,14 +176,14 @@ def _evict_stale(now: float) -> None:
             _captured.pop(path, None)
 
 
-def _record_capture(path: str, payload: dict) -> None:
+def _record_capture(path: str, payload: dict, *, org_id: str) -> None:
     now = time.monotonic()
     _evict_stale(now)
     # If still over cap (every entry fresh), drop the oldest.
     while len(_captured) >= WEBHOOK_CAPTURE_MAX_ENTRIES:
         oldest_path = min(_captured, key=lambda p: _captured[p][0])
         _captured.pop(oldest_path, None)
-    _captured[path] = (now, payload)
+    _captured[_capture_key(org_id, path)] = (now, payload)
 
 
 async def _payload(request: Request) -> tuple[dict, bytes]:
@@ -237,7 +251,8 @@ async def capture_webhook(path: str, request: Request) -> dict:
     then dispatched against the draft graph. Auth IS checked when a workflow
     draft has auth configured.
     """
-    if not await _is_listening(path):
+    listen_org_id = await _listening_org(path)
+    if listen_org_id is None:
         raise HTTPException(
             status_code=404,
             detail=(
@@ -247,11 +262,15 @@ async def capture_webhook(path: str, request: Request) -> dict:
         )
     req_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     payload, raw_body = await _payload(request)
-    _record_capture(path, _redacted_payload(payload))
-    result = await dispatch_webhook(
-        path, payload, prefer_draft=True, raw_body=raw_body,
-        client_ip=request.client.host if request.client else None,
-    )
+    _record_capture(path, _redacted_payload(payload), org_id=listen_org_id)
+    with run_as_org(listen_org_id):
+        result = await dispatch_webhook(
+            path,
+            payload,
+            prefer_draft=True,
+            raw_body=raw_body,
+            client_ip=request.client.host if request.client else None,
+        )
     logger.info(
         "webhook test path=%s matched=%s runs=%d req_id=%s",
         path, result.any_match, len(result.run_ids), req_id,
@@ -285,17 +304,19 @@ async def last_webhook(path: str) -> dict | None:
     poll so it stays open exactly as long as the editor tab does, instead of
     hard-expiring mid-session after the initial TTL.
     """
-    if await _is_listening(path):
-        await _start_listening(path)
+    org_id = active_org_id() or DEFAULT_ORG_ID
+    if await _listening_org(path) == org_id:
+        await _start_listening(path, org_id)
     _evict_stale(time.monotonic())
-    entry = _captured.get(path)
+    entry = _captured.get(_capture_key(org_id, path))
     return entry[1] if entry is not None else None
 
 
 @router.delete("/webhook-test/{path}/last", status_code=204, dependencies=_EDITOR_SESSION)
 async def clear_webhook(path: str) -> None:
     """Drop the last captured request so a fresh ``Listen`` can wait for new ones."""
-    _captured.pop(path, None)
+    org_id = active_org_id() or DEFAULT_ORG_ID
+    _captured.pop(_capture_key(org_id, path), None)
 
 
 @router.post("/webhook-test/{path}/listen", status_code=200, dependencies=_EDITOR_SESSION)
@@ -307,14 +328,21 @@ async def start_listen_session(path: str) -> dict:
     without editor polls (see ``last_webhook``) so a closed browser tab never
     leaves the test URL permanently open.
     """
-    await _start_listening(path)
+    org_id = active_org_id() or DEFAULT_ORG_ID
+    owner = await _listening_org(path)
+    if owner is not None and owner != org_id:
+        raise HTTPException(
+            status_code=409,
+            detail="This webhook test path is currently being used by another workspace.",
+        )
+    await _start_listening(path, org_id)
     return {"listening": True, "ttl_seconds": WEBHOOK_LISTEN_TTL_SECONDS}
 
 
 @router.delete("/webhook-test/{path}/listen", status_code=204, dependencies=_EDITOR_SESSION)
 async def stop_listen_session(path: str) -> None:
     """Clear the listen session; the test URL returns 404 until re-opened."""
-    await _stop_listening(path)
+    await _stop_listening(path, active_org_id() or DEFAULT_ORG_ID)
 
 
 async def _enforce_webhook_rate_limit(path: str, request: Request) -> None:
@@ -339,6 +367,95 @@ async def _enforce_webhook_rate_limit(path: str, request: Request) -> None:
         )
 
 
+@production_router.post("/webhooks/github-sync/{org_id}", status_code=200)
+async def github_sync_webhook(
+    org_id: str,
+    request: Request,
+    session=Depends(get_session),
+) -> dict:
+    """GitHub push webhook for the GitHub sync feature.
+
+    No bearer auth — authenticated by HMAC-SHA256 signature in
+    ``X-Hub-Signature-256``. Bypasses org filter via run_as_system so the
+    config lookup is unscoped (the request carries no Noodle auth context).
+    """
+    import json as _json
+
+    from sqlalchemy import select as _select
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.models import GithubSyncConfig, GithubSyncJob, Workflow
+    from app.services.github_sync import verify_github_hmac, workflow_file_path
+    from app.services.github_sync_jobs import notify_sync_workers
+    from app.tenancy import run_as_system
+
+    typed_session: AsyncSession = session
+
+    with run_as_system():
+        cfg = await typed_session.scalar(
+            _select(GithubSyncConfig).where(GithubSyncConfig.org_id == org_id)
+        )
+        if cfg is None:
+            raise HTTPException(404, "No sync config for this org")
+
+        payload_bytes = await request.body()
+        sig = request.headers.get("X-Hub-Signature-256", "")
+        if not verify_github_hmac(cfg.webhook_secret, payload_bytes, sig):
+            raise HTTPException(401, "Invalid webhook signature")
+
+        event = request.headers.get("X-GitHub-Event", "")
+        if event != "push":
+            return {"status": "ignored", "event": event}
+
+        data = _json.loads(payload_bytes)
+        ref = data.get("ref", "")
+        if ref != f"refs/heads/{cfg.main_branch}":
+            return {"status": "ignored", "ref": ref}
+
+        # Collect changed .py files under the configured base path
+        changed_paths: set[str] = set()
+        for commit in data.get("commits", []):
+            for key in ("added", "modified", "removed"):
+                for p in commit.get(key, []):
+                    if p.startswith(cfg.base_path) and p.endswith(".py"):
+                        changed_paths.add(p)
+
+        if not changed_paths:
+            return {"status": "ok", "enqueued": 0}
+
+        # Match changed files to workflows via file path
+        workflows = (
+            await typed_session.scalars(
+                _select(Workflow).where(Workflow.org_id == org_id)
+            )
+        ).all()
+        slug_to_workflow = {
+            workflow_file_path(cfg.base_path, wf): wf for wf in workflows
+        }
+
+        enqueued = 0
+        for path in changed_paths:
+            wf = slug_to_workflow.get(path)
+            if wf is None:
+                continue
+            typed_session.add(
+                GithubSyncJob(
+                    org_id=org_id,
+                    workflow_id=wf.id,
+                    job_type="pull",
+                    origin="webhook",
+                    status="pending",
+                )
+            )
+            enqueued += 1
+
+        if enqueued:
+            await typed_session.commit()
+            notify_sync_workers()
+
+    return {"status": "ok", "enqueued": enqueued}
+
+
 @production_router.api_route("/webhook/{path:path}", methods=_METHODS)
 async def trigger_webhook(path: str, request: Request) -> dict:
     """Production webhook — dispatch a run of matching active workflows.
@@ -350,7 +467,11 @@ async def trigger_webhook(path: str, request: Request) -> dict:
     await _enforce_webhook_rate_limit(path, request)
     req_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     payload, raw_body = await _payload(request)
-    _record_capture(path, _redacted_payload(payload))
+    _record_capture(
+        path,
+        _redacted_payload(payload),
+        org_id=active_org_id() or DEFAULT_ORG_ID,
+    )
     # Webhook ingress is inherently cross-org: the path decides which org's
     # workflow fires, not the caller's X-Org-Id (callers are external systems
     # with no Noodle identity). Matching runs unscoped; start_run then pins

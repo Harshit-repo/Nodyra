@@ -7,6 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 
 from noodle.models import WorkflowGraph
 
+SUPPORTED_PYTHON_VERSIONS = ("3.12", "3.13", "3.14")
+
 
 class PageResponse[T](BaseModel):
     items: list[T]
@@ -35,6 +37,41 @@ class WorkflowUpdate(BaseModel):
     mcp_tool_name: str | None = None
     mcp_description: str | None = None
     mcp_parameters_schema: dict | None = None
+    folder_id: str | None = None
+
+
+class FolderCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    color: str | None = Field(default=None, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_name(self) -> "FolderCreate":
+        self.name = self.name.strip()
+        if not self.name:
+            raise ValueError("folder name cannot be blank")
+        return self
+
+
+class FolderRename(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=200)
+    color: str | None = Field(default=None, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_name(self) -> "FolderRename":
+        if self.name is not None:
+            self.name = self.name.strip()
+            if not self.name:
+                raise ValueError("folder name cannot be blank")
+        return self
+
+
+class FolderInfo(BaseModel):
+    id: str
+    name: str
+    color: str | None = None
+    workflow_count: int = 0
+    created_at: datetime
+    updated_at: datetime
 
 
 class ProviderTriggerStatusCounts(BaseModel):
@@ -83,6 +120,7 @@ class WorkflowSummary(BaseModel):
     provider_trigger_counts: ProviderTriggerStatusCounts = Field(
         default_factory=ProviderTriggerStatusCounts
     )
+    folder_id: str | None = None
     updated_at: datetime
 
 
@@ -95,6 +133,7 @@ class WorkflowDetail(BaseModel):
     has_unpublished_changes: bool
     environment_id: str | None
     default_runner_pool_id: str | None = None
+    folder_id: str | None = None
     error_workflow_id: str | None = None
     error_alerts: dict[str, Any] = Field(default_factory=dict)
     allow_concurrent: bool = True
@@ -138,8 +177,24 @@ class EnvironmentCreate(BaseModel):
     runner_pool_size: int = Field(default=1, ge=0, le=32)
     runner_pool_max: int | None = Field(default=None, ge=1, le=64)
     runner_pool_id: str | None = None
-    backend: str = "venv"
+    backend: Literal["venv", "conda", "pixi"] = "venv"
     backend_config: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_python_version(self) -> "EnvironmentCreate":
+        parts = self.python_version.split(".")
+        minor_version = ".".join(parts[:2])
+        if (
+            len(parts) not in (2, 3)
+            or not all(part.isdigit() for part in parts)
+            or minor_version not in SUPPORTED_PYTHON_VERSIONS
+        ):
+            supported = ", ".join(SUPPORTED_PYTHON_VERSIONS)
+            raise ValueError(
+                f"unsupported Python version {self.python_version!r}; "
+                f"supported versions: {supported}"
+            )
+        return self
 
 
 class EnvironmentUpdate(BaseModel):
@@ -886,7 +941,7 @@ class SSHOnboardResponse(BaseModel):
 
 class RunBatchCreate(BaseModel):
     runner_pool_id: str | None = None
-    parameters: list[dict[str, Any]] = Field(min_length=1)
+    parameters: list[dict[str, Any]] = Field(min_length=1, max_length=1000)
     trigger_node_id: str | None = None
 
 
@@ -1146,3 +1201,30 @@ class ChatPublicConfig(BaseModel):
     placeholder: str
     initial_message: str
     require_login: bool = True
+
+
+# ---------------------------------------------------------------------------
+# GitHub sync schemas (Task 5)
+# ---------------------------------------------------------------------------
+
+
+class GithubSyncConfigCreate(BaseModel):
+    repo: str = Field(min_length=3, max_length=200, pattern=r"^[\w.\-]+/[\w.\-]+$")
+    base_path: str = Field(default="workflows/", max_length=200)
+    main_branch: str = Field(default="main", max_length=100)
+    credential_id: str | None = None
+
+
+class GithubSyncConfigInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    org_id: str
+    repo: str
+    base_path: str
+    main_branch: str
+    credential_id: str | None
+    webhook_url: str  # computed — not a DB column
+
+
+class GithubConflictResolveRequest(BaseModel):
+    side: Literal["noodle", "github"]

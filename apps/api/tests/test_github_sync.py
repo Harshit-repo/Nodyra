@@ -1,8 +1,11 @@
 """Tests for GitHub sync DB models and service logic."""
+import hmac
+import hashlib
 import secrets
 
 import pytest
 import pytest_asyncio
+from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -110,3 +113,53 @@ async def test_enqueue_github_push_creates_job(db_session):
     assert jobs[0].job_type == "push_draft"
     assert jobs[0].origin == "mcp"
     assert jobs[0].status == "pending"
+
+
+# ---------------------------------------------------------------------------
+# Endpoint tests: settings CRUD + webhook (Task 5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_github_sync_config_no_config(client: AsyncClient) -> None:
+    resp = await client.get("/api/github-sync/config")
+    assert resp.status_code == 200
+    assert resp.json() is None
+
+
+@pytest.mark.asyncio
+async def test_put_github_sync_config(client: AsyncClient) -> None:
+    resp = await client.put(
+        "/api/github-sync/config",
+        json={"repo": "owner/repo", "base_path": "workflows/", "main_branch": "main"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["repo"] == "owner/repo"
+    assert "webhook_url" in data
+    assert data["webhook_url"].endswith("/webhooks/github-sync/default")
+
+
+@pytest.mark.asyncio
+async def test_delete_github_sync_config(client: AsyncClient) -> None:
+    # Create first
+    await client.put("/api/github-sync/config", json={"repo": "owner/repo"})
+    resp = await client.delete("/api/github-sync/config")
+    assert resp.status_code == 204
+    get_resp = await client.get("/api/github-sync/config")
+    assert get_resp.json() is None
+
+
+@pytest.mark.asyncio
+async def test_github_webhook_invalid_signature(client: AsyncClient) -> None:
+    # First create a config so the org lookup succeeds
+    await client.put("/api/github-sync/config", json={"repo": "owner/repo"})
+    resp = await client.post(
+        "/webhooks/github-sync/default",
+        content=b'{"ref":"refs/heads/main"}',
+        headers={
+            "X-Hub-Signature-256": "sha256=badsig",
+            "X-GitHub-Event": "push",
+        },
+    )
+    assert resp.status_code == 401
