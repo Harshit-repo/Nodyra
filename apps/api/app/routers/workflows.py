@@ -1,9 +1,13 @@
 import re
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
+from jsonschema.exceptions import SchemaError
+from jsonschema.validators import validator_for
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.orm.attributes import set_committed_value
 
 import noodle_nodes  # noqa: F401 - registers built-in nodes
 from app.db import get_session
@@ -265,7 +269,11 @@ async def _detail(session: AsyncSession, workflow: Workflow) -> WorkflowDetail:
     )
 
 
-@router.get("", response_model=PageResponse[WorkflowSummary])
+@router.get(
+    "",
+    response_model=PageResponse[WorkflowSummary],
+    dependencies=[Depends(require_permission("workflow:read"))],
+)
 async def list_workflows(
     response: Response,
     limit: int = Query(50, ge=1, le=500),
@@ -276,12 +284,47 @@ async def list_workflows(
     count = await session.scalar(select(func.count()).select_from(Workflow))
     result = await session.scalars(
         select(Workflow)
-        .options(selectinload(Workflow.versions))
         .order_by(Workflow.updated_at.desc())
         .offset(offset)
         .limit(limit)
     )
     workflows = result.all()
+
+    # Load only the latest version per workflow (one IN query instead of
+    # selectinload which pulls every historical version — T-04).
+    if workflows:
+        wf_ids = [w.id for w in workflows]
+        latest_ver_sq = (
+            select(func.max(WorkflowVersion.version))
+            .where(WorkflowVersion.workflow_id == WorkflowVersion.workflow_id)
+            .correlate(WorkflowVersion)
+            .scalar_subquery()
+        )
+        # Use a window function to pick only the max version per workflow.
+        max_ver_sq = (
+            select(
+                WorkflowVersion.workflow_id,
+                func.max(WorkflowVersion.version).label("max_ver"),
+            )
+            .where(WorkflowVersion.workflow_id.in_(wf_ids))
+            .group_by(WorkflowVersion.workflow_id)
+            .subquery()
+        )
+        latest_versions_rows = (await session.scalars(
+            select(WorkflowVersion)
+            .join(
+                max_ver_sq,
+                (WorkflowVersion.workflow_id == max_ver_sq.c.workflow_id)
+                & (WorkflowVersion.version == max_ver_sq.c.max_ver),
+            )
+        )).all()
+        # Attach the single loaded version so relationship access works.
+        # Use set_committed_value to bypass the lazy-load trigger that fires on
+        # direct assignment (w.versions = ...) when outside a greenlet context.
+        latest_by_id = {v.workflow_id: v for v in latest_versions_rows}
+        for w in workflows:
+            ver = latest_by_id.get(w.id)
+            set_committed_value(w, "versions", [ver] if ver is not None else [])
     latest_by_wf = await _latest_runs(session, [w.id for w in workflows])
     provider_counts = await _provider_trigger_counts(session, [w.id for w in workflows])
     items = [
@@ -314,7 +357,14 @@ async def create_workflow(
                     actor_id=actor.id if actor else None,
                     actor_email=actor.email if actor else None)
     await enqueue_github_push(session, workflow, "ui")
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Workflow conflicts with an existing tenant-scoped value.",
+        ) from exc
     notify_sync_workers()
     return await _detail(session, await _load(session, workflow.id))
 
@@ -429,11 +479,73 @@ async def update_workflow(
                 status.HTTP_400_BAD_REQUEST,
                 "mcp_tool_name must match [A-Za-z0-9_-]{1,64}.",
             )
+        if name_value:
+            from app.mcp.tools import STATIC_TOOLS, workflow_tool_name
+
+            if name_value in {tool.name for tool in STATIC_TOOLS}:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "mcp_tool_name is reserved by a built-in Noodle tool.",
+                )
+            others = list(
+                (
+                    await session.scalars(
+                        select(Workflow).where(
+                            Workflow.id != workflow.id,
+                            Workflow.mcp_enabled.is_(True),
+                        )
+                    )
+                ).all()
+            )
+            if any(workflow_tool_name(other) == name_value for other in others):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "mcp_tool_name is already used in this organization.",
+                )
         workflow.mcp_tool_name = name_value or None
     if "mcp_description" in sent:
         workflow.mcp_description = (body.mcp_description or "").strip() or None
     if "mcp_parameters_schema" in sent:
-        workflow.mcp_parameters_schema = body.mcp_parameters_schema
+        schema = body.mcp_parameters_schema
+        if schema is not None:
+            if schema.get("type") not in (None, "object"):
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "mcp_parameters_schema must describe an object.",
+                )
+            schema = {"type": "object", **schema}
+            try:
+                validator_for(schema).check_schema(schema)
+            except SchemaError as exc:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    f"Invalid mcp_parameters_schema: {exc.message}",
+                ) from exc
+        workflow.mcp_parameters_schema = schema
+    if body.mcp_enabled is True:
+        from app.mcp.tools import STATIC_TOOLS, workflow_tool_name
+
+        effective_name = workflow_tool_name(workflow)
+        if effective_name in {tool.name for tool in STATIC_TOOLS}:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "The effective MCP tool name is reserved by Noodle.",
+            )
+        others = list(
+            (
+                await session.scalars(
+                    select(Workflow).where(
+                        Workflow.id != workflow.id,
+                        Workflow.mcp_enabled.is_(True),
+                    )
+                )
+            ).all()
+        )
+        if any(workflow_tool_name(other) == effective_name for other in others):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "The effective MCP tool name is already used in this organization.",
+            )
     if "folder_id" in body.model_fields_set:
         if body.folder_id is not None:
             if await session.scalar(
@@ -453,7 +565,14 @@ async def update_workflow(
         )
     if body.graph is not None:
         await enqueue_github_push(session, workflow, "ui")
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Workflow conflicts with an existing tenant-scoped value.",
+        ) from exc
     if body.graph is not None:
         notify_sync_workers()
     return await _detail(session, await _load(session, workflow_id))
