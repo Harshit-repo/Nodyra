@@ -52,7 +52,12 @@ def _minimal_env() -> dict[str, str]:
     env: dict[str, str] = {}
     # Only what Python needs to start and import noodle; nothing app-specific
     # (SECRET_KEY, DATABASE_URL, REDIS_URL, cloud creds, ...) crosses over.
-    for key in ("PATH", "SYSTEMROOT", "TEMP", "TMP", "PYTHONPATH"):
+    # On Windows, APPDATA/LOCALAPPDATA/USERPROFILE are needed so Python can
+    # locate user-site-packages (where editable installs register .pth files).
+    for key in (
+        "PATH", "SYSTEMROOT", "TEMP", "TMP", "PYTHONPATH",
+        "APPDATA", "LOCALAPPDATA", "USERPROFILE",
+    ):
         if key in os.environ:
             env[key] = os.environ[key]
     env["PYTHONIOENCODING"] = "utf-8"
