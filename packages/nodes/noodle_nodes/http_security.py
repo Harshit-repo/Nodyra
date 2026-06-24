@@ -159,6 +159,42 @@ def _strip_sensitive_headers(body_kwargs: dict[str, Any]) -> None:
     }
 
 
+def _with_ssrf_safe_socket(context: str, fn: Callable[[], Any]) -> Any:
+    """Run ``fn`` with ``socket.create_connection`` patched to re-validate the
+    peer IP at TCP-handshake time (E-04 DNS rebinding defence).
+
+    Patches the stdlib function directly so ALL callers — urllib3, requests, or
+    any library — are intercepted without requiring a custom adapter. Restores
+    the original unconditionally, even if ``fn`` raises.
+    """
+    orig = socket.create_connection
+
+    def _safe_create(
+        address: tuple[str, int | None],
+        *args: Any,
+        **kwargs: Any,
+    ) -> socket.socket:
+        host, port = address
+        if host and not private_egress_allowed():
+            try:
+                infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            except OSError:
+                infos = []
+            for info in infos:
+                if _is_private_address(str(info[4][0])):
+                    raise UnsafeHttpTargetError(
+                        f"{context}: host resolved to private address "
+                        "at connect time (possible DNS rebinding)"
+                    )
+        return orig(address, *args, **kwargs)
+
+    socket.create_connection = _safe_create  # type: ignore[assignment]
+    try:
+        return fn()
+    finally:
+        socket.create_connection = orig  # type: ignore[assignment]
+
+
 def safe_request(
     method: str,
     url: str,
@@ -168,29 +204,29 @@ def safe_request(
     context: str = "HTTP request",
     **kwargs: Any,
 ) -> Any:
-    """Perform an HTTP request with SSRF-safe redirect handling (C2).
+    """Perform an HTTP request with SSRF-safe redirect handling (C2/E-04).
 
     ``requests`` follows redirects automatically and never re-checks the hop
     target, so a public URL that 302-redirects to ``169.254.169.254`` or an
     internal host would defeat a one-shot pre-check. This helper disables
     automatic redirects and re-validates *every* hop with
-    :func:`assert_public_http_url` before issuing it. ``request_fn`` is injected
-    for testing; in production it defaults to ``requests.request``.
+    :func:`assert_public_http_url` before issuing it.
+
+    DNS rebinding (E-04): each hop's socket connection also goes through a
+    patched ``socket.create_connection`` that re-validates resolved IPs at
+    TCP-handshake time. An attacker who flips a DNS record between pre-flight
+    and connect will be blocked.
 
     Credentials (``Authorization``/``Cookie``) are stripped when a redirect
     crosses to a different host or downgrades https->http, so a Location chosen
     by the origin server can never exfiltrate the caller's secrets to another
     host — matching ``requests.Session.rebuild_auth``.
 
-    Residual risk: a sub-second DNS-rebinding attacker can still flip a record
-    between validation and connect. ``assert_public_http_url`` validates *all*
-    resolved addresses on every hop to narrow that window; true pinning requires
-    a custom transport and multi-tenant deployments must additionally rely on
-    ``sandbox_network`` egress isolation.
+    ``request_fn`` is injected for testing; in production it defaults to
+    ``requests.request`` (which remains patchable by tests).
     """
     if request_fn is None:
         import requests  # imported lazily — keeps the module import-light
-
         request_fn = requests.request
 
     current_url = url
@@ -198,8 +234,11 @@ def safe_request(
     body_kwargs = dict(kwargs)
     for _ in range(max_redirects + 1):
         assert_public_http_url(current_url, context=context)
-        response = request_fn(
-            current_method, current_url, allow_redirects=False, **body_kwargs
+        _m, _u, _bkw = current_method, current_url, dict(body_kwargs)
+        _rfn = request_fn
+        response = _with_ssrf_safe_socket(
+            context,
+            lambda: _rfn(_m, _u, allow_redirects=False, **_bkw),
         )
         status = getattr(response, "status_code", None)
         headers = getattr(response, "headers", None) or {}

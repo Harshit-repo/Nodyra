@@ -1,5 +1,40 @@
-# Shared image for the Noodle API and the dispatch worker (app.worker_main).
-# Build context is the repo root.
+# Two-stage build so the final image excludes test files, dev scripts, and
+# the download cache (V-03). Stage 1 installs all dependencies into a venv;
+# stage 2 copies only the venv + application source into a clean base image.
+#
+# Build context must be the repo root:
+#   docker build -f deploy/Dockerfile.python -t noodle-api:latest .
+
+# ── Stage 1: dependency installer ─────────────────────────────────────────────
+FROM python:3.12-slim AS builder
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
+ENV UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/app/.venv \
+    PATH="/app/.venv/bin:$PATH"
+
+WORKDIR /app
+
+# Copy only files required by uv workspace sync (not the full source tree so
+# this layer is cached when only application code changes).
+COPY pyproject.toml uv.lock ./
+COPY apps/api/pyproject.toml apps/api/
+COPY packages/core/pyproject.toml packages/core/
+COPY packages/nodes/pyproject.toml packages/nodes/
+COPY packages/exporter/pyproject.toml packages/exporter/
+COPY packages/runtime/pyproject.toml packages/runtime/
+COPY packages/importer/pyproject.toml packages/importer/
+
+# uv needs stub __init__.py files at each package root to recognise the
+# members during the dep-only install (editable installs require a dist-info).
+RUN for pkg in apps/api packages/core packages/nodes packages/exporter packages/runtime packages/importer; do \
+        mkdir -p "$pkg" && touch "$pkg/__init__.py"; \
+    done
+
+RUN uv sync --locked --no-dev --all-packages
+
+# ── Stage 2: production image ──────────────────────────────────────────────────
 FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
@@ -18,16 +53,20 @@ ENV UV_LINK_MODE=copy \
     PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
-COPY . .
 
-RUN uv sync --locked --no-dev --all-packages
+# Pre-built venv from the installer stage.
+COPY --from=builder /app/.venv /app/.venv
 
-# Run app processes as an unprivileged user (H6). The entrypoint starts as
-# root only long enough to repair mounted runtime-dir ownership, then execs as
-# noodle. This handles named volumes created before the non-root switch.
+# Application source only — no tests, no design files, no CI scripts.
+# Paths must match the editable-install .pth pointers left by uv in the venv.
+COPY apps/api/ apps/api/
+COPY packages/ packages/
+COPY deploy/python-entrypoint.sh deploy/python-entrypoint.sh
+
 RUN mkdir -p /app/envs /app/artifacts \
     && chmod +x /app/deploy/python-entrypoint.sh \
     && chown -R noodle:noodle /app
+
 ENTRYPOINT ["/app/deploy/python-entrypoint.sh"]
 
 # Liveness probe for the API role. The worker exposes no HTTP port, so it

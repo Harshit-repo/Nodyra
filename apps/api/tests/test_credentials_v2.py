@@ -1,8 +1,28 @@
+import re
 from urllib.parse import parse_qs, urlparse
 
 from httpx import AsyncClient
 
 from app.config import settings
+
+
+def test_oauth_popup_escapes_provider_message_and_uses_nonce_csp() -> None:
+    from app.routers.credentials import _oauth_popup_html
+
+    response = _oauth_popup_html(
+        success=False,
+        message='</script><script>alert("x")</script>\nfailed',
+        credential_id='credential-"-id',
+    )
+    body = response.body.decode()
+    csp = response.headers["content-security-policy"]
+
+    assert "unsafe-inline" not in csp
+    nonce = re.search(r"script-src 'nonce-([^']+)'", csp)
+    assert nonce is not None
+    assert body.count(f'nonce="{nonce.group(1)}"') == 2
+    assert "</script><script>alert" not in body
+    assert "&lt;/script&gt;" in body
 
 
 class FakeResponse:
@@ -186,7 +206,7 @@ async def test_integration_node_resolves_stored_credential_ref(
     assert run["status"] == "success"
     assert calls[0]["kwargs"]["headers"]["Authorization"] == ("Bearer xoxb-stored-secret")
     listed = (await client.get("/credentials")).json()
-    assert listed[0]["last_used_at"] is not None
+    assert listed["items"][0]["last_used_at"] is not None
     assert "xoxb-stored-secret" not in str(run)
 
 

@@ -27,6 +27,7 @@ from app.db import SessionLocal
 from app.models import Run, Runner, RunnerPool
 from app.services.executors.base import EventCallback
 from app.tenancy import DEFAULT_ORG_ID, current_org_id, run_as_system
+from noodle.context import call_chain as _call_chain_var
 from noodle.serialization import serialize_value
 
 logger = logging.getLogger("app.services.remote_dispatch")
@@ -297,6 +298,9 @@ async def resolve_remote_subworkflow(conn: _AgentConnection, msg: dict) -> None:
                         org_id = parent.org_id
 
         ctx_token = current_org_id.set(org_id)
+        # Seed call_chain so resolve_subworkflow and any downstream host-side
+        # cycle checks see the correct ancestor set (E-08).
+        chain_token = _call_chain_var.set(call.call_chain)
         try:
             _timeout = settings.subworkflow_spawn_timeout_seconds or None
             coro = resolve_subworkflow(call)
@@ -305,6 +309,7 @@ async def resolve_remote_subworkflow(conn: _AgentConnection, msg: dict) -> None:
             )
         finally:
             current_org_id.reset(ctx_token)
+            _call_chain_var.reset(chain_token)
         await conn.send({
             "type": "call_workflow_response",
             "callback_id": callback_id,
@@ -625,19 +630,36 @@ async def create_runner_and_token(
     session_factory, pool_id: str, name_prefix: str
 ) -> tuple[str, str]:
     from app.services.crypto import create_payload_token  # noqa: PLC0415
-    runner = Runner(
-        pool_id=pool_id,
-        name=f"{name_prefix}-{_uuid_hex()[:8]}",
-        status="offline",
-    )
-    async with session_factory() as session:
-        session.add(runner)
-        await session.commit()
-        runner_id = runner.id
+    from app.tenancy import run_as_system  # noqa: PLC0415
 
+    async with session_factory() as session:
+        with run_as_system():
+            pool = await session.get(RunnerPool, pool_id)
+            if pool is None:
+                raise ValueError(f"runner pool {pool_id!r} not found")
+            runner = Runner(
+                pool_id=pool_id,
+                org_id=pool.org_id,
+                name=f"{name_prefix}-{_uuid_hex()[:8]}",
+                status="offline",
+            )
+            session.add(runner)
+            await session.commit()
+            runner_id = runner.id
+            runner_org_id = runner.org_id
+
+    # Short TTL (30 min) so the bootstrap token embedded in cloud instance
+    # user-data (readable via IMDS at 169.254.169.254) is useless after the
+    # instance has registered. A runner that doesn't register within 30 min
+    # is considered stuck; operators can re-provision. (E-06)
     token = create_payload_token(
-        {"sub": runner_id, "pool_id": pool_id, "kind": "runner_registration"},
-        ttl_seconds=86_400,
+        {
+            "sub": runner_id,
+            "pool_id": pool_id,
+            "org_id": runner_org_id,
+            "kind": "runner_registration",
+        },
+        ttl_seconds=1_800,
     )
     return runner_id, token
 
