@@ -23,8 +23,6 @@ from typing import Any
 
 import httpx
 
-from noodle_nodes.http_security import assert_public_http_url, safe_request
-
 from noodle.ai_runtime import (
     AIMessage,
     ChatModelAdapter,
@@ -33,18 +31,21 @@ from noodle.ai_runtime import (
     RetrievedDocument,
     RetrieverAdapter,
     ToolAdapter,
-    ToolCall,
     ToolParameterSchema,
     ToolSchema,
 )
 from noodle.sdk import node
 from noodle_nodes.ai_v2.tools import collect_tool_adapters
+from noodle_nodes.http_security import assert_public_http_url, safe_request
 
 AI_CATEGORY = "AI"
 
 # Names/functions exposed to the calculator. factorial is wrapped to cap input.
 _SAFE_MATH_NAMES: dict[str, Any] = {
-    "pi": math.pi, "e": math.e, "inf": math.inf, "nan": math.nan,
+    "pi": math.pi,
+    "e": math.e,
+    "inf": math.inf,
+    "nan": math.nan,
 }
 
 
@@ -56,13 +57,33 @@ def _capped_factorial(n: Any) -> int:
 
 
 _SAFE_MATH_FUNCS: dict[str, Any] = {
-    "sqrt": math.sqrt, "abs": abs, "sin": math.sin, "cos": math.cos,
-    "tan": math.tan, "asin": math.asin, "acos": math.acos, "atan": math.atan,
-    "atan2": math.atan2, "sinh": math.sinh, "cosh": math.cosh, "tanh": math.tanh,
-    "log": math.log, "log2": math.log2, "log10": math.log10, "exp": math.exp,
-    "floor": math.floor, "ceil": math.ceil, "round": round, "pow": pow,
-    "factorial": _capped_factorial, "gcd": math.gcd, "degrees": math.degrees,
-    "radians": math.radians, "sum": sum, "min": min, "max": max,
+    "sqrt": math.sqrt,
+    "abs": abs,
+    "sin": math.sin,
+    "cos": math.cos,
+    "tan": math.tan,
+    "asin": math.asin,
+    "acos": math.acos,
+    "atan": math.atan,
+    "atan2": math.atan2,
+    "sinh": math.sinh,
+    "cosh": math.cosh,
+    "tanh": math.tanh,
+    "log": math.log,
+    "log2": math.log2,
+    "log10": math.log10,
+    "exp": math.exp,
+    "floor": math.floor,
+    "ceil": math.ceil,
+    "round": round,
+    "pow": pow,
+    "factorial": _capped_factorial,
+    "gcd": math.gcd,
+    "degrees": math.degrees,
+    "radians": math.radians,
+    "sum": sum,
+    "min": min,
+    "max": max,
 }
 
 _BLOCKED_SUBSTRINGS = ("__", "import", "exec", "eval", "open", "lambda")
@@ -83,7 +104,9 @@ class CalculatorToolAdapter(ToolAdapter):
             name=self._name,
             description=self._description,
             parameters=ToolParameterSchema(
-                properties={"expression": {"type": "string", "description": "Math expression to evaluate."}},
+                properties={
+                    "expression": {"type": "string", "description": "Math expression to evaluate."}
+                },
                 required=["expression"],
             ),
         )
@@ -117,13 +140,19 @@ class CalculatorToolAdapter(ToolAdapter):
             return json.dumps({"error": f"Invalid expression: {exc}"})
         if isinstance(value, complex):
             if not self._allow_complex:
-                return json.dumps({"error": "Result is complex. Enable allow_complex or reformulate."})
+                return json.dumps(
+                    {"error": "Result is complex. Enable allow_complex or reformulate."}
+                )
             return json.dumps({"result": str(value), "expression": expression})
         if isinstance(value, float):
             if math.isnan(value):
-                return json.dumps({"result": None, "expression": expression, "note": "Result is not a number"})
+                return json.dumps(
+                    {"result": None, "expression": expression, "note": "Result is not a number"}
+                )
             if math.isinf(value):
-                return json.dumps({"result": None, "expression": expression, "note": "Result is infinite"})
+                return json.dumps(
+                    {"result": None, "expression": expression, "note": "Result is infinite"}
+                )
             value = round(value, self._precision)
         try:
             return json.dumps({"result": value, "expression": expression})
@@ -164,7 +193,14 @@ def ai_calculator_tool(
 # ---------------------------------------------------------------------------
 
 _DANGEROUS_CALLS = {"eval", "exec", "compile", "__import__"}
-_DANGEROUS_ATTRS = {"__class__", "__bases__", "__subclasses__", "__globals__", "__builtins__", "__mro__"}
+_DANGEROUS_ATTRS = {
+    "__class__",
+    "__bases__",
+    "__subclasses__",
+    "__globals__",
+    "__builtins__",
+    "__mro__",
+}
 
 
 def _ast_security_check(code: str, allowed_modules: set[str]) -> None:
@@ -203,8 +239,16 @@ def _ast_security_check(code: str, allowed_modules: set[str]) -> None:
 class CodeExecToolAdapter(ToolAdapter):
     """Runs Python/JS in an isolated subprocess with an AST pre-check."""
 
-    def __init__(self, *, name: str, description: str, language: str,
-                 allowed_modules: str, timeout_seconds: int, max_output_chars: int) -> None:
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str,
+        language: str,
+        allowed_modules: str,
+        timeout_seconds: int,
+        max_output_chars: int,
+    ) -> None:
         self._name = name or "run_code"
         self._description = description or "Run code and return stdout."
         self._language = (language or "python").lower()
@@ -225,7 +269,10 @@ class CodeExecToolAdapter(ToolAdapter):
             parameters=ToolParameterSchema(
                 properties={
                     "code": {"type": "string", "description": "Source code to execute."},
-                    "timeout": {"type": "integer", "description": "Optional timeout seconds (<= node limit)."},
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Optional timeout seconds (<= node limit).",
+                    },
                 },
                 required=["code"],
             ),
@@ -245,10 +292,20 @@ class CodeExecToolAdapter(ToolAdapter):
             timeout = int(requested)
         if self._language == "python":
             if self._allowed is not None:
+                # Allowlist mode: user specified exactly which modules are permitted.
                 try:
                     _ast_security_check(code, self._allowed)
                 except PermissionError as exc:
                     return json.dumps({"error": str(exc)})
+            else:
+                # Blocklist mode: reject the dangerous module set from _CodeValidator.
+                from noodle.expr import CODE_NODE_BLOCKED_MODULES, _CodeValidator
+                import ast as _ast
+                try:
+                    tree = _ast.parse(code)
+                    _CodeValidator().visit(tree)
+                except (SyntaxError, ValueError) as exc:
+                    return json.dumps({"error": f"Code validation failed: {exc}"})
             argv = [sys.executable, "-c", code]
         elif self._language == "javascript":
             node_bin = shutil.which("node")
@@ -260,9 +317,13 @@ class CodeExecToolAdapter(ToolAdapter):
 
         workdir = tempfile.mkdtemp(prefix="noodle_code_")
         popen_kwargs: dict[str, Any] = dict(
-            cwd=workdir, stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            encoding="utf-8", errors="replace",
+            cwd=workdir,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         if os.name == "posix":
             popen_kwargs["start_new_session"] = True  # own process group for killpg
@@ -279,10 +340,14 @@ class CodeExecToolAdapter(ToolAdapter):
                 stdout, truncated = stdout[: self._max_output], True
             if len(stderr) > self._max_output:
                 stderr, truncated = stderr[: self._max_output], True
-            return json.dumps({
-                "stdout": stdout, "stderr": stderr,
-                "exit_code": proc.returncode, "truncated": truncated,
-            })
+            return json.dumps(
+                {
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "exit_code": proc.returncode,
+                    "truncated": truncated,
+                }
+            )
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 
@@ -315,7 +380,10 @@ class CodeExecToolAdapter(ToolAdapter):
             "description": "Comma-separated import allowlist (e.g. math,json). Empty = no restriction; list modules to enforce an allowlist.",
             "group": "Options",
         },
-        "max_output_chars": {"description": "Truncate stdout/stderr above this.", "group": "Options"},
+        "max_output_chars": {
+            "description": "Truncate stdout/stderr above this.",
+            "group": "Options",
+        },
     },
 )
 def ai_code_execution_tool(
@@ -328,8 +396,11 @@ def ai_code_execution_tool(
 ) -> ToolAdapter:
     """Supply a sandboxed code-execution tool to a downstream AI Agent."""
     return CodeExecToolAdapter(
-        name=name, description=description, language=language,
-        allowed_modules=allowed_modules, timeout_seconds=timeout_seconds,
+        name=name,
+        description=description,
+        language=language,
+        allowed_modules=allowed_modules,
+        timeout_seconds=timeout_seconds,
         max_output_chars=max_output_chars,
     )
 
@@ -344,14 +415,25 @@ _SEARCH_PROVIDERS_NEEDING_KEY = {"tavily", "serpapi", "brave"}
 class WebSearchToolAdapter(ToolAdapter):
     """Calls a web-search provider API; returns structured results."""
 
-    def __init__(self, *, provider: str, credentials: Any, name: str, description: str,
-                 max_results: int, search_depth: str, include_content: bool,
-                 timeout_seconds: int) -> None:
+    def __init__(
+        self,
+        *,
+        provider: str,
+        credentials: Any,
+        name: str,
+        description: str,
+        max_results: int,
+        search_depth: str,
+        include_content: bool,
+        timeout_seconds: int,
+    ) -> None:
         self._provider = (provider or "tavily").lower()
         creds = credentials if isinstance(credentials, dict) else {}
         self._api_key = str(creds.get("api_key") or "").strip()
         if self._provider in _SEARCH_PROVIDERS_NEEDING_KEY and not self._api_key:
-            raise ValueError(f"AI Web Search Tool: {self._provider} requires an api_key credential.")
+            raise ValueError(
+                f"AI Web Search Tool: {self._provider} requires an api_key credential."
+            )
         self._name = name or "web_search"
         self._description = description or "Search the web for current information."
         self._max_results = max(1, min(20, int(max_results or 5)))
@@ -400,7 +482,9 @@ class WebSearchToolAdapter(ToolAdapter):
             results[0]["content"] = self._fetch_content(results[0].get("url", ""))
         return json.dumps({"results": results, "total": len(results), "provider": self._provider})
 
-    def _normalise(self, *, title: str, url: str, snippet: str, score: float | None) -> dict[str, Any]:
+    def _normalise(
+        self, *, title: str, url: str, snippet: str, score: float | None
+    ) -> dict[str, Any]:
         return {
             "title": html.unescape(str(title or ""))[:300],
             "url": str(url or ""),
@@ -411,8 +495,12 @@ class WebSearchToolAdapter(ToolAdapter):
     def _tavily(self, query: str, limit: int) -> list[dict[str, Any]]:
         resp = httpx.post(
             "https://api.tavily.com/search",
-            json={"api_key": self._api_key, "query": query,
-                  "max_results": limit, "search_depth": self._search_depth},
+            json={
+                "api_key": self._api_key,
+                "query": query,
+                "max_results": limit,
+                "search_depth": self._search_depth,
+            },
             timeout=self._timeout,
         )
         if resp.status_code == 429:
@@ -420,44 +508,64 @@ class WebSearchToolAdapter(ToolAdapter):
         if resp.status_code >= 400:
             raise httpx.HTTPError(f"HTTP {resp.status_code}")
         data = resp.json()
-        return [self._normalise(title=r.get("title"), url=r.get("url"),
-                                snippet=r.get("content"), score=r.get("score"))
-                for r in (data.get("results") or [])][:limit]
+        return [
+            self._normalise(
+                title=r.get("title"),
+                url=r.get("url"),
+                snippet=r.get("content"),
+                score=r.get("score"),
+            )
+            for r in (data.get("results") or [])
+        ][:limit]
 
     def _serpapi(self, query: str, limit: int) -> list[dict[str, Any]]:
-        resp = httpx.get("https://serpapi.com/search",
-                         params={"q": query, "api_key": self._api_key, "num": limit},
-                         timeout=self._timeout)
+        resp = httpx.get(
+            "https://serpapi.com/search",
+            params={"q": query, "api_key": self._api_key, "num": limit},
+            timeout=self._timeout,
+        )
         if resp.status_code == 429:
             raise httpx.HTTPError("Rate limited. Try again later.")
         if resp.status_code >= 400:
             raise httpx.HTTPError(f"HTTP {resp.status_code}")
         data = resp.json()
-        return [self._normalise(title=r.get("title"), url=r.get("link"),
-                                snippet=r.get("snippet"), score=None)
-                for r in (data.get("organic_results") or [])][:limit]
+        return [
+            self._normalise(
+                title=r.get("title"), url=r.get("link"), snippet=r.get("snippet"), score=None
+            )
+            for r in (data.get("organic_results") or [])
+        ][:limit]
 
     def _brave(self, query: str, limit: int) -> list[dict[str, Any]]:
-        resp = httpx.get("https://api.search.brave.com/res/v1/web/search",
-                         params={"q": query, "count": limit},
-                         headers={"X-Subscription-Token": self._api_key},
-                         timeout=self._timeout)
+        resp = httpx.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            params={"q": query, "count": limit},
+            headers={"X-Subscription-Token": self._api_key},
+            timeout=self._timeout,
+        )
         if resp.status_code == 429:
             raise httpx.HTTPError("Rate limited. Try again later.")
         if resp.status_code >= 400:
             raise httpx.HTTPError(f"HTTP {resp.status_code}")
         data = resp.json()
         items = ((data.get("web") or {}).get("results")) or []
-        return [self._normalise(title=r.get("title"), url=r.get("url"),
-                                snippet=r.get("description"), score=None)
-                for r in items][:limit]
+        return [
+            self._normalise(
+                title=r.get("title"), url=r.get("url"), snippet=r.get("description"), score=None
+            )
+            for r in items
+        ][:limit]
 
     def _duckduckgo(self, query: str, limit: int) -> list[dict[str, Any]]:
         try:
             import re
-            resp = httpx.get("https://duckduckgo.com/html/",
-                             params={"q": query}, timeout=self._timeout,
-                             headers={"User-Agent": "Mozilla/5.0"})
+
+            resp = httpx.get(
+                "https://duckduckgo.com/html/",
+                params={"q": query},
+                timeout=self._timeout,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
             if resp.status_code >= 400:
                 return []
             pattern = re.compile(r'result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', re.S)
@@ -475,7 +583,9 @@ class WebSearchToolAdapter(ToolAdapter):
         if not url:
             return ""
         try:
-            resp = safe_request("GET", url, context=f"{self._name} web search content", timeout=self._timeout)
+            resp = safe_request(
+                "GET", url, context=f"{self._name} web search content", timeout=self._timeout
+            )
             return resp.text[:8000]
         except Exception:  # noqa: BLE001 - content fetch is best-effort
             return ""
@@ -493,15 +603,28 @@ class WebSearchToolAdapter(ToolAdapter):
     params={
         "name": {"description": "Tool name exposed to the model (snake_case)."},
         "description": {"widget": "textarea", "description": "What the tool does."},
-        "provider": {"choices": ["tavily", "serpapi", "brave", "duckduckgo"], "description": "Search provider."},
+        "provider": {
+            "choices": ["tavily", "serpapi", "brave", "duckduckgo"],
+            "description": "Search provider.",
+        },
         "credentials": {
-            "type": "search_api_key", "label": "Search API key", "multi": True,
+            "type": "search_api_key",
+            "label": "Search API key",
+            "multi": True,
             "fields": ["api_key"],
             "description": "API key for the provider (not needed for duckduckgo).",
         },
         "max_results": {"description": "Max results (1-20)."},
-        "search_depth": {"choices": ["basic", "advanced"], "description": "Tavily depth.", "group": "Options"},
-        "include_content": {"widget": "toggle", "description": "Fetch full content for top result.", "group": "Options"},
+        "search_depth": {
+            "choices": ["basic", "advanced"],
+            "description": "Tavily depth.",
+            "group": "Options",
+        },
+        "include_content": {
+            "widget": "toggle",
+            "description": "Fetch full content for top result.",
+            "group": "Options",
+        },
         "timeout_seconds": {"description": "Per-request timeout.", "group": "Options"},
     },
 )
@@ -517,9 +640,14 @@ def ai_web_search_tool(
 ) -> ToolAdapter:
     """Supply a web-search tool to a downstream AI Agent."""
     return WebSearchToolAdapter(
-        provider=provider, credentials=credentials, name=name, description=description,
-        max_results=max_results, search_depth=search_depth,
-        include_content=include_content, timeout_seconds=timeout_seconds,
+        provider=provider,
+        credentials=credentials,
+        name=name,
+        description=description,
+        max_results=max_results,
+        search_depth=search_depth,
+        include_content=include_content,
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -534,12 +662,24 @@ _BROWSER_WRITE_ACTIONS = {"fill_and_submit"}
 class BrowserToolAdapter(ToolAdapter):
     """Playwright-backed browser tool. Async-only (invoke_async)."""
 
-    def __init__(self, *, name: str, description: str, allowed_actions: str,
-                 wait_strategy: str, timeout_seconds: int, max_content_chars: int) -> None:
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str,
+        allowed_actions: str,
+        wait_strategy: str,
+        timeout_seconds: int,
+        max_content_chars: int,
+    ) -> None:
         self._name = name or "browse_web"
         self._description = description or "Navigate and extract content from web pages."
         self._allowed = {a.strip() for a in str(allowed_actions or "").split(",") if a.strip()}
-        self._wait = wait_strategy if wait_strategy in {"load", "networkidle", "domcontentloaded"} else "load"
+        self._wait = (
+            wait_strategy
+            if wait_strategy in {"load", "networkidle", "domcontentloaded"}
+            else "load"
+        )
         self._timeout_ms = max(1, min(120, int(timeout_seconds or 30))) * 1000
         self._max_chars = max(500, int(max_content_chars or 20000))
 
@@ -552,7 +692,10 @@ class BrowserToolAdapter(ToolAdapter):
                 properties={
                     "action": {"type": "string", "description": f"One of: {sorted(self._allowed)}"},
                     "url": {"type": "string", "description": "Target URL."},
-                    "selector": {"type": "string", "description": "Optional CSS selector for extract."},
+                    "selector": {
+                        "type": "string",
+                        "description": "Optional CSS selector for extract.",
+                    },
                 },
                 required=["action", "url"],
             ),
@@ -569,7 +712,9 @@ class BrowserToolAdapter(ToolAdapter):
         action = str((arguments or {}).get("action") or "navigate")
         url = str((arguments or {}).get("url") or "").strip()
         if action not in self._allowed:
-            return json.dumps({"error": f"Action '{action}' is not allowed. Allowed: {sorted(self._allowed)}"})
+            return json.dumps(
+                {"error": f"Action '{action}' is not allowed. Allowed: {sorted(self._allowed)}"}
+            )
         if not url:
             return json.dumps({"error": "url is required"})
         try:
@@ -577,9 +722,9 @@ class BrowserToolAdapter(ToolAdapter):
         except Exception as exc:  # noqa: BLE001 - SSRF guard raises provider-specific errors
             return json.dumps({"error": f"Blocked URL: {exc}"})
         try:
-            from playwright.async_api import async_playwright
             from playwright.async_api import Error as PlaywrightError
             from playwright.async_api import TimeoutError as PlaywrightTimeout
+            from playwright.async_api import async_playwright
         except ImportError as exc:
             raise RuntimeError(
                 "AI Browser Tool requires playwright. Add playwright>=1.40 to the "
@@ -590,6 +735,23 @@ class BrowserToolAdapter(ToolAdapter):
                 browser = await pw.chromium.launch(headless=True)
                 try:
                     page = await browser.new_page()
+
+                    async def _guard_route(route: Any, request: Any) -> None:
+                        try:
+                            assert_public_http_url(
+                                request.url,
+                                context=f"{self._name} browser subrequest",
+                            )
+                        except Exception:  # noqa: BLE001 - block unsafe hop
+                            await route.abort("blockedbyclient")
+                            return
+                        await route.continue_()
+
+                    # Validate every browser request before Chromium follows it.
+                    # Checking only page.url after goto is too late: a public
+                    # URL can redirect to cloud metadata/private services and
+                    # the response body has already been fetched by then.
+                    await page.route("**/*", _guard_route)
                     await page.goto(url, wait_until=self._wait, timeout=self._timeout_ms)
                     final_url = page.url
                     assert_public_http_url(final_url, context=f"{self._name} post-redirect")
@@ -597,11 +759,15 @@ class BrowserToolAdapter(ToolAdapter):
                 finally:
                     await browser.close()
         except PlaywrightTimeout:
-            return json.dumps({"error": f"Page timed out after {self._timeout_ms // 1000}s", "url": url})
+            return json.dumps(
+                {"error": f"Page timed out after {self._timeout_ms // 1000}s", "url": url}
+            )
         except PlaywrightError as exc:
             message = str(exc)
             if "Executable doesn't exist" in message:
-                return json.dumps({"error": "Browser not installed. Run: playwright install chromium"})
+                return json.dumps(
+                    {"error": "Browser not installed. Run: playwright install chromium"}
+                )
             return json.dumps({"error": f"Browser error: {message}"})
 
     async def _dispatch(self, action: str, page: Any, arguments: dict[str, Any]) -> str:
@@ -611,16 +777,27 @@ class BrowserToolAdapter(ToolAdapter):
             if selector:
                 el = await page.query_selector(selector)
                 if el is None:
-                    return json.dumps({"error": f"Selector '{selector}' not found", "url": page.url})
+                    return json.dumps(
+                        {"error": f"Selector '{selector}' not found", "url": page.url}
+                    )
                 text = await el.inner_text()
             else:
                 text = await page.inner_text("body")
             truncated = len(text) > self._max_chars
-            return json.dumps({"action": action, "url": page.url, "title": title,
-                               "content": text[: self._max_chars], "truncated": truncated})
+            return json.dumps(
+                {
+                    "action": action,
+                    "url": page.url,
+                    "title": title,
+                    "content": text[: self._max_chars],
+                    "truncated": truncated,
+                }
+            )
         if action == "get_links":
             hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.href)")
-            return json.dumps({"action": action, "url": page.url, "title": title, "links": hrefs[:200]})
+            return json.dumps(
+                {"action": action, "url": page.url, "title": title, "links": hrefs[:200]}
+            )
         return json.dumps({"error": f"Action '{action}' not implemented"})
 
 
@@ -637,11 +814,19 @@ class BrowserToolAdapter(ToolAdapter):
     params={
         "name": {"description": "Tool name exposed to the model (snake_case)."},
         "description": {"widget": "textarea", "description": "What the tool does."},
-        "allowed_actions": {"description": "Comma-separated: navigate, extract, get_links, screenshot."},
-        "wait_strategy": {"choices": ["load", "networkidle", "domcontentloaded"],
-                          "description": "When the page is considered ready.", "group": "Options"},
+        "allowed_actions": {
+            "description": "Comma-separated: navigate, extract, get_links, screenshot."
+        },
+        "wait_strategy": {
+            "choices": ["load", "networkidle", "domcontentloaded"],
+            "description": "When the page is considered ready.",
+            "group": "Options",
+        },
         "timeout_seconds": {"description": "Page load timeout (1-120)."},
-        "max_content_chars": {"description": "Truncate extracted text above this.", "group": "Options"},
+        "max_content_chars": {
+            "description": "Truncate extracted text above this.",
+            "group": "Options",
+        },
     },
 )
 def ai_browser_tool(
@@ -654,8 +839,11 @@ def ai_browser_tool(
 ) -> ToolAdapter:
     """Supply a headless-browser tool to a downstream AI Agent."""
     return BrowserToolAdapter(
-        name=name, description=description, allowed_actions=allowed_actions,
-        wait_strategy=wait_strategy, timeout_seconds=timeout_seconds,
+        name=name,
+        description=description,
+        allowed_actions=allowed_actions,
+        wait_strategy=wait_strategy,
+        timeout_seconds=timeout_seconds,
         max_content_chars=max_content_chars,
     )
 
@@ -670,8 +858,16 @@ _MAX_RETRIEVER_TOP_K = 100
 class RetrieverToolAdapter(ToolAdapter):
     """Wraps a RetrieverAdapter as an agent-callable knowledge-base search tool."""
 
-    def __init__(self, *, retriever: RetrieverAdapter, name: str, description: str,
-                 top_k: int, max_doc_chars: int, include_metadata: bool) -> None:
+    def __init__(
+        self,
+        *,
+        retriever: RetrieverAdapter,
+        name: str,
+        description: str,
+        top_k: int,
+        max_doc_chars: int,
+        include_metadata: bool,
+    ) -> None:
         if not isinstance(retriever, RetrieverAdapter):
             raise ValueError("ai_rag_tool: connect an AI Retriever to the retriever port")
         self._retriever = retriever
@@ -742,11 +938,20 @@ class RetrieverToolAdapter(ToolAdapter):
     param_groups={"Options": ["max_doc_chars", "include_metadata"]},
     params={
         "name": {"description": "Tool name exposed to the model (snake_case)."},
-        "description": {"widget": "textarea",
-                        "description": "Describe the knowledge base so the model knows when to search it."},
+        "description": {
+            "widget": "textarea",
+            "description": "Describe the knowledge base so the model knows when to search it.",
+        },
         "top_k": {"description": "Default number of documents to retrieve."},
-        "max_doc_chars": {"description": "Truncate each document at this length.", "group": "Options"},
-        "include_metadata": {"widget": "toggle", "description": "Include score and source.", "group": "Options"},
+        "max_doc_chars": {
+            "description": "Truncate each document at this length.",
+            "group": "Options",
+        },
+        "include_metadata": {
+            "widget": "toggle",
+            "description": "Include score and source.",
+            "group": "Options",
+        },
     },
 )
 def ai_rag_tool(
@@ -759,8 +964,12 @@ def ai_rag_tool(
 ) -> ToolAdapter:
     """Supply a knowledge-base search tool wrapping a connected AI Retriever."""
     return RetrieverToolAdapter(
-        retriever=retriever, name=name, description=description,
-        top_k=top_k, max_doc_chars=max_doc_chars, include_metadata=include_metadata,
+        retriever=retriever,
+        name=name,
+        description=description,
+        top_k=top_k,
+        max_doc_chars=max_doc_chars,
+        include_metadata=include_metadata,
     )
 
 
@@ -806,11 +1015,15 @@ class SubAgentToolAdapter(ToolAdapter):
     def schema(self) -> ToolSchema:
         return ToolSchema(
             name=f"delegate_to_{self._sub.name}",
-            description=self._sub.description or f"Delegate a task to the {self._sub.name} specialist.",
+            description=self._sub.description
+            or f"Delegate a task to the {self._sub.name} specialist.",
             parameters=ToolParameterSchema(
                 properties={
                     "task": {"type": "string", "description": "The specific task to delegate."},
-                    "context": {"type": "string", "description": "Optional context or data for the sub-agent."},
+                    "context": {
+                        "type": "string",
+                        "description": "Optional context or data for the sub-agent.",
+                    },
                 },
                 required=["task"],
             ),
@@ -849,10 +1062,16 @@ class SubAgentToolAdapter(ToolAdapter):
                 )
                 response: ChatResponse = await asyncio.to_thread(self._sub.model.complete, request)
                 if not response.tool_calls:
-                    return json.dumps({
-                        "answer": response.text, "sub_agent": self._sub.name,
-                        "steps_taken": step, "intermediate_steps": steps,
-                    }, ensure_ascii=False, default=str)
+                    return json.dumps(
+                        {
+                            "answer": response.text,
+                            "sub_agent": self._sub.name,
+                            "steps_taken": step,
+                            "intermediate_steps": steps,
+                        },
+                        ensure_ascii=False,
+                        default=str,
+                    )
                 messages.append(AIMessage.assistant(response.text, tool_calls=response.tool_calls))
                 for call in response.tool_calls:
                     tool = self._tool_map.get(call.name)
@@ -866,17 +1085,26 @@ class SubAgentToolAdapter(ToolAdapter):
                                 result = await tool.invoke_async(dict(call.arguments))
                     except Exception as exc:  # noqa: BLE001 - surface tool error to sub-agent
                         result = f"Tool error: {exc}"
-                    messages.append(AIMessage.tool_result(
-                        tool_call_id=call.id, name=call.name, content=result))
-                    steps.append({"tool": call.name, "arguments": dict(call.arguments), "result": result})
-            return json.dumps({
-                "answer": "Sub-agent reached max steps without a final answer.",
-                "sub_agent": self._sub.name, "steps_taken": self._sub.max_steps,
-                "intermediate_steps": steps,
-            }, ensure_ascii=False, default=str)
+                    messages.append(
+                        AIMessage.tool_result(tool_call_id=call.id, name=call.name, content=result)
+                    )
+                    steps.append(
+                        {"tool": call.name, "arguments": dict(call.arguments), "result": result}
+                    )
+            return json.dumps(
+                {
+                    "answer": "Sub-agent reached max steps without a final answer.",
+                    "sub_agent": self._sub.name,
+                    "steps_taken": self._sub.max_steps,
+                    "intermediate_steps": steps,
+                },
+                ensure_ascii=False,
+                default=str,
+            )
         except Exception as exc:  # noqa: BLE001 - never propagate into parent dispatch
-            return json.dumps({"error": str(exc), "sub_agent": self._sub.name,
-                               "intermediate_steps": steps})
+            return json.dumps(
+                {"error": str(exc), "sub_agent": self._sub.name, "intermediate_steps": steps}
+            )
 
 
 def _collect_subagents(value: Any) -> list[SubAgentAdapter]:
@@ -917,14 +1145,19 @@ def subagent_tool_adapters(*values: Any) -> list[SubAgentToolAdapter]:
     param_groups={"Options": ["max_steps", "temperature", "max_tokens", "side_effecting"]},
     params={
         "name": {"description": "Specialist name. Parent calls delegate_to_{name} (snake_case)."},
-        "description": {"widget": "textarea",
-                        "description": "What this specialist does — tells the parent when to delegate."},
+        "description": {
+            "widget": "textarea",
+            "description": "What this specialist does — tells the parent when to delegate.",
+        },
         "system": {"widget": "textarea", "description": "Sub-agent system prompt / persona."},
         "max_steps": {"description": "Sub-agent tool-iteration budget.", "group": "Options"},
         "temperature": {"description": "Sub-agent sampling temperature.", "group": "Options"},
         "max_tokens": {"description": "Sub-agent max response tokens.", "group": "Options"},
-        "side_effecting": {"widget": "toggle",
-                           "description": "Require parent approval before delegating.", "group": "Options"},
+        "side_effecting": {
+            "widget": "toggle",
+            "description": "Require parent approval before delegating.",
+            "group": "Options",
+        },
     },
 )
 def ai_sub_agent(
@@ -942,9 +1175,13 @@ def ai_sub_agent(
     if not isinstance(model, ChatModelAdapter):
         raise ValueError("ai_sub_agent: connect an AI Chat Model to the sub-agent model port")
     return SubAgentAdapter(
-        name=name or "sub_agent", description=description, system=system,
-        model=model, tools=collect_tool_adapters(tool),
+        name=name or "sub_agent",
+        description=description,
+        system=system,
+        model=model,
+        tools=collect_tool_adapters(tool),
         max_steps=max(1, min(25, int(max_steps or 6))),
-        temperature=float(temperature), max_tokens=max_tokens,
+        temperature=float(temperature),
+        max_tokens=max_tokens,
         side_effecting=bool(side_effecting),
     )

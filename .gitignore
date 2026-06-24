@@ -16,10 +16,11 @@ node_modules/
 dist/
 .vite/
 
-# Env / secrets
+# Env / secrets — never commit real values
 .env
 .env.local
 *.local
+deploy/.env
 
 # License signing — NEVER commit the private key or the internal licensing guide.
 .secrets/

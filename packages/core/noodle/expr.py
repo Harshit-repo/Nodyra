@@ -188,14 +188,32 @@ _BLOCKED_STMT_NODES = frozenset({
     ast.ClassDef,
 })
 
+# Modules blocked in Code node imports — defence-in-depth layer.
+# True sandboxing requires Docker; this prevents accidental and most casual attacks.
+# Mirror of _CODE_NODE_BLOCKED_IMPORTS in noodle_nodes/builtin.py.
+CODE_NODE_BLOCKED_MODULES: frozenset[str] = frozenset({
+    # Process and OS escape paths
+    "os", "posix", "nt", "subprocess", "pty", "ctypes", "cffi",
+    "multiprocessing", "signal", "mmap", "resource", "fcntl",
+    # Network escape paths (use Noodle's HTTP / integration nodes instead)
+    "socket", "ssl", "urllib", "http", "ftplib", "telnetlib",
+    "smtplib", "imaplib", "poplib", "xmlrpc",
+    # File system escape paths (use Noodle's file nodes instead)
+    "pathlib", "glob", "shutil", "tempfile", "fileinput",
+    # Code/module execution escape paths
+    "importlib", "pkgutil", "runpy", "code", "codeop",
+    "compileall", "py_compile",
+    # System introspection / sandbox bypass paths
+    "sys", "sysconfig", "gc", "inspect", "dis", "tokenize",
+})
+
 
 class _CodeValidator(ast.NodeVisitor):
-    """Validate exec()-mode code: block class defs and blocked names.
+    """Validate exec()-mode code: block class defs, blocked names, and dangerous imports.
 
-    Imports are allowed — users may freely import any installed library.
-    Unlike _ExprValidator which allowlists node types, this validator
-    blocklists the dangerous constructs so normal control flow (if/for/while/
-    try/with/def/import) all work fine.
+    Checks both blocked statement types and import statements against
+    CODE_NODE_BLOCKED_MODULES. This is a defence-in-depth layer; true isolation
+    requires the ProcessPoolExecutor boundary + the runtime __import__ override.
     """
 
     def generic_visit(self, node: ast.AST) -> None:
@@ -214,6 +232,26 @@ class _CodeValidator(ast.NodeVisitor):
     def visit_Attribute(self, node: ast.Attribute) -> None:
         if node.attr in _BLOCKED_NAMES:
             raise ValueError(f"Code accesses blocked attribute: {node.attr}")
+        self.generic_visit(node)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            root = alias.name.split(".")[0]
+            if root in CODE_NODE_BLOCKED_MODULES:
+                raise ValueError(
+                    f"Import of '{alias.name}' is not allowed in Code nodes. "
+                    "Use Noodle's built-in nodes for OS, network, and file operations."
+                )
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        module = node.module or ""
+        root = module.split(".")[0]
+        if root in CODE_NODE_BLOCKED_MODULES:
+            raise ValueError(
+                f"Import from '{module}' is not allowed in Code nodes. "
+                "Use Noodle's built-in nodes for OS, network, and file operations."
+            )
         self.generic_visit(node)
 
 

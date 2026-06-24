@@ -23,6 +23,31 @@ jobs:
       # event-broker fix); 300s is generous for the subprocess-spawning tests.
       - run: uv run pytest --timeout=300 --timeout-method=thread
 
+  # Compatibility lane: exercise the engine, runtime subprocess, exporter,
+  # environment API, and representative built-in nodes on the newest
+  # supported interpreter. Optional node stacks have their own upstream
+  # interpreter support windows (notably spaCy, which has no cp314 build yet).
+  python-314:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+      - run: uv lock --check
+      - run: uv sync --locked --all-packages
+      - name: Python 3.14 compatibility suite
+        run: >-
+          uv run pytest --timeout=300 --timeout-method=thread
+          apps/api/tests/test_environments.py
+          apps/api/tests/test_settings_endpoints.py
+          apps/api/tests/test_sandbox_container_runtime.py
+          packages/core/tests
+          packages/exporter/tests
+          packages/runtime/tests
+          packages/nodes/tests/test_builtin_nodes.py
+          packages/nodes/tests/test_node_requirements.py
+
   # Real-backend lane: runs the suite against Postgres + Redis so behaviour that
   # SQLite can't model is actually exercised:
   #   * the durable run queue's SELECT ... FOR UPDATE SKIP LOCKED lease path
@@ -156,6 +181,7 @@ jobs:
           node-version: "20"
       - run: npm install
       - run: npm run typecheck
+      - run: npm test -- --run
       - run: npm run build
 
   # Critical-path browser smoke: first-user setup -> workflow authoring ->

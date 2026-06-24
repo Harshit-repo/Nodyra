@@ -1,3 +1,9 @@
 node_modules
 dist
 .vite
+e2e
+coverage
+.nyc_output
+*.log
+*.test.*
+*.spec.*

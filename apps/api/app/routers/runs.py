@@ -12,8 +12,6 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.config import settings
 from app.db import SessionLocal, get_session
-
-logger = logging.getLogger(__name__)
 from app.models import (
     NodeRun,
     PinnedData,
@@ -48,6 +46,7 @@ from app.services.graph_utils import (
 )
 from app.services.runner import cancel_run, resume_waiting_run_from_approval, start_run
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["runs"])
 
 
@@ -88,9 +87,7 @@ async def run_workflow(
     use_draft: bool = Query(default=True),
     session: AsyncSession = Depends(get_session),
 ):
-    workflow = await session.get(
-        Workflow, workflow_id, options=[selectinload(Workflow.versions)]
-    )
+    workflow = await session.get(Workflow, workflow_id, options=[selectinload(Workflow.versions)])
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
 
@@ -180,14 +177,9 @@ async def list_all_runs(
     if until is not None:
         base_stmt = base_stmt.where(Run.started_at <= until)
 
-    total = await session.scalar(
-        select(func.count()).select_from(base_stmt.subquery())
-    )
+    total = await session.scalar(select(func.count()).select_from(base_stmt.subquery()))
 
-    stmt = (
-        select(Run, Workflow.name)
-        .join(Workflow, Run.workflow_id == Workflow.id)
-    )
+    stmt = select(Run, Workflow.name).join(Workflow, Run.workflow_id == Workflow.id)
     if workflow_id is not None:
         stmt = stmt.where(Run.workflow_id == workflow_id)
     if status is not None:
@@ -239,6 +231,7 @@ async def get_run(run_id: str, session: AsyncSession = Depends(get_session)):
     # RunInfo is from_attributes but workflow_name is not on the ORM model;
     # build the response manually.
     from app.schemas import RunInfo as _RunInfo
+
     return _RunInfo(
         id=run.id,
         workflow_id=run.workflow_id,
@@ -248,9 +241,9 @@ async def get_run(run_id: str, session: AsyncSession = Depends(get_session)):
         deployment_id=run.deployment_id,
         triggered_by_error_run_id=run.triggered_by_error_run_id,
         parent_run_id=run.parent_run_id,
-        runner_pool_id=getattr(run, 'runner_pool_id', None),
-        runner_id=getattr(run, 'runner_id', None),
-        batch_id=getattr(run, 'batch_id', None),
+        runner_pool_id=getattr(run, "runner_pool_id", None),
+        runner_id=getattr(run, "runner_id", None),
+        batch_id=getattr(run, "batch_id", None),
         mode=run.mode,
         status=run.status,
         trigger_type=run.trigger_type,
@@ -260,9 +253,7 @@ async def get_run(run_id: str, session: AsyncSession = Depends(get_session)):
     )
 
 
-async def _load_run_and_workflow(
-    session: AsyncSession, run_id: str
-) -> tuple[Run, Workflow]:
+async def _load_run_and_workflow(session: AsyncSession, run_id: str) -> tuple[Run, Workflow]:
     run = await session.get(Run, run_id, options=[selectinload(Run.node_runs)])
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
@@ -272,9 +263,7 @@ async def _load_run_and_workflow(
         .options(selectinload(Workflow.versions))
     )
     if workflow is None:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND, "Workflow has been deleted"
-        )
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow has been deleted")
     return run, workflow
 
 
@@ -283,9 +272,7 @@ async def _load_run_and_workflow(
     response_model=RunCreated,
     dependencies=[Depends(require_permission("workflow:run"))],
 )
-async def rerun_run(
-    run_id: str, session: AsyncSession = Depends(get_session)
-) -> RunCreated:
+async def rerun_run(run_id: str, session: AsyncSession = Depends(get_session)) -> RunCreated:
     """Start a fresh run of the same workflow, replaying the prior trigger input."""
     run, workflow = await _load_run_and_workflow(session, run_id)
     graph, version, version_id = await _graph_for_run(session, run, workflow)
@@ -294,9 +281,7 @@ async def rerun_run(
     trigger_node = first_trigger_node(graph)
     parameters: dict | None = None
     if trigger_node is not None:
-        trigger_id = (
-            trigger_node["id"] if isinstance(trigger_node, dict) else trigger_node.id
-        )
+        trigger_id = trigger_node["id"] if isinstance(trigger_node, dict) else trigger_node.id
         trigger_run = next(
             (nr for nr in run.node_runs if nr.node_id == trigger_id),
             None,
@@ -365,7 +350,13 @@ async def retry_from_failure(
     response_model=RunCancelResponse,
     dependencies=[Depends(require_permission("workflow:run"))],
 )
-async def cancel_workflow_run(run_id: str) -> RunCancelResponse:
+async def cancel_workflow_run(
+    run_id: str, session: AsyncSession = Depends(get_session)
+) -> RunCancelResponse:
+    # Verify the run exists and belongs to this org before cancelling.
+    # do_orm_execute appends the org_id filter automatically for select() queries.
+    if await session.scalar(select(Run).where(Run.id == run_id)) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
     result = await cancel_run(run_id)
     if result is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
@@ -396,9 +387,7 @@ async def replay_workflow_run(
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
 
-    entry = await session.scalar(
-        select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
-    )
+    entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == run_id))
     if entry is None:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -415,9 +404,7 @@ async def replay_workflow_run(
             Workflow, run.workflow_id, options=[selectinload(Workflow.versions)]
         )
         if workflow is None:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "Workflow for run no longer exists."
-            )
+            raise HTTPException(status.HTTP_409_CONFLICT, "Workflow for run no longer exists.")
         graph: dict | None = None
         if run.workflow_version_id:
             version = await session.get(WorkflowVersion, run.workflow_version_id)
@@ -486,9 +473,7 @@ def _timeline_sort_ts(value: datetime | None) -> datetime:
 
 
 @router.get("/runs/{run_id}/timeline", response_model=RunTimeline)
-async def run_timeline(
-    run_id: str, session: AsyncSession = Depends(get_session)
-) -> RunTimeline:
+async def run_timeline(run_id: str, session: AsyncSession = Depends(get_session)) -> RunTimeline:
     """Ordered lifecycle events for a single run.
 
     Composes ``Run`` start/finish, ``RunQueueEntry`` enqueue/lease/retry, and
@@ -500,14 +485,10 @@ async def run_timeline(
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
 
-    entry = await session.scalar(
-        select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
-    )
+    entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == run_id))
     persisted_events = (
         await session.scalars(
-            select(RunEvent)
-            .where(RunEvent.run_id == run_id)
-            .order_by(RunEvent.sequence.asc())
+            select(RunEvent).where(RunEvent.run_id == run_id).order_by(RunEvent.sequence.asc())
         )
     ).all()
 
@@ -673,6 +654,11 @@ async def decide_run_approval(
     session: AsyncSession = Depends(get_session),
 ) -> RunApprovalInfo:
     """Record an operator decision for a pending AI tool approval."""
+    if await session.get(Run, run_id) is None:
+        # RunApproval inherits tenancy through Run and has no direct org_id;
+        # loading the scoped parent first protects the SQLite ORM layer as
+        # well as Postgres RLS.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
     approval = await session.scalar(
         select(RunApproval).where(
             RunApproval.run_id == run_id,
@@ -736,7 +722,11 @@ async def decide_run_approval(
     return approval
 
 
-@router.get("/runs/{run_id}/debug-snapshot", response_model=RunDebugSnapshot)
+@router.get(
+    "/runs/{run_id}/debug-snapshot",
+    response_model=RunDebugSnapshot,
+    dependencies=[Depends(require_permission("workflow:run"))],
+)
 async def run_debug_snapshot(
     run_id: str, session: AsyncSession = Depends(get_session)
 ) -> RunDebugSnapshot:
@@ -811,6 +801,7 @@ async def run_events(websocket: WebSocket, run_id: str) -> None:
                     return
     await websocket.accept()
     try:
+
         async def _heartbeat() -> None:
             while True:
                 await asyncio.sleep(30)

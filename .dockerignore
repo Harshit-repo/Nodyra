@@ -7,8 +7,21 @@
 node_modules
 **/node_modules
 **/dist
+# Secrets — never bake into images
 .env
 .env.local
+.env.*.local
+deploy/.env
+# Test and dev artifacts
+apps/api/tests/
+packages/*/tests/
+docs/
+design/
+brand/
+# CI config
+.github/
+# Dev tools
+*.md
 envs/
 **/envs/
 apps/api/envs/

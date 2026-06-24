@@ -9,6 +9,8 @@ import base64
 import hashlib
 import hmac
 import json
+import re as _re
+from datetime import datetime as _datetime
 from types import ModuleType
 from typing import Any
 
@@ -66,22 +68,26 @@ def _as_list(value: Any) -> list:
     return [] if value is None else [value]
 
 
-import re as _re
-from datetime import datetime as _datetime
-
-
 def _matches_typed(actual: Any, dtype: str, operator: str, value: str = "") -> bool:
     if dtype == "string":
         s = str(actual) if actual is not None else ""
         v = str(value)
-        if operator == "equals":           return s == v
-        if operator == "not equals":       return s != v
-        if operator == "contains":         return v.lower() in s.lower()
-        if operator == "does not contain": return v.lower() not in s.lower()
-        if operator == "starts with":      return s.lower().startswith(v.lower())
-        if operator == "ends with":        return s.lower().endswith(v.lower())
-        if operator == "is empty":         return s == ""
-        if operator == "is not empty":     return s != ""
+        if operator == "equals":
+            return s == v
+        if operator == "not equals":
+            return s != v
+        if operator == "contains":
+            return v.lower() in s.lower()
+        if operator == "does not contain":
+            return v.lower() not in s.lower()
+        if operator == "starts with":
+            return s.lower().startswith(v.lower())
+        if operator == "ends with":
+            return s.lower().endswith(v.lower())
+        if operator == "is empty":
+            return s == ""
+        if operator == "is not empty":
+            return s != ""
         if operator == "matches regex":
             try:
                 return bool(_re.search(v, s))
@@ -94,12 +100,18 @@ def _matches_typed(actual: Any, dtype: str, operator: str, value: str = "") -> b
             v_num = float(value)
         except (TypeError, ValueError):
             return False
-        if operator == "equals":                 return n == v_num
-        if operator == "not equals":             return n != v_num
-        if operator == "greater than":           return n > v_num
-        if operator == "greater than or equal":  return n >= v_num
-        if operator == "less than":              return n < v_num
-        if operator == "less than or equal":     return n <= v_num
+        if operator == "equals":
+            return n == v_num
+        if operator == "not equals":
+            return n != v_num
+        if operator == "greater than":
+            return n > v_num
+        if operator == "greater than or equal":
+            return n >= v_num
+        if operator == "less than":
+            return n < v_num
+        if operator == "less than or equal":
+            return n <= v_num
 
     elif dtype == "boolean":
         # Coerce: the string literals "false"/"0"/"no"/"off"/"" are falsy.
@@ -109,30 +121,44 @@ def _matches_typed(actual: Any, dtype: str, operator: str, value: str = "") -> b
             b = actual.lower() not in ("false", "0", "no", "off", "")
         else:
             b = bool(actual)
-        if operator == "is true":  return b
-        if operator == "is false": return not b
+        if operator == "is true":
+            return b
+        if operator == "is false":
+            return not b
 
     elif dtype == "array":
         arr = actual if isinstance(actual, list) else []
-        if operator == "is empty":         return len(arr) == 0
-        if operator == "is not empty":     return len(arr) > 0
-        if operator == "contains":         return str(value) in [str(x) for x in arr]
-        if operator == "does not contain": return str(value) not in [str(x) for x in arr]
+        if operator == "is empty":
+            return len(arr) == 0
+        if operator == "is not empty":
+            return len(arr) > 0
+        if operator == "contains":
+            return str(value) in [str(x) for x in arr]
+        if operator == "does not contain":
+            return str(value) not in [str(x) for x in arr]
         try:
             v_len = int(value)
         except (TypeError, ValueError):
             return False
-        if operator == "length equals":       return len(arr) == v_len
-        if operator == "length not equals":   return len(arr) != v_len
-        if operator == "length greater than": return len(arr) > v_len
-        if operator == "length less than":    return len(arr) < v_len
+        if operator == "length equals":
+            return len(arr) == v_len
+        if operator == "length not equals":
+            return len(arr) != v_len
+        if operator == "length greater than":
+            return len(arr) > v_len
+        if operator == "length less than":
+            return len(arr) < v_len
 
     elif dtype == "object":
         obj = actual if isinstance(actual, dict) else {}
-        if operator == "has key":           return str(value) in obj
-        if operator == "does not have key": return str(value) not in obj
-        if operator == "is empty":          return len(obj) == 0
-        if operator == "is not empty":      return len(obj) > 0
+        if operator == "has key":
+            return str(value) in obj
+        if operator == "does not have key":
+            return str(value) not in obj
+        if operator == "is empty":
+            return len(obj) == 0
+        if operator == "is not empty":
+            return len(obj) > 0
 
     elif dtype == "date":
         try:
@@ -140,15 +166,22 @@ def _matches_typed(actual: Any, dtype: str, operator: str, value: str = "") -> b
             d_value = _datetime.fromisoformat(str(value))
         except (TypeError, ValueError):
             return False
-        if operator == "before": return d_actual < d_value
-        if operator == "after":  return d_actual > d_value
-        if operator == "equals": return d_actual.date() == d_value.date()
+        if operator == "before":
+            return d_actual < d_value
+        if operator == "after":
+            return d_actual > d_value
+        if operator == "equals":
+            return d_actual.date() == d_value.date()
 
     elif dtype == "any":
-        if operator == "exists":         return actual is not None
-        if operator == "does not exist": return actual is None
-        if operator == "is empty":       return actual in (None, "", [], {})
-        if operator == "is not empty":   return actual not in (None, "", [], {})
+        if operator == "exists":
+            return actual is not None
+        if operator == "does not exist":
+            return actual is None
+        if operator == "is empty":
+            return actual in (None, "", [], {})
+        if operator == "is not empty":
+            return actual not in (None, "", [], {})
 
     return False
 
@@ -181,33 +214,45 @@ def _eval_conditions(input_data: Any, conditions_param: Any) -> bool:
 # ==========================================================================
 
 
-@node(name="Manual Trigger", id="manual_trigger", category="Triggers", icon="play",
-      role="trigger",
-      inputs=[], params={"data": {"description": "Sample payload for test runs."}})
+@node(
+    name="Manual Trigger",
+    id="manual_trigger",
+    category="Triggers",
+    icon="play",
+    role="trigger",
+    inputs=[],
+    params={"data": {"description": "Sample payload for test runs."}},
+)
 def manual_trigger(data: dict | None = None) -> dict:
     """Start the workflow on demand. Useful while building and testing."""
     return data or {}
 
 
-@node(name="Schedule Trigger", id="schedule_trigger", category="Triggers", icon="clock",
-      role="trigger",
-      inputs=[], params={
-          "interval": {"choices": ["minutes", "hours", "days"]},
-          "every": {"description": "Run once per this many intervals."},
-          "cron": {
-              "group": "Options",
-              "placeholder": "0 9 * * 1-5",
-              "description": "Optional cron expression.",
-          },
-          "tz": {
-              "group": "Options",
-              "placeholder": "UTC",
-              "description": (
-                  "Timezone for the cron expression — IANA name like "
-                  "America/New_York or Asia/Kolkata. Defaults to UTC."
-              ),
-          },
-      })
+@node(
+    name="Schedule Trigger",
+    id="schedule_trigger",
+    category="Triggers",
+    icon="clock",
+    role="trigger",
+    inputs=[],
+    params={
+        "interval": {"choices": ["minutes", "hours", "days"]},
+        "every": {"description": "Run once per this many intervals."},
+        "cron": {
+            "group": "Options",
+            "placeholder": "0 9 * * 1-5",
+            "description": "Optional cron expression.",
+        },
+        "tz": {
+            "group": "Options",
+            "placeholder": "UTC",
+            "description": (
+                "Timezone for the cron expression — IANA name like "
+                "America/New_York or Asia/Kolkata. Defaults to UTC."
+            ),
+        },
+    },
+)
 def schedule_trigger(
     interval: str = "hours",
     every: int = 1,
@@ -218,133 +263,139 @@ def schedule_trigger(
     return {"interval": interval, "every": every, "cron": cron, "tz": tz}
 
 
-@node(name="Webhook", id="webhook_trigger", category="Triggers", icon="webhook",
-      role="trigger",
-      inputs=[], params={
-          # --- Core (always shown) ---
-          "http_method": {"choices": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
-          "path": {
-              "placeholder": "products/{id}",
-              "description": (
-                  "URL path for this webhook. Supports REST-style templates with "
-                  "{param} segments, e.g. 'products/{id}' or "
-                  "'customers/{id}/orders'. Captured values are exposed on the "
-                  "trigger output as $json.params (e.g. {{ $json.params.id }}). "
-                  "A plain path with no {param} matches that exact URL."
-              ),
-          },
-          "response_mode": {
-              "choices": ["On Received", "Last Node", "Respond Node"],
-              "description": (
-                  "When to respond: 'On Received' acks immediately; 'Last Node' "
-                  "waits and returns the final node's output; 'Respond Node' "
-                  "waits and returns whatever a Respond to Webhook node records."
-              ),
-          },
-          "response_code": {"description": "HTTP status returned to the caller."},
-          # --- Authentication (optional group) ---
-          "auth_type": {
-              "group": "Authentication",
-              "choices": ["none", "basic", "header", "query", "bearer", "jwt"],
-              "description": (
-                  "Authentication required for callers. 'none' accepts any "
-                  "request. 'basic' = HTTP Basic Auth. 'header' = check a custom "
-                  "header. 'query' = check a query-string parameter. 'bearer' = "
-                  "Authorization: Bearer <token>. 'jwt' = verify an HS256 JWT."
-              ),
-          },
-          "auth_jwt_header": {
-              "group": "Authentication",
-              "placeholder": "Authorization",
-              "description": "Header carrying the JWT (auth_type=jwt). Default Authorization.",
-          },
-          "auth_credentials": {
-              "group": "Authentication",
-              # Default credential type for static manifest; the inspector
-              # dynamically swaps this based on auth_type — Basic Auth uses
-              # http_basic (username/password), Header Auth uses http_header
-              # (name/value), Query Auth uses http_query (name/value).
-              **cred_multi(
-                  "http_basic",
-                  "HTTP Basic Auth credentials",
-                  ["username", "password"],
-              ),
-              "description": "Stored credential used to authenticate inbound webhook calls.",
-          },
-          # --- Security (optional group, independent of auth_type) ---
-          # Signature verification: when 'on', the raw request body is
-          # HMAC-verified against a shared secret before the workflow runs.
-          "hmac_verification": {"group": "Security", "choices": ["off", "on"]},
-          "hmac_header": {
-              "group": "Security",
-              "placeholder": "X-Signature",
-              "description": "Header carrying the HMAC signature.",
-          },
-          "hmac_algorithm": {"group": "Security", "choices": ["sha256", "sha1"]},
-          "hmac_prefix": {
-              "group": "Security",
-              "placeholder": "sha256=",
-              "description": "Optional prefix stripped from the signature header (e.g. 'sha256=').",
-          },
-          "hmac_secret": {
-              "group": "Security",
-              **cred_single("hmac", "secret", "HMAC shared secret"),
-              "description": "Shared secret used to verify the HMAC signature.",
-          },
-          # IP allowlist: non-empty → callers outside the listed CIDRs/IPs are
-          # rejected with 403 before any auth check.
-          "ip_allowlist": {
-              "group": "Security",
-              "placeholder": "203.0.113.0/24, 198.51.100.7",
-              "description": (
-                  "Comma/newline-separated CIDRs or IPs allowed to call this "
-                  "webhook. Blank = allow all."
-              ),
-          },
-          "trust_proxy": {
-              "group": "Security",
-              "choices": ["off", "on"],
-              "description": (
-                  "When 'on', honour the left-most X-Forwarded-For entry for the "
-                  "IP allowlist (set only behind a trusted proxy). Default 'off' "
-                  "uses the socket peer."
-              ),
-          },
-          # --- Idempotency (optional group) ---
-          "dedup": {"group": "Idempotency", "choices": ["off", "on"]},
-          "dedup_key": {
-              "group": "Idempotency",
-              "placeholder": "{{ $json.headers['x-delivery-id'] }}",
-              "description": (
-                  "Expression evaluated against the request to identify a unique "
-                  "delivery. A repeat value is acknowledged without re-running."
-              ),
-          },
-          # --- Body (optional group) ---
-          # Raw body capture: when 'on', the exact request bytes are written as
-          # an artifact and exposed as a `raw_body` ref on the trigger output, so
-          # binary/multipart uploads reach the workflow without bloating the DB.
-          "raw_body": {"group": "Body", "choices": ["off", "on"]},
-          # --- Response shaping (optional group; On Received mode) ---
-          "response_data": {
-              "group": "Response",
-              "choices": ["First Entry JSON", "All Entries", "No Body", "Custom"],
-              "description": (
-                  "Shape the immediate response (On Received mode). Blank = a "
-                  "default JSON ack with the run id."
-              ),
-          },
-          "response_body": {
-              "group": "Response",
-              "placeholder": "{{ $json.body }}",
-              "description": "Custom response body expression (response_data=Custom).",
-          },
-          "response_headers": {
-              "group": "Response",
-              "key_value": True,
-              "description": "Custom response headers (response_data=Custom).",
-          },
-      })
+@node(
+    name="Webhook",
+    id="webhook_trigger",
+    category="Triggers",
+    icon="webhook",
+    role="trigger",
+    inputs=[],
+    params={
+        # --- Core (always shown) ---
+        "http_method": {"choices": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
+        "path": {
+            "placeholder": "products/{id}",
+            "description": (
+                "URL path for this webhook. Supports REST-style templates with "
+                "{param} segments, e.g. 'products/{id}' or "
+                "'customers/{id}/orders'. Captured values are exposed on the "
+                "trigger output as $json.params (e.g. {{ $json.params.id }}). "
+                "A plain path with no {param} matches that exact URL."
+            ),
+        },
+        "response_mode": {
+            "choices": ["On Received", "Last Node", "Respond Node"],
+            "description": (
+                "When to respond: 'On Received' acks immediately; 'Last Node' "
+                "waits and returns the final node's output; 'Respond Node' "
+                "waits and returns whatever a Respond to Webhook node records."
+            ),
+        },
+        "response_code": {"description": "HTTP status returned to the caller."},
+        # --- Authentication (optional group) ---
+        "auth_type": {
+            "group": "Authentication",
+            "choices": ["none", "basic", "header", "query", "bearer", "jwt"],
+            "description": (
+                "Authentication required for callers. 'none' accepts any "
+                "request. 'basic' = HTTP Basic Auth. 'header' = check a custom "
+                "header. 'query' = check a query-string parameter. 'bearer' = "
+                "Authorization: Bearer <token>. 'jwt' = verify an HS256 JWT."
+            ),
+        },
+        "auth_jwt_header": {
+            "group": "Authentication",
+            "placeholder": "Authorization",
+            "description": "Header carrying the JWT (auth_type=jwt). Default Authorization.",
+        },
+        "auth_credentials": {
+            "group": "Authentication",
+            # Default credential type for static manifest; the inspector
+            # dynamically swaps this based on auth_type — Basic Auth uses
+            # http_basic (username/password), Header Auth uses http_header
+            # (name/value), Query Auth uses http_query (name/value).
+            **cred_multi(
+                "http_basic",
+                "HTTP Basic Auth credentials",
+                ["username", "password"],
+            ),
+            "description": "Stored credential used to authenticate inbound webhook calls.",
+        },
+        # --- Security (optional group, independent of auth_type) ---
+        # Signature verification: when 'on', the raw request body is
+        # HMAC-verified against a shared secret before the workflow runs.
+        "hmac_verification": {"group": "Security", "choices": ["off", "on"]},
+        "hmac_header": {
+            "group": "Security",
+            "placeholder": "X-Signature",
+            "description": "Header carrying the HMAC signature.",
+        },
+        "hmac_algorithm": {"group": "Security", "choices": ["sha256", "sha1"]},
+        "hmac_prefix": {
+            "group": "Security",
+            "placeholder": "sha256=",
+            "description": "Optional prefix stripped from the signature header (e.g. 'sha256=').",
+        },
+        "hmac_secret": {
+            "group": "Security",
+            **cred_single("hmac", "secret", "HMAC shared secret"),
+            "description": "Shared secret used to verify the HMAC signature.",
+        },
+        # IP allowlist: non-empty → callers outside the listed CIDRs/IPs are
+        # rejected with 403 before any auth check.
+        "ip_allowlist": {
+            "group": "Security",
+            "placeholder": "203.0.113.0/24, 198.51.100.7",
+            "description": (
+                "Comma/newline-separated CIDRs or IPs allowed to call this "
+                "webhook. Blank = allow all."
+            ),
+        },
+        "trust_proxy": {
+            "group": "Security",
+            "choices": ["off", "on"],
+            "description": (
+                "When 'on', honour the left-most X-Forwarded-For entry for the "
+                "IP allowlist (set only behind a trusted proxy). Default 'off' "
+                "uses the socket peer."
+            ),
+        },
+        # --- Idempotency (optional group) ---
+        "dedup": {"group": "Idempotency", "choices": ["off", "on"]},
+        "dedup_key": {
+            "group": "Idempotency",
+            "placeholder": "{{ $json.headers['x-delivery-id'] }}",
+            "description": (
+                "Expression evaluated against the request to identify a unique "
+                "delivery. A repeat value is acknowledged without re-running."
+            ),
+        },
+        # --- Body (optional group) ---
+        # Raw body capture: when 'on', the exact request bytes are written as
+        # an artifact and exposed as a `raw_body` ref on the trigger output, so
+        # binary/multipart uploads reach the workflow without bloating the DB.
+        "raw_body": {"group": "Body", "choices": ["off", "on"]},
+        # --- Response shaping (optional group; On Received mode) ---
+        "response_data": {
+            "group": "Response",
+            "choices": ["First Entry JSON", "All Entries", "No Body", "Custom"],
+            "description": (
+                "Shape the immediate response (On Received mode). Blank = a "
+                "default JSON ack with the run id."
+            ),
+        },
+        "response_body": {
+            "group": "Response",
+            "placeholder": "{{ $json.body }}",
+            "description": "Custom response body expression (response_data=Custom).",
+        },
+        "response_headers": {
+            "group": "Response",
+            "key_value": True,
+            "description": "Custom response headers (response_data=Custom).",
+        },
+    },
+)
 def webhook_trigger(
     http_method: str = "POST",
     path: str = "noodle",
@@ -376,62 +427,68 @@ def webhook_trigger(
     return {}
 
 
-@node(name="API Endpoint", id="api_endpoint", category="Triggers", icon="webhook",
-      role="trigger",
-      inputs=[], outputs=["main"], params={
-          "base_path": {
-              "placeholder": "customers",
-              "description": (
-                  "Base path for this API. Routes below are matched under "
-                  "/webhook/<base_path>/… , e.g. base 'customers' + route "
-                  "'GET /{id}' serves GET /webhook/customers/42."
-              ),
-          },
-          "routes": {
-              "widget": "routes_table",
-              "description": (
-                  "Route table: a list of {method, path, output} rows. Each row "
-                  "maps an HTTP method + sub-path template (e.g. 'GET /{id}', "
-                  "'POST /', 'GET /{id}/orders') to a named output branch. The "
-                  "single most-specific matching route fires; captured path "
-                  "params are exposed on the branch as $json.params."
-              ),
-          },
-          "response_mode": {
-              "choices": ["Last Node", "Respond Node"],
-              "description": (
-                  "How the matched branch responds: 'Last Node' returns the "
-                  "branch's final node output; 'Respond Node' returns whatever a "
-                  "Respond to Webhook node in the branch records."
-              ),
-          },
-          "response_code": {
-              "description": "Default HTTP status when a branch doesn't set one.",
-          },
-          # --- Authentication (optional group; same shape as the Webhook node) ---
-          "auth_type": {
-              "group": "Authentication",
-              "choices": ["none", "basic", "header", "query", "bearer", "jwt"],
-              "description": (
-                  "Authentication required for callers (same options as the "
-                  "Webhook node)."
-              ),
-          },
-          "auth_jwt_header": {
-              "group": "Authentication",
-              "placeholder": "Authorization",
-              "description": "Header carrying the JWT (auth_type=jwt). Default Authorization.",
-          },
-          "auth_credentials": {
-              "group": "Authentication",
-              **cred_multi(
-                  "http_basic",
-                  "HTTP Basic Auth credentials",
-                  ["username", "password"],
-              ),
-              "description": "Stored credential used to authenticate inbound API calls.",
-          },
-      })
+@node(
+    name="API Endpoint",
+    id="api_endpoint",
+    category="Triggers",
+    icon="webhook",
+    role="trigger",
+    inputs=[],
+    outputs=["main"],
+    params={
+        "base_path": {
+            "placeholder": "customers",
+            "description": (
+                "Base path for this API. Routes below are matched under "
+                "/webhook/<base_path>/… , e.g. base 'customers' + route "
+                "'GET /{id}' serves GET /webhook/customers/42."
+            ),
+        },
+        "routes": {
+            "widget": "routes_table",
+            "description": (
+                "Route table: a list of {method, path, output} rows. Each row "
+                "maps an HTTP method + sub-path template (e.g. 'GET /{id}', "
+                "'POST /', 'GET /{id}/orders') to a named output branch. The "
+                "single most-specific matching route fires; captured path "
+                "params are exposed on the branch as $json.params."
+            ),
+        },
+        "response_mode": {
+            "choices": ["Last Node", "Respond Node"],
+            "description": (
+                "How the matched branch responds: 'Last Node' returns the "
+                "branch's final node output; 'Respond Node' returns whatever a "
+                "Respond to Webhook node in the branch records."
+            ),
+        },
+        "response_code": {
+            "description": "Default HTTP status when a branch doesn't set one.",
+        },
+        # --- Authentication (optional group; same shape as the Webhook node) ---
+        "auth_type": {
+            "group": "Authentication",
+            "choices": ["none", "basic", "header", "query", "bearer", "jwt"],
+            "description": (
+                "Authentication required for callers (same options as the Webhook node)."
+            ),
+        },
+        "auth_jwt_header": {
+            "group": "Authentication",
+            "placeholder": "Authorization",
+            "description": "Header carrying the JWT (auth_type=jwt). Default Authorization.",
+        },
+        "auth_credentials": {
+            "group": "Authentication",
+            **cred_multi(
+                "http_basic",
+                "HTTP Basic Auth credentials",
+                ["username", "password"],
+            ),
+            "description": "Stored credential used to authenticate inbound API calls.",
+        },
+    },
+)
 def api_endpoint(
     base_path: str = "",
     routes: list | None = None,
@@ -452,16 +509,22 @@ def api_endpoint(
     return {}
 
 
-@node(name="Error Trigger", id="error_trigger", category="Triggers", icon="alert",
-      role="trigger",
-      inputs=[], params={
-          "error": {
-              "description": (
-                  "Sample error payload for testing an error workflow. Production "
-                  "error workflows receive the failing workflow/run/node context."
-              ),
-          },
-      })
+@node(
+    name="Error Trigger",
+    id="error_trigger",
+    category="Triggers",
+    icon="alert",
+    role="trigger",
+    inputs=[],
+    params={
+        "error": {
+            "description": (
+                "Sample error payload for testing an error workflow. Production "
+                "error workflows receive the failing workflow/run/node context."
+            ),
+        },
+    },
+)
 def error_trigger(error: dict | None = None) -> dict:
     """Start an error-handling workflow with normalized failure context."""
     raw = error or {}
@@ -483,41 +546,65 @@ def error_trigger(error: dict | None = None) -> dict:
     }
 
 
-@node(name="Chat Trigger", id="chat_trigger", category="Triggers", icon="chat",
-      role="trigger",
-      inputs=[],
-      param_groups={"Options": [
-          "initial_message", "input_placeholder", "title",
-          "public_access", "require_login",
-      ]},
-      params={
-          "initial_message": {
-              "widget": "textarea", "group": "Options",
-              "description": "Assistant greeting shown when the chat panel opens.",
-          },
-          "input_placeholder": {
-              "group": "Options", "placeholder": "Type a message…",
-              "description": "Placeholder text for the chat message box.",
-          },
-          "title": {
-              "group": "Options", "placeholder": "Chat",
-              "description": "Header label for the chat panel.",
-          },
-          "public_access": {
-              "type": "boolean", "group": "Options", "default": False,
-              "description": "Enable the hosted chat page for this workflow.",
-          },
-          "require_login": {
-              "type": "boolean", "group": "Options", "default": True,
-              "description": "Require visitors to sign into this Noodle instance.",
-          },
-          "chat_token": {
-              "type": "string", "widget": "hidden", "default": "",
-          },
-      })
-def chat_trigger(initial_message: str = "", input_placeholder: str = "",
-                 title: str = "", public_access: bool = False,
-                 require_login: bool = True, chat_token: str = "") -> dict:
+@node(
+    name="Chat Trigger",
+    id="chat_trigger",
+    category="Triggers",
+    icon="chat",
+    role="trigger",
+    inputs=[],
+    param_groups={
+        "Options": [
+            "initial_message",
+            "input_placeholder",
+            "title",
+            "public_access",
+            "require_login",
+        ]
+    },
+    params={
+        "initial_message": {
+            "widget": "textarea",
+            "group": "Options",
+            "description": "Assistant greeting shown when the chat panel opens.",
+        },
+        "input_placeholder": {
+            "group": "Options",
+            "placeholder": "Type a message…",
+            "description": "Placeholder text for the chat message box.",
+        },
+        "title": {
+            "group": "Options",
+            "placeholder": "Chat",
+            "description": "Header label for the chat panel.",
+        },
+        "public_access": {
+            "type": "boolean",
+            "group": "Options",
+            "default": False,
+            "description": "Enable the hosted chat page for this workflow.",
+        },
+        "require_login": {
+            "type": "boolean",
+            "group": "Options",
+            "default": True,
+            "description": "Require visitors to sign into this Noodle instance.",
+        },
+        "chat_token": {
+            "type": "string",
+            "widget": "hidden",
+            "default": "",
+        },
+    },
+)
+def chat_trigger(
+    initial_message: str = "",
+    input_placeholder: str = "",
+    title: str = "",
+    public_access: bool = False,
+    require_login: bool = True,
+    chat_token: str = "",
+) -> dict:
     """Conversational entry point. When a chat turn runs, the chat service seeds
     this node's output with the user's message and session id; on a plain manual
     run it returns the empty shape so the graph stays runnable."""
@@ -529,30 +616,36 @@ def chat_trigger(initial_message: str = "", input_placeholder: str = "",
 # ==========================================================================
 
 
-@node(name="If", id="if", category="Logic", icon="branch", outputs=["true", "false"],
-      params={
-          "conditions": {
-              "widget": "conditions_builder",
-              "description": (
-                  "Typed multi-condition test. Each row specifies a field path, "
-                  "data type, operator, and comparison value. Use the logic toggle "
-                  "to require ALL (AND) or ANY (OR) conditions to match."
-              ),
-          },
-          "field": {
-              "placeholder": "status",
-              "description": "Field to test (blank = whole input). Legacy: use Conditions above.",
-              "group": "Legacy condition",
-          },
-          "operator": {
-              "choices": OPERATORS,
-              "group": "Legacy condition",
-          },
-          "value": {
-              "placeholder": "expected value",
-              "group": "Legacy condition",
-          },
-      })
+@node(
+    name="If",
+    id="if",
+    category="Logic",
+    icon="branch",
+    outputs=["true", "false"],
+    params={
+        "conditions": {
+            "widget": "conditions_builder",
+            "description": (
+                "Typed multi-condition test. Each row specifies a field path, "
+                "data type, operator, and comparison value. Use the logic toggle "
+                "to require ALL (AND) or ANY (OR) conditions to match."
+            ),
+        },
+        "field": {
+            "placeholder": "status",
+            "description": "Field to test (blank = whole input). Legacy: use Conditions above.",
+            "group": "Legacy condition",
+        },
+        "operator": {
+            "choices": OPERATORS,
+            "group": "Legacy condition",
+        },
+        "value": {
+            "placeholder": "expected value",
+            "group": "Legacy condition",
+        },
+    },
+)
 def if_node(
     input: Any = None,
     field: str = "",
@@ -568,23 +661,27 @@ def if_node(
     return {"true": input} if matched else {"false": input}
 
 
-@node(name="Switch", id="switch", category="Logic", icon="switch",
-      outputs=["fallback"], params={
-          "field": {
-              "placeholder": "type",
-              "description": "Field whose value selects the branch.",
-          },
-          "rules": {
-              "description": (
-                  "Each entry creates an output branch — the key is the branch "
-                  "name, the value is what the field is matched against."
-              ),
-              "key_value": True,
-          },
-      })
-def switch_node(
-    input: Any = None, field: str = "", rules: dict | None = None
-) -> dict:
+@node(
+    name="Switch",
+    id="switch",
+    category="Logic",
+    icon="switch",
+    outputs=["fallback"],
+    params={
+        "field": {
+            "placeholder": "type",
+            "description": "Field whose value selects the branch.",
+        },
+        "rules": {
+            "description": (
+                "Each entry creates an output branch — the key is the branch "
+                "name, the value is what the field is matched against."
+            ),
+            "key_value": True,
+        },
+    },
+)
+def switch_node(input: Any = None, field: str = "", rules: dict | None = None) -> dict:
     """Route the input to one of several branches by matching a field value."""
     rules = rules or {}
     actual = str(_field(input, field))
@@ -594,28 +691,33 @@ def switch_node(
     return {"fallback": input}
 
 
-@node(name="Filter", id="filter", category="Logic", icon="filter",
-      params={
-          "conditions": {
-              "widget": "conditions_builder",
-              "description": (
-                  "Typed multi-condition filter. Items passing all (AND) or any "
-                  "(OR) conditions flow through; others are dropped."
-              ),
-          },
-          "field": {
-              "placeholder": "status",
-              "group": "Legacy condition",
-          },
-          "operator": {
-              "choices": OPERATORS,
-              "group": "Legacy condition",
-          },
-          "value": {
-              "placeholder": "expected value",
-              "group": "Legacy condition",
-          },
-      })
+@node(
+    name="Filter",
+    id="filter",
+    category="Logic",
+    icon="filter",
+    params={
+        "conditions": {
+            "widget": "conditions_builder",
+            "description": (
+                "Typed multi-condition filter. Items passing all (AND) or any "
+                "(OR) conditions flow through; others are dropped."
+            ),
+        },
+        "field": {
+            "placeholder": "status",
+            "group": "Legacy condition",
+        },
+        "operator": {
+            "choices": OPERATORS,
+            "group": "Legacy condition",
+        },
+        "value": {
+            "placeholder": "expected value",
+            "group": "Legacy condition",
+        },
+    },
+)
 def filter_node(
     input: Any = None,
     field: str = "",
@@ -640,11 +742,19 @@ def filter_node(
     return results
 
 
-@node(name="Merge", id="merge", category="Logic", icon="merge",
-      inputs=["input_a", "input_b"], params={
-          "mode": {"choices": ["append", "combine"],
-                   "description": "append: concatenate · combine: pair into one list."},
-      })
+@node(
+    name="Merge",
+    id="merge",
+    category="Logic",
+    icon="merge",
+    inputs=["input_a", "input_b"],
+    params={
+        "mode": {
+            "choices": ["append", "combine"],
+            "description": "append: concatenate · combine: pair into one list.",
+        },
+    },
+)
 def merge_node(input_a: Any = None, input_b: Any = None, mode: str = "append") -> list:
     """Merge two input streams into one."""
     if mode == "combine":
@@ -658,13 +768,20 @@ def merge_node(input_a: Any = None, input_b: Any = None, mode: str = "append") -
     return merged
 
 
-@node(name="Loop Over Items", id="loop_over_items", category="Logic", icon="repeat",
-      deprecated=True, replacement_id="loop_start",
-      outputs=["item", "done"], params={
-          "max_items": {
-              "description": "Optional maximum number of items to emit (0 = all).",
-          },
-      })
+@node(
+    name="Loop Over Items",
+    id="loop_over_items",
+    category="Logic",
+    icon="repeat",
+    deprecated=True,
+    replacement_id="loop_start",
+    outputs=["item", "done"],
+    params={
+        "max_items": {
+            "description": "Optional maximum number of items to emit (0 = all).",
+        },
+    },
+)
 def loop_over_items(input: Any = None, max_items: int = 0) -> dict:
     """DEPRECATED — use Loop Start / Loop End for real per-item iteration.
 
@@ -700,8 +817,7 @@ def loop_over_items(input: Any = None, max_items: int = 0) -> dict:
         },
         "concurrency": {
             "description": (
-                "How many iterations to process at once (default 1). "
-                "Forced to 1 for while/until."
+                "How many iterations to process at once (default 1). Forced to 1 for while/until."
             ),
         },
         "on_error": {
@@ -725,8 +841,7 @@ def loop_over_items(input: Any = None, max_items: int = 0) -> dict:
         },
         "group_key": {
             "description": (
-                "Row field to group by when mode=group; "
-                "each iteration gets {key, rows}."
+                "Row field to group by when mode=group; each iteration gets {key, rows}."
             ),
         },
         "count": {
@@ -737,8 +852,7 @@ def loop_over_items(input: Any = None, max_items: int = 0) -> dict:
         },
         "step": {
             "description": (
-                "Step between values (mode=range) or window slide "
-                "(mode=window); default 1."
+                "Step between values (mode=range) or window slide (mode=window); default 1."
             ),
         },
         "accumulate": {
@@ -753,8 +867,7 @@ def loop_over_items(input: Any = None, max_items: int = 0) -> dict:
         },
         "condition": {
             "description": (
-                "Expression checked each iteration for while/until, "
-                "e.g. {{ state.count < 10 }}."
+                "Expression checked each iteration for while/until, e.g. {{ state.count < 10 }}."
             ),
         },
         "max_iterations": {
@@ -762,8 +875,7 @@ def loop_over_items(input: Any = None, max_items: int = 0) -> dict:
         },
         "on_max_iterations": {
             "description": (
-                "When the cap is hit: fail = raise; "
-                "stop = emit the current state and warn."
+                "When the cap is hit: fail = raise; stop = emit the current state and warn."
             ),
             "choices": ["fail", "stop"],
         },
@@ -789,9 +901,7 @@ def loop_start(
     """Start of a loop region. The engine drives this node and runs the
     nodes between it and the paired Loop End once per iteration; this function
     is never called directly."""
-    raise RuntimeError(
-        "loop_start is executed by the engine's loop driver, not called directly"
-    )
+    raise RuntimeError("loop_start is executed by the engine's loop driver, not called directly")
 
 
 @node(
@@ -831,25 +941,26 @@ def loop_end(
 ) -> dict[str, Any]:
     """End of a loop region. The engine collects each row's value here; this
     function is never called directly."""
-    raise RuntimeError(
-        "loop_end is executed by the engine's loop driver, not called directly"
-    )
+    raise RuntimeError("loop_end is executed by the engine's loop driver, not called directly")
 
 
-@node(name="Stop And Error", id="stop_and_error", category="Logic", icon="alert",
-      params={
-          "message": {
-              "placeholder": "Workflow stopped intentionally",
-              "description": "Error message shown on the failed node/run.",
-          },
-      })
+@node(
+    name="Stop And Error",
+    id="stop_and_error",
+    category="Logic",
+    icon="alert",
+    params={
+        "message": {
+            "placeholder": "Workflow stopped intentionally",
+            "description": "Error message shown on the failed node/run.",
+        },
+    },
+)
 def stop_and_error(input: Any = None, message: str = "Workflow stopped intentionally") -> Any:
     """Intentionally fail the workflow, similar to n8n's Stop And Error node."""
     if isinstance(input, dict) and not message:
         message = str(
-            input.get("message")
-            or input.get("error")
-            or "Workflow stopped intentionally"
+            input.get("message") or input.get("error") or "Workflow stopped intentionally"
         )
     raise RuntimeError(message or "Workflow stopped intentionally")
 
@@ -859,18 +970,23 @@ def stop_and_error(input: Any = None, message: str = "Workflow stopped intention
 # ==========================================================================
 
 
-@node(name="Edit Fields", id="edit_fields", category="Data", icon="pencil", params={
-    "fields": {
-        "description": (
-            "Fields to set on each item. Drag a field from the Input panel "
-            "into a value to insert an expression like {{ $json.field }}."
-        ),
-        "key_value": True,
+@node(
+    name="Edit Fields",
+    id="edit_fields",
+    category="Data",
+    icon="pencil",
+    params={
+        "fields": {
+            "description": (
+                "Fields to set on each item. Drag a field from the Input panel "
+                "into a value to insert an expression like {{ $json.field }}."
+            ),
+            "key_value": True,
+        },
+        "keep_only_set": {"description": "Drop every field except the ones set here."},
     },
-    "keep_only_set": {"description": "Drop every field except the ones set here."},
-})
-def edit_fields(input: Any = None, fields: dict | None = None,
-                keep_only_set: bool = False) -> Any:
+)
+def edit_fields(input: Any = None, fields: dict | None = None, keep_only_set: bool = False) -> Any:
     """Set, add, or replace fields on the input."""
     fields = fields or {}
 
@@ -884,10 +1000,16 @@ def edit_fields(input: Any = None, fields: dict | None = None,
     return apply(input)
 
 
-@node(name="Sort", id="sort", category="Data", icon="sort", params={
-    "field": {"placeholder": "name", "description": "Field to sort by (blank = whole item)."},
-    "order": {"choices": ["ascending", "descending"]},
-})
+@node(
+    name="Sort",
+    id="sort",
+    category="Data",
+    icon="sort",
+    params={
+        "field": {"placeholder": "name", "description": "Field to sort by (blank = whole item)."},
+        "order": {"choices": ["ascending", "descending"]},
+    },
+)
 def sort_node(input: Any = None, field: str = "", order: str = "ascending") -> list:
     """Sort a list of items by a field."""
     items = _as_list(input)
@@ -902,10 +1024,16 @@ def sort_node(input: Any = None, field: str = "", order: str = "ascending") -> l
         return sorted(items, key=lambda item: str(key(item)), reverse=reverse)
 
 
-@node(name="Limit", id="limit", category="Data", icon="limit", params={
-    "max_items": {"description": "Maximum number of items to keep."},
-    "keep": {"choices": ["first", "last"]},
-})
+@node(
+    name="Limit",
+    id="limit",
+    category="Data",
+    icon="limit",
+    params={
+        "max_items": {"description": "Maximum number of items to keep."},
+        "keep": {"choices": ["first", "last"]},
+    },
+)
 def limit_node(input: Any = None, max_items: int = 10, keep: str = "first") -> list:
     """Keep only the first or last N items."""
     items = _as_list(input)
@@ -913,9 +1041,15 @@ def limit_node(input: Any = None, max_items: int = 10, keep: str = "first") -> l
     return items[-count:] if keep == "last" else items[:count]
 
 
-@node(name="Aggregate", id="aggregate", category="Data", icon="aggregate", params={
-    "field": {"placeholder": "email", "description": "Field to collect across all items."},
-})
+@node(
+    name="Aggregate",
+    id="aggregate",
+    category="Data",
+    icon="aggregate",
+    params={
+        "field": {"placeholder": "email", "description": "Field to collect across all items."},
+    },
+)
 def aggregate_node(input: Any = None, field: str = "") -> dict:
     """Collapse a list of items into a single item."""
     items = _as_list(input)
@@ -924,9 +1058,15 @@ def aggregate_node(input: Any = None, field: str = "") -> dict:
     return {"items": items}
 
 
-@node(name="Remove Duplicates", id="remove_duplicates", category="Data", icon="dedupe",
-      params={"field": {"placeholder": "id",
-                        "description": "Field to compare (blank = whole item)."}})
+@node(
+    name="Remove Duplicates",
+    id="remove_duplicates",
+    category="Data",
+    icon="dedupe",
+    params={
+        "field": {"placeholder": "id", "description": "Field to compare (blank = whole item)."}
+    },
+)
 def remove_duplicates(input: Any = None, field: str = "") -> list:
     """Drop items that have already been seen."""
     seen: set = set()
@@ -944,9 +1084,15 @@ def remove_duplicates(input: Any = None, field: str = "") -> list:
     return result
 
 
-@node(name="Rename Keys", id="rename_keys", category="Data", icon="tag", params={
-    "mapping": {"description": 'Old-to-new key names, e.g. {"oldName": "newName"}.'},
-})
+@node(
+    name="Rename Keys",
+    id="rename_keys",
+    category="Data",
+    icon="tag",
+    params={
+        "mapping": {"description": 'Old-to-new key names, e.g. {"oldName": "newName"}.'},
+    },
+)
 def rename_keys(input: Any = None, mapping: dict | None = None) -> Any:
     """Rename keys on the input objects."""
     mapping = mapping or {}
@@ -971,7 +1117,7 @@ def _short_repr(value: Any, limit: int = 140) -> str:
         text = repr(value)
     except Exception:  # noqa: BLE001 - debugger preview should never fail a node
         text = f"<{type(value).__name__}>"
-    return text if len(text) <= limit else f"{text[:limit - 1]}..."
+    return text if len(text) <= limit else f"{text[: limit - 1]}..."
 
 
 def _json_preview(value: Any, *, depth: int = 2, max_items: int = 20) -> Any:
@@ -981,10 +1127,7 @@ def _json_preview(value: Any, *, depth: int = 2, max_items: int = 20) -> Any:
         return _short_repr(value)
     if isinstance(value, (list, tuple, set)):
         items = list(value)[:max_items]
-        preview = [
-            _json_preview(item, depth=depth - 1, max_items=max_items)
-            for item in items
-        ]
+        preview = [_json_preview(item, depth=depth - 1, max_items=max_items) for item in items]
         if len(value) > max_items:
             preview.append(f"... {len(value) - max_items} more")
         return preview
@@ -994,9 +1137,7 @@ def _json_preview(value: Any, *, depth: int = 2, max_items: int = 20) -> Any:
             if i >= max_items:
                 preview["..."] = f"{len(value) - max_items} more"
                 break
-            preview[str(key)] = _json_preview(
-                item, depth=depth - 1, max_items=max_items
-            )
+            preview[str(key)] = _json_preview(item, depth=depth - 1, max_items=max_items)
         return preview
     try:
         return str(value)
@@ -1155,45 +1296,34 @@ def discover_code_output_ports(code: str) -> list[str]:
     return (["main"] if has_main else []) + ports
 
 
-# Footgun guard, NOT a security boundary. These blocks raise ImportError to
-# steer users toward Noodle's built-in nodes for process/FFI work and to catch
-# accidental misuse. They do NOT contain a determined caller: `os.system`,
-# `os.popen`, `open`, importable C-extension libs, and getattr-based reach all
-# remain available by design (Code nodes are "arbitrary code on the runner
-# host", see app.services.unsafe_nodes — they are flagged unconditionally unsafe
-# and gated by `unsafe_node_policy`). The real isolation boundaries are:
-#   1. process isolation (PROCESS_ISOLATED_NODE_TYPES → ProcessPoolExecutor /
-#      the per-env runtime subprocess), and
-#   2. the deployment-time `unsafe_node_policy` gate (warn/require_approval/block).
-# Hardening toward an actual sandbox (container/seccomp per run) is tracked in
-# docs/production-readiness-audit.md (SEC-1).
-_CODE_NODE_BLOCKED_IMPORTS: frozenset[str] = frozenset({
-    "subprocess",
-    "pty",
-    "ctypes",
-    "cffi",
-    "multiprocessing",
-})
+# Import the shared blocked-modules set from noodle.expr (where _CodeValidator
+# also uses it for AST-level checking). Defence-in-depth: blocked at parse time
+# AND at runtime __import__ level. Real isolation requires ProcessPoolExecutor.
+from noodle.expr import CODE_NODE_BLOCKED_MODULES as _CODE_NODE_BLOCKED_IMPORTS
 
 
 def _make_sandboxed_import(original_import: Any) -> Any:
-    """Return an __import__ replacement that blocks the footgun modules.
+    """Return an __import__ replacement that blocks dangerous modules at runtime.
 
-    See ``_CODE_NODE_BLOCKED_IMPORTS`` — this is a guard, not a sandbox.
+    Defence-in-depth layer: _CodeValidator already blocks these at AST parse time;
+    this catches dynamic __import__() calls that bypass the AST check.
     """
+
     def _safe_import(name: str, *args: Any, **kwargs: Any) -> Any:
         root = name.split(".")[0]
         if root in _CODE_NODE_BLOCKED_IMPORTS:
             raise ImportError(
-                f"Module '{name}' is not available in the code sandbox. "
-                "Use Noodle's built-in nodes for process execution."
+                f"Module '{name}' is not available in Code nodes. "
+                "Use Noodle's built-in nodes for OS, network, and file operations."
             )
         return original_import(name, *args, **kwargs)
+
     return _safe_import
 
 
 def _build_safe_builtins() -> dict:
     import builtins as _builtins
+
     b = vars(_builtins).copy()
     b["__import__"] = _make_sandboxed_import(_builtins.__import__)
     return b
@@ -1238,21 +1368,27 @@ def _run_code_isolated(input: Any, code: str) -> Any:
     return value
 
 
-@node(name="Code", id="code", category="Transform", icon="code", params={
-    "code": {
-        "multiline": True,
-        "description": (
-            "Python executed against the upstream value (variable `input`).\n\n"
-            "Assign your result to `output` — do NOT use `return`. For "
-            "multiple output ports, also assign `output_<name>` variables:\n\n"
-            "    output = clean_rows\n"
-            "    output_rejected = bad_rows\n"
-            "    output_summary = {\"clean\": len(clean_rows)}\n\n"
-            "Each `output_<name>` becomes a separate handle on the node."
-        ),
-        "placeholder": "output = input",
+@node(
+    name="Code",
+    id="code",
+    category="Transform",
+    icon="code",
+    params={
+        "code": {
+            "multiline": True,
+            "description": (
+                "Python executed against the upstream value (variable `input`).\n\n"
+                "Assign your result to `output` — do NOT use `return`. For "
+                "multiple output ports, also assign `output_<name>` variables:\n\n"
+                "    output = clean_rows\n"
+                "    output_rejected = bad_rows\n"
+                '    output_summary = {"clean": len(clean_rows)}\n\n'
+                "Each `output_<name>` becomes a separate handle on the node."
+            ),
+            "placeholder": "output = input",
+        },
     },
-})
+)
 def code_node(input: Any = None, code: str = "output = input") -> Any:
     """Run arbitrary Python against the input (process-isolated + AST sandboxed).
 
@@ -1280,40 +1416,52 @@ _RETRYABLE_HTTP_STATUS = frozenset({429, 500, 502, 503, 504})
 
 def _http_backoff_seconds(attempt: int) -> float:
     """Exponential backoff: 1s, 2s, 4s, … capped at 30s."""
-    return min(2.0 ** attempt, 30.0)
+    return min(2.0**attempt, 30.0)
 
 
-@node(name="HTTP Request", id="http_request", category="API", icon="globe", params={
-    "url": {"placeholder": "https://api.example.com/data"},
-    "method": {"choices": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
-    "headers": {
-        "description": "Request headers — add fields, or switch to raw JSON.",
-        "key_value": True,
+@node(
+    name="HTTP Request",
+    id="http_request",
+    category="API",
+    icon="globe",
+    params={
+        "url": {"placeholder": "https://api.example.com/data"},
+        "method": {"choices": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
+        "headers": {
+            "description": "Request headers — add fields, or switch to raw JSON.",
+            "key_value": True,
+        },
+        "query": {
+            "description": "Query string parameters — add fields, or switch to raw JSON.",
+            "key_value": True,
+        },
+        "body": {
+            "description": "JSON request body — add fields, or switch to raw JSON.",
+            "key_value": True,
+        },
+        "timeout_seconds": {
+            "group": "Options",
+            "description": "Per-request timeout in seconds.",
+        },
+        "max_retries": {
+            "group": "Options",
+            "description": (
+                "Retries on a transient failure (429/5xx or a connection/timeout "
+                "error) with exponential backoff. 0 = a single attempt."
+            ),
+        },
     },
-    "query": {
-        "description": "Query string parameters — add fields, or switch to raw JSON.",
-        "key_value": True,
-    },
-    "body": {
-        "description": "JSON request body — add fields, or switch to raw JSON.",
-        "key_value": True,
-    },
-    "timeout_seconds": {
-        "group": "Options",
-        "description": "Per-request timeout in seconds.",
-    },
-    "max_retries": {
-        "group": "Options",
-        "description": (
-            "Retries on a transient failure (429/5xx or a connection/timeout "
-            "error) with exponential backoff. 0 = a single attempt."
-        ),
-    },
-})
-def http_request(input: Any = None, url: str = "", method: str = "GET",
-                 headers: dict | None = None, query: dict | None = None,
-                 body: dict | None = None, timeout_seconds: float = 30,
-                 max_retries: int = 0) -> Any:
+)
+def http_request(
+    input: Any = None,
+    url: str = "",
+    method: str = "GET",
+    headers: dict | None = None,
+    query: dict | None = None,
+    body: dict | None = None,
+    timeout_seconds: float = 30,
+    max_retries: int = 0,
+) -> Any:
     """Call an HTTP API and return the JSON body (or text on non-JSON).
 
     Optionally retries transient failures (429/5xx, connection/timeout errors)
@@ -1346,10 +1494,7 @@ def http_request(input: Any = None, url: str = "", method: str = "GET",
                 time.sleep(_http_backoff_seconds(attempt))
                 continue
             raise
-        if (
-            response.status_code in _RETRYABLE_HTTP_STATUS
-            and attempt + 1 < attempts
-        ):
+        if response.status_code in _RETRYABLE_HTTP_STATUS and attempt + 1 < attempts:
             time.sleep(_http_backoff_seconds(attempt))
             continue
         break
@@ -1369,13 +1514,19 @@ def http_request(input: Any = None, url: str = "", method: str = "GET",
     return payload
 
 
-@node(name="GraphQL Request", id="graphql_request", category="API", icon="globe", params={
-    "url": {"placeholder": "https://api.example.com/graphql"},
-    "query": {"multiline": True, "description": "GraphQL query or mutation."},
-    "variables": {"description": "GraphQL variables object.", "key_value": True},
-    "headers": {"description": "Request headers.", "key_value": True},
-    "timeout_seconds": {"group": "Options", "description": "Per-request timeout in seconds."},
-})
+@node(
+    name="GraphQL Request",
+    id="graphql_request",
+    category="API",
+    icon="globe",
+    params={
+        "url": {"placeholder": "https://api.example.com/graphql"},
+        "query": {"multiline": True, "description": "GraphQL query or mutation."},
+        "variables": {"description": "GraphQL variables object.", "key_value": True},
+        "headers": {"description": "Request headers.", "key_value": True},
+        "timeout_seconds": {"group": "Options", "description": "Per-request timeout in seconds."},
+    },
+)
 def graphql_request(
     input: Any = None,
     url: str = "",
@@ -1385,7 +1536,6 @@ def graphql_request(
     timeout_seconds: float = 30,
 ) -> Any:
     """Execute a GraphQL query/mutation over HTTP POST."""
-    import requests
 
     if not url:
         raise ValueError("graphql_request: url is required")
@@ -1461,11 +1611,17 @@ def _b64url_decode(payload: str) -> bytes:
     return base64.urlsafe_b64decode((payload + padding).encode("ascii"))
 
 
-@node(name="JWT", id="jwt", category="API", icon="key", params={
-    "operation": {"choices": ["sign", "verify", "decode"]},
-    "secret": {"description": "HMAC secret for sign/verify. Not required for decode."},
-    "algorithm": {"group": "Options", "choices": ["HS256", "HS384", "HS512"]},
-})
+@node(
+    name="JWT",
+    id="jwt",
+    category="API",
+    icon="key",
+    params={
+        "operation": {"choices": ["sign", "verify", "decode"]},
+        "secret": {"description": "HMAC secret for sign/verify. Not required for decode."},
+        "algorithm": {"group": "Options", "choices": ["HS256", "HS384", "HS512"]},
+    },
+)
 def jwt_node(
     input: Any = None,
     operation: str = "decode",
@@ -1518,12 +1674,19 @@ def jwt_node(
     return {**payload, "header": header}
 
 
-@node(name="Date & Time", id="datetime", category="Transform", icon="calendar", params={
-    "operation": {"choices": ["current timestamp", "format"]},
-    "date_format": {"placeholder": "%Y-%m-%d %H:%M:%S"},
-})
-def datetime_node(input: Any = None, operation: str = "current timestamp",
-                  date_format: str = "%Y-%m-%d %H:%M:%S") -> str:
+@node(
+    name="Date & Time",
+    id="datetime",
+    category="Transform",
+    icon="calendar",
+    params={
+        "operation": {"choices": ["current timestamp", "format"]},
+        "date_format": {"placeholder": "%Y-%m-%d %H:%M:%S"},
+    },
+)
+def datetime_node(
+    input: Any = None, operation: str = "current timestamp", date_format: str = "%Y-%m-%d %H:%M:%S"
+) -> str:
     """Produce or format the current date and time."""
     from datetime import UTC, datetime
 
@@ -1533,9 +1696,15 @@ def datetime_node(input: Any = None, operation: str = "current timestamp",
     return now.isoformat()
 
 
-@node(name="To JSON", id="to_json", category="Transform", icon="braces", params={
-    "indent": {"description": "Indentation width for the JSON output."},
-})
+@node(
+    name="To JSON",
+    id="to_json",
+    category="Transform",
+    icon="braces",
+    params={
+        "indent": {"description": "Indentation width for the JSON output."},
+    },
+)
 def to_json(input: Any = None, indent: int = 2) -> str:
     """Serialize the input to a JSON string."""
     return json.dumps(input, indent=int(indent), default=str)
@@ -1560,9 +1729,15 @@ def no_op(input: Any = None) -> Any:
     return input
 
 
-@node(name="Wait", id="wait", category="Utility", icon="pause", params={
-    "seconds": {"description": "Seconds to pause before continuing (max 30)."},
-})
+@node(
+    name="Wait",
+    id="wait",
+    category="Utility",
+    icon="pause",
+    params={
+        "seconds": {"description": "Seconds to pause before continuing (max 30)."},
+    },
+)
 def wait_node(input: Any = None, seconds: int = 1) -> Any:
     """Pause the workflow, then pass the input through."""
     import time
@@ -1576,21 +1751,33 @@ def wait_node(input: Any = None, seconds: int = 1) -> Any:
 # ==========================================================================
 
 
-@node(name="Join", id="join", category="Data", icon="merge", params={
-    "separator": {"placeholder": ", ", "description": "Inserted between items."},
-})
+@node(
+    name="Join",
+    id="join",
+    category="Data",
+    icon="merge",
+    params={
+        "separator": {"placeholder": ", ", "description": "Inserted between items."},
+    },
+)
 def join_node(input: Any = None, separator: str = ", ") -> str:
     """Join a list of items into a single string."""
     items = input if isinstance(input, list) else ([] if input is None else [input])
     return separator.join(str(item) for item in items)
 
 
-@node(name="Split", id="split", category="Data", icon="switch", params={
-    "separator": {"placeholder": ",", "description": "Substring to split on."},
-    "max_split": {
-        "description": "Maximum number of splits (-1 for unlimited).",
+@node(
+    name="Split",
+    id="split",
+    category="Data",
+    icon="switch",
+    params={
+        "separator": {"placeholder": ",", "description": "Substring to split on."},
+        "max_split": {
+            "description": "Maximum number of splits (-1 for unlimited).",
+        },
     },
-})
+)
 def split_node(input: str = "", separator: str = ",", max_split: int = -1) -> list:
     """Split a string into a list."""
     text = str(input or "")
@@ -1609,13 +1796,18 @@ def length_node(input: Any = None) -> int:
         return len(str(input))
 
 
-@node(name="Regex Extract", id="regex_extract", category="Transform", icon="regex",
-      params={
-          "pattern": {
-              "placeholder": r"(\d+)",
-              "description": "Python regex. Groups become individual matches.",
-          },
-      })
+@node(
+    name="Regex Extract",
+    id="regex_extract",
+    category="Transform",
+    icon="regex",
+    params={
+        "pattern": {
+            "placeholder": r"(\d+)",
+            "description": "Python regex. Groups become individual matches.",
+        },
+    },
+)
 def regex_extract(input: str = "", pattern: str = "") -> list:
     """Return every regex match in the input as a list."""
     import re
@@ -1625,11 +1817,16 @@ def regex_extract(input: str = "", pattern: str = "") -> list:
     return re.findall(pattern, str(input or ""))
 
 
-@node(name="Regex Replace", id="regex_replace", category="Transform", icon="regex",
-      params={
-          "pattern": {"placeholder": r"\s+", "description": "Python regex to replace."},
-          "replacement": {"placeholder": " ", "description": "Replacement text."},
-      })
+@node(
+    name="Regex Replace",
+    id="regex_replace",
+    category="Transform",
+    icon="regex",
+    params={
+        "pattern": {"placeholder": r"\s+", "description": "Python regex to replace."},
+        "replacement": {"placeholder": " ", "description": "Replacement text."},
+    },
+)
 def regex_replace(input: str = "", pattern: str = "", replacement: str = "") -> str:
     """Replace every regex match in the input."""
     import re
@@ -1639,9 +1836,15 @@ def regex_replace(input: str = "", pattern: str = "", replacement: str = "") -> 
     return re.sub(pattern, replacement, str(input or ""))
 
 
-@node(name="Hash", id="hash", category="Transform", icon="hash", params={
-    "algorithm": {"choices": ["md5", "sha1", "sha256", "sha512"]},
-})
+@node(
+    name="Hash",
+    id="hash",
+    category="Transform",
+    icon="hash",
+    params={
+        "algorithm": {"choices": ["md5", "sha1", "sha256", "sha512"]},
+    },
+)
 def hash_node(input: Any = None, algorithm: str = "sha256") -> str:
     """Hash the input with one of the common digests."""
     import hashlib
@@ -1690,9 +1893,7 @@ MAX_MAP_CONCURRENCY = 50
 def _bounded_map_concurrency(node_id: str, concurrency: int | None) -> int:
     worker_count = max(1, int(concurrency or 5))
     if worker_count > MAX_MAP_CONCURRENCY:
-        raise ValueError(
-            f"{node_id}: concurrency must be <= {MAX_MAP_CONCURRENCY}."
-        )
+        raise ValueError(f"{node_id}: concurrency must be <= {MAX_MAP_CONCURRENCY}.")
     return worker_count
 
 
@@ -1708,9 +1909,7 @@ def _bounded_map_concurrency(node_id: str, concurrency: int | None) -> int:
         },
     },
 )
-async def execute_workflow_node(
-    input: Any = None, workflow_id: str = ""
-) -> Any:
+async def execute_workflow_node(input: Any = None, workflow_id: str = "") -> Any:
     """Run another Noodle workflow as a step and return its result."""
     from noodle.context import workflow_caller
 
@@ -1718,9 +1917,7 @@ async def execute_workflow_node(
         raise ValueError("execute_workflow: workflow_id is required")
     caller = workflow_caller.get()
     if caller is None:
-        raise RuntimeError(
-            "execute_workflow: no host caller is configured for this run"
-        )
+        raise RuntimeError("execute_workflow: no host caller is configured for this run")
     return await caller(workflow_id, input)
 
 
@@ -1740,8 +1937,7 @@ async def execute_workflow_node(
         },
         "on_error": {
             "description": (
-                "fail = stop on first item error; "
-                "continue = collect errors on the errors output."
+                "fail = stop on first item error; continue = collect errors on the errors output."
             ),
             "choices": ["fail", "continue"],
         },
@@ -1772,8 +1968,7 @@ async def map_items(
     items: list = input if isinstance(input, list) else ([] if input is None else [input])
     if len(items) > MAX_MAP_ITEMS:
         raise ValueError(
-            f"map_items received {len(items)} items but the hard fan-out cap is "
-            f"{MAX_MAP_ITEMS}."
+            f"map_items received {len(items)} items but the hard fan-out cap is {MAX_MAP_ITEMS}."
         )
 
     # Multi-tenancy C5: every mapped item becomes a child workflow run.
@@ -1803,9 +1998,7 @@ async def map_items(
     if on_error == "fail":
         for r in ordered:
             if not r["ok"]:
-                raise RuntimeError(
-                    f"map_items: item {r['index']} failed: {r['error']}"
-                )
+                raise RuntimeError(f"map_items: item {r['index']} failed: {r['error']}")
 
     successful = [r["result"] for r in ordered if r["ok"]]
     errors = [
@@ -1836,8 +2029,7 @@ async def map_items(
         },
         "on_error": {
             "description": (
-                "fail = stop on first item error; "
-                "continue = collect errors on the errors output."
+                "fail = stop on first item error; continue = collect errors on the errors output."
             ),
             "choices": ["fail", "continue"],
         },
@@ -1873,9 +2065,7 @@ async def map_group_node(
     items: list = input if isinstance(input, list) else ([] if input is None else [input])
     cap = max(1, int(max_items or 10000))
     if cap > MAX_MAP_ITEMS:
-        raise ValueError(
-            f"map_group: max_items must be <= {MAX_MAP_ITEMS}."
-        )
+        raise ValueError(f"map_group: max_items must be <= {MAX_MAP_ITEMS}.")
     if len(items) > cap:
         raise ValueError(
             f"Map Group received {len(items)} items but max_items is {cap}. "
@@ -1993,9 +2183,7 @@ def _convert_value(value: Any, target: str, *, separator: str = ",") -> Any:
             return json.loads(value)
         if isinstance(value, (dict, list)):
             return value
-        raise ValueError(
-            f"can't parse {type(value).__name__} as a JSON object"
-        )
+        raise ValueError(f"can't parse {type(value).__name__} as a JSON object")
     raise ValueError(f"unknown target type {target!r}")
 
 
@@ -2045,15 +2233,21 @@ def to_bool_node(input: Any = None) -> bool:
     return _to_bool(input)
 
 
-@node(name="To List", id="to_list", category="Data Types", icon="ruler", params={
-    "separator": {
-        "placeholder": ",",
-        "description": (
-            "Used only when the input is a string. Split on this; "
-            "an empty separator wraps the value in a single-element list."
-        ),
+@node(
+    name="To List",
+    id="to_list",
+    category="Data Types",
+    icon="ruler",
+    params={
+        "separator": {
+            "placeholder": ",",
+            "description": (
+                "Used only when the input is a string. Split on this; "
+                "an empty separator wraps the value in a single-element list."
+            ),
+        },
     },
-})
+)
 def to_list_node(input: Any = None, separator: str = ",") -> list:
     """Coerce the input to a list.
 
@@ -2077,15 +2271,21 @@ def to_list_node(input: Any = None, separator: str = ",") -> list:
     return [input]
 
 
-@node(name="Convert Type", id="convert_type", category="Data Types", icon="braces", params={
-    "to": {
-        "choices": CONVERSION_TARGETS,
-        "description": (
-            "Target type. 'json' returns a JSON string; "
-            "'object' parses a JSON string into a dict/list."
-        ),
+@node(
+    name="Convert Type",
+    id="convert_type",
+    category="Data Types",
+    icon="braces",
+    params={
+        "to": {
+            "choices": CONVERSION_TARGETS,
+            "description": (
+                "Target type. 'json' returns a JSON string; "
+                "'object' parses a JSON string into a dict/list."
+            ),
+        },
     },
-})
+)
 def convert_type_node(input: Any = None, to: str = "string") -> Any:
     """One node that handles every cast. Useful when the target type is wired in dynamically.
 
@@ -2105,9 +2305,7 @@ def convert_type_node(input: Any = None, to: str = "string") -> Any:
     icon="braces",
     params={
         "conversions": {
-            "description": (
-                "Field-to-type map. Example: price=float, active=boolean, id=int."
-            ),
+            "description": ("Field-to-type map. Example: price=float, active=boolean, id=int."),
             "key_value": True,
             "choices": CONVERSION_TARGETS,
         },
@@ -2163,8 +2361,7 @@ def convert_fields_node(
     if isinstance(input, dict):
         return convert_row(input)
     raise ValueError(
-        f"convert_fields: expected an object or list of objects, got "
-        f"{type(input).__name__}"
+        f"convert_fields: expected an object or list of objects, got {type(input).__name__}"
     )
 
 
