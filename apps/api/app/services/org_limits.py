@@ -112,4 +112,75 @@ async def effective_limits(
     return limits
 
 
-__all__ = ["EffectiveLimits", "effective_limits", "invalidate_limits_cache"]
+async def batch_effective_limits(
+    session: AsyncSession, org_ids: list[str]
+) -> dict[str, EffectiveLimits]:
+    """Batch-fetch effective limits for multiple orgs in a single query (T-07).
+
+    Returns a dict keyed by org_id. Orgs not in ``org_settings`` receive
+    instance defaults. Results are written back to the per-org cache so
+    subsequent ``effective_limits`` calls within the TTL hit memory only.
+    """
+    now = time.monotonic()
+    defaults = await _instance_defaults()
+    result: dict[str, EffectiveLimits] = {}
+    uncached: list[str] = []
+    for org_id in org_ids:
+        cached = _cache.get(org_id)
+        if cached is not None and now < cached[0]:
+            result[org_id] = cached[1]
+        else:
+            uncached.append(org_id)
+    if uncached:
+        from sqlalchemy import select as _select
+        rows = (
+            await session.execute(
+                _select(OrgSettings)
+                .where(OrgSettings.org_id.in_(uncached))
+                .execution_options(skip_org_filter=True)
+            )
+        ).scalars().all()
+        by_org = {row.org_id: row for row in rows}
+        for org_id in uncached:
+            row = by_org.get(org_id)
+            if row is None:
+                limits = defaults
+            else:
+                limits = EffectiveLimits(
+                    max_concurrent_runs=(
+                        row.max_concurrent_runs
+                        if row.max_concurrent_runs is not None
+                        else defaults.max_concurrent_runs
+                    ),
+                    executions_per_day=(
+                        row.executions_per_day
+                        if row.executions_per_day is not None
+                        else defaults.executions_per_day
+                    ),
+                    max_map_width=(
+                        row.max_map_width
+                        if row.max_map_width is not None
+                        else defaults.max_map_width
+                    ),
+                    max_loop_iterations=(
+                        row.max_loop_iterations
+                        if row.max_loop_iterations is not None
+                        else defaults.max_loop_iterations
+                    ),
+                    max_inflight_subworkflows=(
+                        row.max_inflight_subworkflows
+                        if row.max_inflight_subworkflows is not None
+                        else defaults.max_inflight_subworkflows
+                    ),
+                    storage_quota_bytes=(
+                        row.storage_quota_bytes
+                        if row.storage_quota_bytes is not None
+                        else defaults.storage_quota_bytes
+                    ),
+                )
+            _cache[org_id] = (now + _CACHE_TTL_SECONDS, limits)
+            result[org_id] = limits
+    return result
+
+
+__all__ = ["EffectiveLimits", "effective_limits", "batch_effective_limits", "invalidate_limits_cache"]

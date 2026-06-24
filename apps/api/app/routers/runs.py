@@ -230,18 +230,18 @@ async def list_all_runs(
 
 @router.get("/runs/{run_id}", response_model=RunInfo)
 async def get_run(run_id: str, session: AsyncSession = Depends(get_session)):
-    run = await session.get(
-        Run,
-        run_id,
-        options=[selectinload(Run.node_runs), selectinload(Run.events)],
-    )
-    if run is None:
+    # T-09: single joined query replaces two sequential session.get() calls.
+    row = (
+        await session.execute(
+            select(Run, Workflow.name)
+            .outerjoin(Workflow, Run.workflow_id == Workflow.id)
+            .where(Run.id == run_id)
+            .options(selectinload(Run.node_runs))
+        )
+    ).first()
+    if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
-    workflow_name: str | None = None
-    if run.workflow_id:
-        wf = await session.get(Workflow, run.workflow_id)
-        if wf is not None:
-            workflow_name = wf.name
+    run, workflow_name = row
     # RunInfo is from_attributes but workflow_name is not on the ORM model;
     # build the response manually.
     from app.schemas import RunInfo as _RunInfo

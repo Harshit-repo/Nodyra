@@ -12,7 +12,7 @@ from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -238,22 +238,27 @@ async def persist_run_outcome(
                 webhook_response = _extract_webhook_response(graph_dict, node_events)
                 if webhook_response is not None:
                     run.webhook_response = webhook_response
-            for (node_id, _path), event in node_run_records.items():
-                session.add(
-                    NodeRun(
-                        run_id=run_id,
-                        node_id=node_id,
-                        status=event.get("status", "unknown"),
-                        output=_cap_output(event.get("outputs"), output_cap),
-                        error=event.get("error"),
-                        logs=_cap_logs(event.get("logs"), output_cap),
-                        debug=event.get("debug"),
-                        started_at=event.get("started_at"),
-                        finished_at=event.get("finished_at"),
-                        duration_ms=event.get("duration_ms"),
-                        iteration_path=event.get("iteration_path"),
-                    )
-                )
+            # T-08: bulk insert all NodeRun records in one statement rather than
+            # one session.add() per record. A 1000-iteration loop produced 1000+
+            # individual INSERTs; this is now a single multi-row INSERT.
+            node_run_rows = [
+                {
+                    "run_id": run_id,
+                    "node_id": node_id,
+                    "status": event.get("status", "unknown"),
+                    "output": _cap_output(event.get("outputs"), output_cap),
+                    "error": event.get("error"),
+                    "logs": _cap_logs(event.get("logs"), output_cap),
+                    "debug": event.get("debug"),
+                    "started_at": event.get("started_at"),
+                    "finished_at": event.get("finished_at"),
+                    "duration_ms": event.get("duration_ms"),
+                    "iteration_path": event.get("iteration_path"),
+                }
+                for (node_id, _path), event in node_run_records.items()
+            ]
+            if node_run_rows:
+                await session.execute(insert(NodeRun), node_run_rows)
             for item in run_events:
                 event = item["event"]
                 event_ts = item["ts"]
@@ -316,6 +321,10 @@ async def persist_run_outcome(
                     await metering.record_run_completion(session, run_id)
                 except Exception:  # noqa: BLE001 - metering never fails a run
                     logger.exception("run_id=%s metering failed", run_id)
+            if run is not None and status != "waiting" and run.batch_id:
+                from app.services.run_batches import reconcile_batch  # noqa: PLC0415
+
+                await reconcile_batch(session, run.batch_id)
             await session.commit()
 
     except Exception:  # noqa: BLE001

@@ -70,6 +70,7 @@ async def notify_queue_workers() -> None:
     _get_wakeup().set()
     try:
         from app.redis_client import redis_client  # noqa: PLC0415
+
         await redis_client.publish(_QUEUE_NOTIFY_CHANNEL, "1")
     except Exception:  # Redis unavailable — polling fallback is still correct
         logger.debug("notify_queue_workers: Redis publish failed — falling back to poll")
@@ -84,6 +85,7 @@ async def _redis_queue_subscriber() -> None:
     """
     try:
         from app.redis_client import redis_client  # noqa: PLC0415
+
         pubsub = redis_client.pubsub()
         try:
             await pubsub.subscribe(_QUEUE_NOTIFY_CHANNEL)
@@ -116,6 +118,7 @@ def _retry_backoff_max() -> int:
 
 def _default_max_attempts() -> int:
     return settings.queue_default_max_attempts
+
 
 # Orchestration states that are still "live" (occupy the run's single queue slot).
 ACTIVE_STATUSES = ("queued", "leased", "running", "waiting")
@@ -205,9 +208,7 @@ async def enqueue(
     return entry
 
 
-async def _org_fair_order(
-    session: AsyncSession, moment: datetime
-) -> list[str]:
+async def _org_fair_order(session: AsyncSession, moment: datetime) -> list[str]:
     """Orgs with eligible queued work, fairest-first (Phase C2).
 
     Two cheap grouped queries instead of correlated subqueries in the lease
@@ -221,7 +222,7 @@ async def _org_fair_order(
       their queued entries get ``queue_reason="org_quota_exceeded"`` for the
       backpressure UI.
     """
-    from app.services.org_limits import effective_limits
+    from app.services.org_limits import batch_effective_limits
 
     eligible = (
         await session.execute(
@@ -249,10 +250,14 @@ async def _org_fair_order(
             )
         ).all()
     )
+    # T-07: batch-fetch all org limits in a single query instead of N sequential
+    # queries inside the loop (was `await effective_limits(session, org_id)` per
+    # org — up to N DB round-trips for N queued orgs on a cold cache).
+    org_limits = await batch_effective_limits(session, [oid for oid, _ in eligible])
     allowed: list[tuple[int, datetime, str]] = []
     capped: list[str] = []
     for org_id, oldest in eligible:
-        limits = await effective_limits(session, org_id)
+        limits = org_limits[org_id]
         cap = limits.max_concurrent_runs
         if cap and inflight.get(org_id, 0) >= cap:
             capped.append(org_id)
@@ -337,9 +342,7 @@ async def lease(
         # Try the fairest few orgs in order; a miss means a peer worker
         # drained that org between the pre-pass and the lock attempt.
         for org_id in (await _org_fair_order(session, moment))[:5]:
-            entry = await session.scalar(
-                _base_stmt().where(RunQueueEntry.org_id == org_id)
-            )
+            entry = await session.scalar(_base_stmt().where(RunQueueEntry.org_id == org_id))
             if entry is not None:
                 break
     else:
@@ -547,9 +550,7 @@ async def cancel(session: AsyncSession, *, run_id: str) -> bool:
     return True
 
 
-async def requeue_expired_leases(
-    session: AsyncSession, *, now: datetime | None = None
-) -> int:
+async def requeue_expired_leases(session: AsyncSession, *, now: datetime | None = None) -> int:
     """Find leased entries whose lease has expired (worker presumed lost) and
     requeue them if attempts remain, otherwise fail them. Returns the number of
     entries acted on."""
@@ -649,11 +650,7 @@ async def stats(session: AsyncSession, *, now: datetime | None = None) -> dict:
                     RunQueueEntry.status,
                     func.count(),
                 )
-                .where(
-                    RunQueueEntry.status.in_(
-                        ("queued", "leased", "running", "waiting")
-                    )
-                )
+                .where(RunQueueEntry.status.in_(("queued", "leased", "running", "waiting")))
                 .group_by(RunQueueEntry.org_id, RunQueueEntry.status)
                 .execution_options(skip_org_filter=True)
             )
@@ -697,7 +694,7 @@ def _worker_id() -> str:
 
 
 async def _cancel_reconcile(
-    session: AsyncSession, active_runs: dict[str, "asyncio.Task[None]"]
+    session: AsyncSession, active_runs: dict[str, asyncio.Task[None]]
 ) -> list[str]:
     """Cancel local tasks whose queue entry was cancelled by another process.
 
@@ -773,7 +770,7 @@ async def run_queue_dispatch_loop() -> None:
                     _get_wakeup().wait(),
                     timeout=settings.queue_dispatch_poll_seconds,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             _get_wakeup().clear()
             try:
@@ -812,9 +809,7 @@ async def run_queue_dispatch_loop() -> None:
                 local_budget = runtime_pool.available_global_slots()
                 for _ in range(settings.queue_max_dispatches_per_tick):
                     async with SessionLocal() as session:
-                        entry = await lease(
-                            session, worker_id=worker, providers=providers
-                        )
+                        entry = await lease(session, worker_id=worker, providers=providers)
                         if entry is None:
                             await session.rollback()
                             break
@@ -842,6 +837,4 @@ async def run_queue_dispatch_loop() -> None:
             await subscriber_task
         # Best-effort drain on shutdown so in-flight runs persist their state.
         if in_flight:
-            await asyncio.wait(
-                in_flight, timeout=settings.queue_dispatch_shutdown_timeout_seconds
-            )
+            await asyncio.wait(in_flight, timeout=settings.queue_dispatch_shutdown_timeout_seconds)
