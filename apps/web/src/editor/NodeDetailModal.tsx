@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { categoryColor } from "../categories";
 import { isBrandIconName, NodeIcon } from "../NodeIcon";
 import { useModalA11y } from "../useModalA11y";
 import { NDVPanels } from "./NDVPanels";
+import { hasTriggerUpstream } from "./NodeCard";
 import { isTriggerManifest, useEditor } from "./store";
 
 export function NodeDetailModal({ nodeId }: { nodeId: string }) {
@@ -14,39 +16,28 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState("");
   const [nameSaved, setNameSaved] = useState(false);
+  const [ndvHeight, setNdvHeight] = useState(65);
+  const [resizing, setResizing] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const nameSavedTimerRef = useRef<number | null>(null);
+  const dragStartY = useRef(0);
+  const dragStartH = useRef(0);
   const toggleDisabled = useEditor((s) => s.toggleDisabled);
   const deleteNode = useEditor((s) => s.deleteNode);
   const runStatus = useEditor((s) => s.runStatus[nodeId]);
   const isTrigger = isTriggerManifest(node?.data.manifest);
-  // Only allow running a node individually when it is wired to a trigger.
-  const hasTriggerUpstream = useEditor((s) => {
-    if (!node || isTrigger) return true;
-    const bySource = new Map<string, string[]>();
-    for (const e of s.edges) {
-      const arr = bySource.get(e.target);
-      if (arr) arr.push(e.source);
-      else bySource.set(e.target, [e.source]);
-    }
-    const triggerById = new Map(
-      s.nodes.map((n) => [n.id, isTriggerManifest(n.data.manifest)]),
-    );
-    const visited = new Set<string>([node.id]);
-    const queue = [node.id];
-    while (queue.length) {
-      const cur = queue.pop() as string;
-      for (const prev of bySource.get(cur) ?? []) {
-        if (visited.has(prev)) continue;
-        visited.add(prev);
-        if (triggerById.get(prev)) return true;
-        queue.push(prev);
-      }
-    }
-    return false;
-  });
-  const canRunStep = isTrigger || hasTriggerUpstream;
+  const [graphNodes, graphEdges] = useEditor(
+    useShallow((s) => [s.nodes, s.edges] as const),
+  );
+  const canRunStep = useMemo(
+    () =>
+      Boolean(
+        node &&
+          (isTrigger || hasTriggerUpstream(graphNodes, graphEdges, node.id)),
+      ),
+    [graphEdges, graphNodes, isTrigger, node],
+  );
   useModalA11y(modalRef, closeNdv, { trapFocus: false });
 
   useEffect(
@@ -76,6 +67,28 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
     }, 1400);
   }
 
+  function startResize(e: React.MouseEvent): void {
+    e.preventDefault();
+    dragStartY.current = e.clientY;
+    dragStartH.current = ndvHeight;
+    setResizing(true);
+    function onMove(mv: MouseEvent): void {
+      const deltaVh = ((mv.clientY - dragStartY.current) / window.innerHeight) * 100;
+      setNdvHeight(Math.min(92, Math.max(35, dragStartH.current + deltaVh)));
+    }
+    function onUp(): void {
+      setResizing(false);
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
+  function resetHeight(): void {
+    setNdvHeight(65);
+  }
+
   function saveName(): void {
     const trimmed = nameVal.trim();
     const nextLabel = trimmed || undefined;
@@ -89,7 +102,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
   return (
     <div className="modal-overlay ndv-overlay" onClick={closeNdv}>
       <div
-        className={`ndv-modal${
+        className={`ndv-modal${resizing ? " ndv-resizing" : ""}${
           runStatus === "success"
             ? " ndv-edge-ok"
             : runStatus === "error"
@@ -104,6 +117,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
         aria-labelledby="ndv-title"
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
+        style={{ height: `${ndvHeight}vh` }}
       >
         <header className="ndv-head">
           <div className="ndv-title">
@@ -205,6 +219,18 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
         </header>
         <div className="ndv-body">
           <NDVPanels nodeId={nodeId} />
+        </div>
+        <div
+          className="ndv-drag-handle"
+          onMouseDown={startResize}
+          onDoubleClick={resetHeight}
+          role="separator"
+          aria-label="Drag to resize panel, double-click to reset"
+        >
+          <span className="ndv-drag-dots" aria-hidden="true">
+            <span /><span /><span /><span /><span />
+          </span>
+          <span className="ndv-drag-tip" aria-hidden="true">double-click to reset</span>
         </div>
       </div>
     </div>

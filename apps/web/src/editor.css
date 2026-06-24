@@ -8706,3 +8706,88 @@ select.field-input:hover {
   border-color: var(--accent);
   color: var(--ink);
 }
+
+/* ========================================================================= */
+/*   NDV drag-to-resize handle                                                */
+/* ========================================================================= */
+.ndv-drag-handle {
+  height: 14px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ns-resize;
+  position: relative;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--accent) 18%, transparent),
+    transparent
+  );
+  border-top: 1px solid color-mix(in srgb, var(--accent) 15%, var(--line-2));
+  border-radius: 0 0 14px 14px;
+  transition: background 180ms, border-color 180ms;
+  user-select: none;
+}
+.ndv-drag-handle:hover {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--accent) 32%, transparent),
+    transparent
+  );
+  border-top-color: color-mix(in srgb, var(--accent) 38%, var(--line-2));
+}
+.ndv-drag-dots {
+  display: flex;
+  gap: 3px;
+}
+.ndv-drag-dots span {
+  display: block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+  transition: background 180ms;
+}
+.ndv-drag-handle:hover .ndv-drag-dots span {
+  background: color-mix(in srgb, var(--accent-2) 70%, transparent);
+}
+.ndv-drag-tip {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  background: var(--surface-2);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: 7px;
+  padding: 4px 10px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--accent-2);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 160ms, transform 160ms;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  z-index: 100;
+}
+.ndv-drag-tip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+.ndv-drag-handle:hover .ndv-drag-tip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.ndv-resizing .ndv-drag-tip {
+  opacity: 0 !important;
+}
+.ndv-modal:not(.ndv-resizing) {
+  transition: height 220ms cubic-bezier(0.25, 0.8, 0.25, 1);
+}
