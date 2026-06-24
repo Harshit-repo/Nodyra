@@ -48,7 +48,10 @@ export type { DrillSliceState } from "./drillSlice";
 export type { GraphSlice } from "./graphSlice";
 export type { RunSlice } from "./runSlice";
 
-export interface NoodleNodeData {
+// F-10: type alias (not interface) satisfies xyflow's `extends Record<string,unknown>`
+// constraint without a blanket index signature that disables TypeScript excess-property checks.
+// Add explicit optional fields here instead of relying on [key: string]: unknown.
+export type NoodleNodeData = {
   manifest: NodeManifest;
   params: Record<string, unknown>;
   disabled: boolean;
@@ -66,10 +69,9 @@ export interface NoodleNodeData {
   label?: string;
   /** Set on placeholder nodes when the node type is not installed. */
   unavailableType?: string;
-  // Index signature required by @xyflow/react Node<T extends Record<string,unknown>>.
-  // Prefer adding explicit optional fields (like unavailableType above) over relying on it.
-  [key: string]: unknown;
-}
+  /** Escape hatch for ad-hoc extra fields that haven't been promoted to explicit properties yet. */
+  extraData?: Record<string, unknown>;
+};
 
 export interface NodeSettingsPatch {
   onError?: string;
