@@ -67,6 +67,69 @@ async def test_update_name_and_active_without_new_version(client: AsyncClient) -
     assert updated["version"] == 1
 
 
+async def test_update_nullable_runtime_bindings_can_be_cleared(
+    client: AsyncClient,
+) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "Configured"})).json()[
+        "id"
+    ]
+    error_workflow_id = (
+        await client.post("/workflows", json={"name": "Error handler"})
+    ).json()["id"]
+    environment_id = (
+        await client.post(
+            "/environments",
+            json={"name": "Workflow env", "python_version": "3.12"},
+        )
+    ).json()["id"]
+    runner_pool_id = (
+        await client.post("/runner-pools", json={"name": "Workflow pool"})
+    ).json()["id"]
+
+    configured = (
+        await client.put(
+            f"/workflows/{workflow_id}",
+            json={
+                "environment_id": environment_id,
+                "default_runner_pool_id": runner_pool_id,
+                "error_workflow_id": error_workflow_id,
+                "run_timeout_seconds": 12,
+                "mcp_tool_name": "configured_tool",
+                "mcp_description": "configured",
+                "mcp_parameters_schema": {"type": "object"},
+            },
+        )
+    ).json()
+    assert configured["environment_id"] == environment_id
+    assert configured["default_runner_pool_id"] == runner_pool_id
+    assert configured["error_workflow_id"] == error_workflow_id
+
+    cleared = (
+        await client.put(
+            f"/workflows/{workflow_id}",
+            json={
+                "environment_id": None,
+                "default_runner_pool_id": None,
+                "error_workflow_id": None,
+                "run_timeout_seconds": None,
+                "mcp_tool_name": None,
+                "mcp_description": None,
+                "mcp_parameters_schema": None,
+            },
+        )
+    ).json()
+    for field in (
+        "environment_id",
+        "default_runner_pool_id",
+        "error_workflow_id",
+        "run_timeout_seconds",
+        "mcp_tool_name",
+        "mcp_description",
+        "mcp_parameters_schema",
+    ):
+        assert cleared[field] is None
+
+
 async def test_workflow_summary_includes_latest_run(client: AsyncClient) -> None:
     workflow_id = (await client.post("/workflows", json={"name": "Run Flow"})).json()[
         "id"
@@ -155,3 +218,56 @@ async def test_saving_a_graph_with_a_metanode_is_accepted(client: AsyncClient) -
     resp = await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
     assert resp.status_code == 200, resp.text
     assert resp.json()["graph"]["nodes"][0]["type"] == "meta_node"
+
+
+# ---------------------------------------------------------------------------
+# T-10: workflow import/export round-trip
+# ---------------------------------------------------------------------------
+
+
+async def test_import_workflow_round_trip_t10(client: AsyncClient) -> None:
+    """T-10: POST /import accepts a .module.py export and creates a workflow with the graph."""
+    import noodle_nodes  # noqa: F401 - register built-ins
+    from noodle.models import WorkflowGraph
+    from noodle.sdk import registry
+    from noodle_exporter import workflow_to_module
+
+    graph_dict = {
+        "nodes": [
+            {"id": "t", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
+            {
+                "id": "c",
+                "type": "code",
+                "params": {"code": "output = input['x'] + 1"},
+                "position": {"x": 300, "y": 0},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e1",
+                "source": "t",
+                "source_output": "main",
+                "target": "c",
+                "target_input": "input",
+            }
+        ],
+    }
+    source = workflow_to_module(
+        WorkflowGraph.model_validate(graph_dict), "Import Test", registry=registry
+    )
+
+    resp = await client.post("/import", json={"name": "Imported Flow", "source": source})
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["name"] == "Imported Flow"
+
+    wf = (await client.get(f"/workflows/{body['workflow_id']}")).json()
+    node_types = {n["type"] for n in wf["graph"]["nodes"]}
+    assert "manual_trigger" in node_types
+    assert "code" in node_types
+
+
+async def test_import_workflow_rejects_invalid_source_t10(client: AsyncClient) -> None:
+    """POST /import returns 422 when the source is not a valid module export."""
+    resp = await client.post("/import", json={"name": "Bad", "source": "x = 1\n"})
+    assert resp.status_code == 422

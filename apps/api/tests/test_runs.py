@@ -44,9 +44,7 @@ async def _workflow_with_graph(client: AsyncClient) -> str:
 async def test_run_executes_the_graph(client: AsyncClient) -> None:
     workflow_id = await _workflow_with_graph(client)
 
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
 
     run = (await client.get(f"/runs/{run_id}")).json()
     assert run["status"] == "success"
@@ -58,22 +56,48 @@ async def test_run_executes_the_graph(client: AsyncClient) -> None:
 
 LOOP_GRAPH = {
     "nodes": [
-        {"id": "t", "type": "manual_trigger", "params": {"data": [1, 2, 3]},
-         "position": {"x": 0, "y": 0}},
-        {"id": "s", "type": "loop_start", "params": {},
-         "position": {"x": 1, "y": 0}},
-        {"id": "b", "type": "code", "params": {"code": "output = input * 2"},
-         "position": {"x": 2, "y": 0}},
-        {"id": "e", "type": "loop_end", "params": {"loop_start_id": "s"},
-         "position": {"x": 3, "y": 0}},
+        {
+            "id": "t",
+            "type": "manual_trigger",
+            "params": {"data": [1, 2, 3]},
+            "position": {"x": 0, "y": 0},
+        },
+        {"id": "s", "type": "loop_start", "params": {}, "position": {"x": 1, "y": 0}},
+        {
+            "id": "b",
+            "type": "code",
+            "params": {"code": "output = input * 2"},
+            "position": {"x": 2, "y": 0},
+        },
+        {
+            "id": "e",
+            "type": "loop_end",
+            "params": {"loop_start_id": "s"},
+            "position": {"x": 3, "y": 0},
+        },
     ],
     "edges": [
-        {"id": "t->s", "source": "t", "source_output": "main",
-         "target": "s", "target_input": "input"},
-        {"id": "s->b", "source": "s", "source_output": "item",
-         "target": "b", "target_input": "input"},
-        {"id": "b->e", "source": "b", "source_output": "main",
-         "target": "e", "target_input": "input"},
+        {
+            "id": "t->s",
+            "source": "t",
+            "source_output": "main",
+            "target": "s",
+            "target_input": "input",
+        },
+        {
+            "id": "s->b",
+            "source": "s",
+            "source_output": "item",
+            "target": "b",
+            "target_input": "input",
+        },
+        {
+            "id": "b->e",
+            "source": "b",
+            "source_output": "main",
+            "target": "e",
+            "target_input": "input",
+        },
     ],
 }
 
@@ -82,9 +106,7 @@ async def test_loop_persists_one_node_run_per_iteration(client: AsyncClient) -> 
     workflow_id = (await client.post("/workflows", json={"name": "Loop"})).json()["id"]
     await client.put(f"/workflows/{workflow_id}", json={"graph": LOOP_GRAPH})
 
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
     run = (await client.get(f"/runs/{run_id}")).json()
     assert run["status"] == "success"
 
@@ -131,9 +153,7 @@ async def test_run_records_node_errors(client: AsyncClient) -> None:
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": bad_graph})
 
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
     run = (await client.get(f"/runs/{run_id}")).json()
     assert run["status"] == "error"
     boom = next(nr for nr in run["node_runs"] if nr["node_id"] == "boom")
@@ -144,9 +164,7 @@ async def test_run_records_node_errors(client: AsyncClient) -> None:
 async def test_typed_outputs_persist_and_stream_as_envelopes(
     client: AsyncClient,
 ) -> None:
-    workflow_id = (await client.post("/workflows", json={"name": "Typed"})).json()[
-        "id"
-    ]
+    workflow_id = (await client.post("/workflows", json={"name": "Typed"})).json()["id"]
     graph = {
         "nodes": [
             {
@@ -188,9 +206,7 @@ async def test_typed_outputs_persist_and_stream_as_envelopes(
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
 
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
     run = (await client.get(f"/runs/{run_id}")).json()
     typed_run = next(nr for nr in run["node_runs"] if nr["node_id"] == "typed")
     output = typed_run["output"]["main"]
@@ -217,9 +233,7 @@ async def test_typed_outputs_persist_and_stream_as_envelopes(
 async def test_run_accepts_editor_cache_for_webhook_payload(
     client: AsyncClient,
 ) -> None:
-    workflow_id = (await client.post("/workflows", json={"name": "Webhook"})).json()[
-        "id"
-    ]
+    workflow_id = (await client.post("/workflows", json={"name": "Webhook"})).json()["id"]
     graph = {
         "nodes": [
             {
@@ -371,9 +385,7 @@ async def test_retry_runs_only_the_failed_node_and_downstream(
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
 
-    original = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    original = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
     first = (await client.get(f"/runs/{original}")).json()
     statuses = {n["node_id"]: n["status"] for n in first["node_runs"]}
     assert statuses["ok"] == "success"
@@ -382,8 +394,7 @@ async def test_retry_runs_only_the_failed_node_and_downstream(
     # Fix the boom node so retry has a chance to succeed.
     fixed = {**graph}
     fixed["nodes"] = [
-        n if n["id"] != "boom"
-        else {**n, "params": {"code": "output = input * 10"}}
+        n if n["id"] != "boom" else {**n, "params": {"code": "output = input * 10"}}
         for n in graph["nodes"]
     ]
     await client.put(f"/workflows/{workflow_id}", json={"graph": fixed})
@@ -403,9 +414,7 @@ async def test_retry_runs_only_the_failed_node_and_downstream(
 async def test_retry_deserializes_typed_cached_outputs(
     client: AsyncClient,
 ) -> None:
-    workflow_id = (await client.post("/workflows", json={"name": "Typed Retry"})).json()[
-        "id"
-    ]
+    workflow_id = (await client.post("/workflows", json={"name": "Typed Retry"})).json()["id"]
     graph = {
         "nodes": [
             {
@@ -418,10 +427,7 @@ async def test_retry_deserializes_typed_cached_outputs(
                 "id": "producer",
                 "type": "code",
                 "params": {
-                    "code": (
-                        "from decimal import Decimal\n"
-                        "output = {'amount': Decimal('3.50')}"
-                    )
+                    "code": ("from decimal import Decimal\noutput = {'amount': Decimal('3.50')}")
                 },
                 "position": {"x": 200, "y": 0},
             },
@@ -459,9 +465,7 @@ async def test_retry_deserializes_typed_cached_outputs(
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
 
-    original = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    original = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
     first = (await client.get(f"/runs/{original}")).json()
     results = {n["node_id"]: n for n in first["node_runs"]}
     assert results["producer"]["output"]["main"]["amount"]["type"] == "decimal"
@@ -484,9 +488,7 @@ async def test_retry_deserializes_typed_cached_outputs(
 
 async def test_retry_rejects_runs_with_no_failures(client: AsyncClient) -> None:
     workflow_id = await _workflow_with_graph(client)
-    original = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    original = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
     assert (await client.get(f"/runs/{original}")).json()["status"] == "success"
     resp = await client.post(f"/runs/{original}/retry")
     assert resp.status_code == 400
@@ -517,9 +519,9 @@ async def test_all_runs_endpoint_lists_across_workflows(client: AsyncClient) -> 
 async def test_targeted_run_executes_a_subset(client: AsyncClient) -> None:
     workflow_id = await _workflow_with_graph(client)
 
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={"targets": ["t"]})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={"targets": ["t"]})).json()[
+        "run_id"
+    ]
     run = (await client.get(f"/runs/{run_id}")).json()
 
     node_ids = {n["node_id"] for n in run["node_runs"]}
@@ -530,9 +532,7 @@ async def test_running_run_can_be_cancelled(client: AsyncClient) -> None:
     previous = settings.run_synchronously
     settings.run_synchronously = False
     try:
-        workflow_id = (await client.post("/workflows", json={"name": "Slow"})).json()[
-            "id"
-        ]
+        workflow_id = (await client.post("/workflows", json={"name": "Slow"})).json()["id"]
         slow_graph = {
             "nodes": [
                 {
@@ -560,9 +560,7 @@ async def test_running_run_can_be_cancelled(client: AsyncClient) -> None:
         }
         await client.put(f"/workflows/{workflow_id}", json={"graph": slow_graph})
 
-        run_id = (
-            await client.post(f"/workflows/{workflow_id}/run", json={})
-        ).json()["run_id"]
+        run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
         cancel = await client.post(f"/runs/{run_id}/cancel")
         assert cancel.status_code == 200
         assert cancel.json()["status"] in {"cancelling", "cancelled"}
@@ -580,9 +578,7 @@ async def test_running_run_can_be_cancelled(client: AsyncClient) -> None:
 
 async def test_run_timeline_returns_ordered_events(client: AsyncClient) -> None:
     workflow_id = await _workflow_with_graph(client)
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
 
     resp = await client.get(f"/runs/{run_id}/timeline")
     assert resp.status_code == 200
@@ -608,9 +604,7 @@ async def test_run_timeline_returns_ordered_events(client: AsyncClient) -> None:
         if e["type"] == "node_finished"
     }
     started = {
-        e["data"]["node_id"]: i
-        for i, e in enumerate(body["events"])
-        if e["type"] == "node_started"
+        e["data"]["node_id"]: i for i, e in enumerate(body["events"]) if e["type"] == "node_started"
     }
     for node_id, idx in finished.items():
         assert started[node_id] < idx
@@ -633,9 +627,7 @@ async def test_run_timeline_includes_persisted_agent_events(
                 "agent_node_id": "agent",
                 "step": 0,
                 "max_steps": 3,
-                "tool_calls": [
-                    {"id": "call_1", "name": "lookup", "arguments": {"q": "Ada"}}
-                ],
+                "tool_calls": [{"id": "call_1", "name": "lookup", "arguments": {"q": "Ada"}}],
             }
         )
         await on_event(
@@ -702,9 +694,7 @@ async def test_run_timeline_includes_persisted_agent_events(
 
     monkeypatch.setattr(runner_module, "execute", fake_execute)
 
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
     body = (await client.get(f"/runs/{run_id}/timeline")).json()
     types = [event["type"] for event in body["events"]]
 
@@ -752,9 +742,7 @@ async def test_run_timeline_includes_persisted_guardrail_events(
 
     monkeypatch.setattr(runner_module, "execute", fake_execute)
 
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
     body = (await client.get(f"/runs/{run_id}/timeline")).json()
     event = next(e for e in body["events"] if e["type"] == "guardrail_redacted")
     assert event["data"]["node_id"] == "agent"
@@ -802,9 +790,7 @@ async def test_run_approvals_are_recorded_and_decidable(
 
     monkeypatch.setattr(runner_module, "execute", fake_execute)
 
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
     approvals = (await client.get(f"/runs/{run_id}/approvals")).json()
 
     by_tool = {approval["tool_name"]: approval for approval in approvals}
@@ -830,13 +816,9 @@ async def test_run_approvals_are_recorded_and_decidable(
     assert conflict.status_code == 409
 
     timeline = (await client.get(f"/runs/{run_id}/timeline")).json()
-    assert "agent_tool_auto_approved" in [
-        event["type"] for event in timeline["events"]
-    ]
+    assert "agent_tool_auto_approved" in [event["type"] for event in timeline["events"]]
     decided = [
-        event
-        for event in timeline["events"]
-        if event["type"] == "agent_tool_approval_decided"
+        event for event in timeline["events"] if event["type"] == "agent_tool_approval_decided"
     ]
     assert decided[0]["data"]["approval_id"] == pending_id
     assert decided[0]["data"]["status"] == "approved"
@@ -929,9 +911,7 @@ async def test_approval_decision_requeues_waiting_run(
 
     monkeypatch.setattr(runner_module, "execute", fake_execute)
 
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
     waiting_run = (await client.get(f"/runs/{run_id}")).json()
     assert waiting_run["status"] == "waiting"
 
@@ -952,9 +932,7 @@ async def test_approval_decision_requeues_waiting_run(
     assert resumed_request.allow_side_effects is True
 
     timeline = (await client.get(f"/runs/{run_id}/timeline")).json()
-    prepared = [
-        event for event in timeline["events"] if event["type"] == "agent_resume_prepared"
-    ]
+    prepared = [event for event in timeline["events"] if event["type"] == "agent_resume_prepared"]
     assert prepared
     assert prepared[0]["data"]["approve_all"] is True
     assert prepared[0]["data"]["cached_node_ids"] == []
@@ -1042,9 +1020,7 @@ async def test_approval_reject_resumes_waiting_run(
 
     monkeypatch.setattr(runner_module, "execute", fake_execute)
 
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
     waiting_run = (await client.get(f"/runs/{run_id}")).json()
     assert waiting_run["status"] == "waiting"
 
@@ -1133,9 +1109,7 @@ async def test_waiting_run_emits_non_terminal_run_waiting(
 
     monkeypatch.setattr(runner_module, "execute", fake_execute)
 
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
     assert (await client.get(f"/runs/{run_id}")).json()["status"] == "waiting"
 
     # Drain the buffered broker events without blocking. A waiting run never
@@ -1148,7 +1122,7 @@ async def test_waiting_run_emits_non_terminal_run_waiting(
         while True:
             try:
                 event = await asyncio.wait_for(gen.__anext__(), timeout=0.5)
-            except (asyncio.TimeoutError, StopAsyncIteration):
+            except (TimeoutError, StopAsyncIteration):
                 break
             streamed.append(event)
             if event.get("type") == "run_finished":
@@ -1163,9 +1137,7 @@ async def test_waiting_run_emits_non_terminal_run_waiting(
 
 async def test_run_timeline_includes_queue_enqueue_event(client: AsyncClient) -> None:
     workflow_id = await _workflow_with_graph(client)
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
 
     body = (await client.get(f"/runs/{run_id}/timeline")).json()
     enqueued = next(e for e in body["events"] if e["type"] == "enqueued")
@@ -1186,15 +1158,11 @@ async def test_replay_run_requeues_dead_lettered_entry(client: AsyncClient) -> N
     from app.models import Run, RunQueueEntry
 
     workflow_id = await _workflow_with_graph(client)
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
 
     override = fastapi_app.dependency_overrides[get_session]
     async for session in override():
-        entry = await session.scalar(
-            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
-        )
+        entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == run_id))
         entry.status = "dead_lettered"
         entry.attempts = entry.max_attempts
         entry.last_error = "exhausted"
@@ -1211,9 +1179,7 @@ async def test_replay_run_requeues_dead_lettered_entry(client: AsyncClient) -> N
     assert body["status"] == "queued"
 
     async for session in override():
-        entry = await session.scalar(
-            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
-        )
+        entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == run_id))
         assert entry.status == "queued"
         assert entry.attempts == 0
         assert entry.last_error is None
@@ -1229,15 +1195,11 @@ async def test_replay_rejects_active_run(client: AsyncClient) -> None:
     from app.models import RunQueueEntry
 
     workflow_id = await _workflow_with_graph(client)
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
 
     override = fastapi_app.dependency_overrides[get_session]
     async for session in override():
-        entry = await session.scalar(
-            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
-        )
+        entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == run_id))
         entry.status = "running"
         await session.commit()
         break
@@ -1265,16 +1227,12 @@ async def test_replay_from_node_seeds_cache_with_upstream_outputs(
     from app.models import Run, RunQueueEntry
 
     workflow_id = await _workflow_with_graph(client)
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
 
     override = fastapi_app.dependency_overrides[get_session]
     async for session in override():
         # Force terminal state and pretend ``c`` failed.
-        entry = await session.scalar(
-            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
-        )
+        entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == run_id))
         entry.status = "failed"
         entry.attempts = entry.max_attempts
         run = await session.get(Run, run_id)
@@ -1282,15 +1240,11 @@ async def test_replay_from_node_seeds_cache_with_upstream_outputs(
         await session.commit()
         break
 
-    resp = await client.post(
-        f"/runs/{run_id}/replay", json={"from_node_id": "c"}
-    )
+    resp = await client.post(f"/runs/{run_id}/replay", json={"from_node_id": "c"})
     assert resp.status_code == 200, resp.text
 
     async for session in override():
-        entry = await session.scalar(
-            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
-        )
+        entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == run_id))
         assert entry.status == "queued"
         assert entry.replay_seed is not None
         # Upstream trigger ``t`` is cached; failed node ``c`` is in targets.
@@ -1308,24 +1262,18 @@ async def test_replay_from_unknown_node_returns_400(client: AsyncClient) -> None
     from app.models import Run, RunQueueEntry
 
     workflow_id = await _workflow_with_graph(client)
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
 
     override = fastapi_app.dependency_overrides[get_session]
     async for session in override():
-        entry = await session.scalar(
-            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
-        )
+        entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == run_id))
         entry.status = "failed"
         run = await session.get(Run, run_id)
         run.status = "error"
         await session.commit()
         break
 
-    resp = await client.post(
-        f"/runs/{run_id}/replay", json={"from_node_id": "nonexistent"}
-    )
+    resp = await client.post(f"/runs/{run_id}/replay", json={"from_node_id": "nonexistent"})
     assert resp.status_code == 400
 
 
@@ -1337,15 +1285,11 @@ async def test_queued_entry_consumes_replay_seed(client: AsyncClient) -> None:
     from app.services.runner import _execute_queued_entry
 
     workflow_id = await _workflow_with_graph(client)
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
 
     override = fastapi_app.dependency_overrides[get_session]
     async for session in override():
-        entry = await session.scalar(
-            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
-        )
+        entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == run_id))
         entry.status = "queued"
         entry.replay_seed = {
             "cache": {"t": {"main": {"n": 5}}},
@@ -1359,9 +1303,7 @@ async def test_queued_entry_consumes_replay_seed(client: AsyncClient) -> None:
     await _execute_queued_entry(run_id)
 
     async for session in override():
-        entry = await session.scalar(
-            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
-        )
+        entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == run_id))
         assert entry.replay_seed is None  # consumed
         run = await session.get(Run, run_id)
         assert run.status == "success"
@@ -1373,9 +1315,7 @@ async def test_queued_entry_consumes_replay_seed(client: AsyncClient) -> None:
     assert by_node["c"]["output"]["main"] == 10
 
 
-async def test_local_run_parks_in_queue_when_at_capacity(
-    client: AsyncClient, monkeypatch
-) -> None:
+async def test_local_run_parks_in_queue_when_at_capacity(client: AsyncClient, monkeypatch) -> None:
     """A local run with no immediate admission slot is parked as a durable
     ``queued`` entry (reason ``local_capacity``) instead of executing."""
     from app.db import get_session
@@ -1392,26 +1332,20 @@ async def test_local_run_parks_in_queue_when_at_capacity(
     monkeypatch.setattr(runtime_pool, "has_immediate_capacity", lambda: False)
     monkeypatch.setattr(runtime_pool, "available_global_slots", lambda: 0)
 
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
 
     override = fastapi_app.dependency_overrides[get_session]
     async for session in override():
         run = await session.get(Run, run_id)
         assert run.status == "queued"
-        entry = await session.scalar(
-            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
-        )
+        entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == run_id))
         assert entry is not None
         assert entry.status == "queued"
         assert entry.queue_reason == "local_capacity"
         break
 
 
-async def test_local_run_executes_when_capacity_available(
-    client: AsyncClient, monkeypatch
-) -> None:
+async def test_local_run_executes_when_capacity_available(client: AsyncClient, monkeypatch) -> None:
     """With capacity, a local async run dispatches immediately (not parked)."""
     from app.db import get_session
     from app.main import app as fastapi_app
@@ -1423,9 +1357,7 @@ async def test_local_run_executes_when_capacity_available(
     monkeypatch.setattr(settings, "local_queue_enabled", True)
     # Default pool reports capacity, so the run should NOT be parked.
 
-    run_id = (
-        await client.post(f"/workflows/{workflow_id}/run", json={})
-    ).json()["run_id"]
+    run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
 
     # Let the background execution task settle.
     for _ in range(50):
@@ -1437,16 +1369,14 @@ async def test_local_run_executes_when_capacity_available(
 
     override = fastapi_app.dependency_overrides[get_session]
     async for session in override():
-        entry = await session.scalar(
-            select(RunQueueEntry).where(RunQueueEntry.run_id == run_id)
-        )
+        entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == run_id))
         # Was dispatched immediately, never parked with the local_capacity reason.
         assert entry.queue_reason != "local_capacity"
         break
 
 
-
 # --- Task 20: Debug in editor ------------------------------------------------
+
 
 async def test_debug_snapshot_returns_graph_failed_node_and_upstream_outputs(
     client: AsyncClient,
@@ -1458,16 +1388,34 @@ async def test_debug_snapshot_returns_graph_failed_node_and_upstream_outputs(
     graph = {
         "nodes": [
             {"id": "t", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
-            {"id": "ok", "type": "code", "params": {"code": "output = 7"},
-             "position": {"x": 1, "y": 0}},
-            {"id": "boom", "type": "code", "params": {"code": "raise RuntimeError('x')"},
-             "position": {"x": 2, "y": 0}},
+            {
+                "id": "ok",
+                "type": "code",
+                "params": {"code": "output = 7"},
+                "position": {"x": 1, "y": 0},
+            },
+            {
+                "id": "boom",
+                "type": "code",
+                "params": {"code": "raise RuntimeError('x')"},
+                "position": {"x": 2, "y": 0},
+            },
         ],
         "edges": [
-            {"id": "e0", "source": "t", "source_output": "main",
-             "target": "ok", "target_input": "input"},
-            {"id": "e1", "source": "ok", "source_output": "main",
-             "target": "boom", "target_input": "input"},
+            {
+                "id": "e0",
+                "source": "t",
+                "source_output": "main",
+                "target": "ok",
+                "target_input": "input",
+            },
+            {
+                "id": "e1",
+                "source": "ok",
+                "source_output": "main",
+                "target": "boom",
+                "target_input": "input",
+            },
         ],
     }
     await client.put(f"/workflows/{workflow_id}", json={"graph": graph})
@@ -1491,22 +1439,23 @@ async def test_debug_snapshot_404_for_unknown_run(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
-
-
 async def test_run_blocked_when_node_package_missing(client: AsyncClient) -> None:
-    env = (await client.post(
-        "/environments", json={"name": "bare", "packages": []}
-    )).json()
+    env = (await client.post("/environments", json={"name": "bare", "packages": []})).json()
     wf = (await client.post("/workflows", json={"name": "needs-duckdb"})).json()
     graph = {
         "nodes": [
-            {"id": "t", "type": "manual_trigger", "params": {},
-             "position": {"x": 0, "y": 0}},
-            {"id": "q", "type": "duckdb_sql", "params": {},
-             "position": {"x": 1, "y": 0}},
+            {"id": "t", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
+            {"id": "q", "type": "duckdb_sql", "params": {}, "position": {"x": 1, "y": 0}},
         ],
-        "edges": [{"id": "e", "source": "t", "source_output": "main",
-                   "target": "q", "target_input": "input"}],
+        "edges": [
+            {
+                "id": "e",
+                "source": "t",
+                "source_output": "main",
+                "target": "q",
+                "target_input": "input",
+            }
+        ],
     }
     await client.put(
         f"/workflows/{wf['id']}",
@@ -1543,3 +1492,67 @@ async def test_list_runs_returns_empty_node_runs(client: AsyncClient) -> None:
     # Single-run endpoint must still return the full per-node breakdown.
     run_detail = (await client.get(f"/runs/{run_id}")).json()
     assert len(run_detail["node_runs"]) > 0, "GET /runs/{id} must still return full node_runs"
+
+
+# ---------------------------------------------------------------------------
+# T-06: WebSocket run streaming
+# ---------------------------------------------------------------------------
+
+
+def test_ws_run_streaming_replays_buffered_events_t06(monkeypatch) -> None:
+    """T-06: /ws/runs/{id} replays pre-buffered events in order and closes on run_finished.
+
+    Uses a sync TestClient (required for WebSocket handshakes) and stubs
+    broker.connect() so the lifespan never switches the broker to Redis mode,
+    ensuring pre-published events are visible regardless of test environment.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services import events as events_mod
+
+    async def _no_redis_connect() -> str:
+        return "inprocess"
+
+    monkeypatch.setattr(events_mod.broker, "connect", _no_redis_connect)
+
+    run_id = "ws-t06-run"
+    events_mod.broker._publish_inprocess(run_id, {"type": "node_started", "node_id": "n1"})
+    events_mod.broker._publish_inprocess(
+        run_id, {"type": "node_finished", "node_id": "n1", "status": "success"}
+    )
+    events_mod.broker._publish_inprocess(run_id, {"type": "run_finished", "status": "success"})
+
+    received: list[dict] = []
+    with TestClient(app) as client:
+        with client.websocket_connect(f"/ws/runs/{run_id}") as ws:
+            for _ in range(3):
+                received.append(ws.receive_json())
+
+    assert [e["type"] for e in received] == ["node_started", "node_finished", "run_finished"]
+    assert received[1]["node_id"] == "n1"
+
+
+def test_ws_run_streaming_rejects_invalid_auth_t06(monkeypatch) -> None:
+    """T-06: /ws/runs/{id} closes with 1008 when a bad token is supplied."""
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    from app.config import settings as app_settings
+    from app.main import app
+    from app.services import events as events_mod
+
+    async def _no_redis_connect() -> str:
+        return "inprocess"
+
+    monkeypatch.setattr(events_mod.broker, "connect", _no_redis_connect)
+    monkeypatch.setattr(app_settings, "auth_required", True)
+
+    rejected = False
+    with TestClient(app, raise_server_exceptions=False) as client:
+        try:
+            with client.websocket_connect("/ws/runs/any-run?token=bad-token") as ws:
+                ws.receive_json()
+        except (WebSocketDisconnect, Exception):
+            rejected = True
+    assert rejected, "Expected server to reject WebSocket with bad token"
