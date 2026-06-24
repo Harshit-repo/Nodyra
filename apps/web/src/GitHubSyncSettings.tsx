@@ -40,7 +40,7 @@ export function GitHubSyncSettings() {
       if (result.accessible) {
         notify("GitHub sync configured and repository verified.", "success");
       } else {
-        notify("GitHub sync saved — repository not yet accessible.", "warning");
+        notify("GitHub sync saved — repository not yet accessible.", "info");
       }
     } catch (err) {
       notify(`Failed to save GitHub sync config. ${errorMessage(err)}`, "error");
