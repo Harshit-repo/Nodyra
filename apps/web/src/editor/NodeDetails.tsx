@@ -3665,9 +3665,11 @@ export function ChatTriggerPanel({
 export function WebhookPanel({
   path,
   nodeId,
+  onListeningChange,
 }: {
   path: string;
   nodeId?: string;
+  onListeningChange?: (listening: boolean) => void;
 }) {
   const slug = path.trim() || "noodle";
   const origin = window.location.origin;
@@ -3684,6 +3686,7 @@ export function WebhookPanel({
     }
     void api.stopListen(slug).catch(() => undefined);
     setListening(false);
+    onListeningChange?.(false);
   }
 
   useEffect(() => stop, []);
@@ -3706,6 +3709,7 @@ export function WebhookPanel({
       return;
     }
     setListening(true);
+    onListeningChange?.(true);
     timerRef.current = window.setInterval(async () => {
       try {
         const data = await api.lastWebhook(slug);
@@ -3721,44 +3725,84 @@ export function WebhookPanel({
     }, 1300);
   }
 
-  return (
-    <div className="inspector-section webhook-panel">
-      <div className="inspector-section-head">Webhook URLs</div>
-      <p className="field-desc">Test URL — captures requests while you build.</p>
-      <UrlRow url={`${origin}/api/webhook-test/${slug}`} />
-      <p className="field-desc">
-        Production URL — runs this workflow when it is active.
-      </p>
-      <UrlRow url={`${origin}/api/webhook/${slug}`} />
+  const particles = [
+    { left: "13%", dur: "3.2s", delay: "0s",   size: 3 },
+    { left: "30%", dur: "2.6s", delay: "0.7s", size: 2 },
+    { left: "50%", dur: "3.9s", delay: "0.2s", size: 3 },
+    { left: "65%", dur: "2.8s", delay: "1.3s", size: 2 },
+    { left: "79%", dur: "3.4s", delay: "0.5s", size: 3 },
+    { left: "7%",  dur: "2.7s", delay: "1.9s", size: 2 },
+    { left: "43%", dur: "3.1s", delay: "2.2s", size: 2 },
+    { left: "91%", dur: "3.6s", delay: "1.0s", size: 3 },
+  ];
 
-      <div className="webhook-listen">
-        {!listening ? (
-          <button className="btn btn-sm" onClick={() => void listen()}>
-            ▶ Listen for test event
-          </button>
-        ) : (
-          <div className="webhook-listening">
-            <div className="webhook-waves" aria-hidden="true">
-              <span className="webhook-wave" />
-              <span className="webhook-wave" />
-              <span className="webhook-wave" />
-              <span className="webhook-wave-dot" />
-            </div>
-            <p className="webhook-listening-label">
-              Listening for a test event…
-            </p>
-            <button className="btn btn-sm" onClick={stop}>
-              Stop
-            </button>
-          </div>
-        )}
-        {received && (
-          <span className="muted">Request captured — see Output panel.</span>
-        )}
+  return (
+    <>
+      {/* z-index 0: animation layer — never blocks clicks */}
+      {listening && (
+        <div className="ndv-webhook-anim" aria-hidden="true">
+          <div className="ndv-webhook-anim-blob" />
+          {particles.map((p, i) => (
+            <div
+              key={i}
+              className="ndv-webhook-particle"
+              style={{
+                left: p.left,
+                width: p.size,
+                height: p.size,
+                animationDuration: p.dur,
+                animationDelay: p.delay,
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* z-index 1: ghosted URL cards */}
+      <div className={`ndv-webhook-urls${listening ? " ndv-webhook-urls--listening" : ""}`}>
+        <div className="inspector-section-head">Webhook URLs</div>
+        <p className="field-desc">Test URL — captures requests while you build.</p>
+        <div className="ndv-webhook-url-row">
+          <span className="ndv-url-badge ndv-url-badge--test">Test</span>
+          <UrlRow url={`${origin}/api/webhook-test/${slug}`} />
+        </div>
+        <p className="field-desc">Production URL — runs this workflow when it is active.</p>
+        <div className="ndv-webhook-url-row">
+          <span className="ndv-url-badge ndv-url-badge--prod">Prod</span>
+          <UrlRow url={`${origin}/api/webhook/${slug}`} />
+        </div>
       </div>
 
-      {error && <p className="error-text">{error}</p>}
-    </div>
+      {/* z-index 1: center stage — orb + label + button */}
+      <div className="ndv-webhook-center">
+        {listening ? (
+          <>
+            <div className="ndv-webhook-orb-wrap">
+              <div className="ndv-webhook-orb-bg" />
+              <div className="ndv-webhook-orb-ring" />
+              <div className="ndv-webhook-orb-core" />
+            </div>
+            <p className="ndv-webhook-listen-label">Listening for a test event…</p>
+            <button type="button" className="ndv-webhook-stop" onClick={stop}>
+              <span className="ndv-webhook-stop-sq" />
+              Stop listening
+            </button>
+          </>
+        ) : (
+          <>
+            <button type="button" className="btn btn-sm" onClick={() => void listen()}>
+              ▶ Listen for test event
+            </button>
+            {received && (
+              <span className="muted" style={{ marginTop: 6, fontSize: 12 }}>
+                Request captured — see Output panel.
+              </span>
+            )}
+          </>
+        )}
+        {error && <p className="error-text">{error}</p>}
+      </div>
+    </>
   );
 }
 

@@ -8708,6 +8708,201 @@ select.field-input:hover {
 }
 
 /* ========================================================================= */
+/*   NDV WebhookPanel listening animation                                     */
+/* ========================================================================= */
+
+/* panel-body becomes the clip/reference frame for absolute animation layer */
+.ndv-webhook-panel .ndv-panel-body {
+  padding: 0;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* animation layer — absolute, z-index 0, never blocks clicks */
+.ndv-webhook-anim {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.ndv-webhook-anim-blob {
+  position: absolute;
+  left: 50%;
+  top: 70%;
+  transform: translate(-50%, -50%);
+  width: 260px;
+  height: 200px;
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse,
+    color-mix(in srgb, var(--accent) 24%, transparent) 0%,
+    transparent 68%
+  );
+  animation: ndv-breathe 3s ease-in-out infinite;
+}
+@keyframes ndv-breathe {
+  0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) scale(0.85); }
+  50%       { opacity: 1;   transform: translate(-50%, -50%) scale(1.16); }
+}
+.ndv-webhook-particle {
+  position: absolute;
+  border-radius: 50%;
+  background: var(--accent-2);
+  box-shadow: 0 0 6px 2px color-mix(in srgb, var(--accent) 50%, transparent);
+  animation: ndv-rise linear infinite;
+  opacity: 0;
+}
+@keyframes ndv-rise {
+  0%   { bottom: -8px; opacity: 0; }
+  15%  { opacity: 0.9; }
+  80%  { opacity: 0.35; }
+  100% { bottom: 108%; opacity: 0; transform: translateX(5px); }
+}
+
+/* URL cards section — z-index 1 above animation */
+.ndv-webhook-urls {
+  position: relative;
+  z-index: 1;
+  padding: 12px 14px 8px;
+  flex-shrink: 0;
+  transition: opacity 300ms ease;
+}
+.ndv-webhook-urls--listening {
+  opacity: 0.28;
+}
+.ndv-webhook-url-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 5px;
+}
+.ndv-url-badge {
+  font-size: 7.5px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.ndv-url-badge--test {
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.22);
+  color: #fbbf24;
+}
+.ndv-url-badge--prod {
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.22);
+  color: #4ade80;
+}
+
+/* center stage — z-index 1, takes remaining height, centers content */
+.ndv-webhook-center {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 16px 16px;
+  min-height: 0;
+}
+
+/* orb */
+.ndv-webhook-orb-wrap {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.ndv-webhook-orb-bg {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 40%, transparent) 0%, transparent 70%);
+  animation: ndv-breathe 3s ease-in-out infinite;
+}
+.ndv-webhook-orb-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  animation: ndv-orb-ring 3s ease-in-out infinite;
+}
+@keyframes ndv-orb-ring {
+  0%, 100% { transform: scale(0.88); border-color: color-mix(in srgb, var(--accent) 18%, transparent); }
+  50%       { transform: scale(1.12); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+}
+.ndv-webhook-orb-core {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, var(--accent-2), var(--accent));
+  box-shadow:
+    0 0 18px 5px color-mix(in srgb, var(--accent) 65%, transparent),
+    0 0 36px 12px color-mix(in srgb, var(--accent) 25%, transparent);
+  animation: ndv-orb-float 3s ease-in-out infinite;
+}
+@keyframes ndv-orb-float {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-4px); }
+}
+
+/* listening label */
+.ndv-webhook-listen-label {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--accent-2);
+  text-align: center;
+  flex-shrink: 0;
+  animation: ndv-breathe 3s ease-in-out infinite;
+}
+
+/* stop button */
+.ndv-webhook-stop {
+  width: 100%;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 650;
+  padding: 9px 14px;
+  border-radius: 9px;
+  border: 1.5px solid rgba(240, 116, 122, 0.55);
+  background: rgba(240, 116, 122, 0.13);
+  color: #fca5a5;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  animation: ndv-stop-glow 2.5s ease-in-out infinite;
+}
+@keyframes ndv-stop-glow {
+  0%, 100% { box-shadow: none; }
+  50%       { box-shadow: 0 0 20px -4px rgba(240, 116, 122, 0.5); }
+}
+.ndv-webhook-stop-sq {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: #f87171;
+  flex-shrink: 0;
+  box-shadow: 0 0 8px 2px rgba(248, 113, 113, 0.7);
+  animation: ndv-blink 1s ease-in-out infinite;
+}
+@keyframes ndv-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+/* ========================================================================= */
 /*   NDV drag-to-resize handle                                                */
 /* ========================================================================= */
 .ndv-drag-handle {
