@@ -18,6 +18,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
   const [nameSaved, setNameSaved] = useState(false);
   const [ndvHeight, setNdvHeight] = useState(65);
   const [resizing, setResizing] = useState(false);
+  const [isWebhookListening, setIsWebhookListening] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const nameSavedTimerRef = useRef<number | null>(null);
@@ -162,20 +163,27 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
             </div>
           </div>
           <div className="ndv-actions">
-            <button
-              className="btn btn-sm btn-run"
-              onClick={() => runFromNode(currentNode.id)}
-              disabled={!canRunStep}
-              title={
-                !canRunStep
-                  ? "Connect a trigger upstream to run this node"
-                  : isWebhook
-                    ? "Listen for a test event"
-                    : "Execute this step using current upstream data"
-              }
-            >
-              {isWebhook ? "▶ Listen for event" : "▶ Execute step"}
-            </button>
+            {isWebhook && isWebhookListening ? (
+              <div className="ndv-listening-pill" aria-live="polite">
+                <span className="ndv-listening-dot" aria-hidden="true" />
+                Listening…
+              </div>
+            ) : (
+              <button
+                className="btn btn-sm btn-run"
+                onClick={() => runFromNode(currentNode.id)}
+                disabled={!canRunStep}
+                title={
+                  !canRunStep
+                    ? "Connect a trigger upstream to run this node"
+                    : isWebhook
+                      ? "Listen for a test event"
+                      : "Execute this step using current upstream data"
+                }
+              >
+                {isWebhook ? "▶ Listen for event" : "▶ Execute step"}
+              </button>
+            )}
             {!isWebhook && (
               <button
                 className="btn btn-sm btn-ghost"
@@ -218,7 +226,10 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
           </div>
         </header>
         <div className="ndv-body">
-          <NDVPanels nodeId={nodeId} />
+          <NDVPanels
+            nodeId={nodeId}
+            onListeningChange={isWebhook ? setIsWebhookListening : undefined}
+          />
         </div>
         <div
           className="ndv-drag-handle"

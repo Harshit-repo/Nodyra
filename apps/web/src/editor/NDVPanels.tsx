@@ -1,4 +1,4 @@
-import { Info } from "@phosphor-icons/react";
+import { Gear, Hexagon, Info, PushPin } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 
 import { api } from "../api";
@@ -6,6 +6,8 @@ import { useToast } from "../ToastProvider";
 import type { ArtifactInfo, ParamSpec } from "../types";
 import { missingFor } from "./missingPackages";
 import { useServerPlatform } from "../hooks/useServerPlatform";
+import { useTimeout } from "../hooks/useTimeout";
+import { safeGetItem } from "../safeStorage";
 import { DataPanel } from "./DataPanel";
 import {
   ParamField,
@@ -53,6 +55,85 @@ function formatPinnedAt(value: string | null): string {
 }
 
 type NdvTab = "parameters" | "settings" | "docs" | "credentials" | "logs";
+
+function AgentWiringBanner({ nodeId }: { nodeId: string }) {
+  const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
+  const edges = useEditor((s) => s.edges);
+  const nodes = useEditor((s) => s.nodes);
+  if (!node || node.data.manifest.id !== "ai_agent_v2") return null;
+
+  const params = node.data.params;
+  const strategy = String(params.strategy ?? "react");
+  const strategyLabel: Record<string, string> = {
+    react: "ReAct",
+    plan_and_execute: "Plan & Execute",
+    reflexion: "Reflexion",
+  };
+
+  const portLabels: Record<string, string> = {
+    model: "Model",
+    fast_model: "Fast model",
+    tool: "Tool",
+    subagent_1: "Sub-agent 1",
+    subagent_2: "Sub-agent 2",
+    subagent_3: "Sub-agent 3",
+    retriever: "Retriever",
+    memory: "Memory",
+    guardrail: "Guardrail",
+    parser: "Parser",
+  };
+
+  const connected: Array<{ port: string; label: string; nodeName: string }> = [];
+  for (const edge of edges) {
+    if (edge.target !== nodeId) continue;
+    const handle = edge.targetHandle ?? "input";
+    const portLabel = portLabels[handle];
+    if (!portLabel) continue;
+    const sourceNode = nodes.find((n) => n.id === edge.source);
+    if (!sourceNode) continue;
+    connected.push({
+      port: handle,
+      label: portLabel,
+      nodeName:
+        sourceNode.data.label ||
+        String(sourceNode.data.params.model || sourceNode.data.params.deployment || "") ||
+        sourceNode.data.manifest.name,
+    });
+  }
+
+  const modelEntry = connected.find((c) => c.port === "model");
+  const toolCount = connected.filter((c) => c.port === "tool").length;
+  const otherConnected = connected.filter((c) => c.port !== "model" && c.port !== "tool");
+
+  return (
+    <div className="agent-ndv-banner">
+      <div className="agent-ndv-banner-row">
+        <span className="agent-ndv-chip agent-ndv-chip--strategy" title="Agent strategy">
+          {strategyLabel[strategy] ?? strategy}
+        </span>
+        {modelEntry ? (
+          <span className="agent-ndv-chip agent-ndv-chip--ok" title={`Model port: ${modelEntry.nodeName}`}>
+            <Hexagon size={12} /> {modelEntry.nodeName}
+          </span>
+        ) : (
+          <span className="agent-ndv-chip agent-ndv-chip--warn" title="No model connected to model port">
+            <Hexagon size={12} /> No model
+          </span>
+        )}
+        {toolCount > 0 ? (
+          <span className="agent-ndv-chip agent-ndv-chip--ok" title={`${toolCount} tool node${toolCount === 1 ? "" : "s"} wired`}>
+            <Gear size={12} /> {toolCount} tool{toolCount === 1 ? "" : "s"}
+          </span>
+        ) : null}
+        {otherConnected.map((c) => (
+          <span key={c.port} className="agent-ndv-chip agent-ndv-chip--ok" title={`${c.label}: ${c.nodeName}`}>
+            {c.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function ParametersTab({ nodeId }: { nodeId: string }) {
   const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
@@ -725,7 +806,7 @@ function ArtifactBrowser({ runId, runOutput }: { runId: string; runOutput: unkno
         Artifacts
       </h4>
       {apiArtifacts.map((a) => {
-        const token = localStorage.getItem("noodle_token");
+        const token = safeGetItem("noodle_token");
         const qs = token ? `?token=${encodeURIComponent(token)}` : "";
         const url = `/api/artifacts/${encodeURIComponent(a.id)}/download${qs}`;
         return (
@@ -784,7 +865,13 @@ function ArtifactBrowser({ runId, runOutput }: { runId: string; runOutput: unkno
   );
 }
 
-export function NDVPanels({ nodeId }: { nodeId: string }) {
+export function NDVPanels({
+  nodeId,
+  onListeningChange,
+}: {
+  nodeId: string;
+  onListeningChange?: (listening: boolean) => void;
+}) {
   const [tab, setTab] = useState<NdvTab>("parameters");
   const middleBodyRef = useRef<HTMLDivElement | null>(null);
   const tabScroll = useRef<Record<NdvTab, number>>({
@@ -813,6 +900,9 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
   const [pkgBusy, setPkgBusy] = useState(false);
   const [pkgElapsed, setPkgElapsed] = useState(0);
   const [pkgDone, setPkgDone] = useState(false);
+  const scheduleTimeout = useTimeout();
+  const installGenerationRef = useRef(0);
+  const installTickerRef = useRef<number | null>(null);
   const { notify } = useToast();
   const platform = useServerPlatform();
 
@@ -825,7 +915,21 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
       logs: 0,
     };
     setTab("parameters");
+    setPkgBusy(false);
+    setPkgElapsed(0);
+    setPkgDone(false);
   }, [nodeId]);
+
+  useEffect(
+    () => () => {
+      installGenerationRef.current += 1;
+      if (installTickerRef.current !== null) {
+        window.clearInterval(installTickerRef.current);
+        installTickerRef.current = null;
+      }
+    },
+    [nodeId],
+  );
 
   useEffect(() => {
     const body = middleBodyRef.current;
@@ -854,24 +958,32 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
 
   async function addMissingToEnv(): Promise<void> {
     if (!envId || pkgBusy) return;
+    const generation = ++installGenerationRef.current;
+    const isCurrent = () => installGenerationRef.current === generation;
     setPkgBusy(true);
     setPkgElapsed(0);
     setPkgDone(false);
     const startedAt = Date.now();
     const ticker = window.setInterval(() => {
-      setPkgElapsed(Math.floor((Date.now() - startedAt) / 1000));
+      if (isCurrent()) setPkgElapsed(Math.floor((Date.now() - startedAt) / 1000));
     }, 1000);
+    installTickerRef.current = ticker;
     try {
       const updated = [...envPackages, ...missingPkgs];
       await api.setPackages(envId, updated);
+      if (!isCurrent()) return;
       setEnvPackages(updated);
 
       while (Date.now() - startedAt < PACKAGE_INSTALL_TIMEOUT_MS) {
         await delay(PACKAGE_INSTALL_POLL_MS);
+        if (!isCurrent()) return;
         const env = await api.getEnvironment(envId);
+        if (!isCurrent()) return;
         if (env.status === "ready") {
           setPkgDone(true);
-          window.setTimeout(() => setPkgDone(false), 3000);
+          scheduleTimeout(() => {
+            if (isCurrent()) setPkgDone(false);
+          }, 3000);
           notify(`Installed ${missingPkgs.join(", ")} in ${envName ?? "environment"}.`, "success");
           return;
         }
@@ -880,12 +992,15 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
           return;
         }
       }
-      notify("Package installation is still building. Check the environment logs.", "error");
+      if (isCurrent()) {
+        notify("Package installation is still building. Check the environment logs.", "error");
+      }
     } catch {
-      notify("Failed to install packages — check the environment.", "error");
+      if (isCurrent()) notify("Failed to install packages — check the environment.", "error");
     } finally {
       window.clearInterval(ticker);
-      setPkgBusy(false);
+      if (installTickerRef.current === ticker) installTickerRef.current = null;
+      if (isCurrent()) setPkgBusy(false);
     }
   }
 
@@ -950,7 +1065,7 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
       ) : (
         runOutput !== undefined && (
           <button className="btn btn-sm" onClick={() => void pin()}>
-            📌 Pin this output
+            <PushPin size={13} /> Pin this output
           </button>
         )
       )}
@@ -970,6 +1085,7 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
             <WebhookPanel
               path={String(node.data.params.path ?? "noodle")}
               nodeId={nodeId}
+              onListeningChange={onListeningChange}
             />
           </div>
         </section>
@@ -983,6 +1099,7 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
       )}
 
       <section className="ndv-middle">
+        <AgentWiringBanner nodeId={nodeId} />
         {missingPkgs.length > 0 && envId && (
           <div className="ndv-missing-pkgs warn-text">
             <p>
@@ -1024,9 +1141,11 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
             </div>
           </div>
         )}
-        <div className="ndv-tabs">
+        <div className="ndv-tabs" role="tablist" aria-label="Node configuration">
           <button
             type="button"
+            role="tab"
+            aria-selected={tab === "parameters"}
             className={tab === "parameters" ? "active" : ""}
             onClick={() => selectTab("parameters")}
           >
@@ -1034,6 +1153,8 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
           </button>
           <button
             type="button"
+            role="tab"
+            aria-selected={tab === "settings"}
             className={tab === "settings" ? "active" : ""}
             onClick={() => selectTab("settings")}
           >
@@ -1041,6 +1162,8 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
           </button>
           <button
             type="button"
+            role="tab"
+            aria-selected={tab === "docs"}
             className={tab === "docs" ? "active" : ""}
             onClick={() => selectTab("docs")}
           >
@@ -1048,6 +1171,8 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
           </button>
           <button
             type="button"
+            role="tab"
+            aria-selected={tab === "credentials"}
             className={tab === "credentials" ? "active" : ""}
             onClick={() => selectTab("credentials")}
           >
@@ -1055,6 +1180,8 @@ export function NDVPanels({ nodeId }: { nodeId: string }) {
           </button>
           <button
             type="button"
+            role="tab"
+            aria-selected={tab === "logs"}
             className={tab === "logs" ? "active" : ""}
             onClick={() => selectTab("logs")}
           >
