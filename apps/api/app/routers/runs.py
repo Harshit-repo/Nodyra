@@ -472,9 +472,11 @@ async def replay_workflow_run(
     return RunReplayResponse(run_id=run_id, previous_status=previous)
 
 
-def _epoch_to_dt(value: float | None) -> datetime | None:
+def _epoch_to_dt(value: float | datetime | None) -> datetime | None:
     if value is None:
         return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     return datetime.fromtimestamp(value, tz=UTC)
 
 

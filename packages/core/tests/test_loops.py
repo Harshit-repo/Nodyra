@@ -763,3 +763,19 @@ async def test_concurrent_loop_iter_outputs_do_not_bleed_into_outer_node_outputs
     result = await execute(g, registry)
     assert str(result.nodes["e"].status) == "success"
     assert sorted(result.nodes["e"].outputs["results"]) == [10, 20, 30, 40]
+
+
+async def test_while_loop_max_iterations_zero_uses_default_e13():
+    # E-13: max_iterations=0 should not silently produce 0 iterations.
+    # The `or 1000` in _bounded_conditional_iterations treats 0 as falsy → default.
+    # A condition that stops at count=3 must still run to completion.
+    g = _incr_while_graph({"max_iterations": 0})
+    result = await execute(g, registry)
+    assert str(result.nodes["e"].status) == "success", result.nodes["e"].error
+    assert result.nodes["e"].outputs["results"] == {"count": 3}
+
+
+def test_bounded_conditional_iterations_zero_returns_default_e13():
+    from noodle.engine.loops import _bounded_conditional_iterations
+    assert _bounded_conditional_iterations(0) == 1000
+    assert _bounded_conditional_iterations(None) == 1000

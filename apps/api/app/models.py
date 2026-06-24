@@ -595,7 +595,7 @@ class AuditEvent(Base):
     target_type: Mapped[str] = mapped_column(String(40), nullable=False)
     target_id: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    actor_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None)
+    actor_id: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
     actor_email: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -724,8 +724,8 @@ class NodeRun(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     logs: Mapped[list | None] = mapped_column(JSON, nullable=True)
     debug: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    started_at: Mapped[float | None] = mapped_column(Float, nullable=True)
-    finished_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Loop iteration coordinates (outermost first), or NULL for non-loop nodes.
     # A looped body node produces one NodeRun per iteration_path.

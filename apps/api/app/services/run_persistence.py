@@ -45,6 +45,13 @@ GUARDRAIL_EVENT_TYPES: frozenset[str] = frozenset(
 )
 
 
+def _epoch_to_dt(value: float | None) -> datetime | None:
+    """D-12: convert epoch-seconds float from the engine into a timezone-aware datetime."""
+    if value is None:
+        return None
+    return datetime.fromtimestamp(value, tz=UTC)
+
+
 def _approval_key(event: dict[str, Any]) -> str:
     """Stable key for idempotent approval rows across local/remote streams."""
     raw = "|".join(
@@ -250,8 +257,8 @@ async def persist_run_outcome(
                     "error": event.get("error"),
                     "logs": _cap_logs(event.get("logs"), output_cap),
                     "debug": event.get("debug"),
-                    "started_at": event.get("started_at"),
-                    "finished_at": event.get("finished_at"),
+                    "started_at": _epoch_to_dt(event.get("started_at")),
+                    "finished_at": _epoch_to_dt(event.get("finished_at")),
                     "duration_ms": event.get("duration_ms"),
                     "iteration_path": event.get("iteration_path"),
                 }

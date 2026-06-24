@@ -3,7 +3,7 @@
 from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from noodle.models import WorkflowGraph
 
@@ -341,6 +341,17 @@ class NodeRunInfo(BaseModel):
     finished_at: float | None = None
     duration_ms: int | None = None
     iteration_path: list[int] | None = None
+
+    @field_validator("started_at", "finished_at", mode="before")
+    @classmethod
+    def _dt_to_epoch(cls, v: Any) -> float | None:
+        # D-12: DB now stores DateTime; keep API returning float (epoch seconds).
+        if isinstance(v, datetime):
+            from datetime import UTC, timezone
+            if v.tzinfo is None:
+                v = v.replace(tzinfo=UTC)
+            return v.timestamp()
+        return v
 
     @model_validator(mode="after")
     def _redact_storage_internals(self) -> "NodeRunInfo":
