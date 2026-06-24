@@ -13,6 +13,8 @@ import os
 import time
 
 from cryptography.fernet import Fernet, InvalidToken
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from app.config import settings
 
@@ -41,7 +43,17 @@ def _fernet() -> Fernet:
     secret = settings.secret_key
     if _fernet_cache is not None and _fernet_cache[0] == secret:
         return _fernet_cache[1]
-    key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
+    # B-08: HKDF-SHA256 with a domain-specific info label is the correct KDF
+    # for deriving a sub-key from a high-entropy master secret. A raw sha256
+    # hash offers no domain separation and is not a proper KDF. Salt=None is
+    # intentional (deterministic derivation — no per-call state to store).
+    raw = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=b"noodle-credential-kek",
+    ).derive(secret.encode())
+    key = base64.urlsafe_b64encode(raw)
     fernet = Fernet(key)
     _fernet_cache = (secret, fernet)
     return fernet

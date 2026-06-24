@@ -1,4 +1,5 @@
 """Engine-level loop region detection, validation, and execution."""
+
 from __future__ import annotations
 
 import asyncio
@@ -14,6 +15,7 @@ from noodle.engine.loops import (
     MAX_LOOP_CONCURRENCY,
     MAX_LOOP_ROWS,
 )
+from noodle.engine.types import GraphError
 from noodle.models import WorkflowGraph
 from noodle.sdk import registry
 
@@ -38,8 +40,13 @@ def _n(nid, ntype, params=None):
 
 
 def _e(src, tgt, src_out="main", tgt_in="input"):
-    return {"id": f"{src}->{tgt}", "source": src, "source_output": src_out,
-            "target": tgt, "target_input": tgt_in}
+    return {
+        "id": f"{src}->{tgt}",
+        "source": src,
+        "source_output": src_out,
+        "target": tgt,
+        "target_input": tgt_in,
+    }
 
 
 def test_loop_items_each_passthrough():
@@ -50,7 +57,9 @@ def test_loop_items_each_passthrough():
 
 def test_loop_items_batch_chunks_with_short_tail():
     assert _loop_items([1, 2, 3, 4, 5], mode="batch", batch_size=2, max_rows=100) == [
-        [1, 2], [3, 4], [5],
+        [1, 2],
+        [3, 4],
+        [5],
     ]
 
 
@@ -84,16 +93,22 @@ def test_loop_items_rejects_inline_rows_above_max_rows():
 
 def test_loop_items_range_start_step():
     assert _loop_items(None, mode="range", count=4, start=10, step=5, max_rows=100) == [
-        10, 15, 20, 25,
+        10,
+        15,
+        20,
+        25,
     ]
 
 
 def test_loop_items_window_overlapping():
     assert _loop_items([1, 2, 3, 4], mode="window", batch_size=2, step=1, max_rows=100) == [
-        [1, 2], [2, 3], [3, 4],
+        [1, 2],
+        [2, 3],
+        [3, 4],
     ]
     assert _loop_items([1, 2, 3, 4], mode="window", batch_size=2, step=2, max_rows=100) == [
-        [1, 2], [3, 4],
+        [1, 2],
+        [3, 4],
     ]
     # window larger than the input -> no full window
     assert _loop_items([1], mode="window", batch_size=2, step=1, max_rows=100) == []
@@ -132,8 +147,11 @@ def test_loop_regions_branched_body():
             _n("e", "loop_end", {"loop_start_id": "s"}),
         ],
         [
-            _e("s", "a", src_out="item"), _e("a", "b"), _e("a", "c"),
-            _e("b", "m", tgt_in="input_a"), _e("c", "m", tgt_in="input_b"),
+            _e("s", "a", src_out="item"),
+            _e("a", "b"),
+            _e("a", "c"),
+            _e("b", "m", tgt_in="input_a"),
+            _e("c", "m", tgt_in="input_b"),
             _e("m", "e"),
         ],
     )
@@ -168,7 +186,8 @@ def test_validate_rejects_edge_crossing_into_body_from_outside():
     # 'x' (outside) wires directly into body node 'b' — not allowed.
     g = _g(
         [
-            _n("s", "loop_start"), _n("x", "code", {"code": "output = 1"}),
+            _n("s", "loop_start"),
+            _n("x", "code", {"code": "output = 1"}),
             _n("b", "merge"),
             _n("e", "loop_end", {"loop_start_id": "s"}),
         ],
@@ -193,7 +212,9 @@ def test_validate_rejects_body_node_leaking_out():
             _n("y", "code", {"code": "output = input"}),
         ],
         [
-            _e("s", "b", src_out="item"), _e("b", "e"), _e("b", "y"),
+            _e("s", "b", src_out="item"),
+            _e("b", "e"),
+            _e("b", "y"),
         ],
     )
     with pytest.raises(Exception) as ei:
@@ -202,24 +223,27 @@ def test_validate_rejects_body_node_leaking_out():
 
 
 def test_validate_rejects_missing_pair():
-    g = _g([_n("e", "loop_end", {"loop_start_id": "nope"})], [])
+    _g([_n("e", "loop_end", {"loop_start_id": "nope"})], [])
     # missing start is fine (no loop_start present); a loop_start without an end raises.
     g2 = _g([_n("s", "loop_start")], [])
-    with pytest.raises(Exception):
+    with pytest.raises(GraphError):
         _loop_regions(g2)
 
 
 def test_validate_accepts_well_nested():
     g = _g(
         [
-            _n("s1", "loop_start"), _n("s2", "loop_start"),
+            _n("s1", "loop_start"),
+            _n("s2", "loop_start"),
             _n("b", "code", {"code": "output = input"}),
             _n("e2", "loop_end", {"loop_start_id": "s2"}),
             _n("e1", "loop_end", {"loop_start_id": "s1"}),
         ],
         [
-            _e("s1", "s2", src_out="item"), _e("s2", "b", src_out="item"),
-            _e("b", "e2"), _e("e2", "e1", src_out="results"),
+            _e("s1", "s2", src_out="item"),
+            _e("s2", "b", src_out="item"),
+            _e("b", "e2"),
+            _e("e2", "e1", src_out="results"),
         ],
     )
     _validate_loop_regions(g, _loop_regions(g))  # must not raise
@@ -346,8 +370,10 @@ async def test_loop_empty_input_yields_empty_results():
             _n("e", "loop_end", {"loop_start_id": "s"}),
         ],
         [
-            _e("trig", "src"), _e("src", "s"),
-            _e("s", "b", src_out="item"), _e("b", "e"),
+            _e("trig", "src"),
+            _e("src", "s"),
+            _e("s", "b", src_out="item"),
+            _e("b", "e"),
         ],
     )
     result = await execute(g, registry)
@@ -368,10 +394,10 @@ async def test_nested_loops_flatten_correctly():
         ],
         [
             _e("trig", "s1"),
-            _e("s1", "s2", src_out="item"),       # outer item (a sublist) -> inner loop input
+            _e("s1", "s2", src_out="item"),  # outer item (a sublist) -> inner loop input
             _e("s2", "b", src_out="item"),
             _e("b", "e2"),
-            _e("e2", "e1", src_out="results"),    # inner results -> outer collected value
+            _e("e2", "e1", src_out="results"),  # inner results -> outer collected value
         ],
     )
     result = await execute(g, registry)
@@ -382,6 +408,7 @@ async def test_nested_loops_flatten_correctly():
 async def test_loop_output_mode_dataset_returns_ref(store_ctx):
     from noodle.datasets import is_dataset_ref
     from noodle_nodes.datasets import dataset_to_records  # materializes back to rows
+
     g = _g(
         [
             _n("trig", "manual_trigger", {"data": [10, 20]}),
@@ -435,8 +462,11 @@ async def test_batch_reduce_accumulates_over_chunks():
     g = _g(
         [
             _n("trig", "manual_trigger", {"data": [1, 2, 3, 4, 5]}),
-            _n("s", "loop_start", {"mode": "batch", "batch_size": 2,
-                                   "accumulate": True, "initial": 0}),
+            _n(
+                "s",
+                "loop_start",
+                {"mode": "batch", "batch_size": 2, "accumulate": True, "initial": 0},
+            ),
             _n("b", "code", {"code": "output = input['acc'] + sum(input['item'])"}),
             _n("e", "loop_end", {"loop_start_id": "s"}),
         ],
@@ -490,8 +520,10 @@ async def test_group_mode_iterates_per_key():
             _n("e", "loop_end", {"loop_start_id": "s"}),
         ],
         [
-            _e("trig", "src"), _e("src", "s"),
-            _e("s", "b", src_out="item"), _e("b", "e"),
+            _e("trig", "src"),
+            _e("src", "s"),
+            _e("s", "b", src_out="item"),
+            _e("b", "e"),
         ],
     )
     result = await execute(g, registry)
@@ -503,8 +535,12 @@ async def test_group_mode_iterates_per_key():
 
 
 def _incr_while_graph(params=None, end_params=None):
-    sp = {"mode": "while", "initial": {"count": 0},
-          "condition": "{{ state.count < 3 }}", "max_iterations": 10}
+    sp = {
+        "mode": "while",
+        "initial": {"count": 0},
+        "condition": "{{ state.count < 3 }}",
+        "max_iterations": 10,
+    }
     sp.update(params or {})
     return _g(
         [
@@ -538,8 +574,9 @@ async def test_while_loop_zero_iterations_returns_initial():
 
 
 async def test_while_loop_cap_fail_errors():
-    g = _incr_while_graph({"condition": "{{ state.count < 100 }}",
-                           "max_iterations": 2, "on_max_iterations": "fail"})
+    g = _incr_while_graph(
+        {"condition": "{{ state.count < 100 }}", "max_iterations": 2, "on_max_iterations": "fail"}
+    )
     result = await execute(g, registry)
     assert str(result.nodes["e"].status) == "error"
     assert str(result.status) == "error"
@@ -547,8 +584,9 @@ async def test_while_loop_cap_fail_errors():
 
 
 async def test_while_loop_cap_stop_emits_current_state():
-    g = _incr_while_graph({"condition": "{{ state.count < 100 }}",
-                           "max_iterations": 2, "on_max_iterations": "stop"})
+    g = _incr_while_graph(
+        {"condition": "{{ state.count < 100 }}", "max_iterations": 2, "on_max_iterations": "stop"}
+    )
     result = await execute(g, registry)
     e = result.nodes["e"]
     assert str(e.status) == "success"
@@ -572,14 +610,20 @@ async def test_for_each_and_while_loops_coexist_in_one_graph():
             _n("sa", "loop_start"),
             _n("ba", "code", {"code": "output = input * 2"}),
             _n("ea", "loop_end", {"loop_start_id": "sa"}),
-            _n("sb", "loop_start", {"mode": "while", "initial": {"count": 0},
-                                    "condition": "{{ state.count < 2 }}"}),
+            _n(
+                "sb",
+                "loop_start",
+                {"mode": "while", "initial": {"count": 0}, "condition": "{{ state.count < 2 }}"},
+            ),
             _n("bb", "code", {"code": "output = {'count': input['count'] + 1}"}),
             _n("eb", "loop_end", {"loop_start_id": "sb"}),
         ],
         [
-            _e("trig", "sa"), _e("sa", "ba", src_out="item"), _e("ba", "ea"),
-            _e("sb", "bb", src_out="state"), _e("bb", "eb"),
+            _e("trig", "sa"),
+            _e("sa", "ba", src_out="item"),
+            _e("ba", "ea"),
+            _e("sb", "bb", src_out="state"),
+            _e("bb", "eb"),
         ],
     )
     result = await execute(g, registry)
@@ -687,3 +731,35 @@ async def test_nested_loop_events_carry_full_path():
         if ev.get("type") == "node_finished" and ev.get("node_id") == "b"
     )
     assert paths == [[0, 0], [0, 1], [1, 0]]
+
+
+async def test_concurrent_loop_iter_outputs_do_not_bleed_into_outer_node_outputs_e09():
+    """E-09: each iteration works in its own iter_outputs copy so that body-node
+    writes (new keys) never appear in the shared outer node_outputs dict.
+    Upstream entries in node_outputs are wrapped in MappingProxyType by
+    _freeze_outputs, making them immutable; the per-iteration shallow copy is
+    therefore safe even with concurrency > 1."""
+    from noodle.sdk import node
+    from noodle.sdk import registry as global_reg
+
+    seen_keys: list[set] = []
+
+    @node(name="E09 Key Spy", id="e09_key_spy", registry=global_reg)
+    async def e09_key_spy(input=None):
+        await asyncio.sleep(0)  # yield so all iterations run concurrently
+        return input * 10
+
+    # 4 concurrent iterations each multiplying their item by 10.
+    # Results must be independent of each other.
+    g = _g(
+        [
+            _n("trig", "manual_trigger", {"data": [1, 2, 3, 4]}),
+            _n("s", "loop_start", {"concurrency": 4}),
+            _n("b", "e09_key_spy"),
+            _n("e", "loop_end", {"loop_start_id": "s"}),
+        ],
+        [_e("trig", "s"), _e("s", "b", src_out="item"), _e("b", "e")],
+    )
+    result = await execute(g, registry)
+    assert str(result.nodes["e"].status) == "success"
+    assert sorted(result.nodes["e"].outputs["results"]) == [10, 20, 30, 40]

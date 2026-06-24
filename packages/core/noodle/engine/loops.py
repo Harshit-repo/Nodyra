@@ -8,9 +8,6 @@ from typing import TYPE_CHECKING, Any
 
 from noodle.ai_runtime import AgentActionRequest
 from noodle.context import iteration_path, org_run_limits
-from noodle.models import NodeRunResult, NodeStatus, RunStatus, WorkflowGraph
-from noodle.sdk import NodeRegistry
-
 from noodle.engine.scheduler import (
     _ancestors,
     _build_plan,
@@ -18,6 +15,8 @@ from noodle.engine.scheduler import (
     _execute_nodes,
 )
 from noodle.engine.types import EventCallback, GraphError
+from noodle.models import NodeRunResult, NodeStatus, RunStatus, WorkflowGraph
+from noodle.sdk import NodeRegistry
 
 if TYPE_CHECKING:
     from noodle.process_isolation import ProcessIsolator
@@ -377,7 +376,12 @@ async def _run_loop(
         async with sem:
             path_token = iteration_path.set(iteration_path.get() + (i,))
             try:
-                iter_outputs = dict(node_outputs)  # inherit upstream values
+                # Shallow copy is safe: _freeze_outputs wraps every upstream
+                # entry in MappingProxyType (read-only), so concurrent body
+                # nodes cannot mutate each other's inherited upstream values.
+                # New keys written by body nodes go into this per-iteration
+                # dict and never touch the shared outer node_outputs (E-09).
+                iter_outputs = dict(node_outputs)
                 iter_outputs[region.start_id] = {"item": item, "index": i}
                 st = await _execute_nodes(
                     plan=body_plan, graph=graph, registry=registry,

@@ -1,4 +1,6 @@
 """Unit tests for app.services.crypto — encryption, hashing, and signed tokens."""
+import base64
+import hashlib
 import time
 from unittest.mock import patch
 
@@ -8,11 +10,11 @@ from app.services.crypto import (
     CredentialDecryptError,
     create_payload_token,
     create_token,
+    decode_payload_token,
     decode_session_token,
     decrypt_credential,
     decrypt_data,
     decrypt_with_dek,
-    decode_payload_token,
     encrypt_credential,
     encrypt_data,
     encrypt_with_dek,
@@ -23,7 +25,6 @@ from app.services.crypto import (
     verify_token,
     wrap_dek,
 )
-
 
 # ---------------------------------------------------------------------------
 # encrypt_data / decrypt_data — master-key path
@@ -323,3 +324,33 @@ def test_payload_token_returns_none_for_tampered_signature() -> None:
 def test_payload_token_returns_none_for_malformed() -> None:
     assert decode_payload_token("malformed") is None
     assert decode_payload_token("") is None
+
+
+# ---------------------------------------------------------------------------
+# B-08: master KEK must be HKDF-SHA256, not a raw SHA-256 hash
+# ---------------------------------------------------------------------------
+
+def test_master_kek_is_hkdf_derived_not_sha256_b08() -> None:
+    """B-08: the Fernet key for the master KEK must come from HKDF-SHA256 with
+    info=b'noodle-credential-kek', not a bare sha256 hash of the secret."""
+    from cryptography.fernet import Fernet, InvalidToken
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+    from app.config import settings
+
+    secret = settings.secret_key
+
+    # Derive the *old* (wrong) SHA-256 key that should no longer be in use.
+    old_key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
+    old_fernet = Fernet(old_key)
+
+    # Encrypt something with the current master KEK.
+    ciphertext = encrypt_data({"b08": True})
+
+    # The old SHA-256 Fernet cannot decrypt it — keys diverge after the fix.
+    with pytest.raises(InvalidToken):
+        old_fernet.decrypt(ciphertext.encode())
+
+    # But the current decrypt_data path succeeds (HKDF is consistent).
+    assert decrypt_data(ciphertext) == {"b08": True}
