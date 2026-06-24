@@ -34,20 +34,36 @@ logger = logging.getLogger(__name__)
 
 # Events forwarded verbatim to the host's on_event (same set as the docker
 # runner-pool provider).
-_FORWARDED_EVENTS = frozenset({
-    "node_started", "node_finished", "agent_action_requested",
-    "agent_tool_started", "agent_tool_approval_required",
-    "agent_tool_auto_approved", "agent_tool_finished",
-    "agent_action_completed", "agent_tool_approval_decided",
-    "run_error", "run_cancelled", "module_error",
-})
+_FORWARDED_EVENTS = frozenset(
+    {
+        "node_started",
+        "node_finished",
+        "agent_action_requested",
+        "agent_tool_started",
+        "agent_tool_approval_required",
+        "agent_tool_auto_approved",
+        "agent_tool_finished",
+        "agent_action_completed",
+        "agent_tool_approval_decided",
+        "run_error",
+        "run_cancelled",
+        "module_error",
+    }
+)
 
 
 class SandboxWorker:
     """One container + attach socket; drives one run at a time."""
 
-    def __init__(self, client: Any, container: Any, sock: Any, *,
-                 key: tuple[str | None, str | None], image_tag: str) -> None:
+    def __init__(
+        self,
+        client: Any,
+        container: Any,
+        sock: Any,
+        *,
+        key: tuple[str | None, str | None],
+        image_tag: str,
+    ) -> None:
         self.client = client
         self.container = container
         self._raw = attach_raw_socket(sock)
@@ -61,8 +77,15 @@ class SandboxWorker:
         self._write_lock = asyncio.Lock()
 
     @classmethod
-    async def spawn(cls, client: Any, *, key: tuple[str | None, str | None],
-                    env_payload: dict, runtime: str, network: str) -> "SandboxWorker":
+    async def spawn(
+        cls,
+        client: Any,
+        *,
+        key: tuple[str | None, str | None],
+        env_payload: dict,
+        runtime: str,
+        network: str,
+    ) -> SandboxWorker:
         loop = asyncio.get_running_loop()
         tag = image_tag_for(env_payload)
         await loop.run_in_executor(None, ensure_docker_image, client, tag, env_payload)
@@ -71,15 +94,22 @@ class SandboxWorker:
         container = await loop.run_in_executor(
             None,
             lambda: client.containers.run(
-                tag, detach=True, stdin_open=True, remove=False,
-                name=name, **spawn_kwargs,
+                tag,
+                detach=True,
+                stdin_open=True,
+                remove=False,
+                name=name,
+                **spawn_kwargs,
             ),
         )
         worker: SandboxWorker | None = None
         try:
-            sock = await loop.run_in_executor(None, lambda: container.attach_socket(
-                params={"stdin": True, "stdout": True, "stderr": False, "stream": True}
-            ))
+            sock = await loop.run_in_executor(
+                None,
+                lambda: container.attach_socket(
+                    params={"stdin": True, "stdout": True, "stderr": False, "stream": True}
+                ),
+            )
             worker = cls(client, container, sock, key=key, image_tag=tag)
             await worker._await_ready(loop)
             return worker
@@ -88,9 +118,7 @@ class SandboxWorker:
                 await worker.close()
             else:
                 try:
-                    await loop.run_in_executor(
-                        None, lambda: container.remove(force=True)
-                    )
+                    await loop.run_in_executor(None, lambda: container.remove(force=True))
                 except Exception:  # noqa: BLE001
                     pass
             raise
@@ -108,12 +136,12 @@ class SandboxWorker:
             ) from exc
         if event.get("type") != "ready":
             raise RuntimeError(
-                f"sandbox container {self.container.name} sent "
-                f"{event.get('type')!r} before ready"
+                f"sandbox container {self.container.name} sent {event.get('type')!r} before ready"
             )
 
     async def _read_event(self, loop: asyncio.AbstractEventLoop) -> dict:
         """Next JSON event from the attach socket (skips undecodable lines)."""
+        _dropped = 0
         while True:
             while b"\n" in self._buf:
                 line, self._buf = self._buf.split(b"\n", 1)
@@ -123,7 +151,19 @@ class SandboxWorker:
                 try:
                     return json.loads(line)
                 except json.JSONDecodeError:
-                    continue  # node stdout noise on the protocol stream
+                    # Non-JSON stdout noise mixed into the protocol stream (E-10).
+                    # Accumulating many dropped lines usually means the container
+                    # wrote to stdout instead of the protocol channel — warn so
+                    # operators can spot this rather than silently hanging.
+                    _dropped += 1
+                    if _dropped == 1 or _dropped % 50 == 0:
+                        logger.warning(
+                            "sandbox %s: dropped %d malformed JSON line(s) from protocol stream "
+                            "(container stdout mixed with protocol channel — E-10)",
+                            getattr(self, "container", {}) and getattr(self.container, "name", "?"),
+                            _dropped,
+                        )
+                    continue
             try:
                 chunk = await loop.run_in_executor(None, self._raw.recv, 4096)
             except Exception as exc:  # noqa: BLE001 — socket.timeout et al.
@@ -163,21 +203,25 @@ class SandboxWorker:
         worker dead so the pool never reuses it."""
         loop = asyncio.get_running_loop()
         timeout = (
-            run_timeout if (run_timeout and run_timeout > 0)
+            run_timeout
+            if (run_timeout and run_timeout > 0)
             else (settings.workflow_run_timeout_seconds or 3600.0)
         )
         await loop.run_in_executor(None, self._raw.settimeout, timeout)
-        await self._send({
-            "type": "run",
-            "request_id": run_id,
-            "graph": graph,
-            "cache": cache or {},
-            "targets": targets or [],
-            "workflow_modules": workflow_modules,
-            "pause_on_approval": pause_on_approval,
-            "agent_action_resume": agent_action_resume or {},
-            "subworkflow_meta": subworkflow_meta or {},
-        }, loop)
+        await self._send(
+            {
+                "type": "run",
+                "request_id": run_id,
+                "graph": graph,
+                "cache": cache or {},
+                "targets": targets or [],
+                "workflow_modules": workflow_modules,
+                "pause_on_approval": pause_on_approval,
+                "agent_action_resume": agent_action_resume or {},
+                "subworkflow_meta": subworkflow_meta or {},
+            },
+            loop,
+        )
 
         callbacks: set[asyncio.Task] = set()
         status = "error"
@@ -199,10 +243,12 @@ class SandboxWorker:
                     clean = True
                     break
                 elif etype == "error":
-                    await on_event({
-                        "type": "run_error",
-                        "error": str(event.get("error", "runtime failure")),
-                    })
+                    await on_event(
+                        {
+                            "type": "run_error",
+                            "error": str(event.get("error", "runtime failure")),
+                        }
+                    )
                     break
                 # unknown event types are ignored (forward-compat)
         finally:
@@ -213,8 +259,9 @@ class SandboxWorker:
                 task.cancel()
         return status
 
-    async def _handle_call_workflow(self, event: dict, subworkflow_resolver,
-                                    loop: asyncio.AbstractEventLoop) -> None:
+    async def _handle_call_workflow(
+        self, event: dict, subworkflow_resolver, loop: asyncio.AbstractEventLoop
+    ) -> None:
         """Mirror of runtime_pool._handle_call_workflow over the attach socket."""
         from noodle.engine.subworkflows import (  # noqa: PLC0415
             InlineSubworkflow,
@@ -224,35 +271,42 @@ class SandboxWorker:
         callback_id = event.get("callback_id", "")
         try:
             if subworkflow_resolver is None:
-                raise RuntimeError(
-                    "sandbox runner has no host-side sub-workflow resolver"
-                )
+                raise RuntimeError("sandbox runner has no host-side sub-workflow resolver")
             call = SubworkflowCall.from_payload(
                 {**event, "input": deserialize_value(event.get("input"))}
             )
             outcome = await subworkflow_resolver(call, parent_env_id=self.key[1])
             if isinstance(outcome, InlineSubworkflow):
-                await self._send({
-                    "type": "call_workflow_response",
-                    "callback_id": callback_id,
-                    "inline_graph": outcome.graph,
-                    "inline_cache": outcome.cache,
-                    "inline_targets": outcome.targets,
-                    "inline_sources": list(outcome.sources),
-                }, loop)
+                await self._send(
+                    {
+                        "type": "call_workflow_response",
+                        "callback_id": callback_id,
+                        "inline_graph": outcome.graph,
+                        "inline_cache": outcome.cache,
+                        "inline_targets": outcome.targets,
+                        "inline_sources": list(outcome.sources),
+                    },
+                    loop,
+                )
             else:
-                await self._send({
-                    "type": "call_workflow_response",
-                    "callback_id": callback_id,
-                    "result": outcome,
-                }, loop)
+                await self._send(
+                    {
+                        "type": "call_workflow_response",
+                        "callback_id": callback_id,
+                        "result": outcome,
+                    },
+                    loop,
+                )
         except Exception as exc:  # noqa: BLE001 — surface back into the run
             try:
-                await self._send({
-                    "type": "call_workflow_error",
-                    "callback_id": callback_id,
-                    "error": f"{type(exc).__name__}: {exc}",
-                }, loop)
+                await self._send(
+                    {
+                        "type": "call_workflow_error",
+                        "callback_id": callback_id,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    },
+                    loop,
+                )
             except RuntimeError:
                 pass  # container died; the read loop reports it
 
@@ -293,15 +347,24 @@ class SandboxPool:
         idle = sum(len(v) for v in self._idle.values())
         return f"runtime={self._runtime} idle={idle} active={len(self._active)}"
 
-    async def dispatch(self, run_id: str, *, org_id: str | None,
-                       env_id: str | None, env_payload: dict, graph: dict,
-                       cache: dict | None, targets: list[str] | None,
-                       workflow_modules: list[dict], on_event,
-                       subworkflow_resolver=None,
-                       subworkflow_meta: dict | None = None,
-                       run_timeout: float | None = None,
-                       pause_on_approval: bool = False,
-                       agent_action_resume: dict | None = None) -> str:
+    async def dispatch(
+        self,
+        run_id: str,
+        *,
+        org_id: str | None,
+        env_id: str | None,
+        env_payload: dict,
+        graph: dict,
+        cache: dict | None,
+        targets: list[str] | None,
+        workflow_modules: list[dict],
+        on_event,
+        subworkflow_resolver=None,
+        subworkflow_meta: dict | None = None,
+        run_timeout: float | None = None,
+        pause_on_approval: bool = False,
+        agent_action_resume: dict | None = None,
+    ) -> str:
         if self._client is None:
             raise RuntimeError("sandbox pool is not configured")
         self._ensure_reaper()
@@ -310,8 +373,12 @@ class SandboxPool:
         self._active[run_id] = worker
         try:
             status = await worker.run(
-                run_id, graph=graph, cache=cache, targets=targets,
-                workflow_modules=workflow_modules, on_event=on_event,
+                run_id,
+                graph=graph,
+                cache=cache,
+                targets=targets,
+                workflow_modules=workflow_modules,
+                on_event=on_event,
                 subworkflow_resolver=subworkflow_resolver,
                 subworkflow_meta=subworkflow_meta,
                 pause_on_approval=pause_on_approval,
@@ -344,8 +411,9 @@ class SandboxPool:
         for w in workers:
             await w.close()
 
-    async def _acquire(self, key: tuple[str | None, str | None],
-                       env_payload: dict) -> SandboxWorker:
+    async def _acquire(
+        self, key: tuple[str | None, str | None], env_payload: dict
+    ) -> SandboxWorker:
         wanted_tag = image_tag_for(env_payload)
         stale: list[SandboxWorker] = []
         worker: SandboxWorker | None = None
@@ -365,15 +433,15 @@ class SandboxPool:
         if worker is not None:
             return worker
         return await SandboxWorker.spawn(
-            self._client, key=key, env_payload=env_payload,
-            runtime=self._runtime, network=self._network,
+            self._client,
+            key=key,
+            env_payload=env_payload,
+            runtime=self._runtime,
+            network=self._network,
         )
 
     async def _release(self, worker: SandboxWorker) -> None:
-        if (
-            worker.dead
-            or worker.runs_completed >= settings.sandbox_max_runs_per_container
-        ):
+        if worker.dead or worker.runs_completed >= settings.sandbox_max_runs_per_container:
             await worker.close()
             return
         evicted: list[SandboxWorker] = []
@@ -409,9 +477,7 @@ class SandboxPool:
                 async with self._lock:
                     for key in list(self._idle):
                         keep = [w for w in self._idle[key] if w.idle_since >= cutoff]
-                        expired.extend(
-                            w for w in self._idle[key] if w.idle_since < cutoff
-                        )
+                        expired.extend(w for w in self._idle[key] if w.idle_since < cutoff)
                         if keep:
                             self._idle[key] = keep
                         else:
@@ -453,19 +519,17 @@ async def init_sandbox() -> str | None:
     try:
         client = await loop.run_in_executor(None, _make_docker_client)
         await loop.run_in_executor(None, client.ping)
-        runtime = await loop.run_in_executor(
-            None, detect_runtime, client, settings.sandbox_runtime
-        )
+        runtime = await loop.run_in_executor(None, detect_runtime, client, settings.sandbox_runtime)
         network = await loop.run_in_executor(None, ensure_sandbox_network, client)
     except Exception as exc:
         if mode == "required":
             raise RuntimeError(
-                f"execution_sandbox=required but no usable Docker daemon/"
-                f"runtime: {exc}"
+                f"execution_sandbox=required but no usable Docker daemon/runtime: {exc}"
             ) from exc
         logger.warning(
             "execution_sandbox=auto: no usable Docker daemon (%s); "
-            "falling back to the subprocess runner", exc,
+            "falling back to the subprocess runner",
+            exc,
         )
         return None
     pool.configure(client, runtime=runtime, network=network)

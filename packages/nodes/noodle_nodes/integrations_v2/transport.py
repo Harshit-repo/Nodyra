@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -11,10 +12,15 @@ from noodle.context import node_debug
 from noodle_nodes.http_security import safe_request
 from noodle_nodes.integrations_v2.errors import ProviderError
 
+_logger = logging.getLogger(__name__)
+
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 # Maximum pages the paginate() helper will follow to avoid unbounded loops.
 DEFAULT_MAX_PAGES = 50
+# Maximum items paginate() will collect before truncating (E-12).
+# At 10,000 items/page and 50 pages the old cap allowed 500,000 in-memory rows.
+DEFAULT_MAX_ITEMS = 10_000
 MAX_DEBUG_REQUEST_EVENTS = 100
 
 
@@ -356,6 +362,7 @@ class ProviderTransport:
         next_token_param: str = "pageToken",
         next_link_key: str = "@odata.nextLink",
         max_pages: int = DEFAULT_MAX_PAGES,
+        max_items: int = DEFAULT_MAX_ITEMS,
         headers: dict[str, str] | None = None,
         params: dict[str, Any] | None = None,
         json_body: Any = None,
@@ -365,7 +372,8 @@ class ProviderTransport:
         """Collect all pages from a paginated provider endpoint.
 
         Supports both token-based pagination (Google style) and next-link
-        pagination (Microsoft Graph style).  Returns all collected items.
+        pagination (Microsoft Graph style).  Returns all collected items up to
+        ``max_items`` (default 10,000) — a warning is logged when truncated.
 
         ``items_key`` names the list field inside each response payload.
         When the response is itself a list, it is used directly.  When
@@ -377,6 +385,17 @@ class ProviderTransport:
         current_url = path_or_url
 
         for _ in range(max_pages):
+            # E-12: stop early if we've already hit the item cap.
+            if len(collected) >= max_items:
+                _logger.warning(
+                    "paginate(%s): truncated at %d items (max_items=%d) — "
+                    "use a filter or increase max_items to retrieve more (E-12)",
+                    operation,
+                    len(collected),
+                    max_items,
+                )
+                break
+
             page = self.request(
                 method,
                 current_url,
@@ -421,4 +440,4 @@ class ProviderTransport:
                 collected.append(page)
                 break
 
-        return collected
+        return collected[:max_items]

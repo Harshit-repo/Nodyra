@@ -15,10 +15,13 @@ import asyncio
 import concurrent.futures
 import contextvars
 import functools
+import logging
 import threading
 import time
 from collections.abc import Callable
 from typing import Any, Protocol
+
+_logger = logging.getLogger(__name__)
 
 # Hosts (runner.py) set this to the workflow's environment id so each
 # environment gets its own ProcessPoolExecutor and worker state cannot
@@ -48,9 +51,19 @@ class PooledProcessIsolator:
     submit/completion activity for ``idle_seconds``. Timeouts and broken
     pools evict immediately so the next attempt gets a fresh pool."""
 
-    def __init__(self, *, max_workers: int = 4, idle_seconds: float = 600.0) -> None:
+    def __init__(
+        self,
+        *,
+        max_workers: int = 4,
+        idle_seconds: float = 600.0,
+        max_total_workers: int = 32,
+    ) -> None:
         self._max_workers = max_workers
         self._idle_seconds = idle_seconds
+        # E-11: global cap on total worker processes across all pools.
+        # At max_workers=4 the default allows up to 8 active environments
+        # before idle pools are evicted.
+        self._max_total_workers = max_total_workers
         self._pools: dict[str | None, concurrent.futures.ProcessPoolExecutor] = {}
         self._last_activity: dict[str | None, float] = {}
         self._in_flight: dict[str | None, int] = {}
@@ -96,6 +109,25 @@ class PooledProcessIsolator:
                 self._evict_locked(k)
             pool = self._pools.get(key)
             if pool is None:
+                # E-11: enforce global worker cap by evicting the idlest idle
+                # pool before creating a new one.  If every pool is busy we
+                # exceed the cap temporarily rather than block a live run.
+                max_pools = max(1, self._max_total_workers // max(1, self._max_workers))
+                if len(self._pools) >= max_pools:
+                    idle_candidates = sorted(
+                        (last, k)
+                        for k, last in self._last_activity.items()
+                        if self._in_flight.get(k, 0) == 0
+                    )
+                    if idle_candidates:
+                        _, oldest = idle_candidates[0]
+                        _logger.warning(
+                            "process isolator: evicting idle pool %r to stay under "
+                            "max_total_workers=%d (E-11)",
+                            oldest,
+                            self._max_total_workers,
+                        )
+                        self._evict_locked(oldest)
                 pool = concurrent.futures.ProcessPoolExecutor(
                     max_workers=self._max_workers
                 )
