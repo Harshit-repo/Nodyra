@@ -1385,20 +1385,34 @@
   color: #06101e;
   border-color: var(--accent-deep);
 }
-/* Space-hold pan: nodes/edges stop capturing the pointer so a left-drag falls
-   through to the pane and pans even over a dense cluster; the whole surface
-   shows a grab cursor (grabbing once React Flow flags the active drag). */
-.canvas--pan .react-flow__pane {
+/* Default: left-drag on empty pane pans the canvas. */
+.canvas .react-flow__pane {
   cursor: grab;
+}
+.canvas .react-flow__pane.dragging {
+  cursor: grabbing;
+}
+/* Space-hold selection mode: nodes/edges stop capturing the pointer so the
+   left-drag selection box reaches through a dense cluster. */
+.canvas--pan .react-flow__pane {
+  cursor: crosshair;
 }
 .canvas--pan .react-flow__pane.dragging,
 .canvas--pan .react-flow__pane.selection {
-  cursor: grabbing;
+  cursor: crosshair;
 }
 .canvas--pan .react-flow__node,
 .canvas--pan .react-flow__edge,
 .canvas--pan .react-flow__nodesselection {
   pointer-events: none;
+}
+/* Right-drag selection rectangle */
+.canvas-selection-rect {
+  position: fixed;
+  pointer-events: none;
+  border: 1px solid var(--accent, #66b2ff);
+  background: var(--accent-glow, rgba(102, 178, 255, 0.08));
+  z-index: 9999;
 }
 .canvas-control-sep {
   width: 1px;
@@ -3426,30 +3440,6 @@ body.is-resizing-vertical {
     opacity: 1;
   }
 }
-.status-run-running {
-  background: var(--accent);
-  color: #06101e;
-}
-.status-run-success {
-  background: #57c98a;
-  color: #06140c;
-}
-.status-run-error {
-  background: #f0747a;
-  color: #1e0608;
-}
-.status-run-skipped {
-  background: var(--surface-3);
-  color: var(--ink-2);
-}
-.status-run-cancelled {
-  background: #b59bff;
-  color: #100822;
-}
-.status-run-waiting {
-  background: #f2c94c;
-  color: #1d1602;
-}
 .node-spinner {
   width: 9px;
   height: 9px;
@@ -3615,10 +3605,15 @@ body.is-resizing-vertical {
   .agent-model-pill.is-active,
   .node-pulse-dot,
   .node-spinner,
-  .node-tile.agent-active-done {
+  .node-tile.agent-active-done,
+  .publish-dot.is-amber,
+  .chat-typing-dot,
+  .chat-agent-live-indicator,
+  .edge-running-pulse {
     animation: none !important;
   }
-  .react-flow__edge-path.edge-agent-flow {
+  .react-flow__edge-path.edge-agent-flow,
+  .react-flow__edge-path.edge-running {
     animation: none !important;
     stroke-dasharray: none;
   }
@@ -7201,6 +7196,9 @@ th.sortable:hover { background:var(--bg-3); }
     0 1px 0 rgba(255, 255, 255, 0.05) inset,
     0 40px 90px -36px rgba(0, 0, 0, 0.86),
     0 0 0 1px rgba(0, 0, 0, 0.35);
+  height: 65vh;
+  max-height: 92vh;
+  min-height: 35vh;
 }
 .ndv-modal::before {
   content: "";
