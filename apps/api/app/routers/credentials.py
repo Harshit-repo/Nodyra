@@ -1,10 +1,12 @@
-import asyncio
+import html as html_lib
+import json
 import logging
+import secrets
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
@@ -19,15 +21,17 @@ from app.schemas import (
     CredentialTestResponse,
     CredentialTypeInfo,
     CredentialUpdate,
+    PageResponse,
 )
 from app.security import get_client_ip, optional_current_user, require_permission
+from app.services import org_keys
 from app.services.audit import log_audit
 from app.services.credential_tests import (
     available_test_services,
     test_credential_connection,
 )
 from app.services.credential_types import get_credential_type, list_credential_types
-from app.services.crypto import decrypt_credential, encrypt_credential
+from app.services.crypto import decrypt_credential
 from app.services.oauth import (
     OAuthError,
     build_authorization_url,
@@ -41,7 +45,6 @@ from app.services.oauth import (
     scopes_from_credential_data,
     token_payload_to_credential_data,
 )
-from app.services import org_keys
 from app.services.redaction import invalidate_secret_cache
 from app.tenancy import active_org_id, current_org_id
 
@@ -53,6 +56,12 @@ SCOPES = {"global", "environment", "workflow", "runner_pool"}
 
 def _info(cred: Credential, org_kek: bytes | None = None) -> CredentialInfo:
     data = decrypt_credential(cred.encrypted_data, cred.encrypted_dek, org_kek=org_kek)
+    if not data and cred.encrypted_data:
+        logger.warning(
+            "credential %s (%s) decrypted to empty dict — possible key mismatch "
+            "or corrupt ciphertext (B-09)",
+            cred.id, cred.name,
+        )
     type_spec = get_credential_type(cred.type)
     return CredentialInfo(
         id=cred.id,
@@ -386,10 +395,14 @@ def _oauth_popup_html(
     messages and refreshes the credentials list accordingly.
     """
     event_type = "noodle_oauth_success" if success else "noodle_oauth_error"
-    cred_id_js = f'"{credential_id}"' if credential_id else "null"
-    # Escape message for JS string literal (no user-controlled content reaches
-    # here, but be explicit).
-    safe_msg = message.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+    safe_html_message = html_lib.escape(message, quote=True)
+    # JSON encoding handles quotes/backslashes/control characters. Escaping the
+    # HTML closing delimiter prevents a provider-controlled error string from
+    # terminating the script element early.
+    message_js = json.dumps(message).replace("</", "<\\/")
+    event_js = json.dumps(event_type)
+    cred_id_js = json.dumps(credential_id)
+    nonce = secrets.token_urlsafe(24)
     bg = "#1a2633" if success else "#2d1a1a"
     icon = "\u2705" if success else "\u274c"
     html = f"""<!doctype html>
@@ -397,7 +410,7 @@ def _oauth_popup_html(
 <head>
   <meta charset="utf-8" />
   <title>Noodle &#8212; OAuth</title>
-  <style>
+  <style nonce="{nonce}">
     *{{box-sizing:border-box;margin:0;padding:0}}
     body{{background:{bg};color:#e0e6ed;font-family:system-ui,sans-serif;
          display:flex;align-items:center;justify-content:center;min-height:100vh}}
@@ -411,15 +424,15 @@ def _oauth_popup_html(
 <body>
   <div class="card">
     <h2>{icon}</h2>
-    <p id="msg">{message}</p>
+    <p id="msg">{safe_html_message}</p>
     <small>This window will close automatically.</small>
   </div>
-  <script>
+  <script nonce="{nonce}">
     (function () {{
       var payload = {{
-        type: "{event_type}",
+        type: {event_js},
         credentialId: {cred_id_js},
-        message: "{safe_msg}"
+        message: {message_js}
       }};
       if (window.opener && !window.opener.closed) {{
         try {{
@@ -433,7 +446,16 @@ def _oauth_popup_html(
 </body>
 </html>
 """
-    return HTMLResponse(content=html, status_code=200)
+    csp = (
+        "default-src 'none'; "
+        f"script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
+        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    )
+    return HTMLResponse(
+        content=html,
+        status_code=200,
+        headers={"Content-Security-Policy": csp},
+    )
 
 
 @router.post(
@@ -482,40 +504,32 @@ async def list_credential_test_handlers() -> list[str]:
     return available_test_services()
 
 
-_LIST_CREDENTIALS_HARD_CAP = 500
-
-
 @router.get(
     "",
-    response_model=list[CredentialInfo],
+    response_model=PageResponse[CredentialInfo],
     dependencies=[Depends(require_permission("credential:read"))],
 )
-async def list_credentials(session: AsyncSession = Depends(get_session)):
+async def list_credentials(
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
+):
+    total = await session.scalar(select(func.count()).select_from(Credential))
     result = await session.scalars(
         select(Credential)
         .order_by(Credential.name)
-        .limit(_LIST_CREDENTIALS_HARD_CAP + 1)
+        .offset(offset)
+        .limit(limit)
     )
     rows = result.all()
-    if len(rows) > _LIST_CREDENTIALS_HARD_CAP:
-        logger.warning(
-            "list_credentials: result truncated to %d rows; "
-            "add pagination to serve all credentials",
-            _LIST_CREDENTIALS_HARD_CAP,
-        )
-        rows = rows[:_LIST_CREDENTIALS_HARD_CAP]
-    # _info decrypts each credential (synchronous Fernet); with up to 500 rows
-    # that's enough CPU to stall the event loop. The ORM column attributes are
-    # already loaded, so building the response off-loop is safe (no lazy DB I/O).
-    # Org KEKs are resolved on-loop first (they need the session); rows can
+    # Resolve org KEKs on-loop first (they need the async session); rows can
     # span orgs only when multi-tenancy is off, but the dict handles both.
     keks: dict[str, bytes | None] = {}
     for c in rows:
         if c.org_id not in keks:
             keks[c.org_id] = await org_keys.get_org_kek(c.org_id, session)
-    return await asyncio.to_thread(
-        lambda: [_info(c, keks.get(c.org_id)) for c in rows]
-    )
+    items = [_info(c, keks.get(c.org_id)) for c in rows]
+    return PageResponse(items=items, total=total or 0, limit=limit, offset=offset)
 
 
 @router.get(

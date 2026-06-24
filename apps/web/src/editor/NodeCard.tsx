@@ -11,8 +11,8 @@ import {
   Warning,
   X,
 } from "@phosphor-icons/react";
-import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Handle, type Edge, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
+import { Fragment, memo, useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
 
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -213,7 +213,35 @@ function compactLabel(value: unknown): string {
   return value.trim();
 }
 
-export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
+export function hasTriggerUpstream(
+  nodes: NoodleNode[],
+  edges: Edge[],
+  nodeId: string,
+): boolean {
+  const byTarget = new Map<string, string[]>();
+  for (const edge of edges) {
+    const sources = byTarget.get(edge.target);
+    if (sources) sources.push(edge.source);
+    else byTarget.set(edge.target, [edge.source]);
+  }
+  const triggerById = new Map(
+    nodes.map((node) => [node.id, isTriggerManifest(node.data.manifest)]),
+  );
+  const visited = new Set<string>([nodeId]);
+  const queue = [nodeId];
+  while (queue.length) {
+    const current = queue.pop() as string;
+    for (const previous of byTarget.get(current) ?? []) {
+      if (visited.has(previous)) continue;
+      visited.add(previous);
+      if (previous === META_BAR_INPUT_ID || triggerById.get(previous)) return true;
+      queue.push(previous);
+    }
+  }
+  return false;
+}
+
+function NodeCardComponent({ id, data, selected }: NodeProps<NoodleNode>) {
   const [toolbarVisible, setToolbarVisible] = useState(false);
   const hideTimerRef = useRef<number | null>(null);
   const { manifest, disabled, outputsOverride } = data;
@@ -317,48 +345,12 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   const runFromNode = useEditor((s) => s.runFromNode);
   const runFromTrigger = useEditor((s) => s.runFromTrigger);
   const isTrigger = isTriggerManifest(manifest);
+  const [canRunStep, setCanRunStep] = useState(isTrigger);
   const devMode = useEditor((s) => s.devMode);
   const stepRunDisabledReason = useEditor((s) => s.drillStepRunDisabledReason());
-  const isUnavailable = Boolean((data as unknown as { unavailableType?: string }).unavailableType);
+  const isUnavailable = Boolean(data.unavailableType);
   const [sdkModalOpen, setSdkModalOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-
-  // Read only the structural data needed for BFS — stable identity when
-  // unchanged so the useMemo below doesn't re-run on unrelated state updates.
-  const storeEdges = useEditor((s) => s.edges);
-  const storeNodes = useEditor((s) => s.nodes);
-
-  // A non-trigger node may only be run individually when it is wired
-  // (directly or transitively) to a trigger. BFS is memoized so it only runs
-  // when the graph edges/nodes actually change, not on every store update.
-  const hasTriggerUpstream = useMemo(() => {
-    if (isTrigger) return true;
-    const bySource = new Map<string, string[]>();
-    for (const e of storeEdges) {
-      const arr = bySource.get(e.target);
-      if (arr) arr.push(e.source);
-      else bySource.set(e.target, [e.source]);
-    }
-    const triggerById = new Map(
-      storeNodes.map((n) => [n.id, isTriggerManifest(n.data.manifest)]),
-    );
-    const visited = new Set<string>([id]);
-    const queue = [id];
-    while (queue.length) {
-      const cur = queue.pop() as string;
-      for (const prev of bySource.get(cur) ?? []) {
-        if (visited.has(prev)) continue;
-        visited.add(prev);
-        // Inside a metanode the input bar stands in for the root upstream (which
-        // carries the trigger), so anything wired from it is step-runnable.
-        if (prev === META_BAR_INPUT_ID) return true;
-        if (triggerById.get(prev)) return true;
-        queue.push(prev);
-      }
-    }
-    return false;
-  }, [isTrigger, storeEdges, storeNodes, id]);
-  const canRunStep = isTrigger || hasTriggerUpstream;
 
   const tileClass = ["node-tile"];
   if (selected) tileClass.push("selected");
@@ -386,6 +378,10 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
 
   function showToolbar(): void {
     clearHideTimer();
+    if (!isTrigger) {
+      const state = useEditor.getState();
+      setCanRunStep(hasTriggerUpstream(state.nodes, state.edges, id));
+    }
     setToolbarVisible(true);
   }
 
@@ -597,6 +593,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
         style={{ "--cat": color } as CSSProperties}
         onMouseEnter={showToolbar}
         onMouseLeave={scheduleToolbarHide}
+        onFocusCapture={showToolbar}
       >
         {toolbar}
         {sdkModalOpen && (
@@ -759,6 +756,18 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
               : `${(runMeta.durationMs / 1000).toFixed(1)}s`}
           </div>
         )}
+        {confirmDelete && (
+          <ConfirmDialog
+            title="Delete node?"
+            body={`Remove "${data.label || manifest.name}" and all its connections. This cannot be undone.`}
+            confirmLabel="Delete"
+            onCancel={() => setConfirmDelete(false)}
+            onConfirm={() => {
+              setConfirmDelete(false);
+              deleteNode(id);
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -766,12 +775,12 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
   if (isUnavailable) {
     return (
       <div className="node">
-        <div className="node-tile node-unavailable" title={`Unavailable node type: ${(data as unknown as { unavailableType?: string }).unavailableType}`}>
+        <div className="node-tile node-unavailable" title={`Unavailable node type: ${data.unavailableType}`}>
           <Warning size={22} weight="bold" />
           <Handle type="target" position={Position.Left} id="input" />
           <Handle type="source" position={Position.Right} id="main" />
         </div>
-        <div className="node-label">{(data as unknown as { unavailableType?: string }).unavailableType}</div>
+        <div className="node-label">{data.unavailableType}</div>
       </div>
     );
   }
@@ -782,6 +791,7 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
       style={{ "--cat": color } as CSSProperties}
       onMouseEnter={showToolbar}
       onMouseLeave={scheduleToolbarHide}
+      onFocusCapture={showToolbar}
     >
       {toolbar}
 
@@ -988,6 +998,14 @@ export function NodeCard({ id, data, selected }: NodeProps<NoodleNode>) {
     </div>
   );
 }
+
+export const NodeCard = memo(
+  NodeCardComponent,
+  (previous, next) =>
+    previous.id === next.id &&
+    previous.data === next.data &&
+    previous.selected === next.selected,
+);
 
 export function metaBadgeText(params: Record<string, unknown>): string {
   const sub = params.subgraph as { nodes?: unknown[] } | undefined;

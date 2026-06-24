@@ -345,13 +345,30 @@ class GithubSyncConfig(Base):
     repo: Mapped[str] = mapped_column(String(200), nullable=False)
     base_path: Mapped[str] = mapped_column(String(200), nullable=False, default="workflows/")
     main_branch: Mapped[str] = mapped_column(String(100), nullable=False, default="main")
-    webhook_secret: Mapped[str] = mapped_column(Text, nullable=False)
+    # webhook_secret is stored encrypted (envelope DEK/KEK pattern, same as Credential).
+    # The plaintext column is kept temporarily for migration; it is NULLed out once
+    # the encrypted columns are populated. Use decrypted_webhook_secret for access.
+    webhook_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    encrypted_webhook_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    encrypted_webhook_secret_dek: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+    def decrypted_webhook_secret(self, org_kek: bytes | None = None) -> str | None:
+        """Return the plaintext webhook secret, trying encrypted store first."""
+        from app.services.crypto import decrypt_credential
+        if self.encrypted_webhook_secret is not None:
+            data = decrypt_credential(
+                self.encrypted_webhook_secret,
+                self.encrypted_webhook_secret_dek,
+                org_kek=org_kek,
+            )
+            return data.get("secret")
+        return self.webhook_secret
 
 
 class GithubSyncJob(Base):
@@ -449,6 +466,15 @@ class Workflow(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
+    __table_args__ = (
+        Index(
+            "uq_workflows_org_mcp_tool_name",
+            "org_id",
+            "mcp_tool_name",
+            unique=True,
+        ),
+    )
+
     versions: Mapped[list["WorkflowVersion"]] = relationship(
         back_populates="workflow",
         cascade="all, delete-orphan",
@@ -477,6 +503,38 @@ class User(Base):
         Float, nullable=True, default=None
     )
 
+
+class ApiToken(Base):
+    """Revocable, org-scoped bearer token for MCP automation."""
+
+    __tablename__ = "api_tokens"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    token_prefix: Mapped[str] = mapped_column(String(20), nullable=False)
+    scopes: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 class Credential(Base):
     """An encrypted secret (API key, auth header, ...) referenced by nodes."""
@@ -745,7 +803,7 @@ class Artifact(Base):
 
     __tablename__ = "artifacts"
 
-    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     org_id: Mapped[str] = mapped_column(
         ForeignKey("organizations.id", ondelete="CASCADE"),
         index=True, nullable=False, server_default="default",

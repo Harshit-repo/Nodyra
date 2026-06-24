@@ -64,6 +64,10 @@ export interface NoodleNodeData {
   toolName?: string | null;
   toolDescription?: string;
   label?: string;
+  /** Set on placeholder nodes when the node type is not installed. */
+  unavailableType?: string;
+  // Index signature required by @xyflow/react Node<T extends Record<string,unknown>>.
+  // Prefer adding explicit optional fields (like unavailableType above) over relying on it.
   [key: string]: unknown;
 }
 
@@ -328,7 +332,7 @@ function buildMetanodeManifest(
     category: "Logic",
     version: "1.0.0",
     description: "A group of nodes collapsed into one.",
-    icon: "stack",
+    icon: "squares-four",
     inputs: inputs.map(toPort),
     outputs: outputs.length > 0 ? outputs.map(toPort) : [toPort({ name: "main" })],
     params: [
@@ -612,30 +616,27 @@ function buildBodyEdgeIndex(childWorkflows: Record<string, ChildWorkflowState>):
   return index;
 }
 
-// Module-level cache so body indices are rebuilt only when childWorkflows
-// reference changes (not on every node drag). Keyed by the childWorkflows
-// object reference itself — a new reference (from any state update that
-// touches childWorkflows) automatically invalidates both caches.
-let _cachedCwRef: Record<string, ChildWorkflowState> | null = null;
-let _cachedBodyIndex: Record<string, string> = {};
-let _cachedBodyEdgeIndex: Record<string, string> = {};
+// WeakMap cache so body indices are rebuilt only when childWorkflows reference
+// changes. Using WeakMap avoids shared mutable module-level state across store
+// instances (safe across test runs and concurrent stores).
+type BodyIndices = { body: Record<string, string>; edge: Record<string, string> };
+const _bodyIndexCache = new WeakMap<Record<string, ChildWorkflowState>, BodyIndices>();
+
+function _getBodyIndices(childWorkflows: Record<string, ChildWorkflowState>): BodyIndices {
+  let cached = _bodyIndexCache.get(childWorkflows);
+  if (!cached) {
+    cached = { body: buildBodyIndex(childWorkflows), edge: buildBodyEdgeIndex(childWorkflows) };
+    _bodyIndexCache.set(childWorkflows, cached);
+  }
+  return cached;
+}
 
 function getBodyIndex(childWorkflows: Record<string, ChildWorkflowState>): Record<string, string> {
-  if (childWorkflows !== _cachedCwRef) {
-    _cachedCwRef = childWorkflows;
-    _cachedBodyIndex = buildBodyIndex(childWorkflows);
-    _cachedBodyEdgeIndex = buildBodyEdgeIndex(childWorkflows);
-  }
-  return _cachedBodyIndex;
+  return _getBodyIndices(childWorkflows).body;
 }
 
 function getBodyEdgeIndex(childWorkflows: Record<string, ChildWorkflowState>): Record<string, string> {
-  if (childWorkflows !== _cachedCwRef) {
-    _cachedCwRef = childWorkflows;
-    _cachedBodyIndex = buildBodyIndex(childWorkflows);
-    _cachedBodyEdgeIndex = buildBodyEdgeIndex(childWorkflows);
-  }
-  return _cachedBodyEdgeIndex;
+  return _getBodyIndices(childWorkflows).edge;
 }
 
 function nodeChangeId(change: NodeChange<NoodleNode>): string {

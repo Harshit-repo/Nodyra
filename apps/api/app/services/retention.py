@@ -22,7 +22,7 @@ from sqlalchemy import delete, func, select
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import NodeRun, Run, RunApproval, RunEvent
+from app.models import NodeRun, Run, RunApproval, RunEvent, RunQueueEntry
 from app.services.artifacts import delete_artifacts_for_run_ids
 from app.services.live_settings import get_live_settings
 
@@ -46,6 +46,7 @@ async def prune_old_runs(now: datetime | None = None) -> tuple[int, int]:
         await session.execute(delete(RunApproval).where(RunApproval.run_id.in_(ids)))
         await session.execute(delete(RunEvent).where(RunEvent.run_id.in_(ids)))
         await session.execute(delete(NodeRun).where(NodeRun.run_id.in_(ids)))
+        await session.execute(delete(RunQueueEntry).where(RunQueueEntry.run_id.in_(ids)))
         result = await session.execute(delete(Run).where(Run.id.in_(ids)))
         return int(result.rowcount or 0)
 
