@@ -9,13 +9,17 @@ can't each mint one and orphan the loser's credentials.
 
 from __future__ import annotations
 
+import logging
 from typing import Protocol
 
-from sqlalchemy import update
+from cryptography.fernet import InvalidToken
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Credential, Organization
 from app.services import crypto
+
+_logger = logging.getLogger(__name__)
 
 
 class KekProvider(Protocol):
@@ -79,9 +83,69 @@ async def get_org_kek(
         )
         await session.flush()
         await session.refresh(org)
-    kek = kek_provider.unwrap(org.wrapped_org_kek)
+    try:
+        kek = kek_provider.unwrap(org.wrapped_org_kek)
+    except (InvalidToken, ValueError):
+        _logger.error(
+            "get_org_kek: cannot unwrap org KEK for org %s — SECRET_KEY may have "
+            "changed since the KEK was minted. Falling back to master-KEK path. "
+            "To recover: restore the original NOODLE_SECRET_KEY, OR run "
+            "`UPDATE organizations SET wrapped_org_kek = NULL` in Postgres "
+            "and delete any credentials that were encrypted under the old key.",
+            org_id,
+        )
+        return None
     _kek_cache[org_id] = kek
     return kek
+
+
+async def batch_get_org_keks(
+    org_ids: list[str | None], session: AsyncSession
+) -> dict[str | None, bytes | None]:
+    """B-11: Batch-fetch KEKs for multiple orgs in a single query.
+
+    Returns a dict keyed by org_id (including None). Unlike get_org_kek(),
+    this path skips KEK minting — orgs without a wrapped_org_kek return None.
+    Minting happens on the first write-path access via get_org_kek(). Cache
+    hits are served from the process-level KEK cache with no DB round-trip.
+    """
+    result: dict[str | None, bytes | None] = {}
+    uncached: list[str] = []
+    for oid in org_ids:
+        if not oid:
+            result[oid] = None
+            continue
+        cached = _kek_cache.get(oid)
+        if cached is not None:
+            result[oid] = cached
+        else:
+            uncached.append(oid)
+
+    if uncached:
+        orgs = (
+            await session.execute(
+                select(Organization).where(Organization.id.in_(uncached))
+            )
+        ).scalars().all()
+        by_id = {o.id: o for o in orgs}
+        for oid in uncached:
+            org = by_id.get(oid)
+            if org is None or not org.wrapped_org_kek:
+                result[oid] = None
+                continue
+            try:
+                kek = kek_provider.unwrap(org.wrapped_org_kek)
+            except (InvalidToken, ValueError):
+                _logger.error(
+                    "batch_get_org_keks: cannot unwrap KEK for org %s — SECRET_KEY may have changed",
+                    oid,
+                )
+                result[oid] = None
+                continue
+            _kek_cache[oid] = kek
+            result[oid] = kek
+
+    return result
 
 
 async def encrypt_credential_for(

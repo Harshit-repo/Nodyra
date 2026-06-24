@@ -127,7 +127,13 @@ async def _mark_interrupted_runs() -> None:
         with run_as_system():
             async with SessionLocal() as session:
                 result = await session.scalars(
-                    select(Run).where(Run.status.in_(("running", "waiting")))
+                    select(Run).where(
+                        Run.status.in_(("running", "waiting")),
+                        # Skip remote-pool runs: they are managed by lease expiry.
+                        # The worker heartbeats extend the lease; if the worker dies
+                        # the lease expires and the run is re-queued automatically.
+                        Run.runner_pool_id.is_(None),
+                    )
                 )
                 runs = result.all()
                 if runs:
@@ -353,7 +359,7 @@ async def lifespan(app: FastAPI):
     )
     cloud_idle = asyncio.create_task(_as_system(cloud_idle_terminate_loop)())
     heartbeat = asyncio.create_task(_as_system(runner_heartbeat_loop)())
-    github_sync = asyncio.create_task(github_sync_dispatch_loop())
+    github_sync = asyncio.create_task(_as_system(github_sync_dispatch_loop)())
     yield
     # Graceful drain on shutdown: stop the dispatch loop from leasing new
     # entries, give in-flight runs a bounded window to finish, then
@@ -468,6 +474,14 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
 _MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MiB — generous for graph payloads
 _MULTIPART_OVERHEAD_BYTES = 1024 * 1024
 
+# B-10: cap concurrent chunked-body reads to bound total in-flight memory.
+# 20 concurrent readers * 10 MiB cap = 200 MiB ceiling (less in practice; most
+# requests send Content-Length and take the fast path, never touching this).
+_MAX_CHUNKED_BODY_READERS = 20
+# Counter is safe without a lock: asyncio is single-threaded and we only
+# increment/decrement at yield points (no concurrent mutation between checks).
+_chunked_body_readers: int = 0
+
 
 def _request_body_limit(path: str) -> int:
     if path in {"/artifacts/upload", "/runner-pools/artifact-upload"}:
@@ -486,6 +500,7 @@ async def _body_size_limit(request: Request, call_next):
     are rejected immediately; chunked bodies are consumed only up to the same
     route-specific limit and then cached for FastAPI's downstream parser.
     """
+    global _chunked_body_readers
     limit = _request_body_limit(request.url.path)
     content_length = request.headers.get("content-length")
     if content_length is not None:
@@ -501,17 +516,27 @@ async def _body_size_limit(request: Request, call_next):
         # Transfer-Encoding: chunked has no declared size. Read only up to the
         # route-specific cap, cache the bounded body for downstream parsers, and
         # reject before request.body()/multipart parsing can grow without limit.
-        chunks: list[bytes] = []
-        total = 0
-        async for chunk in request.stream():
-            total += len(chunk)
-            if total > limit:
-                return JSONResponse(
-                    status_code=413,
-                    content={"detail": "Request body too large"},
-                )
-            chunks.append(chunk)
-        request._body = b"".join(chunks)  # noqa: SLF001 - Starlette body cache
+        if _chunked_body_readers >= _MAX_CHUNKED_BODY_READERS:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Server busy: too many concurrent large uploads"},
+                headers={"Retry-After": "1"},
+            )
+        _chunked_body_readers += 1
+        try:
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in request.stream():
+                total += len(chunk)
+                if total > limit:
+                    return JSONResponse(
+                        status_code=413,
+                        content={"detail": "Request body too large"},
+                    )
+                chunks.append(chunk)
+            request._body = b"".join(chunks)  # noqa: SLF001 - Starlette body cache
+        finally:
+            _chunked_body_readers -= 1
     return await call_next(request)
 
 
@@ -549,6 +574,7 @@ async def _security_headers(request: Request, call_next):
 
 _AUTH_EXEMPT_PREFIXES = (
     "/auth",
+    "/.well-known",
     "/health",
     "/webhook",
     "/webhook-test",
@@ -573,6 +599,7 @@ _AUTH_EXEMPT_PREFIXES = (
 # scraping Prometheus should configure a bearer token in their scrape config.
 _AUTH_EXEMPT_PATHS = {
     "/",
+    "/mcp",  # MCP performs its own bearer auth and standards-compliant challenge.
     "/openapi.json",
     "/docs",
     "/docs/oauth2-redirect",

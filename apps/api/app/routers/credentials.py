@@ -522,12 +522,9 @@ async def list_credentials(
         .limit(limit)
     )
     rows = result.all()
-    # Resolve org KEKs on-loop first (they need the async session); rows can
-    # span orgs only when multi-tenancy is off, but the dict handles both.
-    keks: dict[str, bytes | None] = {}
-    for c in rows:
-        if c.org_id not in keks:
-            keks[c.org_id] = await org_keys.get_org_kek(c.org_id, session)
+    # B-11: batch-fetch all org KEKs in one query instead of one per unique org.
+    unique_org_ids = list({c.org_id for c in rows})
+    keks = await org_keys.batch_get_org_keks(unique_org_ids, session)
     items = [_info(c, keks.get(c.org_id)) for c in rows]
     return PageResponse(items=items, total=total or 0, limit=limit, offset=offset)
 
