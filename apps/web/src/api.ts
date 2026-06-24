@@ -280,11 +280,19 @@ async function requestAllPages<T>(path: string, pageSize = 500): Promise<T[]> {
   const offsets: number[] = [];
   const step = Math.max(1, first.limit || pageSize);
   for (let offset = step; offset < first.total; offset += step) offsets.push(offset);
-  const pages = await Promise.all(
-    offsets.map((offset) =>
-      request<T[] | Page<T>>(`${path}${separator}limit=${step}&offset=${offset}`),
-    ),
-  );
+
+  // F-06: cap concurrent page requests to avoid overwhelming the API server.
+  const MAX_CONCURRENT = 5;
+  const pages: (T[] | Page<T>)[] = [];
+  for (let i = 0; i < offsets.length; i += MAX_CONCURRENT) {
+    const batch = offsets.slice(i, i + MAX_CONCURRENT);
+    const batchPages = await Promise.all(
+      batch.map((offset) =>
+        request<T[] | Page<T>>(`${path}${separator}limit=${step}&offset=${offset}`),
+      ),
+    );
+    pages.push(...batchPages);
+  }
   const all = [
     ...first.items,
     ...pages.flatMap((page) => Array.isArray(page) ? page : page.items),
@@ -620,7 +628,7 @@ export const api = {
       { method: "POST", body: JSON.stringify({ code }) },
     ),
 
-  listCredentials: () => request<Credential[]>("/credentials"),
+  listCredentials: () => requestAllPages<Credential>("/credentials"),
   listCredentialTypes: () => request<CredentialTypeInfo[]>("/credentials/types"),
   startCredentialOAuth: (body: {
     credential_type: string;

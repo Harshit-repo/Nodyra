@@ -12,7 +12,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { Handle, type Edge, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
-import { Fragment, memo, useEffect, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
 
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -22,6 +22,7 @@ import { isBrandIconName, NodeIcon } from "../NodeIcon";
 import { missingFor } from "./missingPackages";
 import { SdkModal } from "./SdkModal";
 import { isTriggerManifest, type NoodleNode, useEditor } from "./store";
+import { useShallow } from "zustand/react/shallow";
 import { META_BAR_INPUT_ID } from "./store/drillSlice";
 import { useServerPlatform } from "../hooks/useServerPlatform";
 
@@ -274,11 +275,20 @@ function NodeCardComponent({ id, data, selected }: NodeProps<NoodleNode>) {
   useEffect(() => {
     updateNodeInternals(id);
   }, [id, handleSignature, updateNodeInternals]);
-  const runKey = useEditor((s) => s.runKeyFor(id));
-  const runStatus = useEditor((s) => s.runStatus[runKey]);
-  const runMeta = useEditor((s) => s.runMeta[runKey]);
-  const runIteration = useEditor((s) => s.runIterations[runKey]);
-  const runChunk = useEditor((s) => s.runChunks[runKey]);
+  // F-07: combine all run-state selectors into one useShallow call so that
+  // streaming run events only trigger a single re-render per NodeCard instead
+  // of 4+ separate subscription callbacks.
+  const { runStatus, runMeta, runIteration, runChunk } = useEditor(
+    useShallow((s) => {
+      const rk = s.runKeyFor(id);
+      return {
+        runStatus: s.runStatus[rk],
+        runMeta: s.runMeta[rk],
+        runIteration: s.runIterations[rk],
+        runChunk: s.runChunks[rk],
+      };
+    }),
+  );
   // A "×N" badge on loop-body tiles: live iteration count while the loop runs,
   // final total once it finishes. Only shown for genuine loops (count > 1).
   const iterationBadge =
@@ -345,7 +355,16 @@ function NodeCardComponent({ id, data, selected }: NodeProps<NoodleNode>) {
   const runFromNode = useEditor((s) => s.runFromNode);
   const runFromTrigger = useEditor((s) => s.runFromTrigger);
   const isTrigger = isTriggerManifest(manifest);
-  const [canRunStep, setCanRunStep] = useState(isTrigger);
+  // F-08: precompute hasTriggerUpstream at render time (keyed on nodes/edges)
+  // instead of running a full BFS on every hover event. The useMemo only
+  // re-runs when the graph structure changes, not on every streaming event.
+  const { graphNodes, graphEdges } = useEditor(
+    useShallow((s) => ({ graphNodes: s.nodes, graphEdges: s.edges })),
+  );
+  const canRunStep = useMemo(
+    () => isTrigger || hasTriggerUpstream(graphNodes, graphEdges, id),
+    [isTrigger, graphNodes, graphEdges, id],
+  );
   const devMode = useEditor((s) => s.devMode);
   const stepRunDisabledReason = useEditor((s) => s.drillStepRunDisabledReason());
   const isUnavailable = Boolean(data.unavailableType);
@@ -378,10 +397,6 @@ function NodeCardComponent({ id, data, selected }: NodeProps<NoodleNode>) {
 
   function showToolbar(): void {
     clearHideTimer();
-    if (!isTrigger) {
-      const state = useEditor.getState();
-      setCanRunStep(hasTriggerUpstream(state.nodes, state.edges, id));
-    }
     setToolbarVisible(true);
   }
 
