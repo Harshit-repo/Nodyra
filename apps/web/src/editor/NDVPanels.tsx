@@ -1080,6 +1080,7 @@ export function NDVPanels({
         <section className="ndv-panel ndv-webhook-panel">
           <header className="ndv-panel-head">
             <h3>Trigger</h3>
+            <span className="ndv-dir-badge">IN</span>
           </header>
           <div className="ndv-panel-body">
             <WebhookPanel

@@ -1439,6 +1439,7 @@ export function DataPanel({
             aria-hidden="true"
           />
           {title}
+          <span className="ndv-dir-badge">{isInput ? "IN" : "OUT"}</span>
           {!empty && itemCount !== null && (
             <span className="ndv-count-badge">
               {itemCount} {itemCount === 1 ? "item" : "items"}

@@ -208,7 +208,7 @@ export function NodeDetailModal({ nodeId }: { nodeId: string }) {
               {disabled ? "Enable" : "Disable"}
             </button>
             <button
-              className="btn btn-sm btn-ghost"
+              className="btn btn-sm btn-danger-soft"
               onClick={() => {
                 deleteNode(currentNode.id);
                 closeNdv();
