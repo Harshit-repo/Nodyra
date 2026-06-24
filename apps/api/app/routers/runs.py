@@ -148,7 +148,33 @@ async def list_runs(
     return PageResponse(items=list(result.all()), total=total or 0, limit=limit, offset=offset)
 
 
-@router.get("/runs", response_model=PageResponse[RunListItem])
+def _runs_filters(
+    workflow_id: str | None,
+    status_filter: str | None,
+    trigger_type: str | None,
+    since: datetime | None,
+    until: datetime | None,
+) -> list:
+    """Return the SQLAlchemy WHERE clauses shared by the count and data queries."""
+    clauses = []
+    if workflow_id is not None:
+        clauses.append(Run.workflow_id == workflow_id)
+    if status_filter is not None:
+        clauses.append(Run.status == status_filter)
+    if trigger_type is not None:
+        clauses.append(Run.trigger_type == trigger_type)
+    if since is not None:
+        clauses.append(Run.started_at >= since)
+    if until is not None:
+        clauses.append(Run.started_at <= until)
+    return clauses
+
+
+@router.get(
+    "/runs",
+    response_model=PageResponse[RunListItem],
+    dependencies=[Depends(require_permission("workflow:read"))],
+)
 async def list_all_runs(
     workflow_id: str | None = None,
     status: str | None = None,
@@ -164,33 +190,21 @@ async def list_all_runs(
     compact ``RunListItem`` (no node_runs) — clients fetch ``GET /runs/{id}``
     for the per-node breakdown + logs.
     """
-    # Build the base filter without ORDER/LIMIT/OFFSET for the count.
-    base_stmt = select(Run).join(Workflow, Run.workflow_id == Workflow.id)
-    if workflow_id is not None:
-        base_stmt = base_stmt.where(Run.workflow_id == workflow_id)
-    if status is not None:
-        base_stmt = base_stmt.where(Run.status == status)
-    if trigger_type is not None:
-        base_stmt = base_stmt.where(Run.trigger_type == trigger_type)
-    if since is not None:
-        base_stmt = base_stmt.where(Run.started_at >= since)
-    if until is not None:
-        base_stmt = base_stmt.where(Run.started_at <= until)
+    filters = _runs_filters(workflow_id, status, trigger_type, since, until)
 
+    base_stmt = (
+        select(Run).join(Workflow, Run.workflow_id == Workflow.id).where(*filters)
+    )
     total = await session.scalar(select(func.count()).select_from(base_stmt.subquery()))
 
-    stmt = select(Run, Workflow.name).join(Workflow, Run.workflow_id == Workflow.id)
-    if workflow_id is not None:
-        stmt = stmt.where(Run.workflow_id == workflow_id)
-    if status is not None:
-        stmt = stmt.where(Run.status == status)
-    if trigger_type is not None:
-        stmt = stmt.where(Run.trigger_type == trigger_type)
-    if since is not None:
-        stmt = stmt.where(Run.started_at >= since)
-    if until is not None:
-        stmt = stmt.where(Run.started_at <= until)
-    stmt = stmt.order_by(Run.started_at.desc()).limit(limit).offset(offset)
+    stmt = (
+        select(Run, Workflow.name)
+        .join(Workflow, Run.workflow_id == Workflow.id)
+        .where(*filters)
+        .order_by(Run.started_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
 
     rows = (await session.execute(stmt)).all()
     items = [

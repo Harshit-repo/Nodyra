@@ -425,7 +425,7 @@ class Workflow(Base):
         ForeignKey("environments.id", ondelete="SET NULL"), nullable=True
     )
     default_runner_pool_id: Mapped[str | None] = mapped_column(
-        String(32), nullable=True
+        ForeignKey("runner_pools.id", ondelete="SET NULL"), nullable=True
     )
     draft_graph: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     published_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -558,7 +558,7 @@ class Credential(Base):
         ForeignKey("environments.id", ondelete="CASCADE"), nullable=True, index=True
     )
     runner_pool_id: Mapped[str | None] = mapped_column(
-        String(120), nullable=True, index=True
+        ForeignKey("runner_pools.id", ondelete="SET NULL"), nullable=True, index=True
     )
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     encrypted_data: Mapped[str] = mapped_column(Text, nullable=False)
@@ -664,8 +664,12 @@ class Run(Base):
     parent_run_id: Mapped[str | None] = mapped_column(
         ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    runner_pool_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    runner_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    runner_pool_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runner_pools.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    runner_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runners.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     batch_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     deduplication_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     # Synchronous webhook response recorded by a respond_to_webhook node
@@ -923,7 +927,9 @@ class Deployment(Base):
         nullable=True,
         index=True,
     )
-    runner_pool_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    runner_pool_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runner_pools.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     error_workflow_id: Mapped[str | None] = mapped_column(
         ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True, index=True
     )
