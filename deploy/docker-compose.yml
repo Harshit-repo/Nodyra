@@ -31,11 +31,11 @@ services:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: noodle
-      MINIO_ROOT_PASSWORD: noodle123
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-noodle}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in deploy/.env (min 8 chars)}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - miniodata:/data
 
@@ -76,6 +76,10 @@ services:
       AUTH_REGISTRATION_ROLE: ${AUTH_REGISTRATION_ROLE:-viewer}
       SECRET_KEY: ${NOODLE_SECRET_KEY:-noodle-dev-secret-change-me-in-production}
       PUBLIC_API_URL: ${PUBLIC_API_URL:-}
+      MCP_AUTHORIZATION_SERVER_URL: ${MCP_AUTHORIZATION_SERVER_URL:-}
+      MCP_OAUTH_INTROSPECTION_URL: ${MCP_OAUTH_INTROSPECTION_URL:-}
+      MCP_OAUTH_CLIENT_ID: ${MCP_OAUTH_CLIENT_ID:-}
+      MCP_OAUTH_CLIENT_SECRET: ${MCP_OAUTH_CLIENT_SECRET:-}
       OAUTH_REDIRECT_BASE_URL: ${OAUTH_REDIRECT_BASE_URL:-}
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}

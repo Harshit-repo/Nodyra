@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
-
 from noodle_nodes.integrations_v2.providers.twilio.voice_gather import (
     twilio_voice_gather,
     voicemail_detect,
 )
-
 
 # ---------------------------------------------------------------------------
 # twilio_voice_gather tests

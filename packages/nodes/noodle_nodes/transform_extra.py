@@ -74,7 +74,10 @@ def template_render(
     """Render a Jinja2 template against the input as context."""
     from jinja2 import Environment, StrictUndefined
 
-    env = Environment(autoescape=autoescape, undefined=StrictUndefined)
+    # The node's explicit switch determines whether the output is plain text or HTML.
+    env = Environment(  # nosec B701
+        autoescape=autoescape, undefined=StrictUndefined
+    )
     rendered = env.from_string(template or "")
     context = input if isinstance(input, dict) else {"input": input}
     return rendered.render(**context)

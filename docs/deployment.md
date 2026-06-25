@@ -60,7 +60,9 @@ run for another worker.
 helm install noodle deploy/helm/noodle \
   --set postgres.url=postgresql+asyncpg://noodle:noodle@postgres:5432/noodle \
   --set redis.url=redis://redis:6379/0 \
-  --set secret.key=$(openssl rand -hex 32)
+  --set secret.key=$(openssl rand -hex 32) \
+  --set secret.internalApiToken=$(openssl rand -hex 32) \
+  --set api.corsOrigins=https://noodle.example.com
 ```
 
 The chart deploys the API (control plane), web, and the dispatch worker.
@@ -161,6 +163,9 @@ in readiness scripts. `POST /ops/drain` requires the `ops:drain` permission
 | Setting | Default | Purpose |
 |---------|---------|---------|
 | `PUBLIC_API_URL` | `http://localhost:8000` fallback | Externally reachable API base URL used for provider-managed trigger callbacks such as GitHub repository webhooks. Set this to the public HTTPS API origin in production. |
+| `MCP_AUTHORIZATION_SERVER_URL` | unset | Optional external OAuth 2.1 issuer advertised through MCP protected-resource metadata. |
+| `MCP_OAUTH_INTROSPECTION_URL` | unset | RFC 7662-style endpoint used to validate external MCP access tokens; required when `MCP_AUTHORIZATION_SERVER_URL` is set. |
+| `MCP_OAUTH_CLIENT_ID` / `MCP_OAUTH_CLIENT_SECRET` | unset | Client credentials used only for token introspection. Store the secret in the deployment secret manager. |
 | `WEBHOOK_ROLE` | `ingress` | Controls whether webhook/provider-webhook ingress routes are mounted. Use `ingress` or `inline` to receive inbound webhook traffic, and `disabled` for API replicas that should never receive production webhook traffic. |
 
 Provider-managed triggers create callback URLs like

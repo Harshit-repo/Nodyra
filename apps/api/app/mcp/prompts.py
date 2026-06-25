@@ -28,11 +28,21 @@ _PROMPTS: list[dict[str, Any]] = [
 
 
 def list_prompts() -> list[dict[str, Any]]:
-    return _PROMPTS
+    return list(_PROMPTS)
 
 
 def get_prompt(name: str, arguments: dict[str, str]) -> dict[str, Any] | None:
     """Return {description, messages} or None when name is unknown."""
+    definition = next((p for p in _PROMPTS if p["name"] == name), None)
+    if definition is None:
+        return None
+    missing = [
+        item["name"]
+        for item in definition.get("arguments", [])
+        if item.get("required") and not arguments.get(item["name"], "").strip()
+    ]
+    if missing:
+        raise ValueError(f"Missing required prompt arguments: {', '.join(missing)}")
     if name == "build_workflow":
         desc = arguments.get("description", "")
         text = (
@@ -70,11 +80,8 @@ def get_prompt(name: str, arguments: dict[str, str]) -> dict[str, Any] | None:
             f"5. patch_node or add_node/remove_node to restructure as needed.\n"
             f"6. validate_graph to confirm changes, then publish_workflow.\n"
         )
-    else:
-        return None
-
     return {
-        "description": next(p["description"] for p in _PROMPTS if p["name"] == name),
+        "description": definition["description"],
         "messages": [
             {"role": "user", "content": {"type": "text", "text": text}}
         ],

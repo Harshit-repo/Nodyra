@@ -20,8 +20,8 @@ This guide covers:
 | | |
 |---|---|
 | **URL** | `POST http://localhost:8000/mcp` (prod: `https://your-host/mcp`) |
-| **Transport** | Streamable HTTP, **stateless JSON** (one JSON-RPC 2.0 message per POST). `GET`/`DELETE` return `405` — the server never opens server-initiated streams. |
-| **Auth** | `Authorization: Bearer <session token>` header. Required whenever `AUTH_REQUIRED=true` (the deploy default). |
+| **Transport** | MCP 2025-11-25 Streamable HTTP, **stateless JSON** (exactly one JSON-RPC 2.0 message per POST). `GET`/`DELETE` return `405`. |
+| **Auth** | `Authorization: Bearer <session token or org-scoped automation token>`. Required whenever `AUTH_REQUIRED=true`. |
 | **Disable** | Set `MCP_SERVER_ENABLED=false`. |
 
 ### Getting a token
@@ -39,6 +39,25 @@ Use the `token` value as the bearer token. Session tokens carry an `exp`
 expiry — when calls start returning `401 Invalid or expired token`, log in
 again for a fresh one. When `AUTH_REQUIRED=false` (pure local dev) the header
 may be omitted entirely.
+
+For unattended agents, create a revocable token with `POST /auth/api-tokens`:
+
+```bash
+curl -s -X POST https://your-host/auth/api-tokens \
+  -H "Authorization: Bearer <session-token>" \
+  -H "X-Org-Id: <org-id>" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"production-agent","scopes":["workflow:run","workflow:write"],"expires_in_days":90}'
+```
+
+The returned `ndpat_...` secret is shown once, is permanently bound to that
+organization, and can be revoked with `DELETE /auth/api-tokens/{id}`. Remote
+clients can discover authorization metadata at
+`/.well-known/oauth-protected-resource/mcp`. Configure
+`MCP_AUTHORIZATION_SERVER_URL` and `MCP_OAUTH_INTROSPECTION_URL` when an
+external OAuth 2.1 authorization server protects the deployment. Introspection
+responses must include `active: true`, a Noodle user id/email in `sub`, the
+tenant in `org_id`, and space-delimited Noodle permissions in `scope`.
 
 ### What each token can do (RBAC)
 
@@ -160,6 +179,11 @@ Static tools (always present):
 | `set_workflow_graph` | Replace the draft graph (`{nodes, edges}`). Validates shape + node types. |
 | `validate_graph` | Validate a graph without saving. |
 | `publish_workflow` | Publish the current draft as a new immutable version. |
+| `update_workflow_settings` | Set environment, runner pool, concurrency, timeout, alerts, folder and MCP input schema. |
+| `get_workflow_version` / `diff_workflow_versions` | Inspect and compare immutable versions or the current draft. |
+| `create_schedule` / `update_schedule` / `toggle_schedule` / `delete_schedule` | Manage version-pinned, policy-validated schedules. |
+| `get_node_run` | Detailed node logs, timings, debug data, output and errors. |
+| `list_run_approvals` / `resolve_run_approval` | Operate waiting AI-tool approvals. |
 
 **Dynamic per-workflow tools.** Any workflow with **MCP enabled** in the editor
 toolbar additionally shows up as its *own* tool (running the published

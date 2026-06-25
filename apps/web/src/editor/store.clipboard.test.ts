@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Edge } from "@xyflow/react";
 
 import type { NodeManifest, PortSpec } from "../types";
@@ -84,6 +84,10 @@ function resetEditor(): void {
     _future: [],
   });
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("editor clipboard", () => {
   it("copies selected nodes and pastes remapped internal edges", () => {
@@ -203,6 +207,27 @@ describe("editor clipboard", () => {
     expect(pasted).toEqual({ nodeCount: 2, edgeCount: 1 });
     expect(useEditor.getState().nodes).toHaveLength(3);
     expect(useEditor.getState().edges).toHaveLength(1);
+  });
+
+  it("falls back to a cycle-safe clone when structuredClone rejects a value", () => {
+    resetEditor();
+    vi.stubGlobal("structuredClone", vi.fn(() => {
+      throw new DOMException("Value could not be cloned", "DataCloneError");
+    }));
+    const sourceManifest = manifest("source");
+    const sourceNode = node("source", sourceManifest, 0, true);
+    const circular: Record<string, unknown> = { label: "source" };
+    circular.self = circular;
+    sourceNode.data.params = circular;
+    useEditor.setState({ nodes: [sourceNode] });
+
+    expect(useEditor.getState().copySelection()).toEqual({ nodeCount: 1, edgeCount: 0 });
+    expect(useEditor.getState().pasteSelection()).toEqual({ nodeCount: 1, edgeCount: 0 });
+
+    const pasted = useEditor.getState().nodes.find((item) => item.id !== "source");
+    expect(pasted).toBeDefined();
+    expect(pasted?.data.params).not.toBe(circular);
+    expect(pasted?.data.params.self).toBe(pasted?.data.params);
   });
 
   it("deletes all selected nodes in one history entry", () => {

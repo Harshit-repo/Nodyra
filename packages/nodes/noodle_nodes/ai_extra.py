@@ -17,7 +17,8 @@ from typing import Any
 
 import requests
 
-from noodle.artifacts import is_artifact_ref, read_bytes as read_artifact_bytes, write_bytes
+from noodle.artifacts import is_artifact_ref, write_bytes
+from noodle.artifacts import read_bytes as read_artifact_bytes
 from noodle.sdk import node
 from noodle_nodes._creds import cred_multi, cred_single
 from noodle_nodes.http_security import assert_public_http_url
@@ -28,9 +29,7 @@ _HTTP_TIMEOUT = 60  # AI calls can be slow; pad past the default 30 s
 def _expect_ok(response: requests.Response, service: str) -> dict:
     if response.status_code >= 400:
         body = response.text[:500]
-        raise RuntimeError(
-            f"{service}: HTTP {response.status_code} — {body}"
-        )
+        raise RuntimeError(f"{service}: HTTP {response.status_code} — {body}")
     try:
         return response.json()
     except ValueError:
@@ -390,15 +389,9 @@ def deepl_translate(
     """Translate text via the DeepL API."""
     api_key = credentials
     if not api_key or not target_lang:
-        raise ValueError(
-            "deepl_translate: credentials and target_lang are required"
-        )
+        raise ValueError("deepl_translate: credentials and target_lang are required")
     payload_text = text or (str(input) if input is not None else "")
-    base = (
-        "https://api-free.deepl.com"
-        if api_key.endswith(":fx")
-        else "https://api.deepl.com"
-    )
+    base = "https://api-free.deepl.com" if api_key.endswith(":fx") else "https://api.deepl.com"
     data = {"text": payload_text, "target_lang": target_lang.upper()}
     if source_lang:
         data["source_lang"] = source_lang.upper()
@@ -472,8 +465,7 @@ def pinecone_upsert(
     index_host = str(creds.get("index_host") or "")
     if not api_key or not index_host or not vector_id:
         raise ValueError(
-            "pinecone_upsert: credentials (api_key + index_host) and "
-            "vector_id are required"
+            "pinecone_upsert: credentials (api_key + index_host) and vector_id are required"
         )
     if values_json:
         try:
@@ -493,9 +485,7 @@ def pinecone_upsert(
         try:
             metadata = json_mod.loads(metadata_json)
         except json_mod.JSONDecodeError as exc:
-            raise ValueError(
-                f"pinecone_upsert: metadata_json invalid: {exc}"
-            ) from exc
+            raise ValueError(f"pinecone_upsert: metadata_json invalid: {exc}") from exc
     elif isinstance(input, dict) and isinstance(input.get("metadata"), dict):
         metadata = input["metadata"]
     vector = {"id": vector_id, "values": values}
@@ -558,24 +548,19 @@ def pinecone_query(
     api_key = str(creds.get("api_key") or "")
     index_host = str(creds.get("index_host") or "")
     if not api_key or not index_host:
-        raise ValueError(
-            "pinecone_query: credentials (api_key + index_host) are required"
-        )
+        raise ValueError("pinecone_query: credentials (api_key + index_host) are required")
     if vector_json:
         try:
             vector = json_mod.loads(vector_json)
         except json_mod.JSONDecodeError as exc:
-            raise ValueError(
-                f"pinecone_query: vector_json invalid: {exc}"
-            ) from exc
+            raise ValueError(f"pinecone_query: vector_json invalid: {exc}") from exc
     elif isinstance(input, list):
         vector = input
     elif isinstance(input, dict) and isinstance(input.get("embedding"), list):
         vector = input["embedding"]
     else:
         raise ValueError(
-            "pinecone_query: provide vector_json or wire a vector/embedding "
-            "into the input"
+            "pinecone_query: provide vector_json or wire a vector/embedding into the input"
         )
     if not isinstance(vector, list) or not vector:
         raise ValueError("pinecone_query: vector must be a non-empty array")
@@ -606,14 +591,28 @@ def pinecone_query(
     icon="brand:openai",
     output_kinds={"main": "artifact"},
     params={
-        "credentials": {**cred_single("openai", "api_key", "OpenAI API key"), "description": "OpenAI API key."},
-        "text": {"description": "Text to synthesize. Falls back to wired input.", "multiline": True},
-        "voice": {"choices": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"], "description": "Voice preset."},
+        "credentials": {
+            **cred_single("openai", "api_key", "OpenAI API key"),
+            "description": "OpenAI API key.",
+        },
+        "text": {
+            "description": "Text to synthesize. Falls back to wired input.",
+            "multiline": True,
+        },
+        "voice": {
+            "choices": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"],
+            "description": "Voice preset.",
+        },
         "model": {"choices": ["tts-1", "tts-1-hd"], "description": "TTS model."},
-        "format": {"choices": ["mp3", "opus", "aac", "flac", "wav", "pcm"], "description": "Audio container format."},
+        "format": {
+            "choices": ["mp3", "opus", "aac", "flac", "wav", "pcm"],
+            "description": "Audio container format.",
+        },
         "speed": {"description": "Playback speed multiplier, 0.25–4.0."},
         "filename": {"placeholder": "speech.mp3", "description": "Artifact filename."},
-        "cache_key": {"description": "Optional cache label (stored as metadata, not used for lookup in this build)."},
+        "cache_key": {
+            "description": "Optional cache label (stored as metadata, not used for lookup in this build)."
+        },
     },
 )
 def text_to_speech_file(
@@ -657,7 +656,11 @@ def text_to_speech_file(
     artifact_name = filename or f"speech.{ext}"
     if "." not in artifact_name:
         artifact_name = f"{artifact_name}.{ext}"
-    metadata: dict[str, Any] = {"model": model or "tts-1", "voice": voice or "alloy", "speed": float(speed) if speed is not None else 1.0}
+    metadata: dict[str, Any] = {
+        "model": model or "tts-1",
+        "voice": voice or "alloy",
+        "speed": float(speed) if speed is not None else 1.0,
+    }
     if cache_key:
         metadata["cache_key"] = cache_key
     return write_bytes(
@@ -683,12 +686,21 @@ WHISPER_MAX_BYTES = 25 * 1024 * 1024
     category="AI",
     icon="brand:openai",
     params={
-        "credentials": {**cred_single("openai", "api_key", "OpenAI API key"), "description": "OpenAI API key."},
+        "credentials": {
+            **cred_single("openai", "api_key", "OpenAI API key"),
+            "description": "OpenAI API key.",
+        },
         "artifact_input": {"description": "Audio artifact ref. Falls back to wired input."},
         "model": {"choices": ["whisper-1"], "description": "Whisper model."},
         "language": {"placeholder": "en", "description": "ISO-639-1 language hint."},
-        "response_format": {"choices": ["json", "text", "srt", "verbose_json", "vtt"], "description": "Transcript format."},
-        "prompt": {"description": "Vocabulary/context hint for the transcription.", "multiline": True},
+        "response_format": {
+            "choices": ["json", "text", "srt", "verbose_json", "vtt"],
+            "description": "Transcript format.",
+        },
+        "prompt": {
+            "description": "Vocabulary/context hint for the transcription.",
+            "multiline": True,
+        },
         "temperature": {"description": "Sampling temperature (0.0–1.0)."},
     },
 )
@@ -722,9 +734,7 @@ def speech_to_text_file(
 
     size = ref.get("size_bytes", 0)
     if size and size > WHISPER_MAX_BYTES:
-        raise ValueError(
-            f"speech_to_text_file: artifact is {size} bytes; Whisper limit is 25 MB"
-        )
+        raise ValueError(f"speech_to_text_file: artifact is {size} bytes; Whisper limit is 25 MB")
 
     audio_bytes = read_artifact_bytes(ref)
     artifact_name = ref.get("name") or "audio.mp3"

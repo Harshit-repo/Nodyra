@@ -6,7 +6,6 @@ from noodle.sdk import node
 from noodle_nodes.http_security import assert_public_http_url
 from noodle_nodes.integrations_v2.providers.twilio.operations import (
     _account_sid,
-    _credentials_dict,
     _transport,
 )
 

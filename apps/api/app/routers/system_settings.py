@@ -11,7 +11,7 @@ from app.schemas import (
     SystemSettingsInfo,
     SystemSettingsUpdate,
 )
-from app.security import optional_current_user, require_permission
+from app.security import optional_current_user, require_instance_permission
 from app.services import licensing
 from app.services.audit import log_audit
 from app.services.live_settings import (
@@ -22,8 +22,8 @@ from app.services.live_settings import (
 
 router = APIRouter(prefix="/system-settings", tags=["system-settings"])
 
-require_read = require_permission("workflow:run")  # any signed-in role can read
-require_write = require_permission("environment:write")  # admin
+require_read = require_instance_permission("workflow:run")
+require_write = require_instance_permission("environment:write")
 
 
 async def _load(session: AsyncSession) -> SystemSetting:

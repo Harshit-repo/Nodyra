@@ -462,7 +462,7 @@ export function Canvas() {
   const pasteSelection = useEditor((s) => s.pasteSelection);
   const autoLayout = useEditor((s) => s.autoLayout);
   const autoEnableAgentDependencies = useEditor((s) => s.autoEnableAgentDependencies);
-  const { fitView, screenToFlowPosition, getNodes } = useReactFlow();
+  const { fitView, screenToFlowPosition, getNodes, getIntersectingNodes } = useReactFlow();
   const { notify } = useToast();
   const [blockedConnection, setBlockedConnection] = useState<{
     connection: Connection;
@@ -479,10 +479,18 @@ export function Canvas() {
   const ctxMenuRef = useRef<HTMLDivElement | null>(null);
   const quickAddInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Left-drag on empty canvas box-selects (middle/right-drag pans, dragging a
-  // node moves it). Holding Space switches to the hand/pan tool: left-drag then
-  // pans, and nodes ignore the pointer so it pans *over* a dense cluster too.
+  // Left-drag on empty canvas pans (middle-drag also pans, dragging a node moves
+  // it). Right-drag draws a selection box to select multiple nodes. Holding Space
+  // switches to selection mode: left-drag then box-selects and nodes ignore the
+  // pointer so the rect can be drawn over a dense cluster too.
   const [spaceDown, setSpaceDown] = useState(false);
+  const rightDragRef = useRef<{ startX: number; startY: number; isDragging: boolean } | null>(null);
+  const rightDragAbortRef = useRef<AbortController | null>(null);
+  const [selectionRect, setSelectionRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const suppressCtxMenuRef = useRef(false);
+
+  // Abort any in-progress right-drag on unmount to remove orphaned window listeners.
+  useEffect(() => () => { rightDragAbortRef.current?.abort(); }, []);
 
   useEffect(() => {
     // Don't hijack Space from text entry or any control it would activate, so
@@ -754,6 +762,66 @@ export function Canvas() {
     autoEnableAgentDependencies();
   }, [autoEnableAgentDependencies, nodes, edges]);
 
+  const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 2) return;
+    // Only initiate right-drag selection on the bare pane, not on nodes/controls.
+    const target = e.target as HTMLElement;
+    if (!target.classList.contains("react-flow__pane") && !target.classList.contains("react-flow__background")) return;
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    rightDragRef.current = { startX, startY, isDragging: false };
+
+    const onMove = (mv: MouseEvent) => {
+      if (!rightDragRef.current) return;
+      const dx = mv.clientX - startX;
+      const dy = mv.clientY - startY;
+      if (!rightDragRef.current.isDragging && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
+        rightDragRef.current.isDragging = true;
+      }
+      if (rightDragRef.current.isDragging) {
+        setSelectionRect({
+          x: Math.min(mv.clientX, startX),
+          y: Math.min(mv.clientY, startY),
+          w: Math.abs(dx),
+          h: Math.abs(dy),
+        });
+      }
+    };
+
+    const onUp = (up: MouseEvent) => {
+      rightDragAbortRef.current?.abort();
+      rightDragAbortRef.current = null;
+
+      if (rightDragRef.current?.isDragging) {
+        const endX = up.clientX;
+        const endY = up.clientY;
+        const flowTL = screenToFlowPosition({ x: Math.min(endX, startX), y: Math.min(endY, startY) });
+        const flowBR = screenToFlowPosition({ x: Math.max(endX, startX), y: Math.max(endY, startY) });
+        const intersecting = getIntersectingNodes({
+          x: flowTL.x,
+          y: flowTL.y,
+          width: flowBR.x - flowTL.x,
+          height: flowBR.y - flowTL.y,
+        });
+        const hitIds = new Set(intersecting.map((n) => n.id));
+        const changes = getNodes()
+          .filter((n) => !n.id.startsWith(LOOP_FRAME_ID_PREFIX) && n.id !== "__meta_input_bar__" && n.id !== "__meta_output_bar__")
+          .map((n) => ({ type: "select" as const, id: n.id, selected: hitIds.has(n.id) }));
+        onNodesChange(changes);
+        suppressCtxMenuRef.current = true;
+      }
+
+      setSelectionRect(null);
+      rightDragRef.current = null;
+    };
+
+    const controller = new AbortController();
+    rightDragAbortRef.current = controller;
+    window.addEventListener("mousemove", onMove, { signal: controller.signal });
+    window.addEventListener("mouseup", onUp, { signal: controller.signal });
+  }, [screenToFlowPosition, getNodes, getIntersectingNodes, onNodesChange]);
+
   const onNodeContextMenu = useCallback((e: React.MouseEvent, node: { id: string }) => {
     e.preventDefault();
     setSelected(node.id);
@@ -762,6 +830,10 @@ export function Canvas() {
 
   const onPaneContextMenu = useCallback((e: React.MouseEvent | MouseEvent) => {
     e.preventDefault();
+    if (suppressCtxMenuRef.current) {
+      suppressCtxMenuRef.current = false;
+      return;
+    }
     setCtxMenu({ x: (e as React.MouseEvent).clientX, y: (e as React.MouseEvent).clientY });
   }, []);
 
@@ -1068,6 +1140,7 @@ export function Canvas() {
       onDrop={onDrop}
       onDragOver={onDragOver}
       onClick={() => setCtxMenu(null)}
+      onMouseDown={handleCanvasMouseDown}
     >
       <ReactFlow
         nodes={allNodes}
@@ -1094,8 +1167,8 @@ export function Canvas() {
         onPaneClick={() => { setSelected(null); setCtxMenu(null); setQuickAdd(null); }}
         onNodeContextMenu={onNodeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
-        selectionOnDrag={!spaceDown}
-        panOnDrag={spaceDown ? [0, 1, 2] : [1, 2]}
+        selectionOnDrag={spaceDown}
+        panOnDrag={spaceDown ? [1, 2] : [0, 1]}
         onlyRenderVisibleElements
         colorMode="dark"
         fitView
@@ -1177,6 +1250,13 @@ export function Canvas() {
             </button>
           ))}
         </div>
+      )}
+
+      {selectionRect && (
+        <div
+          className="canvas-selection-rect"
+          style={{ left: selectionRect.x, top: selectionRect.y, width: selectionRect.w, height: selectionRect.h }}
+        />
       )}
 
       {quickAdd && (

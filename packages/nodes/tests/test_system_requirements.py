@@ -1,11 +1,11 @@
 """Tests for system_requirements on @node manifests."""
 from __future__ import annotations
+
 import noodle_nodes  # noqa: F401
 
 
 def test_node_with_system_requirements_manifest() -> None:
-    from noodle.sdk import node
-    from noodle.sdk import NodeRegistry
+    from noodle.sdk import NodeRegistry, node
 
     _reg = NodeRegistry()
 
@@ -37,7 +37,7 @@ def test_node_with_system_requirements_manifest() -> None:
 
 
 def test_node_without_system_requirements_defaults_to_empty() -> None:
-    from noodle.sdk import node, NodeRegistry
+    from noodle.sdk import NodeRegistry, node
 
     _reg = NodeRegistry()
 

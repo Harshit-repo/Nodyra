@@ -1,10 +1,9 @@
 """File-change polling trigger — local filesystem, Amazon S3, Google Cloud Storage."""
+
 from __future__ import annotations
 
-import fnmatch
-import os
 import pathlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from noodle_nodes.integrations_v2.registry import register_provider_trigger
@@ -29,7 +28,7 @@ _CLOUD = {"param": "source_type", "values": ["s3", "gcs"]}
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _trim_cursor(files: dict[str, Any]) -> dict[str, Any]:
@@ -77,9 +76,7 @@ def _poll_local(ctx: ProviderTriggerPollContext) -> ProviderTriggerPollResult:
 
     base = pathlib.Path(watch_path)
     if not base.exists():
-        raise FileNotFoundError(
-            f"file_change_trigger: watch_path does not exist: {watch_path!r}"
-        )
+        raise FileNotFoundError(f"file_change_trigger: watch_path does not exist: {watch_path!r}")
 
     iterator = base.rglob(glob_pattern) if recursive else base.glob(glob_pattern)
     current: dict[str, tuple[int, float]] = {}  # key → (size, mtime)
@@ -98,7 +95,7 @@ def _poll_local(ctx: ProviderTriggerPollContext) -> ProviderTriggerPollResult:
     updated: dict[str, list] = {}
 
     for key, (size, mtime) in current.items():
-        mtime_iso = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+        mtime_iso = datetime.fromtimestamp(mtime, tz=UTC).isoformat()
         if first_run:
             updated[key] = [size, mtime]
         elif key not in prev:
@@ -226,7 +223,9 @@ def _poll_gcs(ctx: ProviderTriggerPollContext) -> ProviderTriggerPollResult:
             prev_size, prev_md5 = prev[key]
             if md5 != prev_md5 or size != prev_size:
                 events.append(
-                    _make_event("gcs", "modified", key, size, _now_iso(), bucket=bucket_name, md5=md5)
+                    _make_event(
+                        "gcs", "modified", key, size, _now_iso(), bucket=bucket_name, md5=md5
+                    )
                 )
             updated[key] = [size, md5]
 

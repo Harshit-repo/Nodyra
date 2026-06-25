@@ -3,7 +3,7 @@
 from httpx import AsyncClient
 from sqlalchemy import select
 
-from app.models import Run, Runner, Workflow
+from app.models import Run, RunBatch, Runner, Workflow
 from app.schemas import SSHOnboardRequest
 from app.services.crypto import create_payload_token, decode_payload_token, decrypt_data
 from app.services.remote_dispatch import build_env_payload
@@ -289,9 +289,11 @@ async def test_run_queues_when_pool_has_no_runners(client: AsyncClient) -> None:
 
 async def test_batch_runs_dispatch_one_run_per_parameter(client: AsyncClient) -> None:
     workflow_id = await _create_published_workflow(client)
+    pool_id = (await client.post("/runner-pools", json={"name": "batch"})).json()["id"]
+    parameters = [{"city": "NYC"}, {"city": "LA"}, {"city": "SF"}]
     resp = await client.post(
         f"/runner-pools/workflows/{workflow_id}/batch-runs",
-        json={"parameters": [{"city": "NYC"}, {"city": "LA"}, {"city": "SF"}]},
+        json={"runner_pool_id": pool_id, "parameters": parameters},
     )
     assert resp.status_code == 201
     body = resp.json()
@@ -300,6 +302,9 @@ async def test_batch_runs_dispatch_one_run_per_parameter(client: AsyncClient) ->
 
     batch = (await client.get(f"/runner-pools/run-batches/{body['batch_id']}")).json()
     assert batch["total_runs"] == 3
+    assert batch["runner_pool_id"] == pool_id
+    assert batch["status"] == "completed"
+    assert batch["succeeded_runs"] == 3
 
     from app.services.runner import SessionLocal  # patched in conftest
 
@@ -310,6 +315,10 @@ async def test_batch_runs_dispatch_one_run_per_parameter(client: AsyncClient) ->
             )
         ).all()
         assert len(runs) == 3
+        assert {run.runner_pool_id for run in runs} == {pool_id}
+        batch_row = await session.get(RunBatch, body["batch_id"])
+        assert batch_row is not None
+        assert batch_row.parameters == parameters
 
 
 async def test_batch_run_requires_trigger(client: AsyncClient) -> None:
@@ -360,6 +369,7 @@ async def test_artifact_upload_writes_bytes_and_row(client: AsyncClient) -> None
         run = Run(
             workflow_id=workflow_id, workflow_version=1, mode="manual",
             trigger_type="manual", status="success",
+            runner_id=token_resp["runner_id"],
         )
         session.add(run)
         await session.commit()

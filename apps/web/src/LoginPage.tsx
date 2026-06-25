@@ -78,66 +78,74 @@ export function LoginPage({
         </div>
       </section>
       <div className="login-card">
-        <div className="login-card-brand">
-          <Logo size={36} />
-          <span>noodle</span>
-        </div>
         <h2>{mode === "login" ? "Sign in" : "Create owner account"}</h2>
         <p className="muted">
           {mode === "login"
             ? "Use your workspace account."
             : "Name, company, email, and password are required."}
         </p>
+        <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
         {mode === "register" && (
           <>
+            <label className="login-field-label" htmlFor="login-name">Full name</label>
             <input
+              id="login-name"
               className="field-input"
               type="text"
               autoFocus
               placeholder="Full name"
+              autoComplete="name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && void submit()}
             />
+            <label className="login-field-label" htmlFor="login-company">Company</label>
             <input
+              id="login-company"
               className="field-input"
               type="text"
               placeholder="Company"
+              autoComplete="organization"
               value={company}
               onChange={(e) => setCompany(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && void submit()}
             />
           </>
         )}
+        <label className="login-field-label" htmlFor="login-email">Email</label>
         <input
+          id="login-email"
           className="field-input"
           type="email"
           autoFocus={mode === "login"}
           placeholder="you@example.com"
+          autoComplete="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && void submit()}
         />
+        <label className="login-field-label" htmlFor="login-password">Password</label>
         <input
+          id="login-password"
           className="field-input"
           type="password"
-          placeholder="password (min 8 chars)"
+          placeholder="min 8 characters"
+          autoComplete={mode === "login" ? "current-password" : "new-password"}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && void submit()}
         />
-        {error && <p className="error-text">{error}</p>}
+        {error && <p className="error-text" role="alert">{error}</p>}
         <button
+          type="submit"
           className="btn btn-primary"
           disabled={!canSubmit}
-          onClick={() => void submit()}
+          aria-busy={busy}
         >
+          {busy ? (
+            <span className="login-spinner" aria-hidden="true" />
+          ) : null}
           {busy
-            ? "…"
-            : mode === "login"
-              ? "Sign in"
-              : "Create owner"}
+            ? mode === "login" ? "Signing in…" : "Creating…"
+            : mode === "login" ? "Sign in" : "Create owner"}
         </button>
+        </form>
         {registrationOpen ? (
           <button
             type="button"

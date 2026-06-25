@@ -254,11 +254,11 @@ describe("store tool-mode round-trip", () => {
       ],
     });
 
-    const changed = useEditor.getState().autoEnableAgentDependencies();
-
-    expect(changed).toBe(1);
+    // Loading normalizes this invariant once; the canvas no longer rescans the
+    // full graph after every position update.
     const memoryNode = useEditor.getState().toGraph().nodes.find((node) => node.id === "memory");
     expect(memoryNode?.disabled).toBe(false);
+    expect(useEditor.getState().autoEnableAgentDependencies()).toBe(0);
   });
 
   it("toggling tool mode OFF reverts From-AI params to their defaults", () => {

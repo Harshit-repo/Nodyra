@@ -5,7 +5,6 @@ Each test maps to a finding ID in docs/production-readiness-audit.md.
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # TOK-1 — only genuine session tokens authenticate; purpose tokens must not
 # ---------------------------------------------------------------------------

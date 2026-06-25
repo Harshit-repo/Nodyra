@@ -9,18 +9,20 @@ org_limits convention).
 ``SessionLocal`` is imported at module level so the test harness can patch
 ``licensing.SessionLocal`` onto the per-test session (see tests/conftest.py).
 """
+
 from __future__ import annotations
 
 import base64
 import json
 import time
 from dataclasses import dataclass, replace
-from enum import Enum
+from enum import StrEnum
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from fastapi import HTTPException, status as _http_status
+from fastapi import HTTPException
+from fastapi import status as _http_status
 from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
@@ -40,13 +42,13 @@ MCowBQYDK2VwAyEAGdBDiijpMRnL4/lki8urg/wGX3Iw8nZuMKLqNZt+/6U=
 _CACHE_TTL_SECONDS = 30.0
 
 
-class Edition(str, Enum):
+class Edition(StrEnum):
     COMMUNITY = "community"
     PRO = "pro"
     ENTERPRISE = "enterprise"
 
 
-class Feature(str, Enum):
+class Feature(StrEnum):
     SANDBOX = "sandbox"
     OBSERVABILITY = "observability"
     GIT_SYNC = "git_sync"
@@ -78,10 +80,16 @@ class License:
 
 
 _PRO_FEATURES = frozenset({Feature.SANDBOX, Feature.OBSERVABILITY, Feature.GIT_SYNC})
-_ENT_FEATURES = _PRO_FEATURES | frozenset({
-    Feature.MULTI_TENANCY, Feature.SSO, Feature.EXTERNAL_KMS,
-    Feature.AUDIT_LOGS, Feature.ADVANCED_RBAC, Feature.DEDICATED_POOLS,
-})
+_ENT_FEATURES = _PRO_FEATURES | frozenset(
+    {
+        Feature.MULTI_TENANCY,
+        Feature.SSO,
+        Feature.EXTERNAL_KMS,
+        Feature.AUDIT_LOGS,
+        Feature.ADVANCED_RBAC,
+        Feature.DEDICATED_POOLS,
+    }
+)
 
 # (features, ResourceLimits) per tier. 0 = unlimited.
 TIER_DEFAULTS: dict[Edition, tuple[frozenset, ResourceLimits]] = {
@@ -103,7 +111,10 @@ _COMMUNITY = License(
     edition=Edition.COMMUNITY,
     features=TIER_DEFAULTS[Edition.COMMUNITY][0],
     limits=TIER_DEFAULTS[Edition.COMMUNITY][1],
-    customer=None, expires_at=None, valid=True, notice=None,
+    customer=None,
+    expires_at=None,
+    valid=True,
+    notice=None,
 )
 
 _cache: tuple[float, License] | None = None
@@ -181,6 +192,7 @@ def _build(payload: dict) -> License:
 
 async def _db_license_key() -> str | None:
     from app.models import SystemSetting
+
     try:
         async with SessionLocal() as session:
             row = await session.get(SystemSetting, "singleton")
@@ -304,8 +316,17 @@ async def reconcile_capabilities() -> list[str]:
 
 
 __all__ = [
-    "Edition", "Feature", "ResourceLimits", "License", "TIER_DEFAULTS",
-    "current_license", "has_feature", "resource_limit", "invalidate_license_cache",
-    "LicenseLimitError", "enforce_resource_cap", "require_feature",
+    "Edition",
+    "Feature",
+    "ResourceLimits",
+    "License",
+    "TIER_DEFAULTS",
+    "current_license",
+    "has_feature",
+    "resource_limit",
+    "invalidate_license_cache",
+    "LicenseLimitError",
+    "enforce_resource_cap",
+    "require_feature",
     "reconcile_capabilities",
 ]

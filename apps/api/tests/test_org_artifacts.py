@@ -128,7 +128,7 @@ async def test_runner_upload_must_match_run_org_namespace(client, monkeypatch):
             wf.versions.append(models.WorkflowVersion(version=1, graph={}))
             db.add(wf)
             await db.flush()
-            run = models.Run(workflow_id=wf.id)
+            run = models.Run(workflow_id=wf.id, runner_id=runner.id)
             db.add(run)
             await db.commit()
             run_id, runner_id = run.id, runner.id

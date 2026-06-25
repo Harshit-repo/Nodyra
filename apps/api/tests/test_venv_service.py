@@ -1,5 +1,6 @@
 """Unit tests for venv.py — no actual uv subprocess calls."""
-from unittest.mock import AsyncMock, patch
+
+from unittest.mock import patch
 
 import pytest
 
@@ -15,7 +16,9 @@ async def test_do_build_passes_extra_index_urls(tmp_path) -> None:
         return 0, "ok"
 
     with patch("app.services.backends.venv._run", side_effect=fake_run):
-        with patch("app.services.backends.venv.venv_dir", return_value=tmp_path / "envs" / "test-env"):
+        with patch(
+            "app.services.backends.venv.venv_dir", return_value=tmp_path / "envs" / "test-env"
+        ):
             with patch("app.services.backends.venv.venv_python", return_value=tmp_path / "python"):
                 with patch("app.services.backends.venv.local_noodle_packages", return_value=[]):
                     status, _ = await _do_build(
@@ -41,7 +44,9 @@ async def test_do_build_no_extra_index_urls_when_empty(tmp_path) -> None:
         return 0, "ok"
 
     with patch("app.services.backends.venv._run", side_effect=fake_run):
-        with patch("app.services.backends.venv.venv_dir", return_value=tmp_path / "envs" / "test-env"):
+        with patch(
+            "app.services.backends.venv.venv_dir", return_value=tmp_path / "envs" / "test-env"
+        ):
             with patch("app.services.backends.venv.venv_python", return_value=tmp_path / "python"):
                 with patch("app.services.backends.venv.local_noodle_packages", return_value=[]):
                     status, _ = await _do_build("test-env", "3.12", ["pandas"])

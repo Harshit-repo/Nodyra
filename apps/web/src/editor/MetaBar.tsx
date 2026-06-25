@@ -1,6 +1,6 @@
 import { Handle, type NodeProps, Position } from "@xyflow/react";
 import { Plus, X } from "@phosphor-icons/react";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
 import { portColor, portKindLabel } from "./NodeCard";
 import { useEditor } from "./store";
@@ -40,7 +40,7 @@ const ROW = 52; // spacing between ports
 const ADD = 40; // add-row height
 const MIN_H = 300;
 
-export function MetaBar({ data }: NodeProps) {
+function MetaBarComponent({ data }: NodeProps) {
   const { bar, ports } = data as unknown as MetaBarData;
   const addMetaPort = useEditor((s) => s.addMetaPort);
   const removeMetaPort = useEditor((s) => s.removeMetaPort);
@@ -139,3 +139,8 @@ export function MetaBar({ data }: NodeProps) {
     </div>
   );
 }
+
+export const MetaBar = memo(
+  MetaBarComponent,
+  (previous, next) => previous.data === next.data,
+);

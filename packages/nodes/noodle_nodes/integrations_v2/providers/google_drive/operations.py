@@ -239,9 +239,7 @@ def list_files(
         params["supportsAllDrives"] = "true"
 
     transport = _transport(credentials)
-    result = transport.request(
-        "GET", "/files", operation="list_files", params=params
-    )
+    result = transport.request("GET", "/files", operation="list_files", params=params)
     if isinstance(result, dict):
         files = result.get("files", [])
         return {"files": files, "count": len(files)}
@@ -307,12 +305,16 @@ def upload_file(
     metadata_bytes = json.dumps(metadata).encode("utf-8")
 
     multipart_body = (
-        f"--{boundary}\r\n"
-        f"Content-Type: application/json; charset=UTF-8\r\n\r\n"
-        f"{metadata_bytes.decode('utf-8')}\r\n"
-        f"--{boundary}\r\n"
-        f"Content-Type: {mime_type or 'application/octet-stream'}\r\n\r\n"
-    ).encode("utf-8") + body_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
+        (
+            f"--{boundary}\r\n"
+            f"Content-Type: application/json; charset=UTF-8\r\n\r\n"
+            f"{metadata_bytes.decode('utf-8')}\r\n"
+            f"--{boundary}\r\n"
+            f"Content-Type: {mime_type or 'application/octet-stream'}\r\n\r\n"
+        ).encode()
+        + body_bytes
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
 
     return transport.request(
         "POST",
@@ -375,7 +377,9 @@ def get_file(
         "GET",
         f"/files/{quote(fid)}",
         operation="get_file",
-        params={"fields": "id,name,mimeType,size,parents,createdTime,modifiedTime,description,webViewLink"},
+        params={
+            "fields": "id,name,mimeType,size,parents,createdTime,modifiedTime,description,webViewLink"
+        },
     )
 
 

@@ -1,0 +1,570 @@
+.noodle-settings-page {
+  max-width: 1180px;
+}
+
+.noodle-settings-heading {
+  align-items: flex-end;
+  padding: 30px 0 24px;
+}
+
+.noodle-settings-heading h1 {
+  font-size: 30px;
+  margin-bottom: 5px;
+}
+
+.noodle-settings-heading .muted {
+  margin: 0;
+  font-size: 13px;
+}
+
+.noodle-settings-eyebrow {
+  margin: 0 0 6px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.noodle-settings-layout {
+  display: grid;
+  grid-template-columns: 188px minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.noodle-settings-nav {
+  position: sticky;
+  top: calc(var(--noodle-shell-topbar-height, 64px) + 22px);
+  display: grid;
+  gap: 4px;
+}
+
+.noodle-settings-nav a {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--ink-3);
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: color 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+
+.noodle-settings-nav a:hover,
+.noodle-settings-nav a:focus-visible {
+  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--line-2);
+}
+
+.noodle-settings-nav a.is-active {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
+  background: var(--accent-glow);
+  color: var(--accent-2);
+}
+
+.noodle-settings-content {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.noodle-settings-card {
+  scroll-margin-top: calc(var(--noodle-shell-topbar-height, 64px) + 20px);
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 14px 36px -32px rgba(0, 0, 0, 0.78);
+}
+
+.noodle-settings-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 20px 22px 16px;
+}
+
+.noodle-settings-card-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
+  border-radius: 9px;
+  color: var(--accent);
+  background: var(--accent-glow);
+}
+
+.noodle-settings-card-head h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.noodle-settings-card-head p {
+  max-width: 650px;
+  margin: 4px 0 0;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.noodle-settings-card-body {
+  padding: 0 22px 22px;
+}
+
+.noodle-settings-card-footer {
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 22px;
+  border-top: 1px solid var(--line-2);
+  background: color-mix(in srgb, var(--surface-2) 35%, var(--surface));
+}
+
+.noodle-settings-profile {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding: 4px 0 2px;
+}
+
+.noodle-settings-avatar {
+  width: 68px;
+  height: 68px;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  color: #06101e;
+  background: linear-gradient(145deg, var(--accent-2), var(--accent));
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 800;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.noodle-settings-profile-copy,
+.noodle-settings-role {
+  min-width: 0;
+}
+
+.noodle-settings-profile-copy strong,
+.noodle-settings-profile-copy span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.noodle-settings-profile-copy strong {
+  font-size: 17px;
+}
+
+.noodle-settings-profile-copy span {
+  margin-top: 3px;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.noodle-settings-role {
+  display: grid;
+  justify-items: end;
+  gap: 7px;
+}
+
+.noodle-settings-role > span {
+  color: var(--ink-3);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.noodle-settings-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.noodle-settings-fieldset + .noodle-settings-fieldset {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line-2);
+}
+
+.noodle-settings-fieldset legend {
+  margin-bottom: 10px;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.noodle-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.noodle-theme-option,
+.noodle-font-option {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--bg);
+  cursor: pointer;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+
+.noodle-theme-option:hover,
+.noodle-font-option:hover {
+  border-color: var(--accent-deep);
+  background: var(--surface-2);
+}
+
+.noodle-theme-option.is-selected,
+.noodle-font-option.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.noodle-theme-option input,
+.noodle-font-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.noodle-theme-option:focus-within,
+.noodle-font-option:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.noodle-theme-preview {
+  height: 74px;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 7px;
+  align-items: center;
+  margin: 7px;
+  padding: 9px;
+  overflow: hidden;
+  border: 1px solid rgba(127, 145, 171, 0.18);
+  border-radius: 7px;
+}
+
+.noodle-theme-preview.theme-dark { color: #dfe8f6; background: #0a0d12; }
+.noodle-theme-preview.theme-light { color: #314057; background: #eef3f8; }
+.noodle-theme-preview.theme-system { color: #c6d1df; background: linear-gradient(125deg, #0a0d12 49%, #eef3f8 50%); }
+
+.noodle-theme-preview-layout {
+  height: 42px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.noodle-theme-preview-layout i {
+  display: block;
+  border-radius: 3px;
+  background: currentColor;
+  opacity: 0.17;
+}
+
+.noodle-theme-preview-layout i:first-child { grid-column: 1 / -1; height: 9px; }
+
+.noodle-theme-option > strong,
+.noodle-theme-option > small {
+  padding: 0 11px;
+}
+
+.noodle-theme-option > strong { font-size: 12px; }
+.noodle-theme-option > small { padding-bottom: 10px; color: var(--ink-3); font-size: 10px; }
+.noodle-theme-check { position: absolute; top: 12px; right: 12px; color: var(--accent); }
+
+.noodle-font-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.noodle-font-option {
+  gap: 4px;
+  padding: 13px;
+}
+
+.noodle-font-option > span { color: var(--ink); font-size: 15px; font-weight: 650; }
+.noodle-font-option > small { color: var(--ink-3); font-size: 10px; }
+.noodle-font-option.font-inter > span { font-family: Inter, system-ui, sans-serif; }
+.noodle-font-option.font-technical > span { font-family: "Space Grotesk", Inter, system-ui, sans-serif; }
+.noodle-font-option.font-system > span { font-family: system-ui, sans-serif; }
+
+.noodle-settings-save-status {
+  min-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-success);
+  font-size: 11px;
+}
+
+.noodle-settings-restart-note,
+.noodle-settings-inline-warning,
+.noodle-settings-inline-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 28%, var(--line));
+  border-radius: 9px;
+  color: var(--ink-2);
+  background: var(--color-warning-bg);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.noodle-settings-inline-error {
+  align-items: center;
+  border-color: var(--color-error-border);
+  color: var(--color-error);
+  background: var(--color-error-bg);
+}
+
+.noodle-settings-inline-error > span { flex: 1; }
+.noodle-settings-inline-error svg,
+.noodle-settings-inline-warning svg,
+.noodle-settings-restart-note svg { flex: 0 0 auto; margin-top: 1px; }
+
+.noodle-settings-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.noodle-settings-field {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 7px;
+}
+
+.noodle-settings-field-wide { grid-column: 1 / -1; }
+
+.noodle-settings-label {
+  min-height: 21px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.noodle-settings-info {
+  display: inline-grid;
+  place-items: center;
+  color: var(--ink-3);
+  cursor: help;
+}
+
+.noodle-settings-instance-fields {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.noodle-settings-instance-fields:disabled {
+  opacity: 0.72;
+}
+
+.noodle-settings-input-wrap { position: relative; }
+.noodle-settings-input-wrap .field-input { padding-right: 72px; }
+
+.noodle-settings-unit {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  pointer-events: none;
+}
+
+.noodle-settings-field small {
+  color: var(--ink-3);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.noodle-settings-field-error { color: var(--color-error) !important; }
+
+.noodle-settings-footer-status {
+  color: var(--ink-3);
+  font-size: 11px;
+}
+
+.noodle-settings-footer-status .error-text,
+.noodle-settings-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.noodle-settings-saved { color: var(--color-success); }
+
+.noodle-settings-skeleton {
+  display: grid;
+  gap: 10px;
+}
+
+.noodle-settings-skeleton span {
+  height: 42px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2));
+  background-size: 200% 100%;
+  animation: noodle-settings-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes noodle-settings-shimmer {
+  to { background-position: -200% 0; }
+}
+
+.noodle-license-summary {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.8fr) minmax(0, 2fr);
+  gap: 18px;
+  padding: 16px;
+  border: 1px solid var(--line-2);
+  border-radius: 11px;
+  background: var(--bg);
+}
+
+.noodle-license-edition span,
+.noodle-license-edition strong,
+.noodle-license-edition small { display: block; }
+.noodle-license-edition span { color: var(--ink-3); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+.noodle-license-edition strong { margin-top: 8px; font-size: 22px; text-transform: capitalize; }
+.noodle-license-edition small { margin-top: 2px; color: var(--ink-3); }
+
+.noodle-license-summary dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.noodle-license-summary dl > div {
+  padding-left: 12px;
+  border-left: 1px solid var(--line-2);
+}
+
+.noodle-license-summary dt { color: var(--ink-3); font-size: 10px; }
+.noodle-license-summary dd { margin: 7px 0 0; color: var(--ink); font-family: var(--font-mono); font-size: 13px; }
+.noodle-license-expiry { margin: 10px 0 0; color: var(--ink-3); font-size: 11px; }
+.noodle-license-apply { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line-2); }
+.noodle-license-key-control {
+  position: relative;
+  display: block;
+}
+.noodle-license-key-control input {
+  padding-right: 50px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.noodle-license-key-control button {
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-3);
+  transform: translateY(-50%);
+}
+.noodle-license-key-control button:hover { background: var(--surface-2); color: var(--ink); }
+.noodle-license-key-control button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.noodle-management-links {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.noodle-management-links a {
+  min-height: 84px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--bg);
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.noodle-management-links a:hover { border-color: var(--accent-deep); background: var(--surface-2); }
+.noodle-management-links a > svg { flex: 0 0 auto; color: var(--accent); margin-top: 1px; }
+.noodle-management-links strong,
+.noodle-management-links small { display: block; }
+.noodle-management-links strong { font-size: 12px; }
+.noodle-management-links small { margin-top: 4px; color: var(--ink-3); font-size: 10px; line-height: 1.4; }
+
+@media (max-width: 900px) {
+  .noodle-settings-layout { grid-template-columns: 1fr; gap: 14px; }
+  .noodle-settings-nav {
+    position: static;
+    display: flex;
+    gap: 7px;
+    margin: 0 -18px;
+    padding: 0 18px 5px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .noodle-settings-nav::-webkit-scrollbar { display: none; }
+  .noodle-settings-nav a { flex: 0 0 auto; border-color: var(--line-2); background: var(--surface); }
+}
+
+@media (max-width: 700px) {
+  .noodle-settings-heading { padding-top: 22px; }
+  .noodle-settings-heading h1 { font-size: 26px; }
+  .noodle-settings-card-head { padding: 17px 16px 14px; }
+  .noodle-settings-card-body { padding: 0 16px 18px; }
+  .noodle-settings-card-footer { padding: 12px 16px; flex-wrap: wrap; }
+  .noodle-settings-profile { grid-template-columns: 58px minmax(0, 1fr); gap: 13px; }
+  .noodle-settings-avatar { width: 56px; height: 56px; border-radius: 15px; font-size: 15px; }
+  .noodle-settings-role { grid-column: 1 / -1; justify-items: start; padding-top: 12px; border-top: 1px solid var(--line-2); }
+  .noodle-theme-grid { grid-template-columns: 1fr; }
+  .noodle-theme-option { grid-template-columns: 76px minmax(0, 1fr); align-items: center; padding: 7px; }
+  .noodle-theme-preview { grid-row: 1 / span 2; width: 70px; height: 58px; margin: 0; }
+  .noodle-theme-option > strong,
+  .noodle-theme-option > small { padding: 0 8px; }
+  .noodle-theme-option > small { padding-bottom: 0; }
+  .noodle-font-grid,
+  .noodle-settings-form-grid,
+  .noodle-license-summary,
+  .noodle-management-links { grid-template-columns: 1fr; }
+  .noodle-license-summary dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .noodle-settings-field-wide { grid-column: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .noodle-settings-skeleton span { animation: none; }
+}

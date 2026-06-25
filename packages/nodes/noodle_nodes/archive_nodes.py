@@ -120,7 +120,9 @@ def archive_create(
                 tf.add(p)
 
     file_size = os.path.getsize(str(output))
-    display_format = fmt.replace("gztar", "tar.gz").replace("bztar", "tar.bz2").replace("xztar", "tar.xz")
+    display_format = (
+        fmt.replace("gztar", "tar.gz").replace("bztar", "tar.bz2").replace("xztar", "tar.xz")
+    )
     return {
         "output_path": str(output.resolve()),
         "file_size_bytes": file_size,
@@ -251,21 +253,25 @@ def archive_list(
     if is_zip:
         with zipfile.ZipFile(archive_path, "r") as zf:
             for info in zf.infolist():
-                files.append({
-                    "name": info.filename,
-                    "size_bytes": info.file_size,
-                    "compressed_bytes": info.compress_size,
-                    "is_dir": info.filename.endswith("/"),
-                })
+                files.append(
+                    {
+                        "name": info.filename,
+                        "size_bytes": info.file_size,
+                        "compressed_bytes": info.compress_size,
+                        "is_dir": info.filename.endswith("/"),
+                    }
+                )
     else:
         with _open_archive(archive_path) as tf:
             for m in tf.getmembers():
-                files.append({
-                    "name": m.name,
-                    "size_bytes": m.size,
-                    "compressed_bytes": None,
-                    "is_dir": m.isdir(),
-                })
+                files.append(
+                    {
+                        "name": m.name,
+                        "size_bytes": m.size,
+                        "compressed_bytes": None,
+                        "is_dir": m.isdir(),
+                    }
+                )
 
     files.sort(key=lambda x: x["name"])
     total_uncompressed = sum(f["size_bytes"] for f in files)

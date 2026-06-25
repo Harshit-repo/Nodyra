@@ -32,6 +32,35 @@ async def test_create_environment_defaults_to_pool_size_one(
     assert response["description"] == ""
 
 
+async def test_create_environment_accepts_python_314(client: AsyncClient) -> None:
+    response = await client.post(
+        "/environments",
+        json={"name": "Python 3.14", "python_version": "3.14"},
+    )
+    assert response.status_code == 201
+    assert response.json()["python_version"] == "3.14"
+
+
+async def test_create_environment_rejects_unsupported_python(client: AsyncClient) -> None:
+    for python_version in ("3.11", "3.15", "latest", "3.14.1.2"):
+        response = await client.post(
+            "/environments",
+            json={"name": f"Python {python_version}", "python_version": python_version},
+        )
+        assert response.status_code == 422, python_version
+
+
+async def test_create_environment_accepts_supported_patch_python(
+    client: AsyncClient,
+) -> None:
+    response = await client.post(
+        "/environments",
+        json={"name": "Pinned Python", "python_version": "3.14.1"},
+    )
+    assert response.status_code == 201
+    assert response.json()["python_version"] == "3.14.1"
+
+
 async def test_update_environment_changes_description_and_pool_size(
     client: AsyncClient,
 ) -> None:

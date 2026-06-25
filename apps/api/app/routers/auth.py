@@ -1,4 +1,7 @@
+import hashlib
+import secrets
 import time
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy import func, select
@@ -7,8 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_session
-from app.models import User
+from app.models import ApiToken, Environment, Membership, Organization, User
 from app.schemas import (
+    ApiTokenCreate,
+    ApiTokenCreated,
+    ApiTokenInfo,
     AuthRequiredResponse,
     LoginRequest,
     RegisterRequest,
@@ -20,12 +26,16 @@ from app.schemas import (
     WsTicketResponse,
 )
 from app.security import (
+    _PERMISSION_MIN_ROLE,
     _extract_token,
+    _role_for,
     _user_from_session_token,
     current_user,
     get_client_ip,
     normalize_role,
-    require_permission,
+    require_instance_permission,
+    resolve_org,
+    role_allows,
 )
 from app.services import rate_limit
 from app.services.audit import log_audit
@@ -34,12 +44,98 @@ from app.services.crypto import (
     hash_password,
     verify_password,
 )
+from app.tenancy import DEFAULT_ORG_ID
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 # REST-conventional alias surface: /users/me mirrors /auth/me so clients that
 # treat the user object as the canonical "me" resource don't 404.
 users_router = APIRouter(prefix="/users", tags=["users"])
-require_user_manage = require_permission("user:manage")
+require_user_manage = require_instance_permission("user:manage")
+
+
+@router.get("/api-tokens", response_model=list[ApiTokenInfo])
+async def list_api_tokens(
+    user: User = Depends(current_user),
+    _org_id: str | None = Depends(resolve_org),
+    session: AsyncSession = Depends(get_session),
+) -> list[ApiToken]:
+    return list(
+        (
+            await session.scalars(
+                select(ApiToken)
+                .where(ApiToken.user_id == user.id)
+                .order_by(ApiToken.created_at.desc())
+            )
+        ).all()
+    )
+
+
+@router.post("/api-tokens", response_model=ApiTokenCreated, status_code=201)
+async def create_api_token(
+    body: ApiTokenCreate,
+    request: Request,
+    user: User = Depends(current_user),
+    org_id: str | None = Depends(resolve_org),
+    session: AsyncSession = Depends(get_session),
+) -> ApiTokenCreated:
+    if getattr(request.state, "api_token_scopes", None) is not None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Automation tokens cannot mint tokens.")
+    normalized_scopes = sorted(set(body.scopes))
+    unknown = [scope for scope in normalized_scopes if scope not in _PERMISSION_MIN_ROLE]
+    if unknown:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown scopes: {', '.join(unknown)}")
+    role = await _role_for(session, user, org_id)
+    forbidden = [
+        scope
+        for scope in normalized_scopes
+        if not role_allows(role, _PERMISSION_MIN_ROLE[scope])
+    ]
+    if forbidden:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"Your role cannot grant: {', '.join(forbidden)}",
+        )
+    secret = "ndpat_" + secrets.token_urlsafe(32)
+    row = ApiToken(
+        org_id=org_id or DEFAULT_ORG_ID,
+        user_id=user.id,
+        name=body.name.strip(),
+        token_hash=hashlib.sha256(secret.encode()).hexdigest(),
+        token_prefix=secret[:16],
+        scopes=normalized_scopes,
+        expires_at=datetime.now(UTC) + timedelta(days=body.expires_in_days),
+    )
+    session.add(row)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Token creation conflicted; retry the request."
+        ) from exc
+    await session.refresh(row)
+    info = ApiTokenInfo.model_validate(row, from_attributes=True)
+    return ApiTokenCreated(**info.model_dump(), token=secret)
+
+
+@router.delete("/api-tokens/{token_id}", status_code=204)
+async def revoke_api_token(
+    token_id: str,
+    request: Request,
+    user: User = Depends(current_user),
+    _org_id: str | None = Depends(resolve_org),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    if getattr(request.state, "api_token_scopes", None) is not None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Automation tokens cannot revoke tokens.")
+    row = await session.scalar(
+        select(ApiToken).where(ApiToken.id == token_id, ApiToken.user_id == user.id)
+    )
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "API token not found")
+    row.revoked_at = datetime.now(UTC)
+    await session.commit()
+    return Response(status_code=204)
 
 
 # Per-(bucket, IP) rate limiting for unauthenticated endpoints is delegated to
@@ -49,9 +145,7 @@ async def _enforce_auth_rate_limit(request: Request, bucket: str) -> None:
     if not settings.auth_rate_limit_enabled:
         return
     ip = get_client_ip(request)
-    allowed = await rate_limit.allow(
-        bucket, ip, limit=settings.auth_rate_limit_per_minute
-    )
+    allowed = await rate_limit.allow(bucket, ip, limit=settings.auth_rate_limit_per_minute)
     if not allowed:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
@@ -65,9 +159,7 @@ async def _user_count(session: AsyncSession) -> int:
 
 async def _owner_count(session: AsyncSession) -> int:
     return int(
-        await session.scalar(
-            select(func.count()).select_from(User).where(User.role == "owner")
-        )
+        await session.scalar(select(func.count()).select_from(User).where(User.role == "owner"))
         or 0
     )
 
@@ -148,35 +240,32 @@ async def _assert_role_change_allowed(
     if actor is None:
         return
     has_owner = await _owner_count(session) > 0
-    if actor.role != "owner" and (
-        target.role == "owner" or (new_role == "owner" and has_owner)
-    ):
+    if actor.role != "owner" and (target.role == "owner" or (new_role == "owner" and has_owner)):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "Only an owner can manage owner accounts.",
         )
-    if (
-        target.role == "owner"
-        and new_role != "owner"
-        and await _owner_count(session) <= 1
-    ):
+    if target.role == "owner" and new_role != "owner" and await _owner_count(session) <= 1:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "Cannot remove the last owner account.",
         )
-    if actor.id == target.id and target.role in {"owner", "admin"} and new_role not in {
-        "owner",
-        "admin",
-    }:
+    if (
+        actor.id == target.id
+        and target.role in {"owner", "admin"}
+        and new_role
+        not in {
+            "owner",
+            "admin",
+        }
+    ):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "Cannot downgrade your own administrator account.",
         )
 
 
-@router.post(
-    "/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED
-)
+@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     body: RegisterRequest,
     request: Request,
@@ -205,6 +294,41 @@ async def register(
         role=role,
     )
     session.add(user)
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered") from exc
+    if settings.multi_tenancy_enabled:
+        default_org = await session.get(Organization, DEFAULT_ORG_ID)
+        if default_org is None:
+            default_org = Organization(
+                id=DEFAULT_ORG_ID, name="Default", slug="default"
+            )
+            session.add(default_org)
+            await session.flush()
+        from app.services import org_keys
+
+        await org_keys.get_org_kek(DEFAULT_ORG_ID, session)
+        session.add(
+            Membership(
+                org_id=DEFAULT_ORG_ID,
+                user_id=user.id,
+                role="owner" if count == 0 else normalize_role(settings.auth_registration_role),
+            )
+        )
+        if await session.scalar(
+            select(Environment.id).where(Environment.is_global.is_(True))
+        ) is None:
+            session.add(
+                Environment(
+                    org_id=DEFAULT_ORG_ID,
+                    name="Default",
+                    is_global=True,
+                    status="ready",
+                    packages=[],
+                )
+            )
     await log_audit(session, "register", "user", detail=f"{email} ({role})")
     try:
         await session.commit()
@@ -225,9 +349,7 @@ async def login(
     await _enforce_auth_rate_limit(request, "login")
     user = await session.scalar(select(User).where(User.email == _email(body.email)))
     if user is None or not verify_password(body.password, user.password_hash):
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, "Invalid email or password"
-        )
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
     result = _token_response(user)
     _set_session_cookies(response, result.token)
     return result
@@ -265,8 +387,13 @@ async def logout_all(
     """
     _revoke_sessions(user)
     await log_audit(
-        session, "revoke_sessions", "user", user.id, user.email,
-        actor_id=user.id, actor_email=user.email,
+        session,
+        "revoke_sessions",
+        "user",
+        user.id,
+        user.email,
+        actor_id=user.id,
+        actor_email=user.email,
     )
     await session.commit()
     _clear_session_cookies(response)
@@ -288,7 +415,11 @@ async def revoke_user_sessions(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
     _revoke_sessions(user)
     await log_audit(
-        session, "revoke_sessions", "user", user.id, user.email,
+        session,
+        "revoke_sessions",
+        "user",
+        user.id,
+        user.email,
         actor_id=actor.id if actor else None,
         actor_email=actor.email if actor else None,
     )
@@ -389,6 +520,7 @@ async def create_user(
     if existing is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
     from app.services.licensing import enforce_resource_cap
+
     await enforce_resource_cap(session, "seats")
     user = User(
         email=email,
@@ -398,9 +530,14 @@ async def create_user(
         role=role,
     )
     session.add(user)
-    await log_audit(session, "create", "user", detail=f"{email} ({role})",
-                    actor_id=actor.id if actor else None,
-                    actor_email=actor.email if actor else None)
+    await log_audit(
+        session,
+        "create",
+        "user",
+        detail=f"{email} ({role})",
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
+    )
     await session.commit()
     await session.refresh(user)
     return user
@@ -419,9 +556,15 @@ async def update_user(
     role = normalize_role(body.role)
     await _assert_role_change_allowed(session, actor, user, role)
     user.role = role
-    await log_audit(session, "update_role", "user", user.id, f"{user.email} -> {role}",
-                    actor_id=actor.id if actor else None,
-                    actor_email=actor.email if actor else None)
+    await log_audit(
+        session,
+        "update_role",
+        "user",
+        user.id,
+        f"{user.email} -> {role}",
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
+    )
     await session.commit()
     await session.refresh(user)
     return user
@@ -452,8 +595,14 @@ async def delete_user(
                 status.HTTP_400_BAD_REQUEST,
                 "Cannot delete the last owner account.",
             )
-    await log_audit(session, "delete", "user", user.id, user.email,
-                    actor_id=actor.id if actor else None,
-                    actor_email=actor.email if actor else None)
+    await log_audit(
+        session,
+        "delete",
+        "user",
+        user.id,
+        user.email,
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
+    )
     await session.delete(user)
     await session.commit()

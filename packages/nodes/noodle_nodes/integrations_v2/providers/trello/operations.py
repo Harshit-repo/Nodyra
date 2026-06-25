@@ -68,9 +68,7 @@ TRELLO_LIST_BOARDS_SPEC = OperationSpec(
     description="List all Trello boards for the authenticated user.",
     icon="brand:trello",
     tool_side_effecting=False,
-    params=(
-        _credentials_param(),
-    ),
+    params=(_credentials_param(),),
 )
 
 TRELLO_LIST_LISTS_SPEC = OperationSpec(
@@ -98,7 +96,9 @@ TRELLO_CREATE_CARD_SPEC = OperationSpec(
     icon="brand:trello",
     params=(
         _credentials_param(),
-        OperationParamSpec(name="idList", required=True, description="The ID of the list to add the card to."),
+        OperationParamSpec(
+            name="idList", required=True, description="The ID of the list to add the card to."
+        ),
         OperationParamSpec(name="name", required=True),
         OperationParamSpec(name="desc", multiline=True, group="Options"),
         OperationParamSpec(

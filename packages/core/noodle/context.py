@@ -16,6 +16,7 @@ The runner sets these before invoking the engine. Nodes can read them via
   without coupling the core engine to the API database.
 """
 
+import threading
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from typing import Any, Protocol
@@ -81,13 +82,23 @@ def emit_chunk(delta: str, *, channel: str = "output") -> None:
     cb(text, channel=channel)
 
 
+# Cancellation signal for synchronous nodes running in worker threads (E-03).
+# The engine sets this to a threading.Event before invoking a sync node via
+# asyncio.to_thread. The event is set when the run is cancelled so long-running
+# sync nodes that check it can exit early. Nodes access it via:
+#   from noodle.context import cancel_event; event = cancel_event.get()
+_DEFAULT_CANCEL_EVENT = threading.Event()
+cancel_event: ContextVar[threading.Event] = ContextVar(
+    "noodle_cancel_event", default=_DEFAULT_CANCEL_EVENT
+)
+
 # Per-organization amplification caps for the current run (multi-tenancy C5).
 # Keys: "max_map_width" (rows a map node may fan out into child workflows)
 # and "max_loop_iterations" (units a single loop may drive). 0/absent =
 # uncapped. Set by the host (runner / runtime server) before invoking the
 # engine; empty for single-tenant deployments.
-org_run_limits: ContextVar[dict[str, int]] = ContextVar(
-    "noodle_org_run_limits", default={}
+org_run_limits: ContextVar[dict[str, int] | None] = ContextVar(
+    "noodle_org_run_limits", default=None
 )
 
 

@@ -1,8 +1,6 @@
 """Tests for Vapi.ai v2 operations and poll trigger."""
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from noodle_nodes.integrations_v2.providers.vapi.operations import (
     create_assistant,
     end_call,
@@ -10,7 +8,6 @@ from noodle_nodes.integrations_v2.providers.vapi.operations import (
     list_calls,
     poll_completed_calls,
     start_call,
-    upload_file,
 )
 from noodle_nodes.integrations_v2.specs import ProviderTriggerPollContext
 
@@ -66,7 +63,7 @@ def test_list_calls() -> None:
 def test_end_call() -> None:
     mock_transport = _mock_transport({"id": "call1", "status": "ended"})
     with patch(_TRANSPORT_PATH, return_value=mock_transport):
-        result = end_call(credentials=_CREDS, call_id="call1")
+        end_call(credentials=_CREDS, call_id="call1")
     call_args = mock_transport.request.call_args
     assert call_args[0][0] == "DELETE"
     assert call_args[0][1] == "/call/call1"
@@ -94,7 +91,7 @@ def test_create_assistant_with_config() -> None:
     raw_config = '{"name": "raw", "model": {}}'
     mock_transport = _mock_transport({"id": "asst2"})
     with patch(_TRANSPORT_PATH, return_value=mock_transport):
-        result = create_assistant(
+        create_assistant(
             credentials=_CREDS,
             name="ignored",
             assistant_config=raw_config,

@@ -1,8 +1,6 @@
 """Extended tests for noodle.artifacts — limits, path safety, and read helpers."""
-import json
 import pytest
 
-from noodle import artifacts
 from noodle.artifacts import (
     ARTIFACT_MARKER,
     LocalArtifactStore,

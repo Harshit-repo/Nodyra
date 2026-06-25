@@ -1,11 +1,11 @@
 """Tests for typed multi-condition evaluation (_matches_typed, _eval_conditions)."""
 import pytest
+
 import noodle_nodes  # noqa: F401
 from noodle.engine import execute
 from noodle.models import Edge, GraphNode, NodeStatus, WorkflowGraph
 from noodle.sdk import registry
-from noodle_nodes.builtin import _matches_typed, _eval_conditions
-
+from noodle_nodes.builtin import _eval_conditions, _matches_typed
 
 # ---------------------------------------------------------------------------
 # _matches_typed — string operators

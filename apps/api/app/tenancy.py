@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 
 from sqlalchemy import event, text
+from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import Session, with_loader_criteria
 
 from app.config import settings
@@ -38,6 +39,26 @@ current_org_id: ContextVar[str | None] = ContextVar("current_org_id", default=No
 # back to the *default org* (fail-closed for request paths), so loops that
 # legitimately operate across all orgs must declare it via run_as_system().
 SYSTEM_CONTEXT = "__system__"
+
+
+async def assert_safe_postgres_role(engine: AsyncEngine) -> None:
+    """Fail closed when multi-tenancy would run through an RLS-bypass role."""
+    if not settings.multi_tenancy_enabled or engine.dialect.name != "postgresql":
+        return
+    async with engine.connect() as connection:
+        row = (
+            await connection.execute(
+                text(
+                    "SELECT rolsuper, rolbypassrls "
+                    "FROM pg_roles WHERE rolname = current_user"
+                )
+            )
+        ).one()
+    if bool(row.rolsuper) or bool(row.rolbypassrls):
+        raise RuntimeError(
+            "multi-tenancy requires a PostgreSQL application role with "
+            "NOSUPERUSER and NOBYPASSRLS; the configured role bypasses row-level security"
+        )
 
 
 def active_org_id() -> str | None:

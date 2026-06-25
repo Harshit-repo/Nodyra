@@ -104,11 +104,11 @@ def twilio_voice_respond(
             text = text[:_MAX_SAY_LEN] + "…"
         escaped = _escape(text)
         twiml = (
-            f'<Response>'
+            f"<Response>"
             f'<Say voice="{voice}" language="{language}" loop="{loop}">'
-            f'{escaped}'
-            f'</Say>'
-            f'</Response>'
+            f"{escaped}"
+            f"</Say>"
+            f"</Response>"
         )
 
     elif action == "play":
@@ -123,33 +123,21 @@ def twilio_voice_respond(
             attrs += f' numDigits="{gather_num_digits}"'
         if gather_action_url:
             attrs += f' action="{gather_action_url}"'
-        twiml = (
-            f'<Response>'
-            f'<Gather {attrs}>'
-            f'<Say>{escaped}</Say>'
-            f'</Gather>'
-            f'</Response>'
-        )
+        twiml = f"<Response><Gather {attrs}><Say>{escaped}</Say></Gather></Response>"
 
     elif action == "hangup":
         twiml = "<Response><Hangup/></Response>"
 
     elif action == "redirect":
         assert_public_http_url(redirect_url)
-        twiml = f'<Response><Redirect>{redirect_url}</Redirect></Response>'
+        twiml = f"<Response><Redirect>{redirect_url}</Redirect></Response>"
 
     elif action == "dial":
         if dial_caller_id:
             dial_attrs = f'timeout="{dial_timeout}" callerId="{dial_caller_id}"'
         else:
             dial_attrs = f'timeout="{dial_timeout}"'
-        twiml = (
-            f'<Response>'
-            f'<Dial {dial_attrs}>'
-            f'<Number>{dial_number}</Number>'
-            f'</Dial>'
-            f'</Response>'
-        )
+        twiml = f"<Response><Dial {dial_attrs}><Number>{dial_number}</Number></Dial></Response>"
 
     elif action == "raw":
         twiml = message

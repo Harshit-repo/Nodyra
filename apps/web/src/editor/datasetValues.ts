@@ -1,5 +1,6 @@
 import type { ArtifactRef } from "./artifactValues";
 import { asArtifactRef, formatBytes } from "./artifactValues";
+import { safeGetItem } from "../safeStorage";
 
 export interface DatasetSchemaColumn {
   name: string;
@@ -39,7 +40,7 @@ export function datasetSummary(ref: DatasetRef): string {
 }
 
 export function datasetDownloadUrl(ref: DatasetRef): string {
-  const token = localStorage.getItem("noodle_token");
+  const token = safeGetItem("noodle_token");
   const qs = token ? `?token=${encodeURIComponent(token)}` : "";
   return `/api/artifacts/${encodeURIComponent(ref.artifact.artifact_id)}/download${qs}`;
 }

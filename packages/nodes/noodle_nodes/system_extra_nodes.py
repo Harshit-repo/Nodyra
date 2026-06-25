@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import secrets
 import socket
 import string
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from noodle.sdk import node
@@ -19,9 +20,7 @@ def _psutil():
     try:
         import psutil  # type: ignore[import-not-found]
     except ImportError as exc:
-        raise RuntimeError(
-            "System info requires psutil. Install: uv pip install psutil"
-        ) from exc
+        raise RuntimeError("System info requires psutil. Install: uv pip install psutil") from exc
     return psutil
 
 
@@ -109,7 +108,7 @@ def system_info(input: Any = None) -> dict[str, Any]:
             "platform": _platform.system(),
             "platform_version": _platform.version(),
             "uptime_hours": round((time.time() - boot_ts) / 3600, 1),
-            "boot_time": datetime.fromtimestamp(boot_ts, tz=timezone.utc).isoformat(),
+            "boot_time": datetime.fromtimestamp(boot_ts, tz=UTC).isoformat(),
         }
     except (PermissionError, RuntimeError, OSError):
         result["host"] = {"hostname": socket.gethostname()}
@@ -140,7 +139,7 @@ def system_sleep(input: Any = None, seconds: float = 1.0) -> dict[str, Any]:
     time.sleep(seconds)
     return {
         "slept_seconds": seconds,
-        "awake_at": datetime.now(timezone.utc).isoformat(),
+        "awake_at": datetime.now(UTC).isoformat(),
     }
 
 
@@ -198,7 +197,7 @@ def system_list_processes(
                     "memory_percent": pinfo.get("memory_percent") or 0.0,
                     "status": pinfo.get("status") or "",
                     "created": (
-                        datetime.fromtimestamp(created_ts, tz=timezone.utc).isoformat()
+                        datetime.fromtimestamp(created_ts, tz=UTC).isoformat()
                         if created_ts
                         else ""
                     ),
@@ -346,9 +345,7 @@ def random_password(
         },
     },
 )
-def batch_process(
-    input: Any = None, items: str = "", batch_size: int = 10
-) -> dict[str, Any]:
+def batch_process(input: Any = None, items: str = "", batch_size: int = 10) -> dict[str, Any]:
     """Split a list of items into batches."""
     batch_size = max(1, int(batch_size or 10))
     parsed = _parse_items(items)

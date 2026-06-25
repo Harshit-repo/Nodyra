@@ -1,0 +1,9 @@
+<svg width="380" height="96" viewBox="0 0 380 96" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Infinite Nodes logo">
+  <path d="M12 48C12 27 31 20 48 40L54 48L61 56C77 76 94 68 94 48C94 28 77 20 61 40L54 48L48 56C31 76 12 69 12 48Z" stroke="url(#infinityGradient)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="7" y="43" width="10" height="10" rx="3" fill="#4C9EFF"/><rect x="89" y="43" width="10" height="10" rx="3" fill="#35D4D0"/>
+  <circle cx="54" cy="48" r="6" fill="#8B75FF" stroke="#101620" stroke-width="3"/>
+  <text x="120" y="62" fill="#EDF3FA" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">Node</text>
+  <text x="225" y="62" fill="#4C9EFF" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">x</text>
+  <text x="247" y="62" fill="#35D4D0" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">py</text>
+  <defs><linearGradient id="infinityGradient" x1="12" y1="28" x2="94" y2="69" gradientUnits="userSpaceOnUse"><stop stop-color="#4C9EFF"/><stop offset=".5" stop-color="#8B75FF"/><stop offset="1" stop-color="#35D4D0"/></linearGradient></defs>
+</svg>

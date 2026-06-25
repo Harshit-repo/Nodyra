@@ -38,6 +38,7 @@ def _ensure_init() -> None:
         if _initialized:
             return
         import zvec  # noqa: PLC0415
+
         try:
             zvec.init()
         except RuntimeError:
@@ -89,7 +90,9 @@ def _parse_fields(fields_spec: str, zvec: Any) -> list[Any]:
     return result
 
 
-def _build_index_param(index_type: str, metric: str, ef_construction: int, m: int, nlist: int, zvec: Any) -> Any:
+def _build_index_param(
+    index_type: str, metric: str, ef_construction: int, m: int, nlist: int, zvec: Any
+) -> Any:
     mt = getattr(zvec.MetricType, _METRIC_MAP.get(metric.lower(), "L2"))
     if index_type == "hnsw":
         return zvec.HnswIndexParam(metric_type=mt, ef_construction=ef_construction, m=m)
@@ -100,8 +103,11 @@ def _build_index_param(index_type: str, metric: str, ef_construction: int, m: in
 
 def _open_collection(path: str, zvec: Any, read_only: bool = False) -> Any:
     import os  # noqa: PLC0415
+
     if not os.path.exists(path):
-        raise ValueError(f"zvec collection not found at '{path}'. Create it with zvec_create_collection first.")
+        raise ValueError(
+            f"zvec collection not found at '{path}'. Create it with zvec_create_collection first."
+        )
     return zvec.open(path, option=zvec.CollectionOption(read_only=read_only))
 
 
@@ -119,6 +125,7 @@ def _doc_to_dict(doc: Any, include_vector: bool) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Node 1 — Create / Open Collection
 # ---------------------------------------------------------------------------
+
 
 @node(
     name="zvec Create Collection",
@@ -145,7 +152,10 @@ def _doc_to_dict(doc: Any, include_vector: bool) -> dict[str, Any]:
             "description": "Logical name of the collection.",
         },
         "vector_field": {"description": "Vector field name.", "group": "Vector Field"},
-        "vector_dim": {"description": "Vector dimensionality (e.g. 1536 for OpenAI ada-002).", "group": "Vector Field"},
+        "vector_dim": {
+            "description": "Vector dimensionality (e.g. 1536 for OpenAI ada-002).",
+            "group": "Vector Field",
+        },
         "vector_dtype": {
             "choices": ["VECTOR_FP32", "VECTOR_FP16", "VECTOR_INT8"],
             "description": "Vector storage type.",
@@ -212,7 +222,9 @@ def zvec_create_collection(
     try:
         import zvec  # noqa: PLC0415
     except ImportError:
-        raise ImportError("zvec_create_collection requires zvec>=0.4. Install with: pip install zvec")
+        raise ImportError(
+            "zvec_create_collection requires zvec>=0.4. Install with: pip install zvec"
+        )
 
     _ensure_init()
     import os  # noqa: PLC0415
@@ -237,12 +249,17 @@ def zvec_create_collection(
     if fts_field:
         lang_map = {"en": "english", "zh": "chinese", "auto": ""}
         fts_param = zvec.FtsIndexParam(language=lang_map.get(fts_language, "english"))
-        scalar_fields.append(zvec.FieldSchema(fts_field, zvec.DataType.STRING, index_param=fts_param))
+        scalar_fields.append(
+            zvec.FieldSchema(fts_field, zvec.DataType.STRING, index_param=fts_param)
+        )
 
     dtype = getattr(zvec.DataType, vector_dtype, zvec.DataType.VECTOR_FP32)
     idx_param = _build_index_param(
-        index_type, metric_type,
-        int(hnsw_ef_construction or 200), int(hnsw_m or 16), int(ivf_nlist or 100),
+        index_type,
+        metric_type,
+        int(hnsw_ef_construction or 200),
+        int(hnsw_m or 16),
+        int(ivf_nlist or 100),
         zvec,
     )
     vec_schema = zvec.VectorSchema(
@@ -255,6 +272,7 @@ def zvec_create_collection(
 
     if os.path.exists(collection_path) and overwrite:
         import shutil  # noqa: PLC0415
+
         shutil.rmtree(collection_path)
 
     col = zvec.create_and_open(collection_path, schema)
@@ -274,6 +292,7 @@ def zvec_create_collection(
 # Node 2 — Upsert Documents
 # ---------------------------------------------------------------------------
 
+
 @node(
     name="zvec Upsert",
     id="zvec_upsert",
@@ -284,7 +303,10 @@ def zvec_create_collection(
     inputs=["main"],
     outputs=["main"],
     params={
-        "collection_path": {"placeholder": "./my_collection", "description": "Path to the zvec collection."},
+        "collection_path": {
+            "placeholder": "./my_collection",
+            "description": "Path to the zvec collection.",
+        },
         "vector_field": {"description": "Name of the vector field."},
         "id_field": {
             "placeholder": "id",
@@ -319,6 +341,7 @@ def zvec_upsert(
     errors: list[str] = []
 
     import uuid  # noqa: PLC0415
+
     batch: list[Any] = []
     for i, row in enumerate(rows):
         if not isinstance(row, dict):
@@ -332,7 +355,9 @@ def zvec_upsert(
             continue
 
         # Scalar fields = everything except the vector
-        scalar = {k: v for k, v in row.items() if k not in (vector_field, "vector", "embedding", id_field)}
+        scalar = {
+            k: v for k, v in row.items() if k not in (vector_field, "vector", "embedding", id_field)
+        }
 
         doc = zvec.Doc(
             id=doc_id,
@@ -344,13 +369,15 @@ def zvec_upsert(
         if len(batch) >= int(batch_size or 500):
             statuses = col.upsert(batch)
             inserted += sum(1 for s in statuses if s.ok())
-            errors.extend(f"id={b.id}: {s.message()}" for b, s in zip(batch, statuses) if not s.ok())
+            errors.extend(
+                f"id={b.id}: {s.message()}" for b, s in zip(batch, statuses, strict=False) if not s.ok()
+            )
             batch = []
 
     if batch:
         statuses = col.upsert(batch)
         inserted += sum(1 for s in statuses if s.ok())
-        errors.extend(f"id={b.id}: {s.message()}" for b, s in zip(batch, statuses) if not s.ok())
+        errors.extend(f"id={b.id}: {s.message()}" for b, s in zip(batch, statuses, strict=False) if not s.ok())
 
     if flush_after:
         col.flush()
@@ -361,6 +388,7 @@ def zvec_upsert(
 # ---------------------------------------------------------------------------
 # Node 3 — Vector Search
 # ---------------------------------------------------------------------------
+
 
 @node(
     name="zvec Search",
@@ -376,7 +404,10 @@ def zvec_upsert(
         "Options": ["include_vector", "ef_search"],
     },
     params={
-        "collection_path": {"placeholder": "./my_collection", "description": "Path to the zvec collection."},
+        "collection_path": {
+            "placeholder": "./my_collection",
+            "description": "Path to the zvec collection.",
+        },
         "vector_field": {"description": "Vector field to search."},
         "topk": {"description": "Number of nearest neighbours to return."},
         "filter": {
@@ -415,17 +446,21 @@ def zvec_search(
     if isinstance(input, list) and all(isinstance(x, (int, float)) for x in input):
         query_vector = input
     elif isinstance(input, dict):
-        query_vector = (
-            input.get("vector") or input.get("embedding") or input.get("query_vector")
-        )
+        query_vector = input.get("vector") or input.get("embedding") or input.get("query_vector")
         if query_vector is None:
-            raise ValueError("zvec_search: input dict must contain 'vector', 'embedding', or 'query_vector'")
+            raise ValueError(
+                "zvec_search: input dict must contain 'vector', 'embedding', or 'query_vector'"
+            )
     else:
-        raise ValueError(f"zvec_search: input must be a float list or dict with vector, got {type(input).__name__}")
+        raise ValueError(
+            f"zvec_search: input must be a float list or dict with vector, got {type(input).__name__}"
+        )
 
     col = _open_collection(collection_path, zvec, read_only=True)
 
-    fields_list = [f.strip() for f in output_fields.split(",") if f.strip()] if output_fields else None
+    fields_list = (
+        [f.strip() for f in output_fields.split(",") if f.strip()] if output_fields else None
+    )
 
     try:
         hnsw_param = zvec.HnswQueryParam(ef=int(ef_search or 100))
@@ -454,6 +489,7 @@ def zvec_search(
 # Node 4 — Full-Text Search
 # ---------------------------------------------------------------------------
 
+
 @node(
     name="zvec FTS Search",
     id="zvec_fts_search",
@@ -464,15 +500,21 @@ def zvec_search(
     inputs=["main"],
     outputs=["main"],
     params={
-        "collection_path": {"placeholder": "./my_collection", "description": "Path to the zvec collection."},
+        "collection_path": {
+            "placeholder": "./my_collection",
+            "description": "Path to the zvec collection.",
+        },
         "fts_field": {"description": "Field with FTS index."},
         "topk": {"description": "Max number of results."},
         "query_mode": {
             "choices": ["match", "query"],
-            "description": "match = natural language; query = boolean (+term -exclude \"phrase\").",
+            "description": 'match = natural language; query = boolean (+term -exclude "phrase").',
         },
         "filter": {"placeholder": 'lang == "en"', "description": "Boolean scalar filter."},
-        "output_fields": {"placeholder": "title, url", "description": "Fields to include in results."},
+        "output_fields": {
+            "placeholder": "title, url",
+            "description": "Fields to include in results.",
+        },
     },
 )
 def zvec_fts_search(
@@ -497,7 +539,9 @@ def zvec_fts_search(
         raise ValueError("zvec_fts_search: query string is required")
 
     col = _open_collection(collection_path, zvec, read_only=True)
-    fields_list = [f.strip() for f in output_fields.split(",") if f.strip()] if output_fields else None
+    fields_list = (
+        [f.strip() for f in output_fields.split(",") if f.strip()] if output_fields else None
+    )
 
     fts = zvec.Fts(
         match_string=query_str if query_mode == "match" else None,
@@ -521,6 +565,7 @@ def zvec_fts_search(
 # Node 5 — Hybrid Search (vector + FTS)
 # ---------------------------------------------------------------------------
 
+
 @node(
     name="zvec Hybrid Search",
     id="zvec_hybrid_search",
@@ -536,21 +581,34 @@ def zvec_fts_search(
         "Reranking": ["reranker", "vector_weight", "fts_weight"],
     },
     params={
-        "collection_path": {"placeholder": "./my_collection", "description": "Path to the zvec collection."},
+        "collection_path": {
+            "placeholder": "./my_collection",
+            "description": "Path to the zvec collection.",
+        },
         "topk": {"description": "Number of results to return."},
         "filter": {"placeholder": 'category == "news"', "description": "Boolean pre-filter."},
         "output_fields": {"description": "Fields to return."},
         "vector_field": {"description": "Vector field for ANN search.", "group": "Vector"},
         "ef_search": {"description": "[hnsw] ef quality param.", "group": "Vector"},
         "fts_field": {"description": "Field for FTS search.", "group": "FTS"},
-        "fts_mode": {"choices": ["match", "query"], "description": "FTS query mode.", "group": "FTS"},
+        "fts_mode": {
+            "choices": ["match", "query"],
+            "description": "FTS query mode.",
+            "group": "FTS",
+        },
         "reranker": {
             "choices": ["rrf", "weighted"],
             "description": "How to merge vector + FTS scores.",
             "group": "Reranking",
         },
-        "vector_weight": {"description": "[weighted] Weight for vector score (0-1).", "group": "Reranking"},
-        "fts_weight": {"description": "[weighted] Weight for FTS score (0-1).", "group": "Reranking"},
+        "vector_weight": {
+            "description": "[weighted] Weight for vector score (0-1).",
+            "group": "Reranking",
+        },
+        "fts_weight": {
+            "description": "[weighted] Weight for FTS score (0-1).",
+            "group": "Reranking",
+        },
     },
 )
 def zvec_hybrid_search(
@@ -586,13 +644,17 @@ def zvec_hybrid_search(
         query_vector = None
         query_text = input
     else:
-        raise ValueError("zvec_hybrid_search: input must be dict {vector, text}, float list, or string")
+        raise ValueError(
+            "zvec_hybrid_search: input must be dict {vector, text}, float list, or string"
+        )
 
     if not query_vector and not query_text:
         raise ValueError("zvec_hybrid_search: at least one of vector or text query is required")
 
     col = _open_collection(collection_path, zvec, read_only=True)
-    fields_list = [f.strip() for f in output_fields.split(",") if f.strip()] if output_fields else None
+    fields_list = (
+        [f.strip() for f in output_fields.split(",") if f.strip()] if output_fields else None
+    )
 
     queries = []
     if query_vector:
@@ -614,7 +676,9 @@ def zvec_hybrid_search(
         if reranker == "rrf":
             rr = zvec.RrfReRanker()
         else:
-            rr = zvec.WeightedReRanker(weights=[float(vector_weight or 0.7), float(fts_weight or 0.3)])
+            rr = zvec.WeightedReRanker(
+                weights=[float(vector_weight or 0.7), float(fts_weight or 0.3)]
+            )
     except Exception:
         rr = None
 
@@ -635,6 +699,7 @@ def zvec_hybrid_search(
 # Node 6 — Fetch by ID
 # ---------------------------------------------------------------------------
 
+
 @node(
     name="zvec Fetch",
     id="zvec_fetch",
@@ -645,7 +710,10 @@ def zvec_hybrid_search(
     inputs=["main"],
     outputs=["main"],
     params={
-        "collection_path": {"placeholder": "./my_collection", "description": "Path to the zvec collection."},
+        "collection_path": {
+            "placeholder": "./my_collection",
+            "description": "Path to the zvec collection.",
+        },
         "include_vector": {"description": "Include raw vector data in results."},
         "output_fields": {"placeholder": "title, text", "description": "Scalar fields to return."},
     },
@@ -671,12 +739,14 @@ def zvec_fetch(
     elif isinstance(input, dict):
         ids = [str(input.get("id", ""))] if input.get("id") else []
     else:
-        raise ValueError(f"zvec_fetch: input must be a string ID, list of IDs, or dict with 'id'")
+        raise ValueError("zvec_fetch: input must be a string ID, list of IDs, or dict with 'id'")
 
     if not ids:
         return {"docs": {}, "found": 0, "collection_path": collection_path}
 
-    fields_list = [f.strip() for f in output_fields.split(",") if f.strip()] if output_fields else None
+    fields_list = (
+        [f.strip() for f in output_fields.split(",") if f.strip()] if output_fields else None
+    )
 
     col = _open_collection(collection_path, zvec, read_only=True)
     docs = col.fetch(ids, output_fields=fields_list, include_vector=bool(include_vector))
@@ -689,6 +759,7 @@ def zvec_fetch(
 # Node 7 — Delete Documents
 # ---------------------------------------------------------------------------
 
+
 @node(
     name="zvec Delete",
     id="zvec_delete",
@@ -699,7 +770,10 @@ def zvec_fetch(
     inputs=["main"],
     outputs=["main"],
     params={
-        "collection_path": {"placeholder": "./my_collection", "description": "Path to the zvec collection."},
+        "collection_path": {
+            "placeholder": "./my_collection",
+            "description": "Path to the zvec collection.",
+        },
         "delete_by": {
             "choices": ["ids", "filter"],
             "description": "Delete by document IDs or a filter expression.",
@@ -748,7 +822,7 @@ def zvec_delete(
 
     statuses = col.delete(ids)
     ok = sum(1 for s in statuses if s.ok())
-    errors = [f"{doc_id}: {s.message()}" for doc_id, s in zip(ids, statuses) if not s.ok()]
+    errors = [f"{doc_id}: {s.message()}" for doc_id, s in zip(ids, statuses, strict=False) if not s.ok()]
 
     if flush_after:
         col.flush()
@@ -760,6 +834,7 @@ def zvec_delete(
 # Node 8 — Collection Stats & Optimize
 # ---------------------------------------------------------------------------
 
+
 @node(
     name="zvec Collection Stats",
     id="zvec_collection_stats",
@@ -770,8 +845,13 @@ def zvec_delete(
     inputs=["main"],
     outputs=["main"],
     params={
-        "collection_path": {"placeholder": "./my_collection", "description": "Path to the zvec collection."},
-        "optimize": {"description": "Run optimization (merge segments, rebuild index) before reading stats."},
+        "collection_path": {
+            "placeholder": "./my_collection",
+            "description": "Path to the zvec collection.",
+        },
+        "optimize": {
+            "description": "Run optimization (merge segments, rebuild index) before reading stats."
+        },
     },
 )
 def zvec_collection_stats(
@@ -783,7 +863,9 @@ def zvec_collection_stats(
     try:
         import zvec  # noqa: PLC0415
     except ImportError:
-        raise ImportError("zvec_collection_stats requires zvec>=0.4. Install with: pip install zvec")
+        raise ImportError(
+            "zvec_collection_stats requires zvec>=0.4. Install with: pip install zvec"
+        )
 
     _ensure_init()
     col = _open_collection(collection_path, zvec)
@@ -803,11 +885,13 @@ def zvec_collection_stats(
     vector_fields = []
     if hasattr(schema, "vectors") and schema.vectors:
         for v in schema.vectors:
-            vector_fields.append({
-                "name": v.name,
-                "data_type": str(v.data_type),
-                "dimension": int(v.dimension) if hasattr(v, "dimension") else None,
-            })
+            vector_fields.append(
+                {
+                    "name": v.name,
+                    "data_type": str(v.data_type),
+                    "dimension": int(v.dimension) if hasattr(v, "dimension") else None,
+                }
+            )
 
     result: dict[str, Any] = {
         "collection_path": collection_path,

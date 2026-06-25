@@ -23,7 +23,9 @@ _id = 0
 def rpc(method: str, params: dict | None = None) -> dict:
     global _id
     _id += 1
-    body = json.dumps({"jsonrpc": "2.0", "id": _id, "method": method, "params": params or {}}).encode()
+    body = json.dumps(
+        {"jsonrpc": "2.0", "id": _id, "method": method, "params": params or {}}
+    ).encode()
     req = urllib.request.Request(BASE, data=body, headers={"Content-Type": "application/json"})
     if TOKEN:
         req.add_header("Authorization", f"Bearer {TOKEN}")
@@ -47,7 +49,7 @@ def call(name: str, arguments: dict) -> dict:
 
 
 def main() -> None:
-    info = rpc("initialize", {"protocolVersion": "2025-06-18"})
+    info = rpc("initialize", {"protocolVersion": "2025-11-25"})
     print("initialize ->", info["result"]["serverInfo"])
 
     wf = call("create_workflow", {"name": "MCP Smoke Test — Doubler"})
@@ -56,15 +58,26 @@ def main() -> None:
 
     graph = {
         "nodes": [
-            {"id": "trigger", "type": "manual_trigger",
-             "params": {"data": {"value": 21}}, "position": {"x": 0, "y": 0}},
-            {"id": "double", "type": "code",
-             "params": {"code": "output = {'doubled': input['value'] * 2}"},
-             "position": {"x": 320, "y": 0}},
+            {
+                "id": "trigger",
+                "type": "manual_trigger",
+                "params": {"data": {"value": 21}},
+                "position": {"x": 0, "y": 0},
+            },
+            {
+                "id": "double",
+                "type": "code",
+                "params": {"code": "output = {'doubled': input['value'] * 2}"},
+                "position": {"x": 320, "y": 0},
+            },
         ],
         "edges": [
-            {"source": "trigger", "source_output": "main",
-             "target": "double", "target_input": "input"},
+            {
+                "source": "trigger",
+                "source_output": "main",
+                "target": "double",
+                "target_input": "input",
+            },
         ],
     }
     print("validate_graph ->", call("validate_graph", {"graph": graph}))

@@ -15,9 +15,9 @@ Each test covers one observable contract:
 """
 
 import pytest
-from httpx import AsyncClient
 from fastapi import Depends, FastAPI, WebSocket
 from fastapi.testclient import TestClient
+from httpx import AsyncClient
 
 from app.config import settings
 from app.db import get_session
@@ -48,9 +48,12 @@ async def _register(client: AsyncClient) -> tuple[str, str, str]:
 # Test 1: Login sets cookies
 # ---------------------------------------------------------------------------
 
+
 async def test_login_sets_session_and_csrf_cookies(client: AsyncClient):
     await client.post("/auth/register", json=_REG)
-    resp = await client.post("/auth/login", json={"email": _REG["email"], "password": _REG["password"]})
+    resp = await client.post(
+        "/auth/login", json={"email": _REG["email"], "password": _REG["password"]}
+    )
     assert resp.status_code == 200
     assert settings.session_cookie_name in resp.cookies, "session cookie must be set on login"
     assert resp.cookies[settings.session_cookie_name], "session cookie must be non-empty"
@@ -62,6 +65,7 @@ async def test_login_sets_session_and_csrf_cookies(client: AsyncClient):
 # Test 2: Register sets cookies
 # ---------------------------------------------------------------------------
 
+
 async def test_register_sets_session_and_csrf_cookies(client: AsyncClient):
     resp = await client.post("/auth/register", json=_REG)
     assert resp.status_code == 201
@@ -72,6 +76,7 @@ async def test_register_sets_session_and_csrf_cookies(client: AsyncClient):
 # ---------------------------------------------------------------------------
 # Test 3: Cookie-auth reaches authenticated endpoint
 # ---------------------------------------------------------------------------
+
 
 async def test_cookie_auth_reaches_me_endpoint(client: AsyncClient):
     _, sess, _ = await _register(client)
@@ -88,6 +93,7 @@ async def test_cookie_auth_reaches_me_endpoint(client: AsyncClient):
 # Test 4: Invalid cookie → 401
 # ---------------------------------------------------------------------------
 
+
 async def test_invalid_session_cookie_is_rejected(client: AsyncClient):
     await _register(client)
     resp = await client.get(
@@ -101,6 +107,7 @@ async def test_invalid_session_cookie_is_rejected(client: AsyncClient):
 # Test 5: Logout clears cookies
 # ---------------------------------------------------------------------------
 
+
 async def test_logout_clears_cookies(client: AsyncClient):
     _, sess, csrf = await _register(client)
     resp = await client.post(
@@ -111,12 +118,16 @@ async def test_logout_clears_cookies(client: AsyncClient):
     assert resp.status_code == 204
     # The cookie should be deleted (max-age=0 / expired).
     set_cookie_header = resp.headers.get("set-cookie", "")
-    assert settings.session_cookie_name in set_cookie_header or resp.cookies.get(settings.session_cookie_name) == ""
+    assert (
+        settings.session_cookie_name in set_cookie_header
+        or resp.cookies.get(settings.session_cookie_name) == ""
+    )
 
 
 # ---------------------------------------------------------------------------
 # Test 6: Cookie + missing CSRF → 403
 # ---------------------------------------------------------------------------
+
 
 async def test_csrf_missing_header_rejected(client: AsyncClient):
     _, sess, _ = await _register(client)
@@ -135,6 +146,7 @@ async def test_csrf_missing_header_rejected(client: AsyncClient):
 # Test 7: Cookie + matching CSRF header → passes
 # ---------------------------------------------------------------------------
 
+
 async def test_csrf_matching_header_passes(client: AsyncClient):
     _, sess, csrf = await _register(client)
     resp = await client.post(
@@ -152,6 +164,7 @@ async def test_csrf_matching_header_passes(client: AsyncClient):
 # Test 8: Bearer-only request skips CSRF
 # ---------------------------------------------------------------------------
 
+
 async def test_bearer_auth_skips_csrf_check(client: AsyncClient):
     token, _, _ = await _register(client)
     # POST to a state-changing endpoint with Bearer only — no CSRF header, no cookie.
@@ -168,6 +181,7 @@ async def test_bearer_auth_skips_csrf_check(client: AsyncClient):
 # Test 9: POST /auth/ws-ticket returns a ticket
 # ---------------------------------------------------------------------------
 
+
 async def test_ws_ticket_returns_single_use_token(client: AsyncClient):
     token, _, _ = await _register(client)
     resp = await client.post(
@@ -183,6 +197,7 @@ async def test_ws_ticket_returns_single_use_token(client: AsyncClient):
 # ---------------------------------------------------------------------------
 # Test 10: WS ticket is single-use (consume_ticket is idempotent-delete)
 # ---------------------------------------------------------------------------
+
 
 async def test_ws_ticket_is_consumed_on_first_use(client: AsyncClient):
     token, _, _ = await _register(client)

@@ -400,7 +400,7 @@ async def github_sync_webhook(
 
         payload_bytes = await request.body()
         sig = request.headers.get("X-Hub-Signature-256", "")
-        if not verify_github_hmac(cfg.webhook_secret, payload_bytes, sig):
+        if not verify_github_hmac(cfg.decrypted_webhook_secret(), payload_bytes, sig):
             raise HTTPException(401, "Invalid webhook signature")
 
         event = request.headers.get("X-GitHub-Event", "")

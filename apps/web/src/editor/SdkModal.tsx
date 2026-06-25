@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
 
 import { useModalA11y } from "../useModalA11y";
+import { useTimeout } from "../hooks/useTimeout";
+import { useMountedRef } from "../hooks/useMountedRef";
 
 interface SdkModalProps {
   nodeId: string;
@@ -10,6 +12,8 @@ interface SdkModalProps {
 
 export function SdkModal({ nodeId, manifestId, onClose }: SdkModalProps) {
   const [copied, setCopied] = useState(false);
+  const scheduleTimeout = useTimeout();
+  const mountedRef = useMountedRef();
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalA11y(dialogRef, onClose);
 
@@ -23,8 +27,9 @@ result = run_node(
 
   function handleCopy() {
     void navigator.clipboard.writeText(snippet).then(() => {
+      if (!mountedRef.current) return;
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      scheduleTimeout(() => setCopied(false), 2000);
     });
   }
 

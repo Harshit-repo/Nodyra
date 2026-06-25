@@ -20,8 +20,11 @@ def upgrade() -> None:
             sa.Column(
                 "org_id",
                 sa.String(32),
-                sa.ForeignKey("organizations.id", ondelete="CASCADE"),
-                index=True,
+                sa.ForeignKey(
+                    "organizations.id",
+                    name="fk_artifacts_org_id_organizations",
+                    ondelete="CASCADE",
+                ),
                 nullable=False,
                 server_default="default",
             )
@@ -31,15 +34,22 @@ def upgrade() -> None:
             sa.Column(
                 "org_id",
                 sa.String(32),
-                sa.ForeignKey("organizations.id", ondelete="CASCADE"),
-                index=True,
+                sa.ForeignKey(
+                    "organizations.id",
+                    name="fk_runners_org_id_organizations",
+                    ondelete="CASCADE",
+                ),
                 nullable=False,
                 server_default="default",
             )
         )
+    op.create_index("ix_artifacts_org_id", "artifacts", ["org_id"])
+    op.create_index("ix_runners_org_id", "runners", ["org_id"])
 
 
 def downgrade() -> None:
+    op.drop_index("ix_runners_org_id", table_name="runners")
+    op.drop_index("ix_artifacts_org_id", table_name="artifacts")
     with op.batch_alter_table("runners") as batch:
         batch.drop_column("org_id")
     with op.batch_alter_table("artifacts") as batch:

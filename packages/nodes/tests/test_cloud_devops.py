@@ -3,10 +3,41 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from noodle_nodes import cloud_devops
+
+
+def test_ssh_execute_rejects_unknown_host_keys() -> None:
+    client = MagicMock()
+    stdin = MagicMock()
+    stdout = MagicMock()
+    stderr = MagicMock()
+    stdout.read.return_value = b"ok"
+    stdout.channel.recv_exit_status.return_value = 0
+    stderr.read.return_value = b""
+    client.exec_command.return_value = (stdin, stdout, stderr)
+    reject_policy = object()
+    fake_paramiko = SimpleNamespace(
+        SSHClient=lambda: client,
+        RejectPolicy=lambda: reject_policy,
+        SSHException=Exception,
+    )
+
+    with patch.dict(sys.modules, {"paramiko": fake_paramiko}):
+        result = cloud_devops.ssh_execute(
+            host="server.example.com",
+            credentials={"username": "operator", "password": "secret"},
+            command="uptime",
+        )
+
+    client.load_system_host_keys.assert_called_once_with()
+    client.set_missing_host_key_policy.assert_called_once_with(reject_policy)
+    assert result["stdout"] == "ok"
 
 
 class _HangingProcess:

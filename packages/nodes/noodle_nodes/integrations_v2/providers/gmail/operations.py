@@ -3,19 +3,16 @@
 from __future__ import annotations
 
 import base64
-import re
 from email.message import EmailMessage
 from typing import Any
 from urllib.parse import quote
 
 from noodle.models import CredentialSpec
 from noodle_nodes.integrations_v2.providers.google import GoogleTransport
-from noodle_nodes.integrations_v2.registry import register_integration, register_operation
+from noodle_nodes.integrations_v2.registry import register_operation
 from noodle_nodes.integrations_v2.specs import (
-    IntegrationSpec,
     OperationParamSpec,
     OperationSpec,
-    ResourceSpec,
 )
 
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
@@ -257,12 +254,14 @@ def list_messages(
         params["includeSpamTrash"] = "true"
 
     transport = _transport(credentials)
-    result = transport.request(
-        "GET", "/messages", operation="list_messages", params=params
-    )
+    result = transport.request("GET", "/messages", operation="list_messages", params=params)
     if isinstance(result, dict):
         messages = result.get("messages", [])
-        return {"messages": messages, "count": len(messages), "next_page_token": result.get("nextPageToken", "")}
+        return {
+            "messages": messages,
+            "count": len(messages),
+            "next_page_token": result.get("nextPageToken", ""),
+        }
     return {"messages": [], "count": 0}
 
 

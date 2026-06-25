@@ -2,7 +2,6 @@
 
 from typing import Any
 
-
 # Node types whose outputs the engine will inspect and auto-promote heavy
 # values (DataFrames, large row lists, big bytes/text) into Dataset/Artifact
 # refs before the output-size cap is applied. Used for Code-like nodes where

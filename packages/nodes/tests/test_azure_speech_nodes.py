@@ -14,7 +14,6 @@ from noodle_nodes.azure_speech_nodes import (
     azure_ai_speech,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -115,6 +114,7 @@ class TestHelpers:
 
     def test_resolve_audio_bytes_base64(self):
         import base64
+
         encoded = base64.b64encode(b"audio").decode()  # string, not bytes
         result = _resolve_audio_bytes(encoded)
         assert result == b"audio"

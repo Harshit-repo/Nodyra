@@ -12,7 +12,7 @@ update under the unique constraint.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, date
+from datetime import UTC, date, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession

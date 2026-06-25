@@ -8,7 +8,6 @@ container death with .feed_eof().
 
 import json
 import queue
-import socket as socket_mod
 
 
 class FakeRawSock:
@@ -21,9 +20,7 @@ class FakeRawSock:
         # Real no-TTY attach streams are multiplexed: 8-byte frame header
         # (stream type 1=stdout + big-endian length), then the payload.
         payload = (json.dumps(obj) + "\n").encode()
-        self._q.put(
-            bytes([1, 0, 0, 0]) + len(payload).to_bytes(4, "big") + payload
-        )
+        self._q.put(bytes([1, 0, 0, 0]) + len(payload).to_bytes(4, "big") + payload)
 
     def feed_raw(self, data: bytes) -> None:
         self._q.put(data)
@@ -38,7 +35,7 @@ class FakeRawSock:
         try:
             return self._q.get(timeout=self.timeout if self.timeout else 5.0)
         except queue.Empty:
-            raise socket_mod.timeout("fake recv timeout")
+            raise TimeoutError("fake recv timeout")
 
     def settimeout(self, t: float) -> None:
         self.timeout = t

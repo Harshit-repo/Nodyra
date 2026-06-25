@@ -7,6 +7,14 @@ from noodle.models import Edge, GraphNode, NodeStatus, RunStatus, WorkflowGraph
 from noodle.sdk import NodeRegistry, node
 
 
+def _slow_code_for_default_timeout() -> int:
+    """Module-level so process-isolated execution can pickle it on Windows."""
+    import time
+
+    time.sleep(0.2)
+    return 1
+
+
 def make_registry() -> NodeRegistry:
     reg = NodeRegistry()
 
@@ -456,17 +464,13 @@ async def test_timeout_fails_a_slow_node() -> None:
 
 
 async def test_default_timeout_applies_to_code_nodes(monkeypatch) -> None:
-    import time
-
     import noodle.engine as engine_module
 
     reg = NodeRegistry()
     monkeypatch.setitem(engine_module.DEFAULT_NODE_TIMEOUTS, "code", 0.01)
-
-    @node(name="CodeLike", id="code", inputs=[], registry=reg)
-    def slow_code() -> int:
-        time.sleep(0.2)
-        return 1
+    node(name="CodeLike", id="code", inputs=[], registry=reg)(
+        _slow_code_for_default_timeout
+    )
 
     result = await execute(WorkflowGraph(nodes=[GraphNode(id="c", type="code")]), reg)
     assert result.status == RunStatus.error

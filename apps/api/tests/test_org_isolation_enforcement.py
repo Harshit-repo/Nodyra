@@ -6,8 +6,8 @@ from sqlalchemy import select
 
 from app import models
 from app.config import settings
-from app.services import retention
 from app.exceptions import DedicatedPoolRequired
+from app.services import retention
 from app.services.runner import start_run
 from app.tenancy import DEFAULT_ORG_ID, active_org_id, current_org_id, run_as_system
 

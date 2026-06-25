@@ -1,0 +1,8 @@
+<svg width="400" height="100" viewBox="0 0 400 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Twin Wrap logo">
+  <path d="M15 20C37 20 32 42 50 50C68 58 63 80 85 80" stroke="#4C9EFF" stroke-width="9" stroke-linecap="round"/>
+  <path d="M85 20C63 20 68 42 50 50C32 58 37 80 15 80" stroke="#FFD34E" stroke-width="9" stroke-linecap="round"/>
+  <rect x="33" y="33" width="34" height="34" rx="10" fill="#111A27" stroke="#35D4D0" stroke-width="3"/>
+  <path d="M43 43L57 57M57 43L43 57" stroke="#F3F7FA" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="15" cy="20" r="6" fill="#4C9EFF"/><rect x="79" y="74" width="12" height="12" rx="3" fill="#FFD34E"/>
+  <text x="120" y="65" fill="#F3F7FA" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">Node</text><text x="225" y="65" fill="#4C9EFF" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">x</text><text x="247" y="65" fill="#FFD34E" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">py</text>
+</svg>

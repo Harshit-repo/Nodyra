@@ -65,8 +65,16 @@ async def assign_k8s_run(
     full_image = f"{image_registry}/{image_tag}" if image_registry else image_tag
 
     # Generate a one-time run token for this pod.
+    from app.models import Run  # noqa: PLC0415
     from app.services.crypto import create_payload_token  # noqa: PLC0415
-    token = create_payload_token({"sub": run_id, "kind": "k8s_run"}, ttl_seconds=3600)
+
+    async with session_factory() as session:
+        run = await session.get(Run, run_id)
+        run_org_id = run.org_id if run is not None else None
+    token = create_payload_token(
+        {"sub": run_id, "org_id": run_org_id, "kind": "k8s_run"},
+        ttl_seconds=3600,
+    )
 
     from app.config import settings as app_settings  # noqa: PLC0415
     api_url = getattr(app_settings, "public_api_url", "http://noodle-api:8000")

@@ -75,10 +75,7 @@ class OllamaChatAdapter(ChatModelAdapter):
 
         client = ollama.Client(host=self._host)
 
-        messages = [
-            {"role": msg.role.value, "content": msg.content}
-            for msg in request.messages
-        ]
+        messages = [{"role": msg.role.value, "content": msg.content} for msg in request.messages]
 
         # Build options dict — adapter config is authoritative for temperature/max_tokens;
         # request.max_tokens overrides when explicitly provided (non-None)
@@ -165,9 +162,7 @@ class OllamaEmbeddingAdapter(EmbeddingModelAdapter):
         resp = client.embed(model=model_id, input=request.texts)
 
         raw_embeddings = getattr(resp, "embeddings", None) or []
-        embeddings: list[list[float]] = [
-            [float(x) for x in vec] for vec in raw_embeddings
-        ]
+        embeddings: list[list[float]] = [[float(x) for x in vec] for vec in raw_embeddings]
 
         return EmbeddingResponse(
             embeddings=embeddings,

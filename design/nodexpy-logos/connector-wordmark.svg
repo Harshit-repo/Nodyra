@@ -1,0 +1,7 @@
+<svg width="400" height="100" viewBox="0 0 400 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Connector Wordmark logo">
+  <text x="12" y="66" fill="#F3F7FA" font-family="Arial, sans-serif" font-size="53" font-weight="850" letter-spacing="-3">NODE</text>
+  <path d="M157 30L190 68M190 30L157 68" stroke="#4C9EFF" stroke-width="8" stroke-linecap="round"/>
+  <rect x="151" y="24" width="12" height="12" rx="3" fill="#35D4D0"/><rect x="184" y="62" width="12" height="12" rx="3" fill="#35D4D0"/>
+  <text x="205" y="66" fill="#F3F7FA" font-family="Arial, sans-serif" font-size="53" font-weight="850" letter-spacing="-3">PY</text>
+  <path d="M307 49H367" stroke="#35445A" stroke-width="4" stroke-linecap="round"/><circle cx="367" cy="49" r="6" fill="#55D6A8"/>
+</svg>

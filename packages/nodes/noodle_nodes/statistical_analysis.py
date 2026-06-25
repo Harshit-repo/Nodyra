@@ -64,17 +64,17 @@ def statistical_test(
     alternative: str = "two-sided",
 ) -> dict:
     """Run a statistical hypothesis test on a DatasetRef or list of records."""
+    if input is None:
+        raise ValueError("input is required")
+    if not column:
+        raise ValueError("column is required")
+
     try:
         from scipy import stats as _stats
     except ImportError as exc:
         raise RuntimeError(
             "scipy is required. Add scipy to the workflow environment and rebuild it."
         ) from exc
-
-    if input is None:
-        raise ValueError("input is required")
-    if not column:
-        raise ValueError("column is required")
 
     rows = materialize_dataset(input) if is_dataset_ref(input) else list(input)
     col_values = [float(r[column]) for r in rows if column in r and r[column] is not None]
@@ -224,6 +224,11 @@ def distribution_fit(
     distributions: str = "norm,expon,lognorm,gamma",
 ) -> dict:
     """Fit named distributions to a data column; rank by KS statistic."""
+    if input is None:
+        raise ValueError("input is required")
+    if not column:
+        raise ValueError("column is required")
+
     try:
         import numpy as _np
         from scipy import stats as _stats
@@ -231,11 +236,6 @@ def distribution_fit(
         raise RuntimeError(
             "scipy is required. Add scipy to the workflow environment and rebuild it."
         ) from exc
-
-    if input is None:
-        raise ValueError("input is required")
-    if not column:
-        raise ValueError("column is required")
 
     rows = materialize_dataset(input) if is_dataset_ref(input) else list(input)
     data = [float(r[column]) for r in rows if column in r and r[column] is not None]
@@ -294,13 +294,6 @@ def correlation_analysis(
     method: str = "pearson",
 ) -> dict:
     """Compute pairwise correlations between numeric columns."""
-    try:
-        from scipy import stats as _stats
-    except ImportError as exc:
-        raise RuntimeError(
-            "scipy is required. Add scipy to the workflow environment and rebuild it."
-        ) from exc
-
     if input is None:
         raise ValueError("input is required")
 
@@ -314,14 +307,21 @@ def correlation_analysis(
 
     if len(col_names) < 2:
         raise ValueError("correlation_analysis requires at least 2 numeric columns")
+    if method not in {"pearson", "spearman", "kendall"}:
+        raise ValueError("method must be one of ['pearson', 'spearman', 'kendall']")
+
+    try:
+        from scipy import stats as _stats
+    except ImportError as exc:
+        raise RuntimeError(
+            "scipy is required. Add scipy to the workflow environment and rebuild it."
+        ) from exc
 
     _corr_fns = {
         "pearson": _stats.pearsonr,
         "spearman": _stats.spearmanr,
         "kendall": _stats.kendalltau,
     }
-    if method not in _corr_fns:
-        raise ValueError(f"method must be one of {list(_corr_fns)}")
     corr_fn = _corr_fns[method]
 
     vecs: dict[str, list] = {}
@@ -783,6 +783,9 @@ def dimensionality_reduce(
     random_state: int = 42,
 ) -> dict:
     """Reduce dimensionality of feature columns using PCA or t-SNE."""
+    if input is None:
+        raise ValueError("input is required")
+
     try:
         from sklearn.decomposition import PCA as _PCA
         from sklearn.manifold import TSNE as _TSNE
@@ -791,9 +794,6 @@ def dimensionality_reduce(
         raise RuntimeError(
             "scikit-learn is required. Add scikit-learn to the workflow environment and rebuild it."
         ) from exc
-
-    if input is None:
-        raise ValueError("input is required")
 
     rows = materialize_dataset(input) if is_dataset_ref(input) else list(input)
 

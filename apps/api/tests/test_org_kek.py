@@ -19,16 +19,12 @@ from app.tenancy import DEFAULT_ORG_ID
 
 @pytest_asyncio.fixture
 async def session(tmp_path):
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///{tmp_path / 'kek.db'}", poolclass=NullPool
-    )
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'kek.db'}", poolclass=NullPool)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     maker = async_sessionmaker(engine, expire_on_commit=False)
     async with maker() as session:
-        session.add(
-            models.Organization(id=DEFAULT_ORG_ID, name="Default", slug="default")
-        )
+        session.add(models.Organization(id=DEFAULT_ORG_ID, name="Default", slug="default"))
         await session.commit()
         yield session
     await engine.dispose()
@@ -44,6 +40,7 @@ def _clear_kek_cache():
 # ---------------------------------------------------------------------------
 # crypto layer
 # ---------------------------------------------------------------------------
+
 
 def test_encrypt_decrypt_with_org_kek_roundtrip():
     org_kek = crypto.generate_org_kek()
@@ -69,7 +66,9 @@ def test_org_wrapped_dek_does_not_decrypt_without_its_kek():
 
 def test_legacy_kek_direct_path_still_works():
     ciphertext = crypto.encrypt_data({"k": "v"})
-    assert crypto.decrypt_credential(ciphertext, None, org_kek=crypto.generate_org_kek()) == {"k": "v"}
+    assert crypto.decrypt_credential(ciphertext, None, org_kek=crypto.generate_org_kek()) == {
+        "k": "v"
+    }
 
 
 def test_rewrap_dek_moves_master_wrap_to_org_wrap():
@@ -83,6 +82,7 @@ def test_rewrap_dek_moves_master_wrap_to_org_wrap():
 # ---------------------------------------------------------------------------
 # org_keys service
 # ---------------------------------------------------------------------------
+
 
 async def test_get_org_kek_lazily_mints_and_persists(session):
     kek = await org_keys.get_org_kek(DEFAULT_ORG_ID, session)
@@ -105,12 +105,8 @@ async def test_get_org_kek_unknown_org_is_none(session):
 
 
 async def test_credential_helpers_roundtrip(session):
-    enc, dek = await org_keys.encrypt_credential_for(
-        DEFAULT_ORG_ID, {"token": "s3cret"}, session
-    )
-    cred = models.Credential(
-        name="c", type="generic", encrypted_data=enc, encrypted_dek=dek
-    )
+    enc, dek = await org_keys.encrypt_credential_for(DEFAULT_ORG_ID, {"token": "s3cret"}, session)
+    cred = models.Credential(name="c", type="generic", encrypted_data=enc, encrypted_dek=dek)
     session.add(cred)
     await session.commit()
     assert cred.org_id == DEFAULT_ORG_ID  # A3 stamping
@@ -120,9 +116,7 @@ async def test_credential_helpers_roundtrip(session):
 async def test_decrypt_for_legacy_master_wrapped_credential(session):
     """Rows created before Phase E (DEK wrapped by master) keep working."""
     enc, dek = crypto.encrypt_credential({"token": "old"})
-    cred = models.Credential(
-        name="old", type="generic", encrypted_data=enc, encrypted_dek=dek
-    )
+    cred = models.Credential(name="old", type="generic", encrypted_data=enc, encrypted_dek=dek)
     session.add(cred)
     await session.commit()
     assert await org_keys.decrypt_credential_for(cred, session) == {"token": "old"}
@@ -131,12 +125,12 @@ async def test_decrypt_for_legacy_master_wrapped_credential(session):
 async def test_decrypt_credential_for_strict_raises_on_corruption(session):
     """H1: a credential whose ciphertext is unreadable must raise in strict
     mode rather than silently degrade to {}."""
-    enc, dek = await org_keys.encrypt_credential_for(
-        DEFAULT_ORG_ID, {"token": "s3cret"}, session
-    )
+    enc, dek = await org_keys.encrypt_credential_for(DEFAULT_ORG_ID, {"token": "s3cret"}, session)
     cred = models.Credential(
-        name="broken", type="generic",
-        encrypted_data="corrupt-ciphertext", encrypted_dek=dek,
+        name="broken",
+        type="generic",
+        encrypted_data="corrupt-ciphertext",
+        encrypted_dek=dek,
     )
     session.add(cred)
     await session.commit()
@@ -151,19 +145,18 @@ async def test_resolve_credential_refs_raises_on_corrupt_credential(session):
     inject empty credentials, when a referenced credential can't be decrypted."""
     from app.services.credentials import credential_ref, resolve_credential_refs
 
-    enc, dek = await org_keys.encrypt_credential_for(
-        DEFAULT_ORG_ID, {"token": "s3cret"}, session
-    )
+    enc, dek = await org_keys.encrypt_credential_for(DEFAULT_ORG_ID, {"token": "s3cret"}, session)
     cred = models.Credential(
-        name="broken", type="generic",
-        encrypted_data="corrupt-ciphertext", encrypted_dek=dek, scope="global",
+        name="broken",
+        type="generic",
+        encrypted_data="corrupt-ciphertext",
+        encrypted_dek=dek,
+        scope="global",
     )
     session.add(cred)
     await session.commit()
     with pytest.raises(crypto.CredentialDecryptError):
-        await resolve_credential_refs(
-            session, {"auth": credential_ref(cred.id, "token")}
-        )
+        await resolve_credential_refs(session, {"auth": credential_ref(cred.id, "token")})
 
 
 async def test_rewrap_org_credentials(session):
@@ -171,8 +164,10 @@ async def test_rewrap_org_credentials(session):
     KEK; KEK-direct legacy rows (NULL dek) are left alone."""
     enc, dek = crypto.encrypt_credential({"token": "a"})
     direct = models.Credential(
-        name="direct", type="generic",
-        encrypted_data=crypto.encrypt_data({"token": "b"}), encrypted_dek=None,
+        name="direct",
+        type="generic",
+        encrypted_data=crypto.encrypt_data({"token": "b"}),
+        encrypted_dek=None,
     )
     wrapped = models.Credential(
         name="wrapped", type="generic", encrypted_data=enc, encrypted_dek=dek

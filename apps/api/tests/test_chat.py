@@ -101,6 +101,56 @@ async def test_chat_endpoint_returns_reply(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_public_chat_uses_active_published_graph_and_bypasses_global_gate(
+    client: AsyncClient,
+) -> None:
+    from app.config import settings
+
+    published_graph = _chat_echo_graph()
+    published_graph["nodes"][0]["params"] = {
+        "public_access": True,
+        "require_login": False,
+        "title": "Published chat",
+    }
+    workflow_id = (
+        await client.post("/workflows", json={"name": "Public Chat"})
+    ).json()["id"]
+    await client.put(
+        f"/workflows/{workflow_id}",
+        json={"graph": published_graph, "active": True},
+    )
+    await client.post(f"/workflows/{workflow_id}/publish", json={})
+
+    # The draft is deliberately private and returns a different value. Public
+    # config and execution must remain pinned to the reviewed publication.
+    draft_graph = _chat_echo_graph()
+    draft_graph["nodes"][0]["params"] = {
+        "public_access": False,
+        "require_login": True,
+        "title": "Draft chat",
+    }
+    draft_graph["nodes"][1]["params"] = {"code": "output = {'answer': 'DRAFT'}"}
+    await client.put(f"/workflows/{workflow_id}", json={"graph": draft_graph})
+
+    settings.auth_required = True
+    try:
+        config = await client.get(f"/chat/p/{workflow_id}")
+        assert config.status_code == 200
+        assert config.json()["title"] == "Published chat"
+        turn = await client.post(
+            f"/chat/p/{workflow_id}",
+            json={"message": "published", "session_id": "public-session"},
+        )
+        assert turn.status_code == 200, turn.text
+        assert turn.json()["reply"] == "published"
+    finally:
+        settings.auth_required = False
+
+    await client.put(f"/workflows/{workflow_id}", json={"active": False})
+    assert (await client.get(f"/chat/p/{workflow_id}")).status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_chat_turn_survives_queue_parking(client: AsyncClient, monkeypatch) -> None:
     """dispatch_role=disabled: a chat turn is parked on the durable queue and
     executed by a worker in another process. The chat message is seeded into

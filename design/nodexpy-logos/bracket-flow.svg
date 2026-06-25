@@ -1,0 +1,9 @@
+<svg width="380" height="96" viewBox="0 0 380 96" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Bracket Flow logo">
+  <path d="M27 14H15V82H27M69 14H81V82H69" stroke="#4C9EFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M27 61C36 61 36 35 48 35C60 35 60 61 69 61" stroke="#35D4D0" stroke-width="6" stroke-linecap="round"/>
+  <rect x="22" y="56" width="10" height="10" rx="3" fill="#35D4D0"/>
+  <rect x="64" y="56" width="10" height="10" rx="3" fill="#35D4D0"/>
+  <text x="108" y="62" fill="#EDF3FA" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">Node</text>
+  <text x="213" y="62" fill="#4C9EFF" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">x</text>
+  <text x="235" y="62" fill="#35D4D0" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">py</text>
+</svg>

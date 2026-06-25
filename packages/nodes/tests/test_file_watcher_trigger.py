@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
-import os
-import time
-from unittest.mock import patch
-
 import pytest
 
 from noodle_nodes.integrations_v2.providers.filesystem_triggers.triggers import (
     _matches_patterns,
-    _scan_directory,
     poll_file_watcher,
 )
 from noodle_nodes.integrations_v2.registry import is_registered_provider_trigger

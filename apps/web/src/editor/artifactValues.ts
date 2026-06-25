@@ -1,3 +1,5 @@
+import { safeGetItem } from "../safeStorage";
+
 export interface ArtifactRef {
   __noodle_artifact__: true;
   version: number;
@@ -41,7 +43,7 @@ export function artifactSummary(ref: ArtifactRef): string {
 }
 
 export function artifactDownloadUrl(ref: ArtifactRef): string {
-  const token = localStorage.getItem("noodle_token");
+  const token = safeGetItem("noodle_token");
   const qs = token ? `?token=${encodeURIComponent(token)}` : "";
   return `/api/artifacts/${encodeURIComponent(ref.artifact_id)}/download${qs}`;
 }
@@ -49,7 +51,7 @@ export function artifactDownloadUrl(ref: ArtifactRef): string {
 /** Download URL that asks the server for an ``inline`` Content-Disposition so
  *  the browser renders images/PDFs/media in-page instead of downloading. */
 export function artifactInlineUrl(ref: ArtifactRef): string {
-  const token = localStorage.getItem("noodle_token");
+  const token = safeGetItem("noodle_token");
   const params = new URLSearchParams({ inline: "1" });
   if (token) params.set("token", token);
   return `/api/artifacts/${encodeURIComponent(ref.artifact_id)}/download?${params.toString()}`;

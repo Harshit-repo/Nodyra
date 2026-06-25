@@ -6,8 +6,7 @@ import json
 
 import pytest
 
-from noodle.engine import execute
-from noodle.engine import node_exec
+from noodle.engine import execute, node_exec
 from noodle.engine.node_exec import _encoded_upper_bound
 from noodle.models import GraphNode, NodeStatus, RunStatus, WorkflowGraph
 from noodle.sdk import NodeRegistry, node

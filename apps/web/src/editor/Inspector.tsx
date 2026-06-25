@@ -1,9 +1,14 @@
 import { CaretLeft, CaretRight } from "@phosphor-icons/react";
-import { useEffect, useRef, useState } from "react";
-import type { MouseEvent as ReactMouseEvent } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
+import { useShallow } from "zustand/react/shallow";
 
-import { NodeDetails } from "./NodeDetails";
 import { useEditor } from "./store";
+import { safeGetItem, safeSetItem } from "../safeStorage";
+
+const NodeDetails = lazy(() =>
+  import("./NodeDetails").then((module) => ({ default: module.NodeDetails })),
+);
 
 const MIN_WIDTH = 260;
 const MAX_WIDTH = 720;
@@ -16,43 +21,48 @@ function clampWidth(value: number): number {
 }
 
 function readStoredWidth(): number {
-  try {
-    const parsed = Number(localStorage.getItem(WIDTH_KEY));
-    return Number.isFinite(parsed) ? clampWidth(parsed) : DEFAULT_WIDTH;
-  } catch {
-    return DEFAULT_WIDTH;
-  }
+  const parsed = Number(safeGetItem(WIDTH_KEY));
+  return Number.isFinite(parsed) ? clampWidth(parsed) : DEFAULT_WIDTH;
 }
 
 export function Inspector() {
   const selectedId = useEditor((s) => s.selectedId);
-  const nodes = useEditor((s) => s.nodes);
+  const [workflowNodeCount, firstWorkflowNodeId] = useEditor(
+    useShallow((s) => {
+      let count = 0;
+      let firstId: string | null = null;
+      for (const node of s.nodes) {
+        if (!node.data?.manifest) continue;
+        count += 1;
+        firstId ??= node.id;
+      }
+      return [count, firstId] as const;
+    }),
+  );
   const dirty = useEditor((s) => s.dirty);
   const running = useEditor((s) => s.running);
   const setSelected = useEditor((s) => s.setSelected);
   const [width, setWidth] = useState(readStoredWidth);
   const [collapsed, setCollapsed] = useState(() => {
-    try { return localStorage.getItem(COLLAPSED_KEY) === "1"; } catch { return false; }
+    return safeGetItem(COLLAPSED_KEY) === "1";
   });
   const activeListenersRef = useRef<{ move: (ev: MouseEvent) => void; up: () => void } | null>(null);
-  const workflowNodes = nodes.filter((node) => node.data?.manifest);
-  const firstWorkflowNode = workflowNodes[0] ?? null;
 
   function setCollapsedPersisted(next: boolean): void {
     setCollapsed(next);
-    try { localStorage.setItem(COLLAPSED_KEY, next ? "1" : "0"); } catch { /* */ }
+    safeSetItem(COLLAPSED_KEY, next ? "1" : "0");
   }
 
   function toggleCollapsed(): void {
     setCollapsed((v) => {
       const next = !v;
-      try { localStorage.setItem(COLLAPSED_KEY, next ? "1" : "0"); } catch { /* */ }
+      safeSetItem(COLLAPSED_KEY, next ? "1" : "0");
       return next;
     });
   }
 
   useEffect(() => {
-    try { localStorage.setItem(WIDTH_KEY, String(width)); } catch { /* */ }
+    safeSetItem(WIDTH_KEY, String(width));
   }, [width]);
 
   useEffect(() => {
@@ -73,6 +83,17 @@ export function Inspector() {
     window.addEventListener("noodle:toggle-inspector", toggleInspector);
     return () => window.removeEventListener("noodle:toggle-inspector", toggleInspector);
   }, []);
+
+  function handleResizeKey(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    const step = event.shiftKey ? 50 : 10;
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      setWidth((w) => clampWidth(w + step));
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      setWidth((w) => clampWidth(w - step));
+    }
+  }
 
   function startResize(event: ReactMouseEvent<HTMLDivElement>) {
     event.preventDefault();
@@ -115,7 +136,19 @@ export function Inspector() {
 
   return (
     <aside className="inspector" style={{ width }}>
-      <div className="inspector-resize" onMouseDown={startResize} title="Drag to resize" />
+      <div
+        className="inspector-resize"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize inspector"
+        aria-valuenow={width}
+        aria-valuemin={MIN_WIDTH}
+        aria-valuemax={MAX_WIDTH}
+        tabIndex={0}
+        onMouseDown={startResize}
+        onKeyDown={handleResizeKey}
+        title="Drag to resize (← → arrow keys)"
+      />
       <button
         type="button"
         className="inspector-collapse-btn inspector-collapse-btn--float"
@@ -127,7 +160,9 @@ export function Inspector() {
       </button>
       {selectedId ? (
         <div className="inspector-scroll">
-          <NodeDetails nodeId={selectedId} />
+          <Suspense fallback={<div className="inspector-empty">Loading inspector…</div>}>
+            <NodeDetails nodeId={selectedId} />
+          </Suspense>
         </div>
       ) : (
         <>
@@ -137,7 +172,7 @@ export function Inspector() {
           <div className="inspector-empty">
             <div className="inspector-empty-summary">
               <div>
-                <strong>{workflowNodes.length}</strong>
+                <strong>{workflowNodeCount}</strong>
                 <span>Nodes</span>
               </div>
               <div>
@@ -168,10 +203,10 @@ export function Inspector() {
               >
                 Fit view
               </button>
-              {firstWorkflowNode && (
+              {firstWorkflowNodeId && (
                 <button
                   type="button"
-                  onClick={() => setSelected(firstWorkflowNode.id)}
+                  onClick={() => setSelected(firstWorkflowNodeId)}
                 >
                   Select first node
                 </button>

@@ -59,14 +59,14 @@ async def _build_environment_locked(env_id: str) -> None:
         await session.commit()
         _env = env
 
-    if _env.backend == "venv" and not settings.enable_venv_builds:
-        status, detail = "ready", "Venv builds are disabled in this environment."
-    else:
-        backend = get_backend(_env)
-        try:
+    try:
+        if _env.backend == "venv" and not settings.enable_venv_builds:
+            status, detail = "ready", "Venv builds are disabled in this environment."
+        else:
+            backend = get_backend(_env)
             status, detail = await backend.build(_env)
-        except Exception as exc:  # noqa: BLE001
-            status, detail = "error", f"{type(exc).__name__}: {exc}"
+    except Exception as exc:  # noqa: BLE001
+        status, detail = "error", f"{type(exc).__name__}: {exc}"
 
     rss_estimate: int | None = None
     if _env.backend == "venv" and status == "ready" and settings.enable_venv_builds:

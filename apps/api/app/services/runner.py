@@ -15,27 +15,6 @@ from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
-# ContextVar that carries the current run_id into every log record emitted
-# while _execute_run is active, without requiring callers to pass it explicitly.
-_log_run_id: ContextVar[str] = ContextVar("noodle_log_run_id", default="")
-
-
-class _RunIdFilter(logging.Filter):
-    """Inject ``run_id`` from the ContextVar into every log record."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        record.run_id = _log_run_id.get("")  # type: ignore[attr-defined]
-        return True
-
-
-def _install_run_id_filter() -> None:
-    root = logging.getLogger("noodle")
-    for f in root.filters:
-        if isinstance(f, _RunIdFilter):
-            return
-    root.addFilter(_RunIdFilter())
-
-
 from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
@@ -111,6 +90,27 @@ from noodle.serialization import (
     deserialize_value,
     serialize_value,
 )
+
+# ContextVar that carries the current run_id into every log record emitted
+# while _execute_run is active, without requiring callers to pass it explicitly.
+_log_run_id: ContextVar[str] = ContextVar("noodle_log_run_id", default="")
+
+
+class _RunIdFilter(logging.Filter):
+    """Inject ``run_id`` from the ContextVar into every log record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.run_id = _log_run_id.get("")  # type: ignore[attr-defined]
+        return True
+
+
+def _install_run_id_filter() -> None:
+    root = logging.getLogger("noodle")
+    for log_filter in root.filters:
+        if isinstance(log_filter, _RunIdFilter):
+            return
+    root.addFilter(_RunIdFilter())
+
 
 logger = logging.getLogger(__name__)
 
@@ -273,6 +273,8 @@ async def start_run(
     trigger_node_id: str | None = None,
     deduplication_key: str | None = None,
     run_id: str | None = None,
+    batch_id: str | None = None,
+    runner_pool_id: str | None = None,
 ) -> str:
     """Public run launcher that restores any caller tenant context.
 
@@ -310,6 +312,8 @@ async def start_run(
             trigger_node_id=trigger_node_id,
             deduplication_key=deduplication_key,
             pre_run_id=run_id,
+            batch_id=batch_id,
+            runner_pool_id=runner_pool_id,
         )
     finally:
         if org_token is not None:
@@ -349,6 +353,8 @@ async def _start_run_impl(
     trigger_node_id: str | None = None,
     deduplication_key: str | None = None,
     pre_run_id: str | None = None,
+    batch_id: str | None = None,
+    runner_pool_id: str | None = None,
 ) -> str:
     """Create a run record and launch execution in the background.
 
@@ -372,8 +378,7 @@ async def _start_run_impl(
         # ("<meta_id>/<child>"); they only gain their upstream trigger once the
         # metanode is inlined (the engine does this at execute time), so gate
         # against the expanded graph too.
-        raise StepNeedsUpstreamTrigger(
-            "Connect a trigger upstream before running this step.")
+        raise StepNeedsUpstreamTrigger("Connect a trigger upstream before running this step.")
 
     cache = _seed_parameters(graph, cache, parameters, trigger_id=trigger_node_id)
 
@@ -396,8 +401,7 @@ async def _start_run_impl(
         #   3. The pool bound to the workflow's effective Environment — the
         #      explicit one, or the global env for implicit-Global workflows
         #   4. None -> in-process runtime pool
-        runner_pool_id: str | None = None
-        if deployment_id:
+        if runner_pool_id is None and deployment_id:
             dep = await session.get(Deployment, deployment_id)
             if dep:
                 runner_pool_id = dep.runner_pool_id
@@ -507,6 +511,7 @@ async def _start_run_impl(
             status="running",
             runner_pool_id=runner_pool_id,
             deduplication_key=deduplication_key,
+            batch_id=batch_id,
         )
         # A caller can pre-generate the run id (webhook raw-body capture writes
         # artifacts under runs/<pre_run_id>/ before the run exists). Leaving it
@@ -943,13 +948,9 @@ async def _execute_run_impl(
             # propagate to the outer handler aborts the run (status=error) instead
             # of silently executing with unresolved refs and no auth. Do NOT wrap
             # this in a tolerant except.
-            graph_dict = await resolve_credential_refs(
-                session, graph_dict, workflow_id=workflow_id
-            )
+            graph_dict = await resolve_credential_refs(session, graph_dict, workflow_id=workflow_id)
             if cache is not None:
-                cache = await resolve_credential_refs(
-                    session, cache, workflow_id=workflow_id
-                )
+                cache = await resolve_credential_refs(session, cache, workflow_id=workflow_id)
             await session.commit()
 
             # User code modules: tolerate a legacy DB that predates the

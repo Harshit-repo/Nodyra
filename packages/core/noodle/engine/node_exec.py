@@ -12,7 +12,9 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from noodle.ai_runtime import AgentActionRequest, AgentApprovalRequired
-from noodle.context import current_node_id, iteration_path, node_debug, node_emitter
+import threading
+
+from noodle.context import cancel_event, current_node_id, iteration_path, node_debug, node_emitter
 from noodle.engine.agent import (
     _MAX_AGENT_LOOP_ITERATIONS,
     _dispatch_agent_action_request,
@@ -467,14 +469,25 @@ async def _run_one_node(
                 else default_isolator()
             )
             return await isolator.run(node_def.func, current_kwargs, timeout=timeout)
-        if timeout is not None:
-            return await asyncio.wait_for(
-                asyncio.to_thread(node_def.func, **current_kwargs), timeout
-            )
-        # Always run synchronous nodes in a thread — even without a timeout.
-        # Calling node_def.func() directly blocks the event loop for the
-        # node's full duration, stalling all concurrent runs and heartbeats.
-        return await asyncio.to_thread(node_def.func, **current_kwargs)
+
+        # Sync nodes run in a thread. Give each invocation its own
+        # threading.Event so long-running nodes can check cancel_event.is_set()
+        # and exit early when the run is cancelled.
+        run_cancel_event = threading.Event()
+        cancel_event.set(run_cancel_event)
+
+        async def _run_in_thread() -> Any:
+            try:
+                if timeout is not None:
+                    return await asyncio.wait_for(
+                        asyncio.to_thread(node_def.func, **current_kwargs), timeout
+                    )
+                return await asyncio.to_thread(node_def.func, **current_kwargs)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                run_cancel_event.set()
+                raise
+
+        return await _run_in_thread()
 
     async def resolve_agent_actions(raw: Any, current_kwargs: dict[str, Any]) -> Any:
         next_raw = raw

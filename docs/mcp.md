@@ -7,8 +7,14 @@
 
 ## Noodle as an MCP server
 
-Noodle exposes an MCP server at `POST /mcp` (streamable HTTP, stateless).
+Noodle exposes an MCP 2025-11-25 server at `POST /mcp` (Streamable HTTP,
+stateless JSON). Each POST carries exactly one JSON-RPC message; JSON-RPC batch
+arrays are rejected.
 Disable with `MCP_SERVER_ENABLED=false`.
+
+Production clients should use revocable `ndpat_` automation tokens created by
+`POST /auth/api-tokens`. Tokens are bound to one organization and explicit
+permission scopes. Session bearer tokens remain supported for interactive use.
 
 Connect from Claude Code:
 

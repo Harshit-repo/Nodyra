@@ -5,7 +5,7 @@
  * ``require_permission(...)``. Keep this map in sync with the backend's
  * ``_PERMISSION_MIN_ROLE`` when new permissions land.
  */
-import { getUser } from "./api";
+import { useWorkspaceAccessContext } from "./WorkspaceAccess";
 
 export const ROLE_RANK = {
   viewer: 10,
@@ -55,13 +55,15 @@ const PERMISSION_MIN_ROLE: Record<Permission, Role> = {
  * — the backend's middleware does the same when ``auth_required=false``.
  */
 export function useCan(permission: Permission): boolean {
-  const user = getUser();
-  if (!user) return true; // anonymous + auth-off → API allows it
-  const role = (user.role as Role) ?? "viewer";
+  const workspace = useWorkspaceAccessContext();
+  if (!workspace.authRequired) return true; // auth-off → API allows it
+  if (workspace.loading || !workspace.hasActiveWorkspace) return false;
+  const effectiveRole = workspace.multiTenancyEnabled
+    ? workspace.role
+    : workspace.user?.role;
+  const role = (effectiveRole as Role | null) ?? "viewer";
   const userRank = ROLE_RANK[role] ?? 0;
   const minRank = ROLE_RANK[PERMISSION_MIN_ROLE[permission]];
   return userRank >= minRank;
 }
 
-/** Imperative variant for non-component contexts (utility callbacks). */
-export const can = useCan;

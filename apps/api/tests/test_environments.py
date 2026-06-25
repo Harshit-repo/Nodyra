@@ -147,6 +147,7 @@ async def test_backends_endpoint_returns_platform(client: AsyncClient) -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert data["platform"] == sys.platform
+    assert data["supported_python_versions"] == ["3.12", "3.13", "3.14"]
     assert data["venv"]["available"] is True
     assert "conda" in data
     assert "pixi" in data

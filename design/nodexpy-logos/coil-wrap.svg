@@ -1,0 +1,8 @@
+<svg width="400" height="100" viewBox="0 0 400 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Coil Wrap logo">
+  <path d="M18 24C80 3 92 34 48 43C9 51 12 78 82 76" stroke="#4C9EFF" stroke-width="8" stroke-linecap="round"/>
+  <path d="M82 24C20 3 8 34 52 43C91 51 88 78 18 76" stroke="#FFD34E" stroke-width="8" stroke-linecap="round"/>
+  <rect x="31" y="31" width="38" height="38" rx="10" fill="#111A27" stroke="#F3F7FA" stroke-width="3"/>
+  <circle cx="50" cy="50" r="7" fill="#35D4D0"/>
+  <circle cx="18" cy="24" r="6" fill="#4C9EFF"/><rect x="76" y="70" width="12" height="12" rx="3" fill="#FFD34E"/>
+  <text x="120" y="65" fill="#F3F7FA" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">Node</text><text x="225" y="65" fill="#4C9EFF" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">x</text><text x="247" y="65" fill="#FFD34E" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">py</text>
+</svg>

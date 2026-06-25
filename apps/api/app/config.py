@@ -279,6 +279,13 @@ class Settings(BaseSettings):
     # Public API base URL used for remote runners and provider webhook callback
     # URLs. Blank falls back to localhost in non-request lifecycle paths.
     public_api_url: str = ""
+    # Optional external OAuth 2.1 authorization-server issuer used by remote
+    # MCP clients. Noodle remains the protected resource and also supports
+    # org-scoped personal access tokens for preconfigured clients.
+    mcp_authorization_server_url: str = ""
+    mcp_oauth_introspection_url: str = ""
+    mcp_oauth_client_id: str = ""
+    mcp_oauth_client_secret: str = ""
     # C3: Session hardening — httpOnly cookie auth + CSRF + WS tickets.
     # When auth_required=True, the SPA can authenticate via either:
     #   1. Bearer token in Authorization header (existing, unchanged)
@@ -399,6 +406,11 @@ class Settings(BaseSettings):
                 "authenticated cross-origin requests. Set cors_origins to the "
                 "explicit list of allowed frontend URLs (or "
                 "RUNTIME_ALLOW_INSECURE=true to override)."
+            )
+        if self.mcp_authorization_server_url and not self.mcp_oauth_introspection_url:
+            errors.append(
+                "MCP_AUTHORIZATION_SERVER_URL is set without "
+                "MCP_OAUTH_INTROSPECTION_URL; OAuth access tokens could not be validated."
             )
         return errors
 

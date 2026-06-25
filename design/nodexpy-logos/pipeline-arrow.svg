@@ -1,0 +1,9 @@
+<svg width="380" height="96" viewBox="0 0 380 96" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Pipeline Arrow logo">
+  <path d="M15 29H39C50 29 47 48 58 48H78" stroke="#34465F" stroke-width="5" stroke-linecap="round"/>
+  <path d="M15 67H39C50 67 47 48 58 48H78" stroke="#34465F" stroke-width="5" stroke-linecap="round"/>
+  <rect x="9" y="22" width="14" height="14" rx="4" fill="#4C9EFF"/><rect x="9" y="60" width="14" height="14" rx="4" fill="#35D4D0"/>
+  <path d="M56 48H84M73 37L84 48L73 59" stroke="#8B75FF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="108" y="62" fill="#EDF3FA" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">Node</text>
+  <text x="213" y="62" fill="#4C9EFF" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">x</text>
+  <text x="235" y="62" fill="#35D4D0" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">py</text>
+</svg>

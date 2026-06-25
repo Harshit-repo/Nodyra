@@ -1,5 +1,6 @@
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from "@xyflow/react";
 import { Plus, X } from "@phosphor-icons/react";
+import { useShallow } from "zustand/react/shallow";
 
 import { useEditor } from "./store";
 
@@ -104,13 +105,15 @@ export function NoodleEdge({
   });
 
   const onEdgesChange = useEditor((s) => s.onEdgesChange);
-  const edgeType = useEditor((s) => {
-    if (!source) return { icon: "", label: "" };
-    const outputs = s.runOutputs[source];
-    if (!outputs || typeof outputs !== "object") return { icon: "", label: "" };
-    const portValue = (outputs as Record<string, unknown>)[sourceHandleId ?? "main"];
-    return deriveEdgeType(portValue);
-  });
+  const edgeType = useEditor(
+    useShallow((s): { icon: string; label: string } => {
+      if (!source) return { icon: "", label: "" };
+      const outputs = s.runOutputs[source];
+      if (!outputs || typeof outputs !== "object") return { icon: "", label: "" };
+      const val = (outputs as Record<string, unknown>)[sourceHandleId ?? "main"];
+      return deriveEdgeType(val);
+    }),
+  );
   // While an agent uses a connected sub-node, animate the wire so data appears
   // to flow from the model / memory / tool into the agent (n8n-style).
   const agentFlowClass = useEditor((s) =>

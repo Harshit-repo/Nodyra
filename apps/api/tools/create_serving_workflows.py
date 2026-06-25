@@ -1,8 +1,9 @@
 """Create model serving and monitoring workflow demos."""
+
 from __future__ import annotations
 
 import sys
-import time
+
 import requests
 
 API = "http://localhost:8000"
@@ -13,28 +14,43 @@ GLOBAL_ENV = "4b75702411d74bd799371b0f587220a8"
 
 def make_node(nid, ntype, label=None, params=None, x=0, y=120):
     return {
-        "id": nid, "type": ntype, "label": label,
+        "id": nid,
+        "type": ntype,
+        "label": label,
         "params": params or {},
         "position": {"x": x, "y": y},
-        "disabled": False, "outputs_override": None,
-        "on_error": "stop", "retry_on_fail": False, "retries": 1,
-        "retry_wait_seconds": 0, "retry_backoff": False,
-        "always_output_data": False, "timeout_seconds": None,
-        "tool_mode": False, "tool_name": None, "tool_description": "",
+        "disabled": False,
+        "outputs_override": None,
+        "on_error": "stop",
+        "retry_on_fail": False,
+        "retries": 1,
+        "retry_wait_seconds": 0,
+        "retry_backoff": False,
+        "always_output_data": False,
+        "timeout_seconds": None,
+        "tool_mode": False,
+        "tool_name": None,
+        "tool_description": "",
     }
 
 
 def make_edge(eid, src, src_out, tgt, tgt_in):
-    return {"id": eid, "source": src, "source_output": src_out,
-            "target": tgt, "target_input": tgt_in}
+    return {
+        "id": eid,
+        "source": src,
+        "source_output": src_out,
+        "target": tgt,
+        "target_input": tgt_in,
+    }
 
 
 def create_workflow(name, graph, env_id=GLOBAL_ENV):
     r = requests.post(f"{API}/workflows", headers=HEADERS, json={"name": name})
     r.raise_for_status()
     wf_id = r.json()["id"]
-    r2 = requests.patch(f"{API}/workflows/{wf_id}", headers=HEADERS,
-                        json={"environment_id": env_id, "graph": graph})
+    r2 = requests.patch(
+        f"{API}/workflows/{wf_id}", headers=HEADERS, json={"environment_id": env_id, "graph": graph}
+    )
     r2.raise_for_status()
     print(f"  Created {name!r}  id={wf_id}")
     return wf_id
@@ -60,32 +76,46 @@ output = probe
 wf8_graph = {
     "nodes": [
         make_node("trig", "manual_trigger", params={"data": {}}, x=0),
-        make_node("spec", "model_deployment_spec", x=240,
-                  params={
-                      "runtime": "ollama",
-                      "model": "llama3.2",
-                      "port": 11434,
-                      "format": "docker-compose",
-                      "gpu": False,
-                      "context_length": 4096,
-                  }),
-        make_node("probe", "model_endpoint_probe", x=560,
-                  params={
-                      "base_url": "http://localhost:11434",
-                      "model": "llama3.2",
-                      "api_key": "",
-                      "test_prompt": "Hello",
-                      "max_tokens": 8,
-                      "timeout_seconds": 5,
-                      "check_models_list": True,
-                      "check_completion": True,
-                      "fail_if_unhealthy": False,
-                  }),
-        make_node("healthy", "code", label="Log Healthy",
-                  params={"code": PROBE_SUMMARY_CODE}, x=840, y=60),
-        make_node("offline", "code", label="Log Offline",
-                  params={"code": "print('Endpoint offline or unhealthy')\noutput = input"},
-                  x=840, y=200),
+        make_node(
+            "spec",
+            "model_deployment_spec",
+            x=240,
+            params={
+                "runtime": "ollama",
+                "model": "llama3.2",
+                "port": 11434,
+                "format": "docker-compose",
+                "gpu": False,
+                "context_length": 4096,
+            },
+        ),
+        make_node(
+            "probe",
+            "model_endpoint_probe",
+            x=560,
+            params={
+                "base_url": "http://localhost:11434",
+                "model": "llama3.2",
+                "api_key": "",
+                "test_prompt": "Hello",
+                "max_tokens": 8,
+                "timeout_seconds": 5,
+                "check_models_list": True,
+                "check_completion": True,
+                "fail_if_unhealthy": False,
+            },
+        ),
+        make_node(
+            "healthy", "code", label="Log Healthy", params={"code": PROBE_SUMMARY_CODE}, x=840, y=60
+        ),
+        make_node(
+            "offline",
+            "code",
+            label="Log Offline",
+            params={"code": "print('Endpoint offline or unhealthy')\noutput = input"},
+            x=840,
+            y=200,
+        ),
     ],
     "edges": [
         make_edge("e1", "trig", "main", "spec", "input"),
@@ -161,39 +191,79 @@ output = {"p95_latency_ms": sorted(latencies)[int(len(latencies)*0.95)] if isins
 wf9_graph = {
     "nodes": [
         make_node("trig", "manual_trigger", params={"data": {}}, x=0),
-        make_node("sim", "code", label="Simulate Responses",
-                  params={"code": SIMULATE_RESPONSES_CODE}, x=240),
+        make_node(
+            "sim",
+            "code",
+            label="Simulate Responses",
+            params={"code": SIMULATE_RESPONSES_CODE},
+            x=240,
+        ),
         make_node("ds", "records_to_dataset", x=480),
-        make_node("quality", "response_quality_monitor", x=720,
-                  params={
-                      "mode": "rule_check",
-                      "response_column": "response",
-                      "min_length_chars": 20,
-                      "forbidden_patterns": '["I don\\'t know", "N/A"]',
-                      "sample_rate": 1.0,
-                  }),
-        make_node("quality_log", "code", label="Log Quality Results",
-                  params={"code": QUALITY_SUMMARY_CODE}, x=960),
-        make_node("latency_stats", "code", label="Compute Latency Stats",
-                  params={"code": LATENCY_STATS_CODE}, x=1200),
-        make_node("cost_gate", "cost_budget_gate", x=1440,
-                  params={
-                      "budget_usd": 0.01,
-                      "metric_field": "total_cost_usd",
-                      "operator": "<=",
-                      "price_per_1k_tokens": 0.0,
-                  }),
-        make_node("latency_gate", "latency_slo_gate", x=1680,
-                  params={
-                      "slo_ms": 1000.0,
-                      "percentile": "p95",
-                      "operator": "<=",
-                  }),
-        make_node("done", "code", label="All Gates Passed",
-                  params={"code": "print('All quality, cost, and latency gates passed!')\noutput = input"},
-                  x=1920, y=60),
-        make_node("cost_fail", "code", label="Cost Budget Exceeded",
-                  params={"code": COST_FAIL_CODE}, x=1680, y=240),
+        make_node(
+            "quality",
+            "response_quality_monitor",
+            x=720,
+            params={
+                "mode": "rule_check",
+                "response_column": "response",
+                "min_length_chars": 20,
+                "forbidden_patterns": '["I don\'t know", "N/A"]',
+                "sample_rate": 1.0,
+            },
+        ),
+        make_node(
+            "quality_log",
+            "code",
+            label="Log Quality Results",
+            params={"code": QUALITY_SUMMARY_CODE},
+            x=960,
+        ),
+        make_node(
+            "latency_stats",
+            "code",
+            label="Compute Latency Stats",
+            params={"code": LATENCY_STATS_CODE},
+            x=1200,
+        ),
+        make_node(
+            "cost_gate",
+            "cost_budget_gate",
+            x=1440,
+            params={
+                "budget_usd": 0.01,
+                "metric_field": "total_cost_usd",
+                "operator": "<=",
+                "price_per_1k_tokens": 0.0,
+            },
+        ),
+        make_node(
+            "latency_gate",
+            "latency_slo_gate",
+            x=1680,
+            params={
+                "slo_ms": 1000.0,
+                "percentile": "p95",
+                "operator": "<=",
+            },
+        ),
+        make_node(
+            "done",
+            "code",
+            label="All Gates Passed",
+            params={
+                "code": "print('All quality, cost, and latency gates passed!')\noutput = input"
+            },
+            x=1920,
+            y=60,
+        ),
+        make_node(
+            "cost_fail",
+            "code",
+            label="Cost Budget Exceeded",
+            params={"code": COST_FAIL_CODE},
+            x=1680,
+            y=240,
+        ),
     ],
     "edges": [
         make_edge("e1", "trig", "main", "sim", "input"),
@@ -257,39 +327,72 @@ wf10_graph = {
     "nodes": [
         make_node("trig", "manual_trigger", params={"data": {}}, x=0),
         # Registry data
-        make_node("reg_data", "code", label="Sample Registry",
-                  params={"code": REGISTRY_DATA_CODE}, x=240),
+        make_node(
+            "reg_data", "code", label="Sample Registry", params={"code": REGISTRY_DATA_CODE}, x=240
+        ),
         make_node("reg_ds", "records_to_dataset", x=480),
         # Query registry
-        make_node("query", "model_registry_query", x=720,
-                  params={
-                      "filter_status": "candidate",
-                      "filter_provider": "openai",
-                      "sort_by": "model_id",
-                      "limit": 10,
-                  }),
+        make_node(
+            "query",
+            "model_registry_query",
+            x=720,
+            params={
+                "filter_status": "candidate",
+                "filter_provider": "openai",
+                "sort_by": "model_id",
+                "limit": 10,
+            },
+        ),
         # Select and promote best
-        make_node("select", "code", label="Select Best Model",
-                  params={"code": PROMOTE_MODEL_CODE}, x=960),
-        make_node("promote", "model_promote", x=1200,
-                  params={
-                      "target_status": "staging",
-                      "notes": "Automated promotion after eval gate passed",
-                      "require_eval_result": False,
-                  }),
-        make_node("promote_log", "code", label="Log Promotion",
-                  params={"code": LIFECYCLE_DONE_CODE}, x=1440),
+        make_node(
+            "select", "code", label="Select Best Model", params={"code": PROMOTE_MODEL_CODE}, x=960
+        ),
+        make_node(
+            "promote",
+            "model_promote",
+            x=1200,
+            params={
+                "target_status": "staging",
+                "notes": "Automated promotion after eval gate passed",
+                "require_eval_result": False,
+            },
+        ),
+        make_node(
+            "promote_log",
+            "code",
+            label="Log Promotion",
+            params={"code": LIFECYCLE_DONE_CODE},
+            x=1440,
+        ),
         # Rollback demo branch (runs in parallel)
-        make_node("rollback_setup", "code", label="Setup Rollback Demo",
-                  params={"code": ROLLBACK_SETUP_CODE}, x=960, y=240),
-        make_node("rollback", "model_rollback", x=1200, y=240,
-                  params={
-                      "rollback_to_status": "candidate",
-                      "reason": "Accuracy regression detected in production",
-                  }),
-        make_node("rollback_log", "code", label="Log Rollback",
-                  params={"code": "print(f'Rolled back {input.get(\"model_id\")} from {input.get(\"rolled_back_from\")} to {input.get(\"rolled_back_to\")}')\noutput = input"},
-                  x=1440, y=240),
+        make_node(
+            "rollback_setup",
+            "code",
+            label="Setup Rollback Demo",
+            params={"code": ROLLBACK_SETUP_CODE},
+            x=960,
+            y=240,
+        ),
+        make_node(
+            "rollback",
+            "model_rollback",
+            x=1200,
+            y=240,
+            params={
+                "rollback_to_status": "candidate",
+                "reason": "Accuracy regression detected in production",
+            },
+        ),
+        make_node(
+            "rollback_log",
+            "code",
+            label="Log Rollback",
+            params={
+                "code": 'print(f\'Rolled back {input.get("model_id")} from {input.get("rolled_back_from")} to {input.get("rolled_back_to")}\')\noutput = input'
+            },
+            x=1440,
+            y=240,
+        ),
     ],
     "edges": [
         make_edge("e1", "trig", "main", "reg_data", "input"),
@@ -315,7 +418,7 @@ if __name__ == "__main__":
     wf9_id = create_workflow("Response Quality and Cost Monitoring", wf9_graph)
     wf10_id = create_workflow("Model Lifecycle — Registry, Promote, Rollback", wf10_graph)
 
-    print(f"\nAll workflows created:")
+    print("\nAll workflows created:")
     print(f"  WF8 (Serving Pipeline):  {wf8_id}")
     print(f"  WF9 (Quality Monitor):   {wf9_id}")
     print(f"  WF10 (Lifecycle Mgmt):   {wf10_id}")

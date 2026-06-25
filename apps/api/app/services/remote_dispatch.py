@@ -32,6 +32,10 @@ from sqlalchemy import select
 from app.config import settings
 from app.db import SessionLocal
 from app.models import Run, Runner, RunnerPool, RunQueueEntry
+from app.services.container_runtime import (  # noqa: F401
+    _validate_packages,
+    _validate_python_version,
+)
 from app.services.executors.base import EventCallback  # noqa: F401 - re-export
 from app.services.providers import agent as agent_provider
 from app.services.providers import docker as docker_provider
@@ -45,10 +49,6 @@ from app.services.providers.agent import (  # noqa: F401
 from app.services.providers.agent import (  # noqa: F401
     _AgentConnection,
     _QueuedError,
-)
-from app.services.container_runtime import (  # noqa: F401
-    _validate_packages,
-    _validate_python_version,
 )
 
 logger = logging.getLogger(__name__)

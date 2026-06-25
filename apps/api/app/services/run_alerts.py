@@ -11,8 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.models import Deployment, Run, Workflow, WorkflowVersion
-from app.tenancy import run_as_system
 from app.services.redaction import redact_value
+from app.tenancy import run_as_system
 
 
 def _first_failed_event(node_events: dict[str, dict]) -> dict | None:

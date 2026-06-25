@@ -1,0 +1,8 @@
+<svg width="400" height="100" viewBox="0 0 400 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Ribbon Knot logo">
+  <path d="M14 79V21L47 67L82 21V79" stroke="#FF6B5E" stroke-width="10" stroke-linecap="square" stroke-linejoin="bevel"/>
+  <path d="M25 21L72 79M72 21L25 79" stroke="#5B8CFF" stroke-width="7" stroke-linecap="square"/>
+  <path d="M43 44L53 56" stroke="#10141C" stroke-width="9"/>
+  <text x="112" y="65" fill="#F4F2EC" font-family="Arial, sans-serif" font-size="46" font-weight="800" letter-spacing="-2.5">node</text>
+  <text x="218" y="65" fill="#FF6B5E" font-family="Arial, sans-serif" font-size="46" font-weight="800" letter-spacing="-2.5">x</text>
+  <text x="241" y="65" fill="#5B8CFF" font-family="Arial, sans-serif" font-size="46" font-weight="800" letter-spacing="-2.5">py</text>
+</svg>

@@ -12,7 +12,10 @@ results with ``isError`` so the calling model can self-correct; transport
 auth failures are HTTP 401.
 """
 
+import base64
 import logging
+import uuid
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -20,23 +23,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_session
+from app.mcp.prompts import get_prompt, list_prompts
 from app.mcp.protocol import (
+    INVALID_PARAMS,
     INVALID_REQUEST,
     METHOD_NOT_FOUND,
     PARSE_ERROR,
+    SUPPORTED_PROTOCOL_VERSIONS,
     initialize_result,
     jsonrpc_error,
     jsonrpc_result,
     tool_result,
 )
-from app.mcp.prompts import get_prompt, list_prompts
-from app.mcp.resources import list_resources, read_resource
+from app.mcp.resources import (
+    RESOURCE_PAGE_SIZE,
+    list_resource_templates,
+    list_resources,
+    read_resource,
+)
 from app.mcp.tools import (
     STATIC_TOOLS,
     McpToolError,
     call_workflow_tool,
     get_tool,
     list_workflow_tool_descriptors,
+    validate_tool_arguments,
 )
 from app.models import User
 from app.security import (
@@ -53,6 +64,62 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["mcp"])
 
+TOOL_PAGE_SIZE = 100
+
+
+def _cursor(offset: int) -> str:
+    return base64.urlsafe_b64encode(f"noodle:{offset}".encode()).decode().rstrip("=")
+
+
+def _cursor_offset(value: object) -> int:
+    if value in (None, ""):
+        return 0
+    if not isinstance(value, str):
+        raise ValueError("cursor must be a string")
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        decoded = base64.urlsafe_b64decode(padded).decode()
+        prefix, raw = decoded.split(":", 1)
+        offset = int(raw)
+        if prefix != "noodle" or offset < 0:
+            raise ValueError
+        return offset
+    except (ValueError, UnicodeError) as exc:
+        raise ValueError("Invalid pagination cursor") from exc
+
+
+def _request_resource_url(request: Request) -> str:
+    base = (
+        settings.public_api_url.rstrip("/")
+        if settings.public_api_url
+        else str(request.base_url).rstrip("/")
+    )
+    return f"{base}/mcp"
+
+
+def _origin_allowed(request: Request) -> bool:
+    origin = request.headers.get("origin")
+    if not origin:
+        return True
+    allowed = {item.rstrip("/") for item in settings.cors_origin_list if item != "*"}
+    allowed.add(
+        f"{request.url.scheme}://{request.headers.get('host', request.url.netloc)}".rstrip("/")
+    )
+    if settings.public_api_url:
+        parsed = urlsplit(settings.public_api_url)
+        if parsed.scheme and parsed.netloc:
+            allowed.add(f"{parsed.scheme}://{parsed.netloc}")
+    return origin.rstrip("/") in allowed
+
+
+def _auth_challenge(request: Request) -> Response:
+    base = _request_resource_url(request).removesuffix("/mcp")
+    metadata = f"{base}/.well-known/oauth-protected-resource/mcp"
+    return Response(
+        status_code=401,
+        headers={"WWW-Authenticate": f'Bearer resource_metadata="{metadata}"'},
+    )
+
 
 @router.get("/mcp")
 async def mcp_get() -> Response:
@@ -64,8 +131,28 @@ async def mcp_delete() -> Response:
     return Response(status_code=405, headers={"Allow": "POST"})
 
 
+@router.get("/.well-known/oauth-protected-resource")
+@router.get("/.well-known/oauth-protected-resource/mcp")
+async def mcp_protected_resource_metadata(request: Request) -> dict:
+    """RFC 9728 metadata for MCP authorization-server discovery."""
+    payload: dict = {
+        "resource": _request_resource_url(request),
+        "bearer_methods_supported": ["header"],
+        "scopes_supported": sorted(_PERMISSION_MIN_ROLE),
+        "resource_name": "Noodle MCP",
+    }
+    if settings.mcp_authorization_server_url:
+        payload["authorization_servers"] = [
+            settings.mcp_authorization_server_url.rstrip("/")
+        ]
+    return payload
+
+
 async def _check_permission(
-    session: AsyncSession, user: User | None, permission: str | None
+    session: AsyncSession,
+    user: User | None,
+    permission: str | None,
+    request: Request,
 ) -> None:
     """RBAC for one tool call. Raises McpToolError on denial."""
     if permission is None:
@@ -81,6 +168,13 @@ async def _check_permission(
     role = await _role_for(session, user, org_id)
     if not role_allows(role, minimum):
         raise McpToolError(f"This tool requires the {minimum} role or higher.")
+    token_scopes = getattr(request.state, "api_token_scopes", None)
+    if (
+        token_scopes is not None
+        and permission not in token_scopes
+        and "*" not in token_scopes
+    ):
+        raise McpToolError(f"Automation token does not grant {permission}.")
 
 
 async def _dispatch_single(
@@ -90,11 +184,18 @@ async def _dispatch_single(
     request: Request,
 ) -> dict | None:
     """Handle one JSON-RPC message. Returns response dict or None for notifications."""
-    if not isinstance(body, dict) or not isinstance(body.get("method"), str):
+    if (
+        not isinstance(body, dict)
+        or body.get("jsonrpc") != "2.0"
+        or not isinstance(body.get("method"), str)
+        or body.get("id", 0) is None
+    ):
         return jsonrpc_error(None, INVALID_REQUEST, "Expected a JSON-RPC request object.")
 
     method = body["method"]
-    params = body.get("params") if isinstance(body.get("params"), dict) else {}
+    if "params" in body and not isinstance(body.get("params"), dict):
+        return jsonrpc_error(body.get("id"), INVALID_PARAMS, "params must be an object.")
+    params = body.get("params") or {}
 
     if "id" not in body:
         return None  # notification — no response
@@ -106,9 +207,16 @@ async def _dispatch_single(
     if method == "ping":
         return jsonrpc_result(req_id, {})
     if method == "tools/list":
+        try:
+            offset = _cursor_offset(params.get("cursor"))
+        except ValueError as exc:
+            return jsonrpc_error(req_id, INVALID_PARAMS, str(exc))
         tools = [tool.descriptor() for tool in STATIC_TOOLS]
         tools.extend(await list_workflow_tool_descriptors(session))
-        return jsonrpc_result(req_id, {"tools": tools})
+        payload: dict = {"tools": tools[offset:offset + TOOL_PAGE_SIZE]}
+        if offset + TOOL_PAGE_SIZE < len(tools):
+            payload["nextCursor"] = _cursor(offset + TOOL_PAGE_SIZE)
+        return jsonrpc_result(req_id, payload)
     if method == "tools/call":
         name = str(params.get("name") or "")
         arguments = params.get("arguments")
@@ -116,25 +224,46 @@ async def _dispatch_single(
         try:
             tool = get_tool(name)
             if tool is not None:
-                await _check_permission(session, user, tool.permission)
+                await _check_permission(session, user, tool.permission, request)
+                validate_tool_arguments(tool.input_schema, arguments)
                 payload = await tool.handler(session, user, arguments)
                 return jsonrpc_result(req_id, tool_result(payload))
             # Dynamic per-workflow tool — running a workflow needs workflow:run.
-            await _check_permission(session, user, "workflow:run")
+            await _check_permission(session, user, "workflow:run", request)
             payload = await call_workflow_tool(session, user, name, arguments)
             if payload is not None:
                 return jsonrpc_result(req_id, tool_result(payload))
             return jsonrpc_error(req_id, METHOD_NOT_FOUND, f"Unknown tool: {name}")
         except McpToolError as exc:
             return jsonrpc_result(req_id, tool_result(str(exc), is_error=True))
-        except Exception as exc:  # noqa: BLE001 - tool failures go to the model
-            logger.exception("mcp tool %s failed", name)
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            return jsonrpc_result(req_id, tool_result(detail, is_error=True))
+        except Exception:  # noqa: BLE001 - tool failures go to the model
+            error_id = uuid.uuid4().hex[:12]
+            logger.exception("mcp tool %s failed (error_id=%s)", name, error_id)
             return jsonrpc_result(
-                req_id, tool_result(f"{type(exc).__name__}: {exc}", is_error=True)
+                req_id,
+                tool_result(f"Internal tool error (reference {error_id}).", is_error=True),
             )
     if method == "resources/list":
-        resources = await list_resources(session)
-        return jsonrpc_result(req_id, {"resources": resources})
+        try:
+            offset = _cursor_offset(params.get("cursor"))
+        except ValueError as exc:
+            return jsonrpc_error(req_id, INVALID_PARAMS, str(exc))
+        resources, has_more = await list_resources(session, offset=offset)
+        payload = {"resources": resources}
+        if has_more:
+            payload["nextCursor"] = _cursor(offset + RESOURCE_PAGE_SIZE)
+        return jsonrpc_result(req_id, payload)
+    if method == "resources/templates/list":
+        if params.get("cursor") not in (None, ""):
+            return jsonrpc_error(
+                req_id, INVALID_PARAMS, "No additional resource-template pages."
+            )
+        return jsonrpc_result(
+            req_id, {"resourceTemplates": list_resource_templates()}
+        )
     if method == "resources/read":
         uri = str(params.get("uri") or "")
         if not uri:
@@ -145,12 +274,17 @@ async def _dispatch_single(
             return jsonrpc_error(req_id, METHOD_NOT_FOUND, str(exc))
         return jsonrpc_result(req_id, {"contents": [content]})
     if method == "prompts/list":
+        if params.get("cursor") not in (None, ""):
+            return jsonrpc_error(req_id, INVALID_PARAMS, "No additional prompt pages.")
         return jsonrpc_result(req_id, {"prompts": list_prompts()})
     if method == "prompts/get":
         name = str(params.get("name") or "")
         arguments = params.get("arguments")
         arguments = arguments if isinstance(arguments, dict) else {}
-        result = get_prompt(name, {str(k): str(v) for k, v in arguments.items()})
+        try:
+            result = get_prompt(name, {str(k): str(v) for k, v in arguments.items()})
+        except ValueError as exc:
+            return jsonrpc_error(req_id, INVALID_PARAMS, str(exc))
         if result is None:
             return jsonrpc_error(req_id, METHOD_NOT_FOUND, f"Unknown prompt: {name!r}")
         return jsonrpc_result(req_id, result)
@@ -162,8 +296,19 @@ async def _dispatch_single(
 async def mcp_post(
     request: Request,
     authorization: str | None = Header(default=None),
+    mcp_protocol_version: str | None = Header(
+        default=None, alias="MCP-Protocol-Version"
+    ),
     session: AsyncSession = Depends(get_session),
 ):
+    if not _origin_allowed(request):
+        return Response(status_code=403)
+    if (
+        mcp_protocol_version
+        and mcp_protocol_version not in SUPPORTED_PROTOCOL_VERSIONS
+    ):
+        return Response(status_code=400)
+
     # --- transport-level auth ---
     user: User | None = None
     if authorization:
@@ -172,14 +317,14 @@ async def mcp_post(
                 request, authorization=authorization, session=session
             )
         except HTTPException:
-            return Response(
-                status_code=401, headers={"WWW-Authenticate": "Bearer"}
-            )
+            return _auth_challenge(request)
     elif settings.auth_required:
-        return Response(status_code=401, headers={"WWW-Authenticate": "Bearer"})
+        return _auth_challenge(request)
 
     # --- rate limiting ---
-    identifier = user.id if user else (request.client.host if request.client else "anon")
+    org_id = current_org_id.get() or "default"
+    actor = user.id if user else (request.client.host if request.client else "anon")
+    identifier = f"{org_id}:{actor}"
     if not await _rate_allow("mcp", identifier, limit=120, window_seconds=60):
         return Response(status_code=429, headers={"Retry-After": "60"})
 
@@ -189,22 +334,23 @@ async def mcp_post(
     except Exception:
         return JSONResponse(jsonrpc_error(None, PARSE_ERROR, "Invalid JSON."))
 
-    # --- batch ---
+    # Streamable HTTP carries exactly one JSON-RPC message per POST.
     if isinstance(body, list):
-        if not body:
-            return Response(status_code=202)
-        responses: list[dict] = []
-        for item in body:
-            result = await _dispatch_single(item, session, user, request)
-            if result is not None:
-                responses.append(result)
-        if not responses:
-            return Response(status_code=202)
-        return JSONResponse(responses)
+        return JSONResponse(
+            jsonrpc_error(
+                None,
+                INVALID_REQUEST,
+                "MCP accepts one JSON-RPC message per POST.",
+            ),
+            status_code=400,
+        )
 
     # --- single ---
-    if "id" not in body:
-        return Response(status_code=202)
+    if isinstance(body, dict) and "id" not in body:
+        notification_result = await _dispatch_single(body, session, user, request)
+        if notification_result is None:
+            return Response(status_code=202)
+        return JSONResponse(notification_result, status_code=400)
 
     result = await _dispatch_single(body, session, user, request)
     return JSONResponse(result)

@@ -19,9 +19,6 @@ from typing import TYPE_CHECKING, Any
 
 from noodle.ai_runtime import AgentActionRequest
 from noodle.context import iteration_path
-from noodle.models import NodeRunResult, RunResult, RunStatus, WorkflowGraph
-from noodle.sdk import NodeRegistry
-
 from noodle.engine.node_exec import (
     DEFAULT_NODE_TIMEOUTS,
     _install_capture,
@@ -29,6 +26,8 @@ from noodle.engine.node_exec import (
 )
 from noodle.engine.types import EventCallback, GraphError
 from noodle.engine.validation import _validate_connection_kinds
+from noodle.models import NodeRunResult, RunResult, RunStatus, WorkflowGraph
+from noodle.sdk import NodeRegistry
 
 if TYPE_CHECKING:
     from noodle.engine.loops import LoopRegion

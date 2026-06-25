@@ -1,0 +1,24 @@
+Noodle has been deployed successfully.
+
+API:    http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}
+Status: kubectl get pods -l app={{ .Release.Name }}-api
+
+{{- if and .Values.ingress.enabled (not .Values.ingress.tls) }}
+
+WARNING: Ingress TLS is disabled!
+  All traffic (credentials, session tokens, workflow data) is transmitted in
+  plaintext. For production deployments, enable TLS via cert-manager:
+
+    ingress:
+      tls: true
+      annotations:
+        cert-manager.io/cluster-issuer: letsencrypt-prod
+
+{{- end }}
+
+{{- if eq .Values.secret.key "" }}
+
+WARNING: secret.key is empty — using an empty string for NOODLE_SECRET_KEY.
+  Generate a secure key with:  openssl rand -hex 32
+
+{{- end }}

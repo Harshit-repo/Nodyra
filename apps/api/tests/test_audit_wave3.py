@@ -11,7 +11,6 @@ from httpx import AsyncClient
 
 from app.models import Run, Runner
 
-
 # ---------------------------------------------------------------------------
 # EVT-1 — in-process broker reaps abandoned non-finished (e.g. `waiting`) runs
 # ---------------------------------------------------------------------------
@@ -168,6 +167,71 @@ async def test_artifact_upload_allows_assigned_runner(client: AsyncClient):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 201
+
+
+async def test_artifact_upload_rejects_unassigned_run(client: AsyncClient):
+    """A valid runner token is not authority to mutate every run in its org."""
+    _pool_id, _runner_id, token = await _pool_with_token(client)
+    run_id = await _make_run(client, runner_id=None)
+
+    resp = await client.post(
+        "/runner-pools/artifact-upload",
+        params={
+            "run_id": run_id,
+            "node_id": "n",
+            "artifact_id": "unassigned-artifact",
+            "name": "f.txt",
+            "storage_key": f"runs/{run_id}/n/unassigned-artifact-f.txt",
+        },
+        files={"data": ("f.txt", b"x", "text/plain")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
+
+
+async def test_chunked_request_body_is_bounded(client: AsyncClient, monkeypatch):
+    """Missing Content-Length must not bypass the API's memory cap."""
+    import app.main as main_module
+
+    monkeypatch.setattr(main_module, "_MAX_BODY_BYTES", 4)
+
+    async def chunks():
+        yield b"123"
+        yield b"45"
+
+    response = await client.post(
+        "/workflows",
+        content=chunks(),
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 413
+
+
+async def test_webhook_test_capture_dispatches_in_listening_org(
+    client: AsyncClient, monkeypatch
+):
+    import time
+    from types import SimpleNamespace
+
+    from app.config import settings
+    from app.routers import webhooks
+    from app.tenancy import active_org_id
+
+    monkeypatch.setattr(settings, "multi_tenancy_enabled", True)
+    webhooks._listening["tenant-path"] = (time.monotonic() + 60, "org-x")
+    observed: list[str | None] = []
+
+    async def fake_dispatch(*args, **kwargs):
+        observed.append(active_org_id())
+        return SimpleNamespace(any_match=False, run_ids=[], reject_status=None)
+
+    monkeypatch.setattr(webhooks, "dispatch_webhook", fake_dispatch)
+    response = await client.post("/webhook-test/tenant-path", json={"value": 1})
+
+    assert response.status_code == 200
+    assert observed == ["org-x"]
+    assert "org-x:tenant-path" in webhooks._captured
+    assert "default:tenant-path" not in webhooks._captured
 
 
 # ---------------------------------------------------------------------------

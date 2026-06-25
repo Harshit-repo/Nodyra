@@ -86,7 +86,15 @@ _NODE_REGISTRY: dict[str, dict[str, Any]] = {
     },
     "slack": {
         "name": "Slack",
-        "params": ["resource", "operation", "credentials", "channel", "text", "blocks", "thread_ts"],
+        "params": [
+            "resource",
+            "operation",
+            "credentials",
+            "channel",
+            "text",
+            "blocks",
+            "thread_ts",
+        ],
         "credential_specs": [{"type": "slack_bot", "param": "credentials", "key": "*"}],
     },
     "smtp_send_email": {
@@ -517,9 +525,7 @@ async def _resolve_llm_provider(
             if len(key) >= 16:
                 # Honour the requested model only when it matches the provider
                 # we actually fell back to; otherwise use that provider default.
-                use_model = (
-                    model if (hint and hint == cred_type and model) else default_model
-                )
+                use_model = model if (hint and hint == cred_type and model) else default_model
                 return cred_type, use_model, key
 
     if not provider or not api_key:

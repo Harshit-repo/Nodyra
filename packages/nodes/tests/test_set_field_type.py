@@ -1,5 +1,6 @@
 """Tests for the Set Field Type node."""
 import pytest
+
 import noodle_nodes  # noqa: F401
 from noodle.engine import execute
 from noodle.models import Edge, GraphNode, WorkflowGraph

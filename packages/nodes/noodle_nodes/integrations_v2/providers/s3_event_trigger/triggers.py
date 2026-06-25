@@ -45,9 +45,7 @@ def poll_s3_events(ctx: ProviderTriggerPollContext) -> ProviderTriggerPollResult
     try:
         import boto3
     except ImportError:
-        raise ImportError(
-            "s3_event_trigger requires boto3. Install with: pip install boto3"
-        )
+        raise ImportError("s3_event_trigger requires boto3. Install with: pip install boto3")
 
     params = ctx.params
     creds = _creds_dict(params.get("credentials"))

@@ -2,21 +2,29 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
 import pytest
+from tests.test_ai_v2_nodes import DummyTool, ScriptedChatModel
 
 import noodle_nodes  # noqa: F401
-from noodle.ai_runtime import AIMessage, ChatResponse, ToolCall
+from noodle.ai_runtime import (
+    AgentResumeInput,
+    AIMessage,
+    ChatResponse,
+    ModelUsage,
+    RetrievedDocument,
+    RetrieverAdapter,
+    ToolCall,
+    ToolParameterSchema,
+    ToolResult,
+)
 from noodle.sdk import registry
-from noodle_nodes.ai_v2 import agents as agents_mod
 from noodle_nodes.ai_v2.agents import (
     PERSONA_TEMPLATES,
     _apply_persona,
     _strip_control_messages,
     ai_agent_v2,
 )
-from tests.test_ai_v2_nodes import DummyTool, ScriptedChatModel
 
 
 def test_apply_persona_prepends_template() -> None:
@@ -56,9 +64,6 @@ def test_strategy_and_persona_are_top_level() -> None:
 # Task 9: retriever port, subagent ports, unified tool assembly
 # ---------------------------------------------------------------------------
 
-from noodle.ai_runtime import RetrievedDocument, RetrieverAdapter
-
-
 class _FakeRetriever(RetrieverAdapter):
     def __init__(self, docs):
         self._docs = docs
@@ -86,8 +91,13 @@ def test_retriever_tool_overridden_by_external() -> None:
 
 def test_subagent_port_adds_delegate_tool() -> None:
     from noodle_nodes.ai_v2.agent_tools import SubAgentAdapter
-    sub = SubAgentAdapter(name="researcher", description="d", system="",
-                          model=ScriptedChatModel([ChatResponse(text="x")]))
+
+    sub = SubAgentAdapter(
+        name="researcher",
+        description="d",
+        system="",
+        model=ScriptedChatModel([ChatResponse(text="x")]),
+    )
     model = ScriptedChatModel([ChatResponse(text="hi")])
     ai_agent_v2(model=model, subagent_1=sub, prompt="hello")
     assert any(t.name == "delegate_to_researcher" for t in model.requests[0].tools)
@@ -95,10 +105,19 @@ def test_subagent_port_adds_delegate_tool() -> None:
 
 def test_multiple_subagents_all_appear() -> None:
     from noodle_nodes.ai_v2.agent_tools import SubAgentAdapter
-    sub1 = SubAgentAdapter(name="writer", description="writes", system="",
-                           model=ScriptedChatModel([ChatResponse(text="x")]))
-    sub2 = SubAgentAdapter(name="editor", description="edits", system="",
-                           model=ScriptedChatModel([ChatResponse(text="x")]))
+
+    sub1 = SubAgentAdapter(
+        name="writer",
+        description="writes",
+        system="",
+        model=ScriptedChatModel([ChatResponse(text="x")]),
+    )
+    sub2 = SubAgentAdapter(
+        name="editor",
+        description="edits",
+        system="",
+        model=ScriptedChatModel([ChatResponse(text="x")]),
+    )
     model = ScriptedChatModel([ChatResponse(text="hi")])
     ai_agent_v2(model=model, subagent_1=sub1, subagent_2=sub2, prompt="hello")
     names = [t.name for t in model.requests[0].tools]
@@ -120,9 +139,6 @@ def test_new_ports_registered() -> None:
 # Task 10: dual-model routing
 # ---------------------------------------------------------------------------
 
-from noodle.ai_runtime import AgentResumeInput, ToolResult
-
-
 def test_dual_model_step0_uses_main() -> None:
     main = ScriptedChatModel([ChatResponse(text="final")])
     fast = ScriptedChatModel([ChatResponse(text="fast")])
@@ -136,7 +152,8 @@ def test_dual_model_step_gt0_uses_fast() -> None:
     resume = AgentResumeInput(
         tool_results=[ToolResult(tool_call_id="c1", name="lookup", content="r")],
         messages_so_far=[AIMessage.user("hi")],
-        step=1, max_steps=4,
+        step=1,
+        max_steps=4,
     )
     out = ai_agent_v2(model=main, fast_model=fast, prompt="hi", agent_resume=resume)
     assert len(fast.requests) == 1
@@ -147,12 +164,14 @@ def test_dual_model_fast_failure_falls_back(monkeypatch) -> None:
     class _BoomModel(ScriptedChatModel):
         def complete(self, request):
             raise RuntimeError("fast model down")
+
     main = ScriptedChatModel([ChatResponse(text="recovered")])
     fast = _BoomModel([ChatResponse(text="never")])
     resume = AgentResumeInput(
         tool_results=[ToolResult(tool_call_id="c1", name="lookup", content="r")],
         messages_so_far=[AIMessage.user("hi")],
-        step=1, max_steps=4,
+        step=1,
+        max_steps=4,
     )
     out = ai_agent_v2(model=main, fast_model=fast, prompt="hi", agent_resume=resume)
     assert out["answer"] == "recovered"
@@ -161,9 +180,6 @@ def test_dual_model_fast_failure_falls_back(monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 # Task 11: accumulated usage + cost tracking
 # ---------------------------------------------------------------------------
-
-from noodle.ai_runtime import ModelUsage
-
 
 def _resp(text="", tool_calls=None, prompt=10, completion=5):
     return ChatResponse(
@@ -196,12 +212,15 @@ def test_usage_message_not_sent_to_model() -> None:
 def test_usage_accumulates_across_resume() -> None:
     # First call returns a tool call → AgentActionRequest carries usage forward.
     model = ScriptedChatModel(
-        [_resp(tool_calls=[ToolCall(id="c1", name="lookup", arguments={})], prompt=10, completion=5)]
+        [
+            _resp(
+                tool_calls=[ToolCall(id="c1", name="lookup", arguments={})], prompt=10, completion=5
+            )
+        ]
     )
     action = ai_agent_v2(model=model, tool=DummyTool("lookup"), prompt="hi", max_steps=4)
     usage_msgs = [
-        m for m in action.messages_so_far
-        if str(m.content or "").startswith("__noodle_usage__")
+        m for m in action.messages_so_far if str(m.content or "").startswith("__noodle_usage__")
     ]
     assert usage_msgs, "usage carried in messages_so_far"
     payload = json.loads(usage_msgs[0].content.split("\n", 1)[1])
@@ -215,6 +234,7 @@ def test_total_usage_accumulates_multi_step() -> None:
     # Build a resume input that already carries step-1 usage (15 prompt + 7 completion).
     prior_usage = ModelUsage(prompt_tokens=15, completion_tokens=7, total_tokens=22)
     from noodle_nodes.ai_v2.agents import _usage_message
+
     resume = AgentResumeInput(
         tool_results=[ToolResult(tool_call_id="c1", name="lookup", content="r")],
         messages_so_far=[AIMessage.user("hi"), _usage_message(prior_usage)],
@@ -254,8 +274,13 @@ def test_enable_code_execution_adds_tool() -> None:
 def test_enable_web_search_missing_creds_raises() -> None:
     model = ScriptedChatModel([ChatResponse(text="hi")])
     with pytest.raises(ValueError):
-        ai_agent_v2(model=model, prompt="hi", enable_web_search=True,
-                    web_search_provider="tavily", web_search_credentials=None)
+        ai_agent_v2(
+            model=model,
+            prompt="hi",
+            enable_web_search=True,
+            web_search_provider="tavily",
+            web_search_credentials=None,
+        )
 
 
 def test_builtin_overridden_by_external() -> None:
@@ -282,12 +307,21 @@ def test_disabled_builtins_absent() -> None:
 def test_internal_calculator_dispatched_in_node() -> None:
     # Model calls calculate, then answers. No external tool port, so the engine
     # never runs — the node must dispatch the calculator itself and return a dict.
-    model = ScriptedChatModel([
-        ChatResponse(text="", tool_calls=[ToolCall(id="c1", name="calculate", arguments={"expression": "6*7"})]),
-        ChatResponse(text="The answer is 42."),
-    ])
-    out = ai_agent_v2(model=model, prompt="what is 6*7", enable_calculator=True,
-                      side_effect_approval="auto_approve")
+    model = ScriptedChatModel(
+        [
+            ChatResponse(
+                text="",
+                tool_calls=[ToolCall(id="c1", name="calculate", arguments={"expression": "6*7"})],
+            ),
+            ChatResponse(text="The answer is 42."),
+        ]
+    )
+    out = ai_agent_v2(
+        model=model,
+        prompt="what is 6*7",
+        enable_calculator=True,
+        side_effect_approval="auto_approve",
+    )
     assert not hasattr(out, "tool_calls")  # not an AgentActionRequest
     assert out["answer"] == "The answer is 42."
     steps = out["intermediate_steps"]
@@ -296,24 +330,39 @@ def test_internal_calculator_dispatched_in_node() -> None:
 
 def test_external_tool_still_engine_mediated() -> None:
     # An external tool-port call must still return an AgentActionRequest.
-    model = ScriptedChatModel([
-        ChatResponse(text="", tool_calls=[ToolCall(id="c1", name="lookup", arguments={"query": "x"})]),
-    ])
-    out = ai_agent_v2(model=model, tool=DummyTool("lookup"), prompt="go",
-                      side_effect_approval="auto_approve")
+    model = ScriptedChatModel(
+        [
+            ChatResponse(
+                text="", tool_calls=[ToolCall(id="c1", name="lookup", arguments={"query": "x"})]
+            ),
+        ]
+    )
+    out = ai_agent_v2(
+        model=model, tool=DummyTool("lookup"), prompt="go", side_effect_approval="auto_approve"
+    )
     assert hasattr(out, "tool_calls")  # AgentActionRequest
     assert out.tool_calls[0].name == "lookup"
 
 
 def test_mixed_internal_external_returns_external_only() -> None:
-    model = ScriptedChatModel([
-        ChatResponse(text="", tool_calls=[
-            ToolCall(id="c1", name="calculate", arguments={"expression": "1+1"}),
-            ToolCall(id="c2", name="lookup", arguments={"query": "x"}),
-        ]),
-    ])
-    out = ai_agent_v2(model=model, tool=DummyTool("lookup"), prompt="go",
-                      enable_calculator=True, side_effect_approval="auto_approve")
+    model = ScriptedChatModel(
+        [
+            ChatResponse(
+                text="",
+                tool_calls=[
+                    ToolCall(id="c1", name="calculate", arguments={"expression": "1+1"}),
+                    ToolCall(id="c2", name="lookup", arguments={"query": "x"}),
+                ],
+            ),
+        ]
+    )
+    out = ai_agent_v2(
+        model=model,
+        tool=DummyTool("lookup"),
+        prompt="go",
+        enable_calculator=True,
+        side_effect_approval="auto_approve",
+    )
     assert hasattr(out, "tool_calls")
     # Only the external call is handed to the engine; the calculator result is
     # already in messages_so_far as a tool result.
@@ -324,12 +373,21 @@ def test_mixed_internal_external_returns_external_only() -> None:
 def test_internal_side_effect_requires_approval() -> None:
     # Code execution is side-effecting; without approval the node returns an
     # approval-required tool result rather than running code.
-    model = ScriptedChatModel([
-        ChatResponse(text="", tool_calls=[ToolCall(id="c1", name="run_code", arguments={"code": "print(1)"})]),
-        ChatResponse(text="ok"),
-    ])
-    out = ai_agent_v2(model=model, prompt="run", enable_code_execution=True,
-                      side_effect_approval="require_approval")
+    model = ScriptedChatModel(
+        [
+            ChatResponse(
+                text="",
+                tool_calls=[ToolCall(id="c1", name="run_code", arguments={"code": "print(1)"})],
+            ),
+            ChatResponse(text="ok"),
+        ]
+    )
+    out = ai_agent_v2(
+        model=model,
+        prompt="run",
+        enable_code_execution=True,
+        side_effect_approval="require_approval",
+    )
     steps = out["intermediate_steps"]
     assert any("approval" in (s["result"] or "").lower() for s in steps)
 
@@ -350,7 +408,9 @@ def test_compression_triggers_over_threshold() -> None:
     long_history = [AIMessage.user("x" * 4000) for _ in range(8)]
     resume = AgentResumeInput(
         tool_results=[ToolResult(tool_call_id="c1", name="lookup", content="r")],
-        messages_so_far=long_history, step=1, max_steps=4,
+        messages_so_far=long_history,
+        step=1,
+        max_steps=4,
     )
     # 2 responses: [0] compression summary, [1] final answer
     model = ScriptedChatModel([ChatResponse(text="SUMMARY"), ChatResponse(text="final")])
@@ -363,15 +423,19 @@ def test_compression_failure_graceful() -> None:
         def __init__(self):
             super().__init__([ChatResponse(text="final")])
             self._first = True
+
         def complete(self, request):
             if self._first:
                 self._first = False
                 raise RuntimeError("compress failed")
             return super().complete(request)
+
     long_history = [AIMessage.user("x" * 4000) for _ in range(8)]
     resume = AgentResumeInput(
         tool_results=[ToolResult(tool_call_id="c1", name="lookup", content="r")],
-        messages_so_far=long_history, step=1, max_steps=4,
+        messages_so_far=long_history,
+        step=1,
+        max_steps=4,
     )
     out = ai_agent_v2(model=_FailFirst(), prompt="hi", agent_resume=resume, max_history_tokens=100)
     assert out["answer"] == "final"
@@ -393,11 +457,20 @@ def test_tool_selection_all_sends_everything() -> None:
 def test_tool_selection_top_k_limits() -> None:
     model = ScriptedChatModel([ChatResponse(text="hi")])
     # Names chosen so only some overlap the task wording.
-    tools = [DummyTool("weather_lookup"), DummyTool("stock_price"),
-             DummyTool("translate_text"), DummyTool("send_email"),
-             DummyTool("calendar_create")]
-    ai_agent_v2(model=model, tool=tools, prompt="what is the weather and stock price today",
-                tool_selection="top_k", tool_selection_top_k=2)
+    tools = [
+        DummyTool("weather_lookup"),
+        DummyTool("stock_price"),
+        DummyTool("translate_text"),
+        DummyTool("send_email"),
+        DummyTool("calendar_create"),
+    ]
+    ai_agent_v2(
+        model=model,
+        tool=tools,
+        prompt="what is the weather and stock price today",
+        tool_selection="top_k",
+        tool_selection_top_k=2,
+    )
     sent = {t.name for t in model.requests[0].tools}
     assert len(sent) <= 4  # top_k plus zero-overlap fallback cap
     assert "weather_lookup" in sent or "stock_price" in sent
@@ -406,8 +479,13 @@ def test_tool_selection_top_k_limits() -> None:
 def test_tool_selection_fallback_when_all_zero() -> None:
     model = ScriptedChatModel([ChatResponse(text="hi")])
     tools = [DummyTool("alpha"), DummyTool("beta"), DummyTool("gamma")]
-    ai_agent_v2(model=model, tool=tools, prompt="zzzzz qqqqq",
-                tool_selection="top_k", tool_selection_top_k=1)
+    ai_agent_v2(
+        model=model,
+        tool=tools,
+        prompt="zzzzz qqqqq",
+        tool_selection="top_k",
+        tool_selection_top_k=1,
+    )
     assert len(model.requests[0].tools) == 3  # no overlap → send all
 
 
@@ -453,16 +531,22 @@ def test_reflexion_lgtm_keeps_original() -> None:
 
 
 def test_reflexion_improves_answer() -> None:
-    model = ScriptedChatModel([ChatResponse(text="rough draft"), ChatResponse(text="polished answer")])
+    model = ScriptedChatModel(
+        [ChatResponse(text="rough draft"), ChatResponse(text="polished answer")]
+    )
     out = ai_agent_v2(model=model, prompt="q", strategy="reflexion", reflection_rounds=1)
     assert out["answer"] == "polished answer"
 
 
 def test_reflexion_rounds_capped_at_two() -> None:
-    model = ScriptedChatModel([
-        ChatResponse(text="v0"), ChatResponse(text="v1"), ChatResponse(text="v2"),
-        ChatResponse(text="v3 should never be requested"),
-    ])
+    model = ScriptedChatModel(
+        [
+            ChatResponse(text="v0"),
+            ChatResponse(text="v1"),
+            ChatResponse(text="v2"),
+            ChatResponse(text="v3 should never be requested"),
+        ]
+    )
     ai_agent_v2(model=model, prompt="q", strategy="reflexion", reflection_rounds=2)
     # 1 initial + 2 reflection = 3 requests max
     assert len(model.requests) == 3
@@ -472,9 +556,6 @@ def test_reflexion_rounds_capped_at_two() -> None:
 # Task 17: param-group wiring verification + untrusted-tool-result notice
 # ---------------------------------------------------------------------------
 
-from noodle.ai_runtime import ToolParameterSchema
-
-
 def test_param_groups_present() -> None:
     manifest = registry.get("ai_agent_v2").manifest
     groups = {p.group for p in manifest.params if p.group}
@@ -482,9 +563,12 @@ def test_param_groups_present() -> None:
 
 
 def test_tool_instruction_warns_about_untrusted_results() -> None:
+    from noodle.ai_runtime import ToolSchema
     from noodle_nodes.ai_v2.agents import _tool_instruction
-    from noodle.ai_runtime import ToolSchema, ToolParameterSchema
-    msg = _tool_instruction([ToolSchema(name="x", description="d", parameters=ToolParameterSchema())])
+
+    msg = _tool_instruction(
+        [ToolSchema(name="x", description="d", parameters=ToolParameterSchema())]
+    )
     assert "untrusted" in msg.content.lower()
 
 
@@ -506,13 +590,13 @@ def test_reflexion_and_parser_consistent() -> None:
     from noodle.sdk import registry as _registry
 
     # Two model calls: [0] initial draft, [1] improved answer from reflection.
-    model = ScriptedChatModel([
-        ChatResponse(text='{"value": "rough draft"}'),
-        ChatResponse(text='{"value": "polished answer"}'),
-    ])
-    parser = _registry.get("ai_structured_output_parser").func(
-        schema='{"required": ["value"]}'
+    model = ScriptedChatModel(
+        [
+            ChatResponse(text='{"value": "rough draft"}'),
+            ChatResponse(text='{"value": "polished answer"}'),
+        ]
     )
+    parser = _registry.get("ai_structured_output_parser").func(schema='{"required": ["value"]}')
     out = ai_agent_v2(
         model=model,
         prompt="q",

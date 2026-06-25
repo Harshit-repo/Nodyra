@@ -39,17 +39,11 @@ def _decode_value(raw: bytes | None, fmt: str) -> Any:
 def poll_kafka(ctx: ProviderTriggerPollContext) -> ProviderTriggerPollResult:
     try:
         from confluent_kafka import Consumer, KafkaError
-    except ImportError:
-        try:
-            from kafka import KafkaConsumer as _KC  # type: ignore[import]
-            raise ImportError(
-                "kafka_trigger requires confluent-kafka. Install with: pip install confluent-kafka"
-            )
-        except ImportError:
-            raise ImportError(
-                "kafka_trigger requires confluent-kafka>=2.0. "
-                "Install with: pip install 'confluent-kafka>=2.0'"
-            )
+    except ImportError as exc:
+        raise ImportError(
+            "kafka_trigger requires confluent-kafka>=2.0. "
+            "Install with: pip install 'confluent-kafka>=2.0'"
+        ) from exc
 
     params = ctx.params
     creds = _creds_dict(params.get("credentials"))
@@ -70,7 +64,9 @@ def poll_kafka(ctx: ProviderTriggerPollContext) -> ProviderTriggerPollResult:
         max_records = 10
     value_format = str(params.get("value_format") or "json").lower()
     include_metadata = str(params.get("include_metadata", "true")).lower() not in (
-        "false", "0", "no"
+        "false",
+        "0",
+        "no",
     )
 
     conf: dict[str, Any] = {
@@ -107,9 +103,7 @@ def poll_kafka(ctx: ProviderTriggerPollContext) -> ProviderTriggerPollResult:
                         "partition": msg.partition(),
                         "offset": msg.offset(),
                         "timestamp": msg.timestamp()[1] if msg.timestamp()[0] != 0 else None,
-                        "key": msg.key().decode("utf-8", errors="replace")
-                        if msg.key()
-                        else None,
+                        "key": msg.key().decode("utf-8", errors="replace") if msg.key() else None,
                     }
                 )
             events.append(event)
@@ -129,7 +123,13 @@ _CREDENTIALS_PARAM = OperationParamSpec(
         type="kafka",
         key="*",
         label="Kafka credentials",
-        fields=["bootstrap_servers", "security_protocol", "sasl_mechanism", "sasl_username", "sasl_password"],
+        fields=[
+            "bootstrap_servers",
+            "security_protocol",
+            "sasl_mechanism",
+            "sasl_username",
+            "sasl_password",
+        ],
         multi=True,
         test_service="kafka",
     ),

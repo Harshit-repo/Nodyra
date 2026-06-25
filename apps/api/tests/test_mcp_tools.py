@@ -15,6 +15,13 @@ def test_static_registry_names_unique_and_complete() -> None:
         "set_workflow_graph",
         "validate_graph",
         "publish_workflow",
+        "update_workflow_settings",
+        "get_workflow_version",
+        "diff_workflow_versions",
+        "update_schedule",
+        "get_node_run",
+        "list_run_approvals",
+        "resolve_run_approval",
     ):
         assert expected in names
 
@@ -28,3 +35,6 @@ def test_every_tool_has_object_schema() -> None:
     for tool in STATIC_TOOLS:
         assert tool.input_schema.get("type") == "object"
         assert isinstance(tool.description, str) and tool.description
+        descriptor = tool.descriptor()
+        assert descriptor["outputSchema"]["type"] == "object"
+        assert descriptor["execution"]["taskSupport"] == "forbidden"

@@ -9,7 +9,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from noodle.ai_runtime import (
-    AIMessage,
     ChatModelAdapter,
     ChatRequest,
     ChatResponse,
@@ -31,7 +30,6 @@ from noodle_nodes.ai_analytical_nodes import (
     ai_summarizer,
     huggingface_inference,
 )
-
 
 # ---------------------------------------------------------------------------
 # Mock adapters
@@ -106,10 +104,12 @@ class TestHelpers:
 
 class TestAINER:
     def test_llm_returns_entities(self):
-        response_json = json.dumps([
-            {"text": "Alice", "type": "PERSON", "start": 0, "end": 5},
-            {"text": "Acme", "type": "ORG", "start": 10, "end": 14},
-        ])
+        response_json = json.dumps(
+            [
+                {"text": "Alice", "type": "PERSON", "start": 0, "end": 5},
+                {"text": "Acme", "type": "ORG", "start": 10, "end": 14},
+            ]
+        )
         adapter = _MockChatAdapter(response_json)
         result = ai_named_entity_recognition(
             text="Alice works at Acme Corp in New York.",
@@ -218,9 +218,9 @@ class TestAISemanticSearch:
     def _make_adapter(self) -> _MockEmbeddingAdapter:
         # query=[1,0], docs=[0,1],[1,0],[0.5,0.5]
         vecs = [
-            [1.0, 0.0],    # query
-            [0.0, 1.0],    # doc0 — orthogonal to query
-            [1.0, 0.0],    # doc1 — identical to query
+            [1.0, 0.0],  # query
+            [0.0, 1.0],  # doc0 — orthogonal to query
+            [1.0, 0.0],  # doc1 — identical to query
             [0.707, 0.707],  # doc2 — 45 degrees
         ]
         return _MockEmbeddingAdapter(vecs)
@@ -284,7 +284,10 @@ class TestHuggingFaceInference:
         mock_resp.json.return_value = [{"generated_text": "hello"}]
 
         with patch.dict(sys.modules, {"huggingface_hub": mock_hf}):
-            with patch("noodle_nodes.ai_analytical_nodes._requests.post", return_value=mock_resp) as mock_post:
+            with patch(
+                "noodle_nodes.ai_analytical_nodes.safe_request",
+                return_value=mock_resp,
+            ) as mock_post:
                 result = huggingface_inference(
                     inputs="translate: hello",
                     model="t5-small",
@@ -302,7 +305,10 @@ class TestHuggingFaceInference:
         mock_resp.text = "Service unavailable"
 
         with patch.dict(sys.modules, {"huggingface_hub": mock_hf}):
-            with patch("noodle_nodes.ai_analytical_nodes._requests.post", return_value=mock_resp):
+            with patch(
+                "noodle_nodes.ai_analytical_nodes.safe_request",
+                return_value=mock_resp,
+            ):
                 with pytest.raises(RuntimeError, match="503"):
                     huggingface_inference(
                         inputs="test",
@@ -444,15 +450,29 @@ class TestAIImageClassifier:
 
 
 class TestAICodeReview:
-    _REVIEW_JSON = json.dumps({
-        "issues": [
-            {"severity": "high", "line": "5", "category": "security", "description": "SQL injection", "suggestion": "Use parameterized queries"},
-            {"severity": "low", "line": "10", "category": "style", "description": "Magic number", "suggestion": "Extract constant"},
-        ],
-        "summary": "Found security issue.",
-        "language": "Python",
-        "overall_quality": "poor",
-    })
+    _REVIEW_JSON = json.dumps(
+        {
+            "issues": [
+                {
+                    "severity": "high",
+                    "line": "5",
+                    "category": "security",
+                    "description": "SQL injection",
+                    "suggestion": "Use parameterized queries",
+                },
+                {
+                    "severity": "low",
+                    "line": "10",
+                    "category": "style",
+                    "description": "Magic number",
+                    "suggestion": "Extract constant",
+                },
+            ],
+            "summary": "Found security issue.",
+            "language": "Python",
+            "overall_quality": "poor",
+        }
+    )
 
     def test_returns_issues(self):
         adapter = _MockChatAdapter(self._REVIEW_JSON)
@@ -471,10 +491,7 @@ class TestAICodeReview:
             severity_threshold="high",
         )
         # Only high+ severity issues
-        assert all(
-            i["severity"] in ("high", "critical")
-            for i in result["issues"]
-        )
+        assert all(i["severity"] in ("high", "critical") for i in result["issues"])
         assert result["all_issue_count"] == 2
 
     def test_empty_code_raises(self):

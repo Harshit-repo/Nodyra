@@ -12,7 +12,9 @@ def _pil():
     try:
         from PIL import Image, ImageFilter
     except ImportError as exc:
-        raise RuntimeError("Image processing requires Pillow. Install: uv pip install Pillow") from exc
+        raise RuntimeError(
+            "Image processing requires Pillow. Install: uv pip install Pillow"
+        ) from exc
     return Image, ImageFilter
 
 
@@ -269,7 +271,9 @@ def image_crop(
         bottom = bottom or img.height
 
         if left >= right or top >= bottom:
-            raise ValueError("image_crop: invalid crop box (left must be < right, top must be < bottom)")
+            raise ValueError(
+                "image_crop: invalid crop box (left must be < right, top must be < bottom)"
+            )
 
         cropped = img.crop((left, top, right, bottom))
         _save_image(cropped, output_path)

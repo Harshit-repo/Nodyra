@@ -1,6 +1,6 @@
 """Noodle core: execution engine, node SDK, and shared models."""
 
-from noodle.context import emit_chunk
+from noodle.context import cancel_event, emit_chunk
 from noodle.engine import GraphError, execute, run
 from noodle.models import (
     BinaryRef,
@@ -41,6 +41,7 @@ __all__ = [
     "RunResult",
     "RunStatus",
     "WorkflowGraph",
+    "cancel_event",
     "emit_chunk",
     "execute",
     "node",

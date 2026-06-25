@@ -1,0 +1,5 @@
+<svg width="400" height="100" viewBox="0 0 400 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Spiral Port logo">
+  <path d="M15 71C15 31 81 22 86 54C91 84 39 88 35 58C32 36 70 33 70 54C70 68 50 70 49 57" stroke="#34D6C6" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="15" cy="71" r="7" fill="#FFD34E"/><rect x="43" y="50" width="12" height="12" rx="3" fill="#FFD34E"/>
+  <text x="117" y="65" fill="#F4F2EC" font-family="Arial, sans-serif" font-size="44" font-weight="650" letter-spacing="-2">nodexpy</text>
+</svg>

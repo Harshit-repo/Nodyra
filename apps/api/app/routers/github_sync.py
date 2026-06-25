@@ -81,9 +81,13 @@ async def upsert_github_sync_config(
         select(GithubSyncConfig).where(GithubSyncConfig.org_id == org_id)
     )
     if cfg is None:
+        from app.services.crypto import encrypt_credential
+        raw_secret = secrets.token_hex(32)
+        enc_data, enc_dek = encrypt_credential({"secret": raw_secret})
         cfg = GithubSyncConfig(
             org_id=org_id,
-            webhook_secret=secrets.token_hex(32),
+            encrypted_webhook_secret=enc_data,
+            encrypted_webhook_secret_dek=enc_dek,
         )
         session.add(cfg)
     cfg.repo = body.repo
@@ -108,7 +112,7 @@ async def get_webhook_secret(
     )
     if cfg is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No sync config")
-    return {"webhook_secret": cfg.webhook_secret}
+    return {"webhook_secret": cfg.decrypted_webhook_secret()}
 
 
 @router.get("/github-sync/repo/validate", response_model=GithubRepoValidation)

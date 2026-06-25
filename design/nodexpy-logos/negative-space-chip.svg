@@ -1,0 +1,6 @@
+<svg width="400" height="100" viewBox="0 0 400 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Negative Space Chip logo">
+  <rect x="8" y="8" width="84" height="84" rx="24" fill="#315CFF"/>
+  <path d="M27 70V30L50 62V30M51 38L73 65M73 38L51 65" stroke="white" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="86" y="44" width="12" height="12" rx="3" fill="#C8FF5A"/>
+  <text x="118" y="65" fill="#F7F9FC" font-family="Arial, sans-serif" font-size="45" font-weight="700" letter-spacing="-2">Nodexpy</text>
+</svg>

@@ -9,23 +9,24 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+import app.main as main_module
 import app.mcp.tools as mcp_tools_module
+import app.routers.chat_public as chat_public_module
 import app.routers.runner_pools as runner_pools_module
 import app.services.artifacts as artifacts_module
+import app.services.backends as backends_module
 import app.services.chat_service as chat_service_module
 import app.services.licensing as licensing_module
 import app.services.live_settings as live_settings_module
 import app.services.provider_triggers as provider_triggers_module
+import app.services.queue as queue_module
 import app.services.redaction as redaction_module
 import app.services.remote_dispatch as remote_dispatch_module
 import app.services.retention as retention_module
 import app.services.runner as runner_module
 import app.services.runtime_pool as runtime_pool_module
 import app.services.subworkflows as subworkflows_module
-import app.services.queue as queue_module
 import app.services.triggers as triggers_module
-import app.services.backends as backends_module
-import app.services.venv as venv_module
 from app import models  # noqa: F401 - registers ORM models on Base.metadata
 from app.config import settings
 from app.db import Base, get_session
@@ -202,14 +203,20 @@ def _license_enterprise_by_default():
     (test_licensing.py / test_license_caps.py monkeypatch ``license_key`` /
     ``license_public_key`` back down).
     """
-    from app.config import settings as _settings
     from tests._license_keys import TEST_PUBLIC_KEY_PEM, enterprise_key
+
+    from app.config import settings as _settings
 
     prev_pub = _settings.license_public_key
     prev_key = _settings.license_key
     _settings.license_public_key = TEST_PUBLIC_KEY_PEM
     _settings.license_key = enterprise_key()
     licensing_module.invalidate_license_cache()
+    # A trigger-role test reloads ``app.main`` with a temporary Settings
+    # instance.  Functions attached to the already-imported FastAPI app retain
+    # the reloaded module globals, so restore the canonical singleton at every
+    # fixture boundary to keep middleware configuration isolated by test.
+    main_module.settings = settings
     yield
     _settings.license_public_key = prev_pub
     _settings.license_key = prev_key
@@ -296,8 +303,10 @@ async def client() -> AsyncIterator[AsyncClient]:
         runtime_pool_module: runtime_pool_module.SessionLocal,
         remote_dispatch_module: remote_dispatch_module.SessionLocal,
         runner_pools_module: runner_pools_module.SessionLocal,
+        chat_public_module: chat_public_module.SessionLocal,
         subworkflows_module: subworkflows_module.SessionLocal,
         mcp_tools_module: mcp_tools_module.SessionLocal,
+        main_module: main_module.SessionLocal,
     }
     backends_module.SessionLocal = test_session
     artifacts_module.SessionLocal = test_session
@@ -312,8 +321,10 @@ async def client() -> AsyncIterator[AsyncClient]:
     runtime_pool_module.SessionLocal = test_session
     remote_dispatch_module.SessionLocal = test_session
     runner_pools_module.SessionLocal = test_session
+    chat_public_module.SessionLocal = test_session
     subworkflows_module.SessionLocal = test_session
     mcp_tools_module.SessionLocal = test_session
+    main_module.SessionLocal = test_session
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
@@ -322,6 +333,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     app.dependency_overrides.clear()
     for module, original in originals.items():
         module.SessionLocal = original
+    main_module.settings = settings
     settings.artifacts_dir = old_artifacts_dir
     redaction_module.invalidate_secret_cache()
     live_settings_module.invalidate_live_settings_cache()

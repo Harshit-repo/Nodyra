@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
 
 import { api } from "../api";
+import { useTimeout } from "../hooks/useTimeout";
+import { useMountedRef } from "../hooks/useMountedRef";
 import type { DatasetQueryResult } from "../types";
 import { useModalA11y } from "../useModalA11y";
 import type { DatasetRef } from "./datasetValues";
@@ -23,6 +25,8 @@ export function DatasetSqlModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<DatasetQueryResult | null>(null);
+  const scheduleTimeout = useTimeout();
+  const mountedRef = useMountedRef();
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalA11y(dialogRef, onClose);
 
@@ -60,9 +64,11 @@ export function DatasetSqlModal({
   async function copySql(): Promise<void> {
     try {
       await navigator.clipboard.writeText(sql);
+      if (!mountedRef.current) return;
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
+      scheduleTimeout(() => setCopied(false), 1500);
     } catch {
+      if (!mountedRef.current) return;
       setCopied(false);
     }
   }

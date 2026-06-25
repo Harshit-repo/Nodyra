@@ -1,4 +1,5 @@
 """Engine-level metanode flattening (transparent execution)."""
+
 from __future__ import annotations
 
 import noodle_nodes  # noqa: F401 - registers code/manual_trigger
@@ -16,16 +17,25 @@ def _n(nid, ntype, params=None):
 
 
 def _e(src, tgt, src_out="main", tgt_in="input"):
-    return {"id": f"{src}->{tgt}", "source": src, "source_output": src_out,
-            "target": tgt, "target_input": tgt_in}
+    return {
+        "id": f"{src}->{tgt}",
+        "source": src,
+        "source_output": src_out,
+        "target": tgt,
+        "target_input": tgt_in,
+    }
 
 
 def _meta(nid, sub_nodes, sub_edges, ports, execution="transparent"):
-    return _n(nid, "meta_node", {
-        "execution": execution,
-        "subgraph": {"nodes": sub_nodes, "edges": sub_edges},
-        "ports": ports,
-    })
+    return _n(
+        nid,
+        "meta_node",
+        {
+            "execution": execution,
+            "subgraph": {"nodes": sub_nodes, "edges": sub_edges},
+            "ports": ports,
+        },
+    )
 
 
 def test_expand_inlines_a_transparent_metanode():
@@ -39,13 +49,17 @@ def test_expand_inlines_a_transparent_metanode():
         },
     )
     g = _g(
-        [_n("trig", "manual_trigger", {"data": 5}), meta, _n("sink", "code", {"code": "output = input"})],
+        [
+            _n("trig", "manual_trigger", {"data": 5}),
+            meta,
+            _n("sink", "code", {"code": "output = input"}),
+        ],
         [_e("trig", "m", tgt_in="input"), _e("m", "sink")],
     )
     flat = _expand_metanodes(g)
     ids = {n.id for n in flat.nodes}
-    assert "m" not in ids          # metanode is gone
-    assert "m/c" in ids            # child inlined + namespaced
+    assert "m" not in ids  # metanode is gone
+    assert "m/c" in ids  # child inlined + namespaced
     # boundary edges rewired through the metanode
     pairs = {(e.source, e.target) for e in flat.edges}
     assert ("trig", "m/c") in pairs
@@ -63,7 +77,11 @@ async def test_transparent_metanode_runs_like_ungrouped():
         },
     )
     g = _g(
-        [_n("trig", "manual_trigger", {"data": 5}), meta, _n("sink", "code", {"code": "output = input"})],
+        [
+            _n("trig", "manual_trigger", {"data": 5}),
+            meta,
+            _n("sink", "code", {"code": "output = input"}),
+        ],
         [_e("trig", "m", tgt_in="input"), _e("m", "sink")],
     )
     result = await execute(g, registry)
@@ -87,7 +105,9 @@ def test_expand_handles_nested_metanodes():
         [inner],
         [],
         {
-            "inputs": [{"port": "input", "targets": [{"target": "inner", "target_input": "input"}]}],
+            "inputs": [
+                {"port": "input", "targets": [{"target": "inner", "target_input": "input"}]}
+            ],
             "outputs": [{"port": "main", "source": "inner", "source_output": "main"}],
         },
     )
@@ -109,7 +129,11 @@ async def test_isolated_metanode_runs_its_subgraph_and_maps_ports():
         execution="isolated",
     )
     g = _g(
-        [_n("trig", "manual_trigger", {"data": 5}), meta, _n("sink", "code", {"code": "output = input"})],
+        [
+            _n("trig", "manual_trigger", {"data": 5}),
+            meta,
+            _n("sink", "code", {"code": "output = input"}),
+        ],
         [_e("trig", "m", tgt_in="input"), _e("m", "sink")],
     )
     result = await execute(g, registry)

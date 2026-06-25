@@ -11,13 +11,16 @@ def _pd():
     try:
         import pandas as pd
     except ImportError as exc:
-        raise RuntimeError("Data transform requires pandas. Install: uv pip install pandas") from exc
+        raise RuntimeError(
+            "Data transform requires pandas. Install: uv pip install pandas"
+        ) from exc
     return pd
 
 
 def _parse_data(data: Any) -> list[dict]:
     if isinstance(data, str):
         import json
+
         parsed = json.loads(data)
         if isinstance(parsed, list):
             return parsed
@@ -28,14 +31,32 @@ def _parse_data(data: Any) -> list[dict]:
 
 
 _OPERATORS = [
-    "eq", "neq", "gt", "gte", "lt", "lte",
-    "contains", "startswith", "endswith",
-    "in", "not_in", "is_null", "not_null",
+    "eq",
+    "neq",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+    "contains",
+    "startswith",
+    "endswith",
+    "in",
+    "not_in",
+    "is_null",
+    "not_null",
 ]
 
 _AGG_FUNCTIONS = [
-    "sum", "mean", "count", "min", "max",
-    "median", "std", "first", "last", "nunique",
+    "sum",
+    "mean",
+    "count",
+    "min",
+    "max",
+    "median",
+    "std",
+    "first",
+    "last",
+    "nunique",
 ]
 
 
@@ -94,7 +115,9 @@ def data_filter_rows(
         try:
             num_val = float(value)
         except (ValueError, TypeError):
-            raise ValueError(f"data_filter_rows: value '{value}' is not numeric for operator '{operator}'")
+            raise ValueError(
+                f"data_filter_rows: value '{value}' is not numeric for operator '{operator}'"
+            )
         if operator == "gt":
             mask = col.astype(float) > num_val
         elif operator == "gte":
@@ -115,12 +138,16 @@ def data_filter_rows(
         mask = col.astype(str).str.endswith(value)
     elif operator == "in":
         if value == "":
-            raise ValueError("data_filter_rows: operator 'in' requires a comma-separated value list")
+            raise ValueError(
+                "data_filter_rows: operator 'in' requires a comma-separated value list"
+            )
         vals = [v.strip() for v in value.split(",")]
         mask = col.isin(vals)
     elif operator == "not_in":
         if value == "":
-            raise ValueError("data_filter_rows: operator 'not_in' requires a comma-separated value list")
+            raise ValueError(
+                "data_filter_rows: operator 'not_in' requires a comma-separated value list"
+            )
         vals = [v.strip() for v in value.split(",")]
         mask = ~col.isin(vals)
     elif operator == "is_null":
@@ -306,6 +333,7 @@ def data_select_columns(
 
     if rename:
         import json
+
         try:
             rename_map = json.loads(rename)
         except (json.JSONDecodeError, TypeError):

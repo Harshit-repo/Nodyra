@@ -27,7 +27,7 @@ describe("LoginPage — FE-1 cookie session (no localStorage token)", () => {
     fireEvent.change(screen.getByPlaceholderText(/you@example\.com/i), {
       target: { value: "a@b.com" },
     });
-    fireEvent.change(screen.getByPlaceholderText(/password/i), {
+    fireEvent.change(screen.getByLabelText(/password/i), {
       target: { value: "password123" },
     });
     fireEvent.click(screen.getByRole("button", { name: /sign in/i }));

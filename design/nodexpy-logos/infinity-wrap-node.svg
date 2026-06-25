@@ -1,0 +1,8 @@
+<svg width="400" height="100" viewBox="0 0 400 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Infinity Wrap Node logo">
+  <path d="M10 50C10 19 35 17 50 39C65 17 90 19 90 50C90 81 65 83 50 61C35 83 10 81 10 50Z" stroke="url(#wrapGradient)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="36" y="36" width="28" height="28" rx="8" fill="#111A27" stroke="#F3F7FA" stroke-width="3"/>
+  <rect x="45" y="45" width="10" height="10" rx="3" fill="#35D4D0"/>
+  <circle cx="10" cy="50" r="6" fill="#4C9EFF"/><rect x="84" y="44" width="12" height="12" rx="3" fill="#FFD34E"/>
+  <text x="120" y="65" fill="#F3F7FA" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">Node</text><text x="225" y="65" fill="#4C9EFF" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">x</text><text x="247" y="65" fill="#35D4D0" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">py</text>
+  <defs><linearGradient id="wrapGradient" x1="10" y1="22" x2="90" y2="78"><stop stop-color="#4C9EFF"/><stop offset=".5" stop-color="#35D4D0"/><stop offset="1" stop-color="#FFD34E"/></linearGradient></defs>
+</svg>

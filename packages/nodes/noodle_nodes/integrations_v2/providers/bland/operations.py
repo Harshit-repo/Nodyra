@@ -232,6 +232,7 @@ BLAND_ANALYZE_CALL_SPEC = OperationSpec(
 # Executor functions
 # ---------------------------------------------------------------------------
 
+
 def send_call(
     *,
     input: Any = None,
@@ -278,9 +279,7 @@ def get_call(
 ) -> Any:
     if not call_id:
         raise ValueError("bland_get_call: call_id is required")
-    return _transport(credentials).request(
-        "GET", f"/v1/calls/{call_id}", operation="get_call"
-    )
+    return _transport(credentials).request("GET", f"/v1/calls/{call_id}", operation="get_call")
 
 
 def list_calls(
@@ -293,9 +292,7 @@ def list_calls(
     query: dict[str, Any] = {"limit": int(limit or 20)}
     if from_number:
         query["from"] = from_number
-    return _transport(credentials).request(
-        "GET", "/v1/calls", operation="list_calls", params=query
-    )
+    return _transport(credentials).request("GET", "/v1/calls", operation="list_calls", params=query)
 
 
 def stop_call(
@@ -322,6 +319,7 @@ def analyze_call(
     if not call_id:
         raise ValueError("bland_analyze_call: call_id is required")
     import json as _json
+
     body: dict[str, Any] = {}
     if goal:
         body["goal"] = goal

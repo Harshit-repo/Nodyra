@@ -1,11 +1,11 @@
 import time
 
 import pytest
+from tests._license_keys import TEST_PUBLIC_KEY_PEM, enterprise_key, make_key, pro_key
 
 from app.config import settings
 from app.services import licensing
 from app.services.licensing import Edition, Feature
-from tests._license_keys import TEST_PUBLIC_KEY_PEM, enterprise_key, make_key, pro_key
 
 
 @pytest.fixture(autouse=True)

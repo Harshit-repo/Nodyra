@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-import json
+
 import requests
 
 API = "http://localhost:8000"
@@ -14,23 +14,33 @@ GLOBAL_ENV = "4b75702411d74bd799371b0f587220a8"
 
 def make_node(id, ntype, label=None, params=None, x=0, y=120, outputs_override=None):
     return {
-        "id": id, "type": ntype, "label": label,
+        "id": id,
+        "type": ntype,
+        "label": label,
         "params": params or {},
         "position": {"x": x, "y": y},
         "disabled": False,
         "outputs_override": outputs_override,
         "on_error": "stop",
-        "retry_on_fail": False, "retries": 1, "retry_wait_seconds": 0,
-        "retry_backoff": False, "always_output_data": False,
-        "timeout_seconds": None, "tool_mode": False,
-        "tool_name": None, "tool_description": "",
+        "retry_on_fail": False,
+        "retries": 1,
+        "retry_wait_seconds": 0,
+        "retry_backoff": False,
+        "always_output_data": False,
+        "timeout_seconds": None,
+        "tool_mode": False,
+        "tool_name": None,
+        "tool_description": "",
     }
 
 
 def make_edge(eid, src, src_out, tgt, tgt_in):
     return {
-        "id": eid, "source": src, "source_output": src_out,
-        "target": tgt, "target_input": tgt_in,
+        "id": eid,
+        "source": src,
+        "source_output": src_out,
+        "target": tgt,
+        "target_input": tgt_in,
     }
 
 
@@ -74,23 +84,49 @@ FAIL_LOG_CODE = (
 wf1_graph = {
     "nodes": [
         make_node("trig", "manual_trigger", params={"data": {}}, x=0),
-        make_node("gen", "code", label="Generate Sample Predictions",
-                  params={"code": GENERATE_PREDS_CODE},
-                  x=260, outputs_override=["main"]),
+        make_node(
+            "gen",
+            "code",
+            label="Generate Sample Predictions",
+            params={"code": GENERATE_PREDS_CODE},
+            x=260,
+            outputs_override=["main"],
+        ),
         make_node("ds", "records_to_dataset", x=520),
-        make_node("eval", "llm_rule_eval", x=780,
-                  params={"mode": "exact_match", "output_column": "output",
-                          "expected_column": "expected",
-                          "case_sensitive": False, "strip_whitespace": True}),
-        make_node("gate", "eval_gate", x=1040,
-                  params={"metric": "accuracy", "operator": ">=",
-                          "threshold": 0.70, "on_fail": "branch"}),
-        make_node("report", "eval_report", x=1300, y=60,
-                  params={"title": "Rule Eval Report",
-                          "include_sample_rows": True, "sample_rows": 10}),
-        make_node("fail_log", "code", label="Log Gate Failure",
-                  params={"code": FAIL_LOG_CODE},
-                  x=1300, y=200, outputs_override=["main"]),
+        make_node(
+            "eval",
+            "llm_rule_eval",
+            x=780,
+            params={
+                "mode": "exact_match",
+                "output_column": "output",
+                "expected_column": "expected",
+                "case_sensitive": False,
+                "strip_whitespace": True,
+            },
+        ),
+        make_node(
+            "gate",
+            "eval_gate",
+            x=1040,
+            params={"metric": "accuracy", "operator": ">=", "threshold": 0.70, "on_fail": "branch"},
+        ),
+        make_node(
+            "report",
+            "eval_report",
+            x=1300,
+            y=60,
+            params={"title": "Rule Eval Report", "include_sample_rows": True, "sample_rows": 10},
+        ),
+        make_node(
+            "fail_log",
+            "code",
+            label="Log Gate Failure",
+            params={"code": FAIL_LOG_CODE},
+            x=1300,
+            y=200,
+            outputs_override=["main"],
+        ),
     ],
     "edges": [
         make_edge("e1", "trig", "main", "gen", "input"),
@@ -142,32 +178,65 @@ VALIDATE_DATASET_CODE = (
 wf2_graph = {
     "nodes": [
         make_node("trig", "manual_trigger", params={"data": {}}, x=0),
-        make_node("gen", "code", label="Generate Training Data",
-                  params={"code": SAMPLE_TRAINING_CODE},
-                  x=260, outputs_override=["main"]),
+        make_node(
+            "gen",
+            "code",
+            label="Generate Training Data",
+            params={"code": SAMPLE_TRAINING_CODE},
+            x=260,
+            outputs_override=["main"],
+        ),
         make_node("ds", "records_to_dataset", x=520),
-        make_node("ft_prep", "llm_fine_tune_dataset", x=780,
-                  params={
-                      "format": "openai_chat_jsonl",
-                      "user_column": "user",
-                      "assistant_column": "assistant",
-                      "min_examples": 10,
-                      "dedupe": True,
-                      "validation_split": 0.1,
-                      "max_tokens_per_example": 512,
-                  }),
-        make_node("validate", "code", label="Validate Dataset",
-                  params={"code": VALIDATE_DATASET_CODE},
-                  x=1040, outputs_override=["main"]),
-        make_node("gate", "eval_gate", x=1300,
-                  params={"metric": "accuracy", "operator": ">=",
-                          "threshold": 1.0, "on_fail": "branch"}),
-        make_node("ready", "code", label="Dataset Ready",
-                  params={"code": "print('Dataset validated! Ready to upload to OpenAI.')\noutput = input"},
-                  x=1560, y=60, outputs_override=["main"]),
-        make_node("insufficient", "code", label="Too Few Examples",
-                  params={"code": "n = input.get('input', {}).get('n_examples', 0)\nprint(f'Not enough: {n}')\noutput = input"},
-                  x=1560, y=200, outputs_override=["main"]),
+        make_node(
+            "ft_prep",
+            "llm_fine_tune_dataset",
+            x=780,
+            params={
+                "format": "openai_chat_jsonl",
+                "user_column": "user",
+                "assistant_column": "assistant",
+                "min_examples": 10,
+                "dedupe": True,
+                "validation_split": 0.1,
+                "max_tokens_per_example": 512,
+            },
+        ),
+        make_node(
+            "validate",
+            "code",
+            label="Validate Dataset",
+            params={"code": VALIDATE_DATASET_CODE},
+            x=1040,
+            outputs_override=["main"],
+        ),
+        make_node(
+            "gate",
+            "eval_gate",
+            x=1300,
+            params={"metric": "accuracy", "operator": ">=", "threshold": 1.0, "on_fail": "branch"},
+        ),
+        make_node(
+            "ready",
+            "code",
+            label="Dataset Ready",
+            params={
+                "code": "print('Dataset validated! Ready to upload to OpenAI.')\noutput = input"
+            },
+            x=1560,
+            y=60,
+            outputs_override=["main"],
+        ),
+        make_node(
+            "insufficient",
+            "code",
+            label="Too Few Examples",
+            params={
+                "code": "n = input.get('input', {}).get('n_examples', 0)\nprint(f'Not enough: {n}')\noutput = input"
+            },
+            x=1560,
+            y=200,
+            outputs_override=["main"],
+        ),
     ],
     "edges": [
         make_edge("e1", "trig", "main", "gen", "input"),
@@ -206,41 +275,66 @@ OPENAI_DATA_CODE = (
 wf3_graph = {
     "nodes": [
         make_node("trig", "manual_trigger", params={"data": {}}, x=0),
-        make_node("gen", "code", label="Generate Training Examples",
-                  params={"code": OPENAI_DATA_CODE},
-                  x=260, outputs_override=["main"]),
+        make_node(
+            "gen",
+            "code",
+            label="Generate Training Examples",
+            params={"code": OPENAI_DATA_CODE},
+            x=260,
+            outputs_override=["main"],
+        ),
         make_node("ds", "records_to_dataset", x=520),
-        make_node("ft_prep", "llm_fine_tune_dataset", x=780,
-                  params={
-                      "format": "openai_chat_jsonl",
-                      "user_column": "user",
-                      "assistant_column": "assistant",
-                      "min_examples": 10,
-                      "dedupe": True,
-                      "validation_split": 0.0,
-                  }),
-        make_node("upload", "openai_upload_fine_tune_file", x=1060,
-                  params={"openai_api_key": "", "purpose": "fine-tune"}),
-        make_node("create_job", "openai_create_fine_tune_job", x=1340,
-                  params={
-                      "openai_api_key": "",
-                      "model": "gpt-4.1-mini",
-                      "suffix": "noodle-test",
-                  }),
-        make_node("status", "openai_fine_tune_status", x=1620,
-                  params={
-                      "openai_api_key": "",
-                      "include_events": True,
-                      "include_result_files": True,
-                      "fail_if_failed": True,
-                  }),
-        make_node("register", "register_fine_tuned_model", x=1900,
-                  params={
-                      "name": "Noodle Test Fine-Tune",
-                      "task": "chat",
-                      "description": "Test fine-tuned model from Noodle workflow",
-                      "tags": "test, noodle, gpt-4.1-mini",
-                  }),
+        make_node(
+            "ft_prep",
+            "llm_fine_tune_dataset",
+            x=780,
+            params={
+                "format": "openai_chat_jsonl",
+                "user_column": "user",
+                "assistant_column": "assistant",
+                "min_examples": 10,
+                "dedupe": True,
+                "validation_split": 0.0,
+            },
+        ),
+        make_node(
+            "upload",
+            "openai_upload_fine_tune_file",
+            x=1060,
+            params={"openai_api_key": "", "purpose": "fine-tune"},
+        ),
+        make_node(
+            "create_job",
+            "openai_create_fine_tune_job",
+            x=1340,
+            params={
+                "openai_api_key": "",
+                "model": "gpt-4.1-mini",
+                "suffix": "noodle-test",
+            },
+        ),
+        make_node(
+            "status",
+            "openai_fine_tune_status",
+            x=1620,
+            params={
+                "openai_api_key": "",
+                "include_events": True,
+                "include_result_files": True,
+                "fail_if_failed": True,
+            },
+        ),
+        make_node(
+            "register",
+            "register_fine_tuned_model",
+            x=1900,
+            params={
+                "name": "Noodle Test Fine-Tune",
+                "task": "chat",
+                "description": "Test fine-tuned model from Noodle workflow",
+                "tags": "test, noodle, gpt-4.1-mini",
+            },
+        ),
     ],
     "edges": [
         make_edge("e1", "trig", "main", "gen", "input"),
@@ -263,7 +357,7 @@ if __name__ == "__main__":
     wf2_id = create_workflow("LLM Fine-Tune Dataset Prep + Validation", wf2_graph)
     wf3_id = create_workflow("OpenAI Fine-Tune Pipeline", wf3_graph)
 
-    print(f"\nAll workflows created:")
+    print("\nAll workflows created:")
     print(f"  WF1 (Rule Eval):      {wf1_id}")
     print(f"  WF2 (Dataset Prep):   {wf2_id}")
     print(f"  WF3 (Full Pipeline):  {wf3_id}")

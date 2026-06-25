@@ -1,6 +1,6 @@
 import { NodeResizer } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
-import { useState } from "react";
+import { memo, useState } from "react";
 
 import { useEditor } from "./store";
 
@@ -9,23 +9,21 @@ interface NodeGroupData {
   color: string;
 }
 
-export function NodeGroup({ data, id }: NodeProps) {
+function NodeGroupComponent({ data, id }: NodeProps) {
   const groupData = data as unknown as NodeGroupData;
   const [label, setLabel] = useState(groupData.label ?? "Group");
-  const nodes = useEditor((s) => s.nodes);
   const onNodesChange = useEditor((s) => s.onNodesChange);
 
   function handleLabelChange(e: React.ChangeEvent<HTMLInputElement>) {
     const val = e.target.value;
     setLabel(val);
-    const changes = nodes
-      .filter((n) => n.id === id)
-      .map((n) => ({
-        type: "replace" as const,
-        id: n.id,
-        item: { ...n, data: { ...n.data, label: val } },
-      }));
-    if (changes.length > 0) onNodesChange(changes);
+    const node = useEditor.getState().nodes.find((item) => item.id === id);
+    if (!node) return;
+    onNodesChange([{
+      type: "replace",
+      id: node.id,
+      item: { ...node, data: { ...node.data, label: val } },
+    }]);
   }
 
   const bg = groupData.color ?? "rgba(99,102,241,0.08)";
@@ -73,3 +71,8 @@ export function NodeGroup({ data, id }: NodeProps) {
     </>
   );
 }
+
+export const NodeGroup = memo(
+  NodeGroupComponent,
+  (previous, next) => previous.id === next.id && previous.data === next.data,
+);

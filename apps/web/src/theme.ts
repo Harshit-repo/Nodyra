@@ -1,3 +1,5 @@
+import { safeGetItem, safeSetItem } from "./safeStorage";
+
 export type ThemePreference = "system" | "dark" | "light";
 export type FontPreference = "brand" | "inter" | "technical" | "system";
 
@@ -22,7 +24,7 @@ function systemTheme(): "dark" | "light" {
 }
 
 export function getThemePreference(): ThemePreference {
-  const stored = window.localStorage.getItem(KEY);
+  const stored = safeGetItem(KEY);
   return isTheme(stored) ? stored : "system";
 }
 
@@ -35,13 +37,14 @@ export function applyThemePreference(
   return resolved;
 }
 
-export function setThemePreference(preference: ThemePreference): void {
-  window.localStorage.setItem(KEY, preference);
+export function setThemePreference(preference: ThemePreference): boolean {
+  const persisted = safeSetItem(KEY, preference);
   applyThemePreference(preference);
+  return persisted;
 }
 
 export function getFontPreference(): FontPreference {
-  const stored = window.localStorage.getItem(FONT_KEY);
+  const stored = safeGetItem(FONT_KEY);
   return isFont(stored) ? stored : "brand";
 }
 
@@ -52,9 +55,10 @@ export function applyFontPreference(
   return preference;
 }
 
-export function setFontPreference(preference: FontPreference): void {
-  window.localStorage.setItem(FONT_KEY, preference);
+export function setFontPreference(preference: FontPreference): boolean {
+  const persisted = safeSetItem(FONT_KEY, preference);
   applyFontPreference(preference);
+  return persisted;
 }
 
 export function listenForSystemThemeChanges(): () => void {

@@ -7,8 +7,6 @@ import imaplib
 from email.message import Message
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from noodle_nodes.integrations_v2.providers.imap.triggers import (
     _creds_dict,
     _decode_header_value,

@@ -46,7 +46,7 @@ def _transport(credentials: Any) -> ProviderTransport:
         raise ValueError("woocommerce: consumer_secret is required")
     for prefix in ("http://", "https://"):
         if store_url.startswith(prefix):
-            store_url = store_url[len(prefix):]
+            store_url = store_url[len(prefix) :]
     raw = f"{consumer_key}:{consumer_secret}"
     encoded = base64.b64encode(raw.encode()).decode()
     return ProviderTransport(
@@ -145,7 +145,15 @@ WOOCOMMERCE_LIST_ORDERS_SPEC = OperationSpec(
         OperationParamSpec(
             name="status",
             group="Options",
-            choices=("pending", "processing", "on-hold", "completed", "cancelled", "refunded", "failed"),
+            choices=(
+                "pending",
+                "processing",
+                "on-hold",
+                "completed",
+                "cancelled",
+                "refunded",
+                "failed",
+            ),
         ),
         OperationParamSpec(
             name="limit",

@@ -1,7 +1,9 @@
 """Create synthetic data and labeling workflow demos."""
+
 from __future__ import annotations
 
 import sys
+
 import requests
 
 API = "http://localhost:8000"
@@ -12,23 +14,33 @@ GLOBAL_ENV = "4b75702411d74bd799371b0f587220a8"
 
 def make_node(nid, ntype, label=None, params=None, x=0, y=120, outputs_override=None):
     return {
-        "id": nid, "type": ntype, "label": label,
+        "id": nid,
+        "type": ntype,
+        "label": label,
         "params": params or {},
         "position": {"x": x, "y": y},
         "disabled": False,
         "outputs_override": outputs_override,
         "on_error": "stop",
-        "retry_on_fail": False, "retries": 1, "retry_wait_seconds": 0,
-        "retry_backoff": False, "always_output_data": False,
-        "timeout_seconds": None, "tool_mode": False,
-        "tool_name": None, "tool_description": "",
+        "retry_on_fail": False,
+        "retries": 1,
+        "retry_wait_seconds": 0,
+        "retry_backoff": False,
+        "always_output_data": False,
+        "timeout_seconds": None,
+        "tool_mode": False,
+        "tool_name": None,
+        "tool_description": "",
     }
 
 
 def make_edge(eid, src, src_out, tgt, tgt_in):
     return {
-        "id": eid, "source": src, "source_output": src_out,
-        "target": tgt, "target_input": tgt_in,
+        "id": eid,
+        "source": src,
+        "source_output": src_out,
+        "target": tgt,
+        "target_input": tgt_in,
     }
 
 
@@ -92,31 +104,67 @@ BILLING_BILLING_PATTERNS = '{"billing": ["invoice", "payment", "refund", "charge
 wf4_graph = {
     "nodes": [
         make_node("trig", "manual_trigger", params={"data": {}}, x=0),
-        make_node("gen", "code", label="Generate Support Tickets",
-                  params={"code": GENERATE_SUPPORT_TICKETS},
-                  x=260, outputs_override=["main"]),
+        make_node(
+            "gen",
+            "code",
+            label="Generate Support Tickets",
+            params={"code": GENERATE_SUPPORT_TICKETS},
+            x=260,
+            outputs_override=["main"],
+        ),
         make_node("ds", "records_to_dataset", x=520),
-        make_node("label", "weak_label", x=780,
-                  params={
-                      "mode": "rule_keyword_vote",
-                      "text_column": "text",
-                      "labels": "billing, technical, account, other",
-                      "output_column": "category",
-                      "rule_patterns": '{"billing": ["invoice", "payment", "refund", "charge", "subscription", "cancel"], "technical": ["crash", "error", "api", "503", "broken", "slow", "export", "webhook"], "account": ["login", "password", "log in", "account"]}',
-                      "default_label": "other",
-                  }),
-        make_node("check", "code", label="Check Label Distribution",
-                  params={"code": CHECK_LABELS_CODE},
-                  x=1060, outputs_override=["main"]),
-        make_node("gate", "eval_gate", x=1320,
-                  params={"metric": "n_categories", "operator": ">=",
-                          "threshold": 3, "on_fail": "branch"}),
-        make_node("success", "code", label="Labels Ready",
-                  params={"code": "print(f'Labeling complete! {input}')\noutput = input"},
-                  x=1580, y=60, outputs_override=["main"]),
-        make_node("fail", "code", label="Too Few Categories",
-                  params={"code": "print('WARNING: labeler only found ' + str(input.get('input', {}).get('n_categories', 0)) + ' categories')\noutput = input"},
-                  x=1580, y=200, outputs_override=["main"]),
+        make_node(
+            "label",
+            "weak_label",
+            x=780,
+            params={
+                "mode": "rule_keyword_vote",
+                "text_column": "text",
+                "labels": "billing, technical, account, other",
+                "output_column": "category",
+                "rule_patterns": '{"billing": ["invoice", "payment", "refund", "charge", "subscription", "cancel"], "technical": ["crash", "error", "api", "503", "broken", "slow", "export", "webhook"], "account": ["login", "password", "log in", "account"]}',
+                "default_label": "other",
+            },
+        ),
+        make_node(
+            "check",
+            "code",
+            label="Check Label Distribution",
+            params={"code": CHECK_LABELS_CODE},
+            x=1060,
+            outputs_override=["main"],
+        ),
+        make_node(
+            "gate",
+            "eval_gate",
+            x=1320,
+            params={
+                "metric": "n_categories",
+                "operator": ">=",
+                "threshold": 3,
+                "on_fail": "branch",
+            },
+        ),
+        make_node(
+            "success",
+            "code",
+            label="Labels Ready",
+            params={"code": "print(f'Labeling complete! {input}')\noutput = input"},
+            x=1580,
+            y=60,
+            outputs_override=["main"],
+        ),
+        make_node(
+            "fail",
+            "code",
+            label="Too Few Categories",
+            params={
+                "code": "print('WARNING: labeler only found ' + str(input.get('input', {}).get('n_categories', 0)) + ' categories')\noutput = input"
+            },
+            x=1580,
+            y=200,
+            outputs_override=["main"],
+        ),
     ],
     "edges": [
         make_edge("e1", "trig", "main", "gen", "input"),
@@ -173,31 +221,64 @@ output = {
 wf5_graph = {
     "nodes": [
         make_node("trig", "manual_trigger", params={"data": {}}, x=0),
-        make_node("gen", "code", label="Sample Q&A Dataset",
-                  params={"code": SAMPLE_QA_CODE},
-                  x=260, outputs_override=["main"]),
+        make_node(
+            "gen",
+            "code",
+            label="Sample Q&A Dataset",
+            params={"code": SAMPLE_QA_CODE},
+            x=260,
+            outputs_override=["main"],
+        ),
         make_node("ds", "records_to_dataset", x=520),
-        make_node("ft_prep", "llm_fine_tune_dataset", x=780,
-                  params={
-                      "format": "openai_chat_jsonl",
-                      "user_column": "user",
-                      "assistant_column": "assistant",
-                      "min_examples": 10,
-                      "dedupe": True,
-                      "validation_split": 0.1,
-                  }),
-        make_node("check", "code", label="Validate Dataset",
-                  params={"code": CHECK_PREP_CODE},
-                  x=1060, outputs_override=["main"]),
-        make_node("gate", "eval_gate", x=1320,
-                  params={"metric": "n_examples", "operator": ">=",
-                          "threshold": 10, "on_fail": "branch"}),
-        make_node("ready", "code", label="Ready to Upload",
-                  params={"code": "n = input.get('input', {}).get('n_examples', 0)\nprint(f'Dataset ready: {n} examples!')\noutput = input"},
-                  x=1580, y=60, outputs_override=["main"]),
-        make_node("insufficient", "code", label="Insufficient Data",
-                  params={"code": "n = input.get('input', {}).get('n_examples', 0)\nprint(f'Not enough examples: {n}')\noutput = input"},
-                  x=1580, y=200, outputs_override=["main"]),
+        make_node(
+            "ft_prep",
+            "llm_fine_tune_dataset",
+            x=780,
+            params={
+                "format": "openai_chat_jsonl",
+                "user_column": "user",
+                "assistant_column": "assistant",
+                "min_examples": 10,
+                "dedupe": True,
+                "validation_split": 0.1,
+            },
+        ),
+        make_node(
+            "check",
+            "code",
+            label="Validate Dataset",
+            params={"code": CHECK_PREP_CODE},
+            x=1060,
+            outputs_override=["main"],
+        ),
+        make_node(
+            "gate",
+            "eval_gate",
+            x=1320,
+            params={"metric": "n_examples", "operator": ">=", "threshold": 10, "on_fail": "branch"},
+        ),
+        make_node(
+            "ready",
+            "code",
+            label="Ready to Upload",
+            params={
+                "code": "n = input.get('input', {}).get('n_examples', 0)\nprint(f'Dataset ready: {n} examples!')\noutput = input"
+            },
+            x=1580,
+            y=60,
+            outputs_override=["main"],
+        ),
+        make_node(
+            "insufficient",
+            "code",
+            label="Insufficient Data",
+            params={
+                "code": "n = input.get('input', {}).get('n_examples', 0)\nprint(f'Not enough examples: {n}')\noutput = input"
+            },
+            x=1580,
+            y=200,
+            outputs_override=["main"],
+        ),
     ],
     "edges": [
         make_edge("e1", "trig", "main", "gen", "input"),
@@ -220,6 +301,6 @@ if __name__ == "__main__":
     wf4_id = create_workflow("Weak Label — Rule-Based Ticket Classification", wf4_graph)
     wf5_id = create_workflow("Synthetic QA Dataset Prep + Validation", wf5_graph)
 
-    print(f"\nAll workflows created:")
+    print("\nAll workflows created:")
     print(f"  WF4 (Weak Label):     {wf4_id}")
     print(f"  WF5 (Dataset Prep):   {wf5_id}")

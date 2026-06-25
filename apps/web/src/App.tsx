@@ -5,7 +5,8 @@ const AUTH_MAX_RETRIES = AUTH_RETRY_DELAYS_MS.length;
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Link, Route, Routes, useLocation } from "react-router-dom";
 
-import { api, apiLogout, onUnauthorized, setToken, setUser } from "./api";
+import { api, apiLogout, getUser, onUnauthorized, setUser } from "./api";
+import { AuthRuntimeProvider } from "./AuthRuntime";
 import { NO_AUTH_FALLBACK, shouldRetryAuthError } from "./authBootstrap";
 import { BackendLoading } from "./BackendLoading";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -20,6 +21,8 @@ import { queryClient } from "./queries";
 import { ToastProvider } from "./ToastProvider";
 import type { AuthState, UserInfo } from "./types";
 import { EntitlementsProvider } from "./entitlements";
+import { WorkspaceAccessProvider } from "./WorkspaceAccess";
+import { clearClientDataScope, clearClientSession } from "./sessionIsolation";
 
 // Route pages are code-split so the initial bundle doesn't carry the editor
 // (React Flow + Plotly) and every admin page. `named` adapts our named exports
@@ -97,7 +100,7 @@ export default function App() {
   useEffect(() => {
     loadAuth();
     onUnauthorized(() => {
-      setUser(null);
+      clearClientSession();
       setAuth((current) =>
         current ? { ...current, signed_in: false, user: null } : current,
       );
@@ -109,6 +112,7 @@ export default function App() {
   }, [loadAuth]);
 
   function onSignedIn(user: UserInfo): void {
+    clearClientDataScope();
     setAuth((current) => ({
       ...current,
       auth_required: true,
@@ -123,8 +127,7 @@ export default function App() {
     // Fire-and-forget: clears server httpOnly cookie; local state cleared
     // synchronously below so the UI transitions immediately.
     void apiLogout();
-    setToken(null);
-    setUser(null);
+    clearClientSession();
     setAuth((current) =>
       current ? { ...current, signed_in: false, user: null } : current,
     );
@@ -135,19 +138,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (auth?.user) setUser(auth.user);
+    if (!auth?.user) return;
+    const cachedUser = getUser();
+    if (cachedUser && cachedUser.id !== auth.user.id) clearClientDataScope();
+    setUser(auth.user);
   }, [auth?.user]);
 
   useEffect(() => {
-    // Surface signOut to HomeHeader without prop-drilling through route pages.
-    const target = window as unknown as { __noodle_sign_out?: () => void };
-    target.__noodle_sign_out = signOut;
-    return () => {
-      if (target.__noodle_sign_out === signOut) {
-        delete target.__noodle_sign_out;
-      }
-    };
-  }, [signOut]);
+    function refreshIdentity(): void {
+      void api.authRequired().then(setAuth).catch(() => undefined);
+    }
+    window.addEventListener("focus", refreshIdentity);
+    return () => window.removeEventListener("focus", refreshIdentity);
+  }, []);
+
 
   // Chat pages are outside the auth gate: ChatPublicPage manages its own
   // login check based on the workflow's require_login param. (Placed after all
@@ -179,10 +183,12 @@ export default function App() {
   }
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <ToastProvider>
-        <ConfirmProvider>
-          <EntitlementsProvider auth={auth}>
+    <AuthRuntimeProvider auth={auth} signOut={signOut}>
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceAccessProvider>
+          <ToastProvider>
+            <ConfirmProvider>
+              <EntitlementsProvider auth={auth}>
           {auth.license_notice && (
             <div className="license-banner" role="status">
               {auth.license_notice}
@@ -214,13 +220,15 @@ export default function App() {
               }
             />
           </Routes>
-          </EntitlementsProvider>
+              </EntitlementsProvider>
           {/* App-wide AI assistant (floating dock). Temporarily disabled in the UI
               while it is iterated on — the component and its backend wiring remain
               in the codebase (apps/web/src/AppAssistant.tsx). To re-enable, restore:
               {location.pathname.startsWith("/workflows/") ? null : <AppAssistant />} */}
-        </ConfirmProvider>
-      </ToastProvider>
-    </QueryClientProvider>
+            </ConfirmProvider>
+          </ToastProvider>
+        </WorkspaceAccessProvider>
+      </QueryClientProvider>
+    </AuthRuntimeProvider>
   );
 }

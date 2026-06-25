@@ -1,5 +1,6 @@
 """Tests for file reading nodes (read_text_file, read_csv_file, read_json_file, read_xml_file,
 read_s3_file, read_url_file, stream_large_file)."""
+
 from __future__ import annotations
 
 import json
@@ -28,6 +29,7 @@ def store_ctx(tmp_path):
     yield store
     current_node_id.reset(tok_n)
     artifact_store.reset(tok_a)
+
 
 # ---------------------------------------------------------------------------
 # read_text_file
@@ -199,9 +201,7 @@ def test_read_xml_as_dataset(tmp_path: Path) -> None:
     f = tmp_path / "data.xml"
     f.write_text(XML_TEXT, encoding="utf-8")
     with patch("noodle_nodes.file_nodes.csv_parse", return_value=fake_ref) as mock_parse:
-        result = read_xml_file(
-            input=None, path=str(f), row_xpath="person", output_as_dataset=True
-        )
+        result = read_xml_file(input=None, path=str(f), row_xpath="person", output_as_dataset=True)
     assert result is fake_ref
     # Both persons should have been extracted — csv_parse gets 2-row CSV
     call_text = mock_parse.call_args.kwargs.get("text", "")
@@ -322,7 +322,9 @@ def test_read_s3_json_as_dataset() -> None:
     json_bytes = json.dumps(data).encode()
     mock_client = _mock_boto3_client(json_bytes)
     with patch("boto3.client", return_value=mock_client):
-        with patch("noodle_nodes.file_nodes._parse_file_bytes", return_value=fake_ref) as mock_parse:
+        with patch(
+            "noodle_nodes.file_nodes._parse_file_bytes", return_value=fake_ref
+        ) as mock_parse:
             result = read_s3_file(
                 input=None,
                 credentials=_make_s3_creds(),
@@ -373,6 +375,7 @@ def test_read_s3_empty_endpoint_passes_none_to_boto3() -> None:
 def test_read_s3_parquet_as_dataset(store_ctx, tmp_path: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
+
     from noodle.datasets import is_dataset_ref
     from noodle_nodes.file_nodes import read_s3_file
 
@@ -404,7 +407,10 @@ def test_read_url_csv_auto_detect_by_extension() -> None:
     from noodle_nodes.file_nodes import read_url_file
 
     fake_ref = {"__noodle_dataset__": True}
-    with patch("noodle_nodes.file_nodes._ssrf_safe_fetch", return_value=(b"a,b\n1,2\n", "application/octet-stream")):
+    with patch(
+        "noodle_nodes.file_nodes._ssrf_safe_fetch",
+        return_value=(b"a,b\n1,2\n", "application/octet-stream"),
+    ):
         with patch("noodle_nodes.file_nodes.csv_parse", return_value=fake_ref) as mock_parse:
             result = read_url_file(
                 input=None,
@@ -420,7 +426,9 @@ def test_read_url_csv_auto_detect_by_content_type() -> None:
     from noodle_nodes.file_nodes import read_url_file
 
     fake_ref = {"__noodle_dataset__": True}
-    with patch("noodle_nodes.file_nodes._ssrf_safe_fetch", return_value=(b"x,y\n1,2\n", "text/csv")):
+    with patch(
+        "noodle_nodes.file_nodes._ssrf_safe_fetch", return_value=(b"x,y\n1,2\n", "text/csv")
+    ):
         with patch("noodle_nodes.file_nodes.csv_parse", return_value=fake_ref):
             result = read_url_file(
                 input=None,
@@ -448,7 +456,9 @@ def test_read_url_text_format_explicit() -> None:
 def test_read_url_custom_headers_forwarded() -> None:
     from noodle_nodes.file_nodes import read_url_file
 
-    with patch("noodle_nodes.file_nodes._ssrf_safe_fetch", return_value=(b"ok", "text/plain")) as mock_fetch:
+    with patch(
+        "noodle_nodes.file_nodes._ssrf_safe_fetch", return_value=(b"ok", "text/plain")
+    ) as mock_fetch:
         read_url_file(
             input=None,
             url="https://example.com/data.txt",
@@ -464,7 +474,10 @@ def test_read_url_custom_headers_forwarded() -> None:
 def test_read_url_http_error_raises() -> None:
     from noodle_nodes.file_nodes import read_url_file
 
-    with patch("noodle_nodes.file_nodes._ssrf_safe_fetch", side_effect=ValueError("HTTP 403 from https://example.com/private.csv")):
+    with patch(
+        "noodle_nodes.file_nodes._ssrf_safe_fetch",
+        side_effect=ValueError("HTTP 403 from https://example.com/private.csv"),
+    ):
         with pytest.raises(ValueError, match="HTTP 403"):
             read_url_file(input=None, url="https://example.com/private.csv", format="auto")
 
@@ -477,9 +490,7 @@ def test_ssrf_fetch_blocks_private_by_default(monkeypatch) -> None:
     from noodle_nodes.file_nodes import _ssrf_safe_fetch
 
     monkeypatch.delenv("NOODLE_ALLOW_PRIVATE_EGRESS", raising=False)
-    monkeypatch.setattr(
-        socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("10.0.0.5", 80))]
-    )
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("10.0.0.5", 80))])
     with pytest.raises(ValueError, match="globally routable"):
         _ssrf_safe_fetch("http://internal.example/data", {})
 
@@ -493,9 +504,7 @@ def test_ssrf_fetch_allows_private_when_opted_in(monkeypatch) -> None:
     from noodle_nodes.file_nodes import _ssrf_safe_fetch
 
     monkeypatch.setenv("NOODLE_ALLOW_PRIVATE_EGRESS", "1")
-    monkeypatch.setattr(
-        socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("10.0.0.5", 80))]
-    )
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("10.0.0.5", 80))])
 
     class _FakeResp:
         status = 200
@@ -541,8 +550,12 @@ def test_read_url_json_auto_detect_by_extension() -> None:
     data = [{"id": 1}, {"id": 2}]
     json_bytes = json.dumps(data).encode()
     fake_ref = {"__noodle_dataset__": True}
-    with patch("noodle_nodes.file_nodes._ssrf_safe_fetch", return_value=(json_bytes, "application/json")):
-        with patch("noodle_nodes.file_nodes._parse_file_bytes", return_value=fake_ref) as mock_parse:
+    with patch(
+        "noodle_nodes.file_nodes._ssrf_safe_fetch", return_value=(json_bytes, "application/json")
+    ):
+        with patch(
+            "noodle_nodes.file_nodes._parse_file_bytes", return_value=fake_ref
+        ) as mock_parse:
             result = read_url_file(
                 input=None,
                 url="https://example.com/records.json",
@@ -558,6 +571,7 @@ def test_read_url_json_auto_detect_by_extension() -> None:
 # stream_large_file
 # ---------------------------------------------------------------------------
 
+
 def _make_csv_bytes(rows: int = 5) -> bytes:
     lines = ["id,name,value"]
     for i in range(rows):
@@ -567,6 +581,7 @@ def _make_csv_bytes(rows: int = 5) -> bytes:
 
 def _make_ndjson_bytes(rows: int = 3) -> bytes:
     import json as _json
+
     lines = [_json.dumps({"id": i, "val": i * 2}) for i in range(rows)]
     return "\n".join(lines).encode()
 

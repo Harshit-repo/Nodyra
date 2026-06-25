@@ -1,5 +1,4 @@
 """Tests for noodle.dataset_promote — auto-promotion of large values."""
-import pytest
 
 from noodle.artifacts import ARTIFACT_MARKER, LocalArtifactStore
 from noodle.context import artifact_store, current_node_id
@@ -9,7 +8,6 @@ from noodle.dataset_promote import (
     _row_shaped,
     promote_value,
 )
-
 
 # ---------------------------------------------------------------------------
 # _is_dataframe

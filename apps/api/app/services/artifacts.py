@@ -8,6 +8,8 @@ previews, and orchestrating backend deletes.
 
 from __future__ import annotations
 
+import os
+import uuid
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -34,6 +36,17 @@ from noodle.artifacts import ARTIFACT_MARKER, LocalArtifactStore, is_artifact_re
 
 def artifact_base_dir() -> Path:
     return Path(settings.artifacts_dir).expanduser().resolve()
+
+
+def atomic_write_bytes(path: Path, content: bytes) -> None:
+    """Atomically replace a local artifact without exposing partial bytes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_bytes(content)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def make_artifact_store(

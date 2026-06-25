@@ -64,6 +64,7 @@ def _usage_message(total: ModelUsage) -> AIMessage:
     """Serialize accumulated usage into a system control message."""
     return AIMessage.system(f"{USAGE_PREFIX}\n{json.dumps(total.model_dump(mode='json'))}")
 
+
 PERSONA_TEMPLATES: dict[str, str] = {
     "research_assistant": (
         "You are a meticulous research assistant. Cite sources, verify claims with "
@@ -108,11 +109,9 @@ def _apply_persona(system: str, persona: str) -> str:
 
 def _strip_control_messages(messages: list[AIMessage]) -> list[AIMessage]:
     return [
-        m for m in messages
-        if not (
-            m.role == MessageRole.system
-            and str(m.content or "").startswith(_CONTROL_PREFIXES)
-        )
+        m
+        for m in messages
+        if not (m.role == MessageRole.system and str(m.content or "").startswith(_CONTROL_PREFIXES))
     ]
 
 
@@ -124,11 +123,9 @@ def _strip_for_request(messages: list[AIMessage]) -> list[AIMessage]:
     (summarised history the model should see).
     """
     return [
-        m for m in messages
-        if not (
-            m.role == MessageRole.system
-            and str(m.content or "").startswith(_OUTBOUND_STRIP)
-        )
+        m
+        for m in messages
+        if not (m.role == MessageRole.system and str(m.content or "").startswith(_OUTBOUND_STRIP))
     ]
 
 
@@ -139,18 +136,20 @@ def _generate_plan(model: ChatModelAdapter, task: str) -> list[str]:
     (the caller falls back to the react strategy in that case).
     """
     try:
-        response = model.complete(ChatRequest(
-            messages=[
-                AIMessage.system("You are a planning assistant. Output ONLY a JSON object."),
-                AIMessage.user(
-                    f"Task: {task}\n\nRespond with ONLY this JSON:\n"
-                    '{"plan": ["step 1: ...", "step 2: ..."]}\nNo prose.'
-                ),
-            ],
-            model=_model_name(model),
-            temperature=0.0,
-            response_format="json_object",
-        ))
+        response = model.complete(
+            ChatRequest(
+                messages=[
+                    AIMessage.system("You are a planning assistant. Output ONLY a JSON object."),
+                    AIMessage.user(
+                        f"Task: {task}\n\nRespond with ONLY this JSON:\n"
+                        '{"plan": ["step 1: ...", "step 2: ..."]}\nNo prose.'
+                    ),
+                ],
+                model=_model_name(model),
+                temperature=0.0,
+                response_format="json_object",
+            )
+        )
         data = json.loads(response.text)
         plan = data.get("plan") if isinstance(data, dict) else None
         return [str(s) for s in plan] if isinstance(plan, list) and plan else []
@@ -212,9 +211,7 @@ def _session_id(input_value: Any, configured: str) -> str:
     return "default"
 
 
-def _active_model(
-    model: ChatModelAdapter, fast_model: Any, step: int
-) -> ChatModelAdapter:
+def _active_model(model: ChatModelAdapter, fast_model: Any, step: int) -> ChatModelAdapter:
     """Return fast_model for intermediate steps (step > 0), else model."""
     if isinstance(fast_model, ChatModelAdapter) and step > 0:
         return fast_model
@@ -320,41 +317,49 @@ def _builtin_tool_adapters(
     """Instantiate and return the enabled built-in tool adapters."""
     builtins: list[ToolAdapter] = []
     if enable_calculator:
-        builtins.append(CalculatorToolAdapter(
-            name="calculate",
-            description="Evaluate a mathematical expression safely.",
-            precision=10,
-            allow_complex=False,
-        ))
+        builtins.append(
+            CalculatorToolAdapter(
+                name="calculate",
+                description="Evaluate a mathematical expression safely.",
+                precision=10,
+                allow_complex=False,
+            )
+        )
     if enable_code_execution:
-        builtins.append(CodeExecToolAdapter(
-            name="run_code",
-            description="Run Python code and return stdout.",
-            language="python",
-            allowed_modules="",
-            timeout_seconds=int(code_execution_timeout or 30),
-            max_output_chars=8000,
-        ))
+        builtins.append(
+            CodeExecToolAdapter(
+                name="run_code",
+                description="Run Python code and return stdout.",
+                language="python",
+                allowed_modules="",
+                timeout_seconds=int(code_execution_timeout or 30),
+                max_output_chars=8000,
+            )
+        )
     if enable_web_search:
-        builtins.append(WebSearchToolAdapter(
-            provider=web_search_provider,
-            credentials=web_search_credentials,
-            name="web_search",
-            description="Search the web for current information.",
-            max_results=int(web_search_max_results or 5),
-            search_depth="basic",
-            include_content=False,
-            timeout_seconds=15,
-        ))  # raises ValueError if creds missing and provider requires a key
+        builtins.append(
+            WebSearchToolAdapter(
+                provider=web_search_provider,
+                credentials=web_search_credentials,
+                name="web_search",
+                description="Search the web for current information.",
+                max_results=int(web_search_max_results or 5),
+                search_depth="basic",
+                include_content=False,
+                timeout_seconds=15,
+            )
+        )  # raises ValueError if creds missing and provider requires a key
     if enable_browser:
-        builtins.append(BrowserToolAdapter(
-            name="browse_web",
-            description="Navigate and extract content from web pages.",
-            allowed_actions="navigate,extract,get_links",
-            wait_strategy="load",
-            timeout_seconds=int(browser_timeout_seconds or 30),
-            max_content_chars=20000,
-        ))
+        builtins.append(
+            BrowserToolAdapter(
+                name="browse_web",
+                description="Navigate and extract content from web pages.",
+                allowed_actions="navigate,extract,get_links",
+                wait_strategy="load",
+                timeout_seconds=int(browser_timeout_seconds or 30),
+                max_content_chars=20000,
+            )
+        )
     return builtins
 
 
@@ -390,12 +395,14 @@ def _run_internal_tool(
 ) -> str:
     """Invoke an internal tool adapter synchronously, respecting the side-effect gate."""
     if adapter.side_effecting and not allow_side_effects:
-        return json.dumps({
-            "error": (
-                "This tool is side-effecting and requires approval. "
-                "Enable auto-approve or approve the call to proceed."
-            )
-        })
+        return json.dumps(
+            {
+                "error": (
+                    "This tool is side-effecting and requires approval. "
+                    "Enable auto-approve or approve the call to proceed."
+                )
+            }
+        )
     try:
         # Try sync invoke first (most built-ins implement it).
         return adapter.invoke(dict(arguments))
@@ -659,16 +666,19 @@ def _compress_history(
         return messages, False
     serialized = "\n".join(f"{m.role.value}: {m.content}" for m in compressible)
     try:
-        summary = model.complete(ChatRequest(
-            messages=[
-                AIMessage.system(
-                    "Summarize the following conversation history concisely. Preserve key "
-                    "facts discovered, tool results, decisions, and errors. Max 400 words."),
-                AIMessage.user(serialized),
-            ],
-            model=_model_name(model),
-            temperature=0.0,
-        )).text
+        summary = model.complete(
+            ChatRequest(
+                messages=[
+                    AIMessage.system(
+                        "Summarize the following conversation history concisely. Preserve key "
+                        "facts discovered, tool results, decisions, and errors. Max 400 words."
+                    ),
+                    AIMessage.user(serialized),
+                ],
+                model=_model_name(model),
+                temperature=0.0,
+            )
+        ).text
     except Exception:  # noqa: BLE001 - compression is best-effort
         return messages, False
     rebuilt: list[AIMessage] = []
@@ -677,7 +687,9 @@ def _compress_history(
         if _protected(i, m):
             rebuilt.append(m)
         elif not inserted:
-            rebuilt.append(AIMessage.system(f"{COMPRESSED_PREFIX}\nConversation summary:\n{summary}"))
+            rebuilt.append(
+                AIMessage.system(f"{COMPRESSED_PREFIX}\nConversation summary:\n{summary}")
+            )
             inserted = True
     return rebuilt, True
 
@@ -703,11 +715,13 @@ def _reflect(model: ChatModelAdapter, messages: list[AIMessage], answer: str, ro
     for _ in range(max(1, min(2, int(rounds or 1)))):
         convo = [*convo, AIMessage.assistant(current), AIMessage.user(_REFLECTION_PROMPT)]
         try:
-            critique = model.complete(ChatRequest(
-                messages=_strip_for_request(convo),
-                model=_model_name(model),
-                temperature=0.0,
-            )).text
+            critique = model.complete(
+                ChatRequest(
+                    messages=_strip_for_request(convo),
+                    model=_model_name(model),
+                    temperature=0.0,
+                )
+            ).text
         except Exception:  # noqa: BLE001 - reflection is best-effort
             return current
         if critique.strip().upper().startswith("LGTM"):
@@ -770,8 +784,19 @@ def _final_output(
     category=AI_CATEGORY,
     role="executable",
     icon="ai",
-    inputs=["input", "model", "fast_model", "tool", "retriever",
-             "subagent_1", "subagent_2", "subagent_3", "memory", "parser", "guardrail"],
+    inputs=[
+        "input",
+        "model",
+        "fast_model",
+        "tool",
+        "retriever",
+        "subagent_1",
+        "subagent_2",
+        "subagent_3",
+        "memory",
+        "parser",
+        "guardrail",
+    ],
     input_kinds={
         "input": "main",
         "model": "ai_language_model",
@@ -834,8 +859,15 @@ def _final_output(
             "description": "How the agent executes: ReAct loop, Plan-then-Execute, or Reflexion (self-critique).",
         },
         "persona": {
-            "choices": ["none", "research_assistant", "data_analyst", "code_assistant",
-                        "customer_support", "senior_engineer", "creative_writer"],
+            "choices": [
+                "none",
+                "research_assistant",
+                "data_analyst",
+                "code_assistant",
+                "customer_support",
+                "senior_engineer",
+                "creative_writer",
+            ],
             "description": "Pre-built expert persona (sets a system-prompt template).",
         },
         "reflection_rounds": {
@@ -879,8 +911,7 @@ def _final_output(
             "widget": "toggle",
             "display_name": "Return tool trace",
             "description": (
-                "Include the ordered tool-call trace (intermediate_steps) "
-                "in the output."
+                "Include the ordered tool-call trace (intermediate_steps) in the output."
             ),
             "group": "Options",
         },
@@ -1065,8 +1096,10 @@ def ai_agent_v2(
     if isinstance(resume, AgentResumeInput):
         resume_allows_side_effects = bool(resume.allow_side_effects)
     auto_approve_side_effects = (
-        str(side_effect_approval or "").strip() == "auto_approve"
-    ) or legacy_allow or resume_allows_side_effects
+        (str(side_effect_approval or "").strip() == "auto_approve")
+        or legacy_allow
+        or resume_allows_side_effects
+    )
 
     # Build the internal-adapter map: tools the node will dispatch itself.
     # External (tool-port) adapters remain engine-mediated.
@@ -1126,13 +1159,9 @@ def ai_agent_v2(
         # Semantic tool selection (Task 14): optionally limit tools sent to the model.
         active_tool_schemas = tool_schemas
         if str(tool_selection or "all") == "top_k" and tool_schemas:
-            already_called: set[str] = {
-                c.name for m in messages for c in (m.tool_calls or [])
-            }
+            already_called: set[str] = {c.name for m in messages for c in (m.tool_calls or [])}
             task_text = (
-                _task_text(input, prompt)
-                if not isinstance(resume, AgentResumeInput)
-                else ""
+                _task_text(input, prompt) if not isinstance(resume, AgentResumeInput) else ""
             )
             active_tool_schemas = _select_tools(
                 tool_schemas,
@@ -1162,11 +1191,9 @@ def ai_agent_v2(
 
         # Remove any prior usage control message, inject fresh one.
         messages = [
-            m for m in messages
-            if not (
-                m.role == MessageRole.system
-                and str(m.content or "").startswith(USAGE_PREFIX)
-            )
+            m
+            for m in messages
+            if not (m.role == MessageRole.system and str(m.content or "").startswith(USAGE_PREFIX))
         ]
         messages.append(_usage_message(running_usage))
         messages.append(AIMessage.assistant(response.text, tool_calls=response.tool_calls))

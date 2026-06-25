@@ -1,13 +1,18 @@
 """Vapi.ai v2 operation specs and executors."""
+
 from __future__ import annotations
 
 import base64
 import json
-import requests
 from typing import Any
 
 from noodle.models import CredentialSpec
-from noodle_nodes.integrations_v2.registry import register_integration, register_operation, register_provider_trigger
+from noodle_nodes.http_security import safe_request
+from noodle_nodes.integrations_v2.registry import (
+    register_integration,
+    register_operation,
+    register_provider_trigger,
+)
 from noodle_nodes.integrations_v2.specs import (
     IntegrationSpec,
     OperationParamSpec,
@@ -72,10 +77,27 @@ VAPI_START_CALL_SPEC = OperationSpec(
     params=(
         _credentials_param(),
         OperationParamSpec(name="assistant_id", required=True, description="Vapi assistant ID."),
-        OperationParamSpec(name="phone_number_id", required=True, description="Vapi phone number ID to call from."),
-        OperationParamSpec(name="customer_number", required=True, placeholder="+1234567890", description="Destination E.164 phone number."),
-        OperationParamSpec(name="assistant_overrides", multiline=True, group="Options", description="JSON string of assistant overrides (optional)."),
-        OperationParamSpec(name="metadata", multiline=True, group="Options", description="JSON string of metadata to attach to the call."),
+        OperationParamSpec(
+            name="phone_number_id", required=True, description="Vapi phone number ID to call from."
+        ),
+        OperationParamSpec(
+            name="customer_number",
+            required=True,
+            placeholder="+1234567890",
+            description="Destination E.164 phone number.",
+        ),
+        OperationParamSpec(
+            name="assistant_overrides",
+            multiline=True,
+            group="Options",
+            description="JSON string of assistant overrides (optional).",
+        ),
+        OperationParamSpec(
+            name="metadata",
+            multiline=True,
+            group="Options",
+            description="JSON string of metadata to attach to the call.",
+        ),
     ),
 )
 
@@ -90,7 +112,9 @@ VAPI_GET_CALL_SPEC = OperationSpec(
     tool_side_effecting=False,
     params=(
         _credentials_param(),
-        OperationParamSpec(name="call_id", required=True, placeholder="call_abc123", description="Vapi call ID."),
+        OperationParamSpec(
+            name="call_id", required=True, placeholder="call_abc123", description="Vapi call ID."
+        ),
     ),
 )
 
@@ -105,9 +129,21 @@ VAPI_LIST_CALLS_SPEC = OperationSpec(
     tool_side_effecting=False,
     params=(
         _credentials_param(),
-        OperationParamSpec(name="limit", type="number", default=20, group="Options", description="Max calls to return."),
-        OperationParamSpec(name="created_at_gt", group="Filters", description="ISO 8601 datetime — only calls after this."),
-        OperationParamSpec(name="assistant_id", group="Filters", description="Filter by assistant ID."),
+        OperationParamSpec(
+            name="limit",
+            type="number",
+            default=20,
+            group="Options",
+            description="Max calls to return.",
+        ),
+        OperationParamSpec(
+            name="created_at_gt",
+            group="Filters",
+            description="ISO 8601 datetime — only calls after this.",
+        ),
+        OperationParamSpec(
+            name="assistant_id", group="Filters", description="Filter by assistant ID."
+        ),
     ),
 )
 
@@ -137,12 +173,35 @@ VAPI_CREATE_ASSISTANT_SPEC = OperationSpec(
         _credentials_param(),
         OperationParamSpec(name="name", required=True, description="Assistant name."),
         OperationParamSpec(name="first_message", description="First thing the assistant says."),
-        OperationParamSpec(name="system_prompt", multiline=True, description="Assistant system prompt."),
-        OperationParamSpec(name="voice_provider", default="playht", choices=["playht", "eleven-labs", "openai", "deepgram"], group="Voice", description="Voice provider."),
-        OperationParamSpec(name="voice_id", group="Voice", description="Voice ID for the chosen provider."),
-        OperationParamSpec(name="model_provider", default="openai", choices=["openai", "anthropic", "together-ai"], group="Model", description="LLM provider."),
-        OperationParamSpec(name="model_id", default="gpt-4o-mini", group="Model", description="Model ID."),
-        OperationParamSpec(name="assistant_config", multiline=True, group="Advanced", description="Full assistant config as JSON (overrides all other fields if set)."),
+        OperationParamSpec(
+            name="system_prompt", multiline=True, description="Assistant system prompt."
+        ),
+        OperationParamSpec(
+            name="voice_provider",
+            default="playht",
+            choices=["playht", "eleven-labs", "openai", "deepgram"],
+            group="Voice",
+            description="Voice provider.",
+        ),
+        OperationParamSpec(
+            name="voice_id", group="Voice", description="Voice ID for the chosen provider."
+        ),
+        OperationParamSpec(
+            name="model_provider",
+            default="openai",
+            choices=["openai", "anthropic", "together-ai"],
+            group="Model",
+            description="LLM provider.",
+        ),
+        OperationParamSpec(
+            name="model_id", default="gpt-4o-mini", group="Model", description="Model ID."
+        ),
+        OperationParamSpec(
+            name="assistant_config",
+            multiline=True,
+            group="Advanced",
+            description="Full assistant config as JSON (overrides all other fields if set).",
+        ),
     ),
 )
 
@@ -156,14 +215,25 @@ VAPI_UPLOAD_FILE_SPEC = OperationSpec(
     icon="brand:vapi",
     params=(
         _credentials_param(),
-        OperationParamSpec(name="file_content", multiline=True, required=True, description="File content as text or base64 bytes."),
-        OperationParamSpec(name="filename", required=True, placeholder="knowledge.txt", description="Filename for the upload."),
+        OperationParamSpec(
+            name="file_content",
+            multiline=True,
+            required=True,
+            description="File content as text or base64 bytes.",
+        ),
+        OperationParamSpec(
+            name="filename",
+            required=True,
+            placeholder="knowledge.txt",
+            description="Filename for the upload.",
+        ),
         OperationParamSpec(name="content_type", default="text/plain", description="MIME type."),
     ),
 )
 
 
 # --- Executor functions ---
+
 
 def start_call(
     *,
@@ -251,7 +321,9 @@ def create_assistant(
         if voice_id:
             voice_body["voiceId"] = voice_id
         body["voice"] = voice_body
-    return _transport(credentials).request("POST", "/assistant", operation="create_assistant", json_body=body)
+    return _transport(credentials).request(
+        "POST", "/assistant", operation="create_assistant", json_body=body
+    )
 
 
 def upload_file(
@@ -268,11 +340,13 @@ def upload_file(
         content_bytes = file_content.encode("utf-8")
     creds = _credentials_dict(credentials)
     api_key = str(creds.get("api_key") or "")
-    response = requests.post(
+    response = safe_request(
+        "POST",
         f"{VAPI_API_BASE}/file",
         headers={"Authorization": f"Bearer {api_key}"},
         files={"file": (filename, content_bytes, content_type)},
         timeout=60,
+        context="vapi_upload_file endpoint",
     )
     if response.status_code >= 400:
         raise RuntimeError(f"vapi_upload_file: HTTP {response.status_code} — {response.text[:500]}")
@@ -280,6 +354,7 @@ def upload_file(
 
 
 # --- Poll trigger ---
+
 
 def poll_completed_calls(ctx: ProviderTriggerPollContext) -> ProviderTriggerPollResult:
     params = ctx.params
@@ -298,8 +373,10 @@ def poll_completed_calls(ctx: ProviderTriggerPollContext) -> ProviderTriggerPoll
 
     response = transport.request("GET", "/call", operation="poll_calls", params=query_params)
     calls: list[dict[str, Any]] = (
-        response if isinstance(response, list)
-        else response.get("results", []) if isinstance(response, dict)
+        response
+        if isinstance(response, list)
+        else response.get("results", [])
+        if isinstance(response, dict)
         else []
     )
 
@@ -317,17 +394,21 @@ def poll_completed_calls(ctx: ProviderTriggerPollContext) -> ProviderTriggerPoll
             continue
         if created > latest:
             latest = created
-        events.append({
-            "id": call_id,
-            "status": call.get("status"),
-            "assistantId": call.get("assistantId"),
-            "transcript": call.get("transcript"),
-            "summary": call.get("analysis", {}).get("summary") if call.get("analysis") else None,
-            "recordingUrl": call.get("recordingUrl"),
-            "startedAt": call.get("startedAt"),
-            "endedAt": call.get("endedAt"),
-            "call": call,
-        })
+        events.append(
+            {
+                "id": call_id,
+                "status": call.get("status"),
+                "assistantId": call.get("assistantId"),
+                "transcript": call.get("transcript"),
+                "summary": call.get("analysis", {}).get("summary")
+                if call.get("analysis")
+                else None,
+                "recordingUrl": call.get("recordingUrl"),
+                "startedAt": call.get("startedAt"),
+                "endedAt": call.get("endedAt"),
+                "call": call,
+            }
+        )
         new_ids.append(call_id)
 
     new_ids = new_ids[-500:]
@@ -351,7 +432,11 @@ VAPI_CALL_COMPLETED_TRIGGER_SPEC = ProviderTriggerSpec(
     icon="brand:vapi",
     params=(
         _credentials_param(),
-        OperationParamSpec(name="assistant_id", group="Filters", description="Only trigger for calls with this assistant ID. Leave blank for all."),
+        OperationParamSpec(
+            name="assistant_id",
+            group="Filters",
+            description="Only trigger for calls with this assistant ID. Leave blank for all.",
+        ),
     ),
     poll=poll_completed_calls,
     poll_interval_seconds=10,
@@ -374,7 +459,16 @@ VAPI_INTEGRATION = IntegrationSpec(
     icon="brand:vapi",
     credential_types=("vapi",),
     resources=(
-        ResourceSpec(id="call", name="Call", operations=(VAPI_START_CALL_SPEC, VAPI_GET_CALL_SPEC, VAPI_LIST_CALLS_SPEC, VAPI_END_CALL_SPEC)),
+        ResourceSpec(
+            id="call",
+            name="Call",
+            operations=(
+                VAPI_START_CALL_SPEC,
+                VAPI_GET_CALL_SPEC,
+                VAPI_LIST_CALLS_SPEC,
+                VAPI_END_CALL_SPEC,
+            ),
+        ),
         ResourceSpec(id="assistant", name="Assistant", operations=(VAPI_CREATE_ASSISTANT_SPEC,)),
         ResourceSpec(id="file", name="File", operations=(VAPI_UPLOAD_FILE_SPEC,)),
     ),

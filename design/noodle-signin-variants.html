@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Noodle sign-in concepts</title>
+  <style>
+    :root {
+      --bg: #090b10;
+      --surface: #10141c;
+      --surface-2: #161b25;
+      --surface-3: #1f2632;
+      --canvas: #0b0e14;
+      --line: #242c3a;
+      --line-2: #1a2029;
+      --ink: #e9eef6;
+      --ink-2: #98a4ba;
+      --ink-3: #7a8598;
+      --accent: #4c9eff;
+      --accent-2: #79b6ff;
+      --accent-deep: #1f4f8f;
+      --dataset: #7c5cff;
+      --font-display: "Bricolage Grotesque", Inter, system-ui, sans-serif;
+      --font-sans: "Hanken Grotesk", Inter, system-ui, sans-serif;
+      --font-mono: "IBM Plex Mono", Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: #05070a; font-family: var(--font-sans); }
+    body { overflow: hidden; }
+    button, input { font: inherit; }
+    .mockup { position: relative; width: 1440px; height: 900px; overflow: hidden; color: var(--ink); background: var(--bg); }
+    .mockup[hidden] { display: none; }
+    .brand { display: inline-flex; align-items: center; gap: 13px; color: var(--ink); }
+    .brand-mark { width: 46px; height: 32px; overflow: visible; }
+    .brand-name { font-family: var(--font-display); font-size: 30px; font-weight: 800; letter-spacing: -1.4px; }
+    .concept-tag { position: absolute; right: 28px; bottom: 24px; z-index: 20; color: #647084; font: 10px var(--font-mono); letter-spacing: .12em; }
+    .canvas-grid {
+      background-color: #101112;
+      background-image: radial-gradient(circle, rgba(137, 150, 169, .38) 1.15px, transparent 1.3px);
+      background-size: 24px 24px;
+    }
+
+    /* Accurate editor node styling from NodeCard/editor.css */
+    .workflow { position: relative; width: 760px; height: 420px; }
+    .edges { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+    .edge { fill: none; stroke: #242c3a; stroke-width: 2; }
+    .node { position: absolute; width: 116px; display: flex; flex-direction: column; align-items: center; }
+    .node-tile {
+      position: relative; width: 72px; height: 72px; border-radius: 17px;
+      background: #161b25; border: 1.5px solid #242c3a;
+      display: flex; align-items: center; justify-content: center; color: var(--cat);
+      box-shadow: 0 9px 22px -13px rgba(0,0,0,.85);
+    }
+    .node-tile::before { content: ""; position: absolute; inset: 0; border-radius: 15.5px; background: var(--cat); opacity: .12; }
+    .node-icon { position: relative; z-index: 1; width: 26px; height: 26px; color: var(--cat); }
+    .node-icon * { vector-effect: non-scaling-stroke; }
+    .node-icon-text { position: relative; z-index: 1; color: var(--cat); font: 21px/1 var(--font-mono); letter-spacing: -2px; }
+    .node-label { margin: 9px -22px 0; width: 116px; text-align: center; color: #e9eef6; font-size: 12px; line-height: 1.25; font-weight: 600; }
+    .port { position: absolute; top: 31px; width: 10px; height: 10px; border-radius: 3px; border: 2px solid #161b25; z-index: 3; }
+    .port.in { left: -5px; }
+    .port.out { right: -5px; }
+    .port.data { background: #94a3b8; }
+    .port.dataset { background: #7c5cff; box-shadow: 0 0 0 3px rgba(124,92,255,.18); }
+
+    .auth-card { width: 450px; border: 1px solid var(--line); border-radius: 18px; background: rgba(16,20,28,.97); padding: 42px; box-shadow: 0 28px 70px rgba(0,0,0,.44); }
+    .auth-card h1 { margin: 0; color: var(--ink); font: 750 35px/1.1 var(--font-display); letter-spacing: -1.25px; }
+    .auth-card .lead { margin: 10px 0 31px; color: var(--ink-2); font-size: 15px; line-height: 1.5; }
+    .field { margin-top: 20px; }
+    .field label { display: block; margin-bottom: 8px; color: #cbd4e1; font-size: 13px; font-weight: 650; }
+    .input-wrap { position: relative; }
+    .field input { width: 100%; height: 52px; padding: 0 16px; color: var(--ink); background: #0b0e14; border: 1px solid #39465a; border-radius: 10px; outline: none; font-size: 14px; }
+    .field.is-focused input { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(76,158,255,.17); }
+    .eye { position: absolute; right: 15px; top: 14px; width: 24px; height: 24px; color: var(--ink-2); }
+    .primary { width: 100%; height: 54px; margin-top: 26px; border: 1px solid #79b6ff; border-radius: 10px; color: #07101c; background: linear-gradient(180deg,#79b6ff,#4c9eff); font-size: 15px; font-weight: 750; }
+    .primary span { margin-left: 9px; font-size: 19px; }
+    .access-note { display: flex; gap: 12px; align-items: flex-start; margin-top: 24px; padding: 15px 16px; border: 1px solid #202938; border-radius: 10px; background: #0c1017; }
+    .shield { flex: 0 0 auto; width: 21px; height: 21px; color: var(--accent-2); }
+    .access-note strong { display: block; color: #c6d0df; font-size: 13px; }
+    .access-note p { margin: 4px 0 0; color: var(--ink-3); font-size: 12px; line-height: 1.4; }
+    .secure-row { display: flex; justify-content: center; gap: 26px; margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--line-2); color: #718097; font: 9px var(--font-mono); letter-spacing: .09em; }
+    .secure-row span::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 8px; border-radius: 50%; background: #57c98a; vertical-align: 1px; }
+    .secure-row span + span::before { background: var(--accent); }
+
+    /* A: full-canvas split */
+    #variant-a { background: #090b10; }
+    #variant-a::before { content: ""; position: absolute; inset: 0; background: radial-gradient(800px 600px at 88% 48%, rgba(76,158,255,.08), transparent 68%); }
+    .a-header { position: absolute; left: 66px; top: 46px; z-index: 5; }
+    .a-form { position: absolute; left: 96px; top: 148px; z-index: 5; }
+    .a-form .auth-card { width: 470px; padding: 44px; }
+    .a-divider { position: absolute; left: 625px; top: 74px; bottom: 74px; width: 1px; background: linear-gradient(transparent,var(--line) 12%,var(--line) 88%,transparent); }
+    .a-product { position: absolute; left: 650px; top: 0; width: 790px; height: 900px; overflow: hidden; }
+    .a-copy { position: absolute; left: 58px; top: 102px; z-index: 3; }
+    .eyebrow { color: #82bbff; font: 10px var(--font-mono); letter-spacing: .12em; }
+    .a-copy h2 { margin: 17px 0 0; color: #eff4fa; font: 700 42px/1.07 var(--font-display); letter-spacing: -1.6px; }
+    .a-copy p { margin: 14px 0 0; color: var(--ink-2); font-size: 15px; }
+    .a-workflow { position: absolute; left: 10px; top: 265px; transform: scale(.95); transform-origin: top left; }
+    .canvas-meta { position: absolute; left: 58px; bottom: 70px; display: flex; gap: 8px; }
+    .canvas-meta span { padding: 7px 10px; border: 1px solid #252e3b; border-radius: 6px; background: rgba(16,20,28,.76); color: #8491a5; font: 9px var(--font-mono); letter-spacing: .06em; }
+
+    /* B: editor shell + modal gateway */
+    #variant-b { background: #0b0e14; }
+    .editor-top { position: absolute; inset: 0 0 auto; height: 72px; display: flex; align-items: center; padding: 0 24px; border-bottom: 1px solid var(--line); background: #10141c; z-index: 3; }
+    .editor-top .brand-name { font-size: 22px; }
+    .workflow-title { margin-left: 28px; padding-left: 28px; border-left: 1px solid var(--line); color: #dfe6f0; font-size: 15px; font-weight: 650; }
+    .top-pills { margin-left: auto; display: flex; gap: 8px; }
+    .top-pills span { padding: 9px 13px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink-2); background: var(--surface-2); font-size: 11px; }
+    .editor-left { position: absolute; left: 0; top: 72px; bottom: 0; width: 240px; padding: 22px 16px; border-right: 1px solid var(--line); background: #10141c; }
+    .panel-title { color: #aeb9ca; font: 10px var(--font-mono); letter-spacing: .12em; }
+    .fake-search { height: 38px; margin-top: 22px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 8px; color: #69768a; background: #0b0e14; font-size: 11px; }
+    .category { display: flex; justify-content: space-between; align-items: center; height: 45px; color: #a9b3c2; font-size: 13px; }
+    .category i { width: 6px; height: 6px; margin-right: 10px; display: inline-block; border-radius: 2px; background: var(--c); }
+    .category small { color: #677387; font: 9px var(--font-mono); }
+    .editor-right { position: absolute; right: 0; top: 72px; bottom: 0; width: 270px; padding: 22px 18px; border-left: 1px solid var(--line); background: #10141c; }
+    .inspector-stat { display: grid; grid-template-columns: repeat(3,1fr); gap: 6px; margin-top: 22px; }
+    .inspector-stat div { padding: 12px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
+    .inspector-stat b { display: block; color: #dce4ef; font-size: 12px; }
+    .inspector-stat small { color: #6f7b8e; font: 8px var(--font-mono); }
+    .editor-canvas { position: absolute; left: 240px; right: 270px; top: 72px; bottom: 0; overflow: hidden; }
+    .b-workflow { position: absolute; left: 50px; top: 170px; transform: scale(.88); transform-origin: top left; opacity: .72; }
+    .editor-scrim { position: absolute; inset: 0; z-index: 6; background: rgba(3,5,8,.55); backdrop-filter: blur(1.5px); }
+    .b-modal { position: absolute; left: 50%; top: 52%; z-index: 8; transform: translate(-50%,-50%); }
+    .b-modal .auth-card { width: 438px; padding: 36px 38px; box-shadow: 0 34px 100px rgba(0,0,0,.66); }
+    .b-modal .mini-brand { margin-bottom: 28px; }
+    .b-modal .brand-name { font-size: 24px; }
+    .b-modal .brand-mark { width: 38px; height: 27px; }
+    .b-modal .auth-card h1 { font-size: 29px; }
+    .b-modal .lead { margin-bottom: 22px; }
+    .b-modal .field { margin-top: 16px; }
+    .b-modal .primary { margin-top: 22px; }
+    .b-modal .access-note { margin-top: 18px; }
+
+    /* C: app-light entry panel + authentic dark canvas */
+    #variant-c { background: #f6f8fb; color: #111827; }
+    .c-panel { position: absolute; inset: 0 auto 0 0; width: 520px; padding: 52px 72px; background: #f8fafc; border-right: 1px solid #dbe3ed; z-index: 5; }
+    .c-panel .brand { color: #101827; }
+    .c-panel .brand-name { color: #111827; }
+    .c-form { margin-top: 126px; }
+    .c-form h1 { margin: 0; color: #111827; font: 750 38px/1.1 var(--font-display); letter-spacing: -1.5px; }
+    .c-form .lead { margin: 12px 0 34px; color: #526176; font-size: 15px; line-height: 1.5; }
+    .c-form .field label { color: #263244; }
+    .c-form .field input { color: #111827; background: #fff; border-color: #c8d3e1; }
+    .c-form .field.is-focused input { border-color: #246bdb; box-shadow: 0 0 0 3px rgba(36,107,219,.14); }
+    .c-form .eye { color: #66758a; }
+    .c-form .access-note { background: #edf3fa; border-color: #d4deea; }
+    .c-form .access-note strong { color: #2d3b4f; }
+    .c-form .access-note p { color: #5a687b; }
+    .c-footer { position: absolute; left: 72px; bottom: 42px; color: #718096; font-size: 11px; }
+    .c-canvas { position: absolute; left: 520px; right: 0; top: 0; bottom: 0; overflow: hidden; }
+    .c-canvas::after { content: ""; position: absolute; inset: 0; background: radial-gradient(650px 460px at 54% 42%, rgba(76,158,255,.07), transparent 68%); pointer-events: none; }
+    .c-caption { position: absolute; left: 70px; top: 70px; z-index: 3; }
+    .c-caption h2 { margin: 15px 0 0; color: #eef3f9; font: 700 36px/1.08 var(--font-display); letter-spacing: -1.25px; }
+    .c-caption p { margin: 12px 0 0; color: #8f9bae; font-size: 14px; }
+    .c-workflow { position: absolute; left: 40px; top: 260px; transform: scale(1.02); transform-origin: top left; }
+    .run-pill { position: absolute; right: 58px; bottom: 52px; z-index: 3; padding: 13px 18px; border: 1px solid #1f4f8f; border-radius: 22px; color: #07101c; background: linear-gradient(180deg,#79b6ff,#4c9eff); font-size: 12px; font-weight: 750; box-shadow: 0 10px 28px rgba(76,158,255,.2); }
+
+    /* D/E/F: homepage-informed initial sign-in samples */
+    .home-shell { background: #090b10; }
+    .home-shell::before { content:""; position:absolute; inset:0; background: radial-gradient(720px 480px at 14% 10%,rgba(76,158,255,.09),transparent 68%), radial-gradient(640px 520px at 88% 92%,rgba(76,158,255,.06),transparent 68%); pointer-events:none; }
+    .sample-header { position:absolute; left:0; right:0; top:0; height:78px; display:flex; align-items:center; padding:0 80px; border-bottom:1px solid #171e29; background:rgba(9,11,16,.88); z-index:5; }
+    .sample-header .brand-name { font-size:26px; }
+    .header-proof { margin-left:auto; display:flex; align-items:center; gap:18px; color:#778499; font:10px var(--font-mono); letter-spacing:.08em; }
+    .header-proof b { color:#7fbeff; font-weight:500; }
+    .version-pill { display:inline-flex; align-items:center; gap:9px; padding:8px 13px; border:1px solid #214a78; border-radius:18px; color:#76b8ff; background:rgba(76,158,255,.09); font:10px var(--font-mono); letter-spacing:.1em; }
+    .version-pill i { width:7px; height:7px; border-radius:50%; background:#57c98a; box-shadow:0 0 0 4px rgba(87,201,138,.12); }
+    .python-grad { color:#6eacfa; }
+    .home-copy h1 { margin:22px 0 20px; color:#eef3fa; font:750 64px/.98 var(--font-display); letter-spacing:-3px; }
+    .home-copy .sub { color:#9ca8ba; font-size:17px; line-height:1.62; }
+    .home-copy .sub b { color:#e4ebf5; }
+    .proof-list { display:flex; flex-wrap:wrap; gap:10px 18px; margin-top:28px; color:#a9b5c5; font-size:12px; }
+    .proof-list span { display:inline-flex; align-items:center; gap:8px; }
+    .proof-list svg { width:16px; height:16px; color:#57c98a; }
+    .sample-auth { position:absolute; z-index:4; }
+    .sample-auth .auth-card { width:446px; padding:39px 40px; }
+    .sample-auth .auth-card h1 { font-size:31px; }
+    .sample-auth .lead { margin-bottom:25px; }
+    .sample-auth .field { margin-top:17px; }
+    .sample-auth .primary { margin-top:23px; }
+    .sample-auth .access-note { margin-top:19px; }
+    .sample-auth .secure-row { margin-top:21px; padding-top:17px; }
+
+    /* D: homepage hero + sign in */
+    .d-copy { position:absolute; left:96px; top:184px; width:660px; z-index:3; }
+    .d-copy .sub { max-width:620px; }
+    .d-auth { right:94px; top:154px; }
+    .home-note { margin-top:34px; padding-top:22px; border-top:1px solid #1a222e; color:#6f7c90; font:10px/1.65 var(--font-mono); letter-spacing:.03em; }
+    .home-note b { color:#9aa8bb; }
+    .strand-underline { width:262px; height:18px; margin-top:-11px; }
+
+    /* E: product proof demo + sign in */
+    .e-copy { position:absolute; left:78px; top:118px; width:730px; z-index:3; }
+    .e-copy h1 { margin:16px 0 13px; color:#edf3fa; font:750 44px/1.02 var(--font-display); letter-spacing:-1.8px; }
+    .e-copy p { margin:0; color:#94a2b5; font-size:15px; line-height:1.5; }
+    .e-demo { position:absolute; left:78px; top:295px; width:760px; height:480px; border:1px solid #263249; border-radius:16px; background:#0b0e14; overflow:hidden; box-shadow:0 30px 80px rgba(0,0,0,.34); z-index:2; }
+    .demo-bar { height:45px; display:flex; align-items:center; gap:8px; padding:0 16px; border-bottom:1px solid #202938; background:#111721; }
+    .demo-bar i { width:8px; height:8px; border-radius:50%; background:#ff7b72; }.demo-bar i:nth-child(2){background:#ffd479}.demo-bar i:nth-child(3){background:#57c98a}
+    .demo-title { margin-left:8px; color:#8fa0b8; font:9px var(--font-mono); letter-spacing:.05em; }
+    .e-canvas { position:absolute; left:0; top:45px; width:520px; bottom:0; overflow:hidden; }
+    .e-workflow { position:absolute; left:-10px; top:85px; transform:scale(.7); transform-origin:top left; }
+    .python-panel { position:absolute; right:0; top:45px; bottom:0; width:240px; padding:24px 20px; border-left:1px solid #202938; background:#10141c; }
+    .python-panel .eyebrow { font-size:9px; }
+    .python-panel h3 { margin:15px 0 17px; font-size:16px; }
+    .codebox { padding:14px; border:1px solid #273347; border-radius:9px; background:#090c12; color:#a9c6e8; font:10px/1.7 var(--font-mono); }
+    .codebox .kw { color:#ff8da8; }.codebox .fn { color:#79b6ff; }.codebox .str { color:#8fd06f; }
+    .python-facts { margin-top:18px; display:grid; gap:9px; }
+    .python-facts div { padding:10px; border-radius:7px; background:#161b25; color:#8e9bad; font-size:10px; }
+    .python-facts b { display:block; margin-bottom:3px; color:#d6deea; font-size:11px; }
+    .e-auth { right:74px; top:150px; }
+
+    /* F: benefit-led sign in */
+    .f-copy { position:absolute; left:86px; top:142px; width:760px; z-index:3; }
+    .f-copy h1 { margin:17px 0 14px; max-width:690px; color:#eff4fa; font:750 50px/1.02 var(--font-display); letter-spacing:-2px; }
+    .f-copy > p { margin:0; color:#98a5b7; font-size:16px; }
+    .benefit-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:13px; margin-top:46px; }
+    .benefit { min-height:210px; padding:23px 21px; border:1px solid #222c3a; border-radius:13px; background:#10141c; }
+    .benefit-icon { width:38px; height:38px; display:grid; place-items:center; margin-bottom:25px; border:1px solid #29415d; border-radius:9px; color:#72b4ff; background:rgba(76,158,255,.09); }
+    .benefit-icon svg { width:20px; height:20px; }
+    .benefit h3 { margin:0 0 10px; color:#e5ebf3; font-size:15px; }
+    .benefit p { margin:0; color:#8592a6; font-size:12px; line-height:1.55; }
+    .infra-band { display:flex; align-items:center; gap:26px; margin-top:22px; padding:17px 20px; border:1px solid #1f2937; border-radius:10px; color:#78869b; background:#0c1017; font:9px var(--font-mono); letter-spacing:.07em; }
+    .infra-band strong { color:#a8b5c7; font-weight:500; }
+    .infra-band span::before { content:""; width:5px; height:5px; display:inline-block; margin-right:8px; border-radius:50%; background:#57c98a; vertical-align:1px; }
+    .f-auth { right:76px; top:148px; }
+  </style>
+</head>
+<body>
+  <section class="mockup" id="variant-a">
+    <div class="a-header brand"></div>
+    <div class="a-form"><div class="auth-card auth-content"></div></div>
+    <div class="a-divider"></div>
+    <div class="a-product canvas-grid">
+      <div class="a-copy"><div class="eyebrow">BACK TO YOUR WORKSPACE</div><h2>Your workflows<br/>are waiting.</h2><p>Build, connect, run, repeat.</p></div>
+      <div class="workflow a-workflow"></div>
+      <div class="canvas-meta"><span>6 NODES</span><span>DATASET PIPELINE</span><span>READY</span></div>
+    </div>
+    <div class="concept-tag">CONCEPT A · CANVAS SPLIT</div>
+  </section>
+
+  <section class="mockup" id="variant-b">
+    <header class="editor-top"><div class="brand"></div><div class="workflow-title">Customer Data Pipeline</div><div class="top-pills"><span>Global</span><span>No timeout</span><span>Runs</span></div></header>
+    <aside class="editor-left">
+      <div class="panel-title">NODES <span style="float:right">298</span></div><div class="fake-search">⌕&nbsp;&nbsp;Search nodes…</div>
+      <div style="margin-top:14px">
+        <div class="category" style="--c:#4c9eff"><span><i></i>Triggers</span><small>13</small></div>
+        <div class="category" style="--c:#2f9bff"><span><i></i>API</span><small>4</small></div>
+        <div class="category" style="--c:#b48bff"><span><i></i>Logic</span><small>11</small></div>
+        <div class="category" style="--c:#24c78e"><span><i></i>AI</span><small>45</small></div>
+        <div class="category" style="--c:#37c8a8"><span><i></i>Data</span><small>20</small></div>
+        <div class="category" style="--c:#3fd0e0"><span><i></i>Transform</span><small>22</small></div>
+        <div class="category" style="--c:#ff6f91"><span><i></i>Integrations</span><small>97</small></div>
+      </div>
+    </aside>
+    <main class="editor-canvas canvas-grid"><div class="workflow b-workflow"></div></main>
+    <aside class="editor-right"><div class="panel-title">INSPECTOR</div><div class="inspector-stat"><div><b>6</b><small>NODES</small></div><div><b>Idle</b><small>STATUS</small></div><div><b>Saved</b><small>CHANGES</small></div></div><h3 style="margin-top:24px;font-size:14px">No node selected</h3><p style="color:#8390a4;font-size:12px;line-height:1.5">Select a node to edit parameters or inspect port data.</p></aside>
+    <div class="editor-scrim"></div>
+    <div class="b-modal"><div class="auth-card"><div class="brand mini-brand"></div><div class="auth-content"></div></div></div>
+    <div class="concept-tag" style="z-index:10">CONCEPT B · EDITOR GATEWAY</div>
+  </section>
+
+  <section class="mockup" id="variant-c">
+    <aside class="c-panel"><div class="brand"></div><div class="c-form auth-content light-auth"></div><div class="c-footer">Secure workspace access · Noodle 2026</div></aside>
+    <main class="c-canvas canvas-grid"><div class="c-caption"><div class="eyebrow">NOODLE WORKFLOW EDITOR</div><h2>Pick up where your<br/>flow left off.</h2><p>Real nodes. Real connections. One secure workspace.</p></div><div class="workflow c-workflow"></div><div class="run-pill">▶&nbsp;&nbsp;Execute Workflow</div></main>
+    <div class="concept-tag">CONCEPT C · PRODUCT PANEL</div>
+  </section>
+
+  <section class="mockup home-shell" id="variant-d">
+    <header class="sample-header"><div class="brand"></div><div class="header-proof"><span>SELF-HOSTABLE</span><span>PYTHON-NATIVE</span><b>NO TELEMETRY</b></div></header>
+    <div class="home-copy d-copy">
+      <div class="version-pill"><i></i> V1 · SELF-HOSTABLE · AI-NATIVE</div>
+      <h1>Workflow automation<br/>that speaks <span class="python-grad">Python</span>.</h1>
+      <svg class="strand-underline" viewBox="0 0 262 18" fill="none"><path d="M3 11C54 2 90 15 137 9S220 13 259 6" stroke="#2e72c5" stroke-width="3" stroke-linecap="round"/></svg>
+      <p class="sub">Drag-and-drop a canvas where <b>every node is real Python</b> — pandas, boto3, and your internal libraries, all running in the same interpreter that executes the workflow.</p>
+      <div class="proof-list">
+        <span><svg viewBox="0 0 20 20" fill="none"><path d="m4 10 4 4 8-9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Real Python nodes</span>
+        <span><svg viewBox="0 0 20 20" fill="none"><path d="m4 10 4 4 8-9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Environment-aware runtime</span>
+        <span><svg viewBox="0 0 20 20" fill="none"><path d="m4 10 4 4 8-9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Production controls</span>
+      </div>
+      <div class="home-note">Runs on <b>your infrastructure</b> · FastAPI · PostgreSQL · Redis · React Flow<br/>One <b>docker compose up</b> away.</div>
+    </div>
+    <div class="sample-auth d-auth"><div class="auth-card auth-content"></div></div>
+    <div class="concept-tag">SAMPLE D · HOMEPAGE HERO</div>
+  </section>
+
+  <section class="mockup home-shell" id="variant-e">
+    <header class="sample-header"><div class="brand"></div><div class="header-proof"><span>REAL PYTHON</span><span>YOUR INFRASTRUCTURE</span><b>SECURE WORKSPACE</b></div></header>
+    <div class="e-copy"><div class="eyebrow">VISUAL WORKFLOWS · REAL PYTHON</div><h1>Build visually. Keep the code.</h1><p>Every node stays readable, testable, and yours.</p></div>
+    <div class="e-demo">
+      <div class="demo-bar"><i></i><i></i><i></i><span class="demo-title">Noodle / Customer data pipeline / Draft</span></div>
+      <div class="e-canvas canvas-grid"><div class="workflow e-workflow"></div></div>
+      <aside class="python-panel"><div class="eyebrow">SELECTED NODE</div><h3>Records To Dataset</h3><div class="codebox"><span class="kw">@node</span><br/><span class="kw">def</span> <span class="fn">records_to_dataset</span>(<br/>&nbsp;&nbsp;rows: list[dict]<br/>):<br/>&nbsp;&nbsp;<span class="kw">return</span> Dataset(<span class="str">rows</span>)</div><div class="python-facts"><div><b>Python 3.12</b>env-prod</div><div><b>Inspectable</b>No hidden runtime layer</div></div></aside>
+    </div>
+    <div class="sample-auth e-auth"><div class="auth-card auth-content"></div></div>
+    <div class="concept-tag">SAMPLE E · PRODUCT PROOF</div>
+  </section>
+
+  <section class="mockup home-shell" id="variant-f">
+    <header class="sample-header"><div class="brand"></div><div class="header-proof"><span>SELF-HOSTABLE</span><span>AIR-GAP FRIENDLY</span><b>NO USAGE METER</b></div></header>
+    <div class="f-copy">
+      <div class="eyebrow">WHY TEAMS PICK NOODLE</div>
+      <h1>Built for teams whose stack is already Python.</h1>
+      <p>Visual automation without giving up the runtime your team trusts.</p>
+      <div class="benefit-grid">
+        <article class="benefit"><div class="benefit-icon"><svg viewBox="0 0 24 24" fill="none"><path d="m8 6-5 6 5 6M16 6l5 6-5 6M14 4l-4 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div><h3>Real Python nodes</h3><p>Decorate a function with <span style="font-family:var(--font-mono);color:#a9c6e8">@node</span> and it appears on the canvas. No wrappers or glue.</p></article>
+        <article class="benefit"><div class="benefit-icon"><svg viewBox="0 0 24 24" fill="none"><path d="M4 6h16M7 3v6M17 3v6M5 12h14v8H5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></div><h3>Your environments</h3><p>Run pandas, boto3, private packages, and internal libraries in isolated Python environments.</p></article>
+        <article class="benefit"><div class="benefit-icon"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3 20 6v6c0 4.5-3 7.5-8 9-5-1.5-8-4.5-8-9V6l8-3Z" stroke="currentColor" stroke-width="1.7"/><path d="m8.5 12 2.2 2.2 4.8-5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></div><h3>Production control</h3><p>RBAC, scoped credentials, audit logs, versioned releases, schedules, and webhooks.</p></article>
+      </div>
+      <div class="infra-band"><strong>YOUR INFRASTRUCTURE</strong><span>No telemetry</span><span>Offline license checks</span><span>Workflows keep running</span></div>
+    </div>
+    <div class="sample-auth f-auth"><div class="auth-card auth-content"></div></div>
+    <div class="concept-tag">SAMPLE F · BENEFIT LED</div>
+  </section>
+
+  <template id="logo-template">
+    <svg class="brand-mark" viewBox="0 0 48 32" fill="none" aria-hidden="true"><path d="M3 25C9 5 18 5 23 17S36 30 44 7" stroke="#4c9eff" stroke-width="4" stroke-linecap="round"/><circle cx="3" cy="25" r="4" fill="#4c9eff"/><circle cx="44" cy="7" r="4" fill="#79b6ff"/></svg><span class="brand-name">noodle</span>
+  </template>
+
+  <template id="auth-template">
+    <h1>Welcome back</h1><p class="lead">Sign in to continue to your workspace.</p>
+    <div class="field"><label>Email address</label><div class="input-wrap"><input value="you@example.com" readonly /></div></div>
+    <div class="field is-focused"><label>Password</label><div class="input-wrap"><input type="password" value="password" readonly/><svg class="eye" viewBox="0 0 24 24" fill="none"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/></svg></div></div>
+    <button class="primary">Sign in <span>→</span></button>
+    <div class="access-note"><svg class="shield" viewBox="0 0 24 24" fill="none"><path d="M12 2 20 5.5v6.2c0 5-3.2 8.5-8 10.3-4.8-1.8-8-5.3-8-10.3V5.5L12 2Z" stroke="currentColor" stroke-width="1.6"/><path d="m8.7 12.1 2.1 2.1 4.6-4.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><div><strong>Registration is invite-only</strong><p>Ask your workspace owner or admin for access.</p></div></div>
+    <div class="secure-row"><span>SECURE SESSION</span><span>ENCRYPTED</span></div>
+  </template>
+
+  <script>
+    const logo = document.querySelector('#logo-template').content;
+    document.querySelectorAll('.brand').forEach((el) => el.append(logo.cloneNode(true)));
+    const auth = document.querySelector('#auth-template').content;
+    document.querySelectorAll('.auth-content').forEach((el) => el.append(auth.cloneNode(true)));
+
+    const nodes = [
+      { id:'manual', x:18, y:168, label:'Manual Trigger', cat:'#4c9eff', icon:'manual', out:'data' },
+      { id:'code', x:166, y:168, label:'Code', cat:'#3fd0e0', icon:'code', in:'data', out:'data' },
+      { id:'records', x:314, y:168, label:'Records To Dataset', cat:'#37c8a8', icon:'table', in:'data', out:'dataset' },
+      { id:'filter', x:462, y:84, label:'Dataset Filter', cat:'#37c8a8', icon:'filter', in:'dataset', out:'dataset' },
+      { id:'limit', x:610, y:84, label:'Dataset Limit', cat:'#37c8a8', icon:'hash', in:'dataset', out:'dataset' },
+      { id:'back', x:610, y:252, label:'Dataset To Records', cat:'#37c8a8', icon:'list', in:'dataset', out:'data' },
+    ];
+    const links = [['manual','code'],['code','records'],['records','filter'],['filter','limit'],['limit','back']];
+    function iconMarkup(type) {
+      if (type === 'manual') return '<svg class="node-icon" viewBox="0 0 26 26" fill="none"><path d="M7 4.5 21 13 7 21.5V4.5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>';
+      if (type === 'code') return '<span class="node-icon-text">&lt;/&gt;</span>';
+      if (type === 'table') return '<svg class="node-icon" viewBox="0 0 26 26" fill="none"><rect x="4" y="6" width="18" height="14" rx="1" stroke="currentColor" stroke-width="1.6"/><path d="M4 10h18M9 10v10M9 14h13M9 17h13" stroke="currentColor" stroke-width="1.3"/></svg>';
+      if (type === 'filter') return '<svg class="node-icon" viewBox="0 0 26 26" fill="none"><path d="M4 5h18l-7 8v6l-4 2v-8L4 5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>';
+      if (type === 'hash') return '<svg class="node-icon" viewBox="0 0 26 26" fill="none"><path d="m9 4-2 18M18 4l-2 18M4 10h18M3 17h18" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
+      return '<svg class="node-icon" viewBox="0 0 26 26" fill="none"><path d="M5 7h16M5 13h16M5 19h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+    }
+    function renderWorkflow(el) {
+      const byId = Object.fromEntries(nodes.map(n => [n.id,n]));
+      const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+      svg.setAttribute('class','edges'); svg.setAttribute('viewBox','0 0 760 420');
+      links.forEach(([a,b]) => {
+        const from=byId[a], to=byId[b]; const x1=from.x+94, y1=from.y+36, x2=to.x+22, y2=to.y+36;
+        const p=document.createElementNS('http://www.w3.org/2000/svg','path');
+        const bend=Math.max(48,Math.abs(x2-x1)*.5);
+        p.setAttribute('d',`M${x1} ${y1} C${x1+bend} ${y1}, ${x2-bend} ${y2}, ${x2} ${y2}`); p.setAttribute('class','edge'); svg.append(p);
+      });
+      el.append(svg);
+      nodes.forEach(n => {
+        const node=document.createElement('div'); node.className='node'; node.style.cssText=`left:${n.x}px;top:${n.y}px;--cat:${n.cat}`;
+        node.innerHTML=`<div class="node-tile">${n.in?`<i class="port in ${n.in}"></i>`:''}${iconMarkup(n.icon)}${n.out?`<i class="port out ${n.out}"></i>`:''}</div><div class="node-label">${n.label}</div>`;
+        el.append(node);
+      });
+    }
+    document.querySelectorAll('.workflow').forEach(renderWorkflow);
+    const requested = new URLSearchParams(location.search).get('variant') || 'a';
+    document.querySelectorAll('.mockup').forEach((el) => { el.hidden = el.id !== `variant-${requested}`; });
+  </script>
+</body>
+</html>

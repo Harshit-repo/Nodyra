@@ -2,12 +2,10 @@
 
 from typing import Any
 
+from noodle.engine.types import GraphError
 from noodle.models import PortSpec, WorkflowGraph
 from noodle.node_tool import TOOL_MODE_OUTPUT
 from noodle.sdk import NodeRegistry
-
-from noodle.engine.types import GraphError
-
 
 AI_PORT_KINDS: frozenset[str] = frozenset(
     {

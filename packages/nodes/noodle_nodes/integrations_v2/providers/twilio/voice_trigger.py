@@ -8,6 +8,12 @@ import hmac
 import urllib.parse
 from typing import Any
 
+from noodle_nodes.integrations_v2.providers.twilio.operations import (
+    _account_sid,
+    _credentials_dict,
+    _credentials_param,
+    _transport,
+)
 from noodle_nodes.integrations_v2.registry import register_provider_trigger
 from noodle_nodes.integrations_v2.specs import (
     OperationParamSpec,
@@ -17,13 +23,6 @@ from noodle_nodes.integrations_v2.specs import (
     ProviderTriggerRequest,
     ProviderTriggerSpec,
     ProviderTriggerSubscription,
-)
-
-from noodle_nodes.integrations_v2.providers.twilio.operations import (
-    _account_sid,
-    _credentials_dict,
-    _credentials_param,
-    _transport,
 )
 
 TWILIO_API_BASE = "https://api.twilio.com"
@@ -178,7 +177,9 @@ def deactivate_voice_webhook(context: ProviderTriggerDeactivationContext) -> Non
     )
 
 
-def _validate_twilio_signature(auth_token: str, url: str, params: dict[str, Any], signature: str) -> bool:
+def _validate_twilio_signature(
+    auth_token: str, url: str, params: dict[str, Any], signature: str
+) -> bool:
     """Validate a Twilio webhook signature using HMAC-SHA1."""
     s = url + "".join(f"{k}{v}" for k, v in sorted(params.items()))
     mac = hmac.new(auth_token.encode("utf-8"), s.encode("utf-8"), hashlib.sha1).digest()
@@ -234,7 +235,9 @@ def handle_voice_event(
             response_status=500,
         )
 
-    if not signature or not _validate_twilio_signature(auth_token, callback_url, form_params, signature):
+    if not signature or not _validate_twilio_signature(
+        auth_token, callback_url, form_params, signature
+    ):
         return ProviderTriggerEvent(
             payload=None,
             response_body={"message": "Twilio webhook signature verification failed"},

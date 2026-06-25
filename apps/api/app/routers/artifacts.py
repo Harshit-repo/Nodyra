@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 import logging
 import uuid
@@ -17,7 +18,7 @@ from app.services.artifact_backends import (
     _resolve_local_path,
     get_backend,
 )
-from app.services.artifacts import delete_artifact_files
+from app.services.artifacts import atomic_write_bytes, delete_artifact_files
 from app.services.datasets_query import DatasetQueryError, run_dataset_query
 from app.tenancy import DEFAULT_ORG_ID, active_org_id
 
@@ -199,9 +200,9 @@ async def upload_artifact(
     _: None = Depends(require_permission("artifact:write")),
 ) -> ArtifactInfo:
     """Upload a file from the browser and store it as a run-less artifact."""
-    content = await file.read()
-    max_bytes: int = getattr(settings, "max_upload_size_bytes", 52_428_800)
-    if len(content) > max_bytes:
+    max_bytes = settings.max_artifact_bytes
+    content = await file.read(max_bytes + 1 if max_bytes > 0 else -1)
+    if max_bytes > 0 and len(content) > max_bytes:
         raise HTTPException(
             status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             f"File exceeds maximum upload size of {max_bytes} bytes",
@@ -220,8 +221,7 @@ async def upload_artifact(
     org_segment = active_org_id() or DEFAULT_ORG_ID
     storage_key = f"{org_segment}/uploads/{artifact_id}/{filename}"
     artifact_path = _resolve_local_path(storage_key)
-    artifact_path.parent.mkdir(parents=True, exist_ok=True)
-    artifact_path.write_bytes(content)
+    await asyncio.to_thread(atomic_write_bytes, artifact_path, content)
 
     backend = get_backend()
     storage_backend = "local"

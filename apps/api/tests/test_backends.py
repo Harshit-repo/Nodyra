@@ -1,9 +1,9 @@
 """Unit tests for the backend dispatcher and all backend classes."""
+
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -18,26 +18,31 @@ def _make_env(backend: str):
 # Dispatcher tests
 # ---------------------------------------------------------------------------
 
+
 def test_get_backend_returns_venv_backend() -> None:
     from app.services.backends import get_backend
     from app.services.backends.venv import VenvBackend
+
     assert isinstance(get_backend(_make_env("venv")), VenvBackend)
 
 
 def test_get_backend_returns_conda_backend() -> None:
     from app.services.backends import get_backend
     from app.services.backends.conda import CondaBackend
+
     assert isinstance(get_backend(_make_env("conda")), CondaBackend)
 
 
 def test_get_backend_returns_pixi_backend() -> None:
     from app.services.backends import get_backend
     from app.services.backends.pixi import PixiBackend
+
     assert isinstance(get_backend(_make_env("pixi")), PixiBackend)
 
 
 def test_get_backend_raises_for_unknown() -> None:
     from app.services.backends import get_backend
+
     with pytest.raises(ValueError, match="unknown_backend"):
         get_backend(_make_env("unknown_backend"))
 
@@ -46,8 +51,10 @@ def test_get_backend_raises_for_unknown() -> None:
 # VenvBackend tests
 # ---------------------------------------------------------------------------
 
+
 def test_venv_backend_python_path_posix() -> None:
     from app.services.backends.venv import VenvBackend
+
     b = VenvBackend()
     with patch("sys.platform", "linux"):
         with patch("app.services.backends.venv.venv_dir", return_value=Path("/fake")):
@@ -58,6 +65,7 @@ def test_venv_backend_python_path_posix() -> None:
 
 def test_venv_backend_python_path_win32() -> None:
     from app.services.backends.venv import VenvBackend
+
     b = VenvBackend()
     with patch("sys.platform", "win32"):
         with patch("app.services.backends.venv.venv_dir", return_value=Path("/fake")):
@@ -93,6 +101,7 @@ async def test_venv_backend_build_passes_index_urls() -> None:
 # ---------------------------------------------------------------------------
 # CondaBackend tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_conda_build_calls_micromamba_with_channels(tmp_path) -> None:
@@ -159,6 +168,7 @@ async def test_conda_build_returns_error_on_nonzero_exit(tmp_path) -> None:
 
 def test_conda_python_path_posix(tmp_path) -> None:
     from app.services.backends.conda import CondaBackend
+
     b = CondaBackend()
     with patch("sys.platform", "linux"):
         with patch("app.services.backends.conda.venv_dir", return_value=tmp_path):
@@ -168,6 +178,7 @@ def test_conda_python_path_posix(tmp_path) -> None:
 
 def test_conda_python_path_win32(tmp_path) -> None:
     from app.services.backends.conda import CondaBackend
+
     b = CondaBackend()
     with patch("sys.platform", "win32"):
         with patch("app.services.backends.conda.venv_dir", return_value=tmp_path):
@@ -179,8 +190,10 @@ def test_conda_python_path_win32(tmp_path) -> None:
 # PixiBackend tests
 # ---------------------------------------------------------------------------
 
+
 def test_pixi_split_packages_routes_pypi_suffix() -> None:
     from app.services.backends.pixi import _split_packages
+
     conda, pypi = _split_packages(["numpy", "httpx @ pypi", "pandas", "mylib@pypi"])
     assert set(conda) == {"numpy", "pandas"}
     assert set(pypi) == {"httpx", "mylib"}
@@ -188,6 +201,7 @@ def test_pixi_split_packages_routes_pypi_suffix() -> None:
 
 def test_pixi_split_packages_no_pypi() -> None:
     from app.services.backends.pixi import _split_packages
+
     conda, pypi = _split_packages(["numpy", "scipy"])
     assert set(conda) == {"numpy", "scipy"}
     assert pypi == []
@@ -229,12 +243,15 @@ def test_pixi_write_toml_no_pypi_packages(tmp_path) -> None:
     content = toml_path.read_text()
 
     assert "pandas" in content
-    conda_section = content.split("[pypi-dependencies]")[0] if "[pypi-dependencies]" in content else content
+    conda_section = (
+        content.split("[pypi-dependencies]")[0] if "[pypi-dependencies]" in content else content
+    )
     assert "pandas" in conda_section
 
 
 def test_pixi_python_path_posix(tmp_path) -> None:
     from app.services.backends.pixi import PixiBackend
+
     b = PixiBackend()
     with patch("sys.platform", "linux"):
         with patch("app.services.backends.pixi.venv_dir", return_value=tmp_path):
@@ -245,6 +262,7 @@ def test_pixi_python_path_posix(tmp_path) -> None:
 
 def test_pixi_python_path_win32(tmp_path) -> None:
     from app.services.backends.pixi import PixiBackend
+
     b = PixiBackend()
     with patch("sys.platform", "win32"):
         with patch("app.services.backends.pixi.venv_dir", return_value=tmp_path):
@@ -289,8 +307,6 @@ async def test_pixi_build_calls_pixi_install(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_pixi_build_incremental_add_when_env_exists(tmp_path) -> None:
     """When env already built and only new packages added, uses pixi add not install."""
-    import io
-    import tomllib
     from app.services.backends.pixi import PixiBackend
 
     env_dir = tmp_path / "env"
@@ -311,7 +327,7 @@ async def test_pixi_build_incremental_add_when_env_exists(tmp_path) -> None:
     env = MagicMock()
     env.id = "test"
     env.python_version = "3.12"
-    env.packages = ["numpy", "pandas"]   # pandas is new
+    env.packages = ["numpy", "pandas"]  # pandas is new
     env.backend_config = {"channels": ["conda-forge"]}
 
     calls: list[tuple] = []
@@ -359,7 +375,7 @@ async def test_pixi_build_full_rebuild_on_removal(tmp_path) -> None:
     env = MagicMock()
     env.id = "test"
     env.python_version = "3.12"
-    env.packages = ["numpy"]   # pandas removed
+    env.packages = ["numpy"]  # pandas removed
     env.backend_config = {"channels": ["conda-forge"]}
 
     calls: list[tuple] = []

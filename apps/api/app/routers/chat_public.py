@@ -55,10 +55,11 @@ async def _load_graph_unscoped(workflow_id: str) -> dict | None:
                 .where(Workflow.id == workflow_id)
             )
         ).first()
-        if wf is None:
+        if wf is None or not wf.active:
             return None
-        if getattr(wf, "draft_graph", None):
-            return wf.draft_graph
+        # Public traffic is a production surface. Drafts may contain unreviewed
+        # code/configuration and must never become externally executable before
+        # the explicit publish step.
         if wf.versions:
             return wf.versions[-1].graph
         return None
@@ -116,7 +117,7 @@ async def public_chat_turn(
     try:
         with run_as_system():
             result = await run_chat_turn(
-                workflow_id, body.message, body.session_id, prefer_draft=True
+                workflow_id, body.message, body.session_id, prefer_draft=False
             )
     except WorkflowNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

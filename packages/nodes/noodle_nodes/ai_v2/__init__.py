@@ -22,10 +22,10 @@ Submodules:
 
 from noodle_nodes.ai_v2 import agent_tools as agent_tools
 from noodle_nodes.ai_v2 import agents as agents
-from noodle_nodes.ai_v2 import mcp as mcp
 from noodle_nodes.ai_v2 import document_loaders as document_loaders
 from noodle_nodes.ai_v2 import embeddings as embeddings
 from noodle_nodes.ai_v2 import guardrails as guardrails
+from noodle_nodes.ai_v2 import mcp as mcp
 from noodle_nodes.ai_v2 import memory as memory
 from noodle_nodes.ai_v2 import model_options as model_options
 from noodle_nodes.ai_v2 import models as models

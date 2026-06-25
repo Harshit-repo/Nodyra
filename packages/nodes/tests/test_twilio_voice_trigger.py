@@ -1,4 +1,5 @@
 """Tests for Twilio Voice Call Trigger (twilio_voice_call_trigger)."""
+
 from __future__ import annotations
 
 import base64
@@ -10,9 +11,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from noodle_nodes.integrations_v2.providers.twilio.voice_trigger import (
-    TWILIO_VOICE_CALL_TRIGGER_SPEC,
-    _parse_form_body,
-    _validate_twilio_signature,
     activate_voice_webhook,
     deactivate_voice_webhook,
     handle_voice_event,
@@ -44,7 +42,9 @@ def _make_activation_context(**override) -> ProviderTriggerActivationContext:
     )
 
 
-def _make_signed_request(auth_token: str, url: str, params: dict[str, str]) -> ProviderTriggerRequest:
+def _make_signed_request(
+    auth_token: str, url: str, params: dict[str, str]
+) -> ProviderTriggerRequest:
     """Create a mock request with a valid Twilio signature."""
     s = url + "".join(f"{k}{v}" for k, v in sorted(params.items()))
     mac = hmac.new(auth_token.encode(), s.encode(), hashlib.sha1).digest()
@@ -62,11 +62,10 @@ def _make_signed_request(auth_token: str, url: str, params: dict[str, str]) -> P
 # 1. activate sets voice URL
 # ---------------------------------------------------------------------------
 
+
 def test_activate_sets_voice_url():
     ctx = _make_activation_context()
-    list_response = {
-        "incoming_phone_numbers": [{"sid": _PN_SID, "voice_url": ""}]
-    }
+    list_response = {"incoming_phone_numbers": [{"sid": _PN_SID, "voice_url": ""}]}
     with patch(
         "noodle_nodes.integrations_v2.providers.twilio.voice_trigger._transport"
     ) as mock_transport_fn:
@@ -90,6 +89,7 @@ def test_activate_sets_voice_url():
 # 2. activate raises if phone number not found
 # ---------------------------------------------------------------------------
 
+
 def test_activate_raises_if_phone_not_found():
     ctx = _make_activation_context()
     with patch(
@@ -106,6 +106,7 @@ def test_activate_raises_if_phone_not_found():
 # ---------------------------------------------------------------------------
 # 3. deactivate clears voice URL
 # ---------------------------------------------------------------------------
+
 
 def test_deactivate_clears_voice_url():
     ctx = ProviderTriggerDeactivationContext(
@@ -133,6 +134,7 @@ def test_deactivate_clears_voice_url():
 # 4. handle_event returns payload on valid signature
 # ---------------------------------------------------------------------------
 
+
 def test_handle_event_returns_payload_on_valid_signature():
     call_params = {
         "CallSid": "CA123",
@@ -156,6 +158,7 @@ def test_handle_event_returns_payload_on_valid_signature():
 # 5. handle_event rejects invalid signature
 # ---------------------------------------------------------------------------
 
+
 def test_handle_event_rejects_invalid_signature():
     call_params = {"CallSid": "CA123", "CallStatus": "ringing"}
     body_str = urllib.parse.urlencode(call_params)
@@ -176,6 +179,7 @@ def test_handle_event_rejects_invalid_signature():
 # ---------------------------------------------------------------------------
 # 6. handle_event skips completed calls
 # ---------------------------------------------------------------------------
+
 
 def test_handle_event_skips_completed_calls():
     """Completed calls are skipped after a valid signature check."""
@@ -211,6 +215,8 @@ def test_handle_event_fails_closed_when_callback_url_missing():
 # Bonus: registration sanity check
 # ---------------------------------------------------------------------------
 
+
 def test_trigger_is_registered():
     from noodle_nodes.integrations_v2.registry import is_registered_provider_trigger
+
     assert is_registered_provider_trigger("twilio_voice_call_trigger")

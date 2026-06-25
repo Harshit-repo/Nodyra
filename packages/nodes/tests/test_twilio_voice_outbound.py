@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from noodle_nodes.http_security import UnsafeHttpTargetError
 from noodle_nodes.integrations_v2.providers.twilio.voice_outbound import (
     twilio_call_status_handler,
     twilio_outbound_call,
 )
-from noodle_nodes.http_security import UnsafeHttpTargetError
 
 CREDS = {"account_sid": "ACtest", "auth_token": "token123"}
 
@@ -51,7 +52,6 @@ def test_outbound_call_with_twiml_url():
 
     # Verify transport was called with Url key in data
     call_kwargs = transport.request.call_args
-    data = call_kwargs.kwargs.get("data") or call_kwargs[1].get("data") or call_kwargs[0][3] if len(call_kwargs[0]) > 3 else {}
     # More robust: check keyword argument named 'data'
     _, kw = call_kwargs
     assert "Url" in kw["data"]

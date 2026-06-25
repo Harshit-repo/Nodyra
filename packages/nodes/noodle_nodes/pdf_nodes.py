@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 from noodle.sdk import node
@@ -214,7 +215,9 @@ def pdf_split(
             out_doc = fitz.open()
             try:
                 out_doc.insert_pdf(doc, from_page=start, to_page=end - 1)
-                filename = naming.replace("{name}", base_name).replace("{page}", f"{page_num + 1:04d}")
+                filename = naming.replace("{name}", base_name).replace(
+                    "{page}", f"{page_num + 1:04d}"
+                )
                 out_path = os.path.join(output_dir, filename)
                 out_doc.save(out_path)
                 output_files.append(os.path.abspath(out_path))

@@ -42,7 +42,9 @@ def _credentials_dict(value: Any) -> dict[str, str]:
 
 def _transport(credentials: Any) -> ProviderTransport:
     creds = _credentials_dict(credentials)
-    server_url = str(creds.get("server_url", GITLAB_API_DEFAULT_URL) or GITLAB_API_DEFAULT_URL).rstrip("/")
+    server_url = str(
+        creds.get("server_url", GITLAB_API_DEFAULT_URL) or GITLAB_API_DEFAULT_URL
+    ).rstrip("/")
     access_token = str(creds.get("access_token") or "")
     if not access_token:
         raise ValueError("gitlab: access_token is required")

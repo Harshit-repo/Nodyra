@@ -177,9 +177,7 @@ LINEAR_LIST_TEAMS_SPEC = OperationSpec(
     description="List Linear teams.",
     icon="brand:linear",
     tool_side_effecting=False,
-    params=(
-        _credentials_param(),
-    ),
+    params=(_credentials_param(),),
 )
 
 LINEAR_ADD_COMMENT_SPEC = OperationSpec(
@@ -281,7 +279,9 @@ def create_issue(
     if assignee_id:
         variables["input"]["assigneeId"] = assignee_id
     if labels:
-        variables["input"]["labelIds"] = [str(l) for l in labels if str(l).strip()]
+        variables["input"]["labelIds"] = [
+            str(label) for label in labels if str(label).strip()
+        ]
     result = _transport(credentials).request(
         "POST",
         "",

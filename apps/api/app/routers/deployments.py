@@ -244,6 +244,7 @@ async def update_deployment(
     deployment_id: str,
     body: DeploymentUpdate,
     session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     deployment = await _load(session, deployment_id)
     if body.name is not None:
@@ -311,6 +312,15 @@ async def update_deployment(
         deployment.error_workflow_id = body.error_workflow_id
     if body.error_alerts is not None:
         deployment.error_alerts = body.error_alerts
+    await log_audit(
+        session,
+        "update",
+        "deployment",
+        deployment.id,
+        deployment.name,
+        actor_id=actor.id if actor else None,
+        actor_email=actor.email if actor else None,
+    )
     await session.commit()
     await session.refresh(deployment)
     return await _info(session, deployment)

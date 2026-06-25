@@ -86,6 +86,36 @@ async def _setup() -> None:
             "('wf-a', 'a-flow', false, 1, '{}', true, 'org-a'), "
             "('wf-b', 'b-flow', false, 1, '{}', true, 'org-b')"
         )
+        await db.execute(
+            "INSERT INTO folders (id, org_id, name) VALUES "
+            "('folder-a', 'org-a', 'A folder'), "
+            "('folder-b', 'org-b', 'B folder')"
+        )
+        await db.execute(
+            "INSERT INTO runner_pools (id, org_id, name) VALUES "
+            "('pool-a', 'org-a', 'A pool'), ('pool-b', 'org-b', 'B pool')"
+        )
+        await db.execute(
+            "INSERT INTO runners (id, pool_id, org_id, name) VALUES "
+            "('runner-a', 'pool-a', 'org-a', 'A runner'), "
+            "('runner-b', 'pool-b', 'org-b', 'B runner')"
+        )
+        await db.execute(
+            "INSERT INTO runs "
+            "(id, workflow_id, workflow_version, mode, status, trigger_type, org_id) "
+            "VALUES "
+            "('run-a', 'wf-a', 1, 'manual', 'success', 'manual', 'org-a'), "
+            "('run-b', 'wf-b', 1, 'manual', 'success', 'manual', 'org-b')"
+        )
+        await db.execute(
+            "INSERT INTO artifacts "
+            "(id, run_id, node_id, name, kind, content_type, size_bytes, "
+            " storage_backend, storage_key, metadata, org_id) VALUES "
+            "('artifact-a', 'run-a', 'n', 'a', 'binary', "
+            " 'application/octet-stream', 1, 'local', 'a', '{}', 'org-a'), "
+            "('artifact-b', 'run-b', 'n', 'b', 'binary', "
+            " 'application/octet-stream', 1, 'local', 'b', '{}', 'org-b')"
+        )
     finally:
         await db.close()
 
@@ -175,6 +205,31 @@ async def test_guc_dies_with_the_transaction(pg):
         await conn.close()
 
 
+async def test_new_direct_org_policies_cover_folders_artifacts_and_runners(pg):
+    """New tenant tables and migrated direct-org children stay RLS scoped."""
+    conn = await asyncpg.connect(pg["app"])
+    try:
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('app.current_org', 'org-a', true)")
+            expected = {
+                "folders": "folder-a",
+                "artifacts": "artifact-a",
+                "runners": "runner-a",
+            }
+            for table, row_id in expected.items():
+                rows = await conn.fetch(f"SELECT id FROM {table} ORDER BY id")
+                assert [row["id"] for row in rows] == [row_id]
+
+            assert (
+                await conn.execute(
+                    "UPDATE artifacts SET name = 'stolen' WHERE id = 'artifact-b'"
+                )
+                == "UPDATE 0"
+            )
+    finally:
+        await conn.close()
+
+
 async def test_superuser_bypasses_rls_so_production_must_not_use_one(pg):
     """Codifies the deployment requirement: a superuser connection ignores
     RLS no matter what the GUC says. docs/deployment.md must require a
@@ -222,3 +277,41 @@ async def test_rls_catches_orm_filter_bypass(pg, monkeypatch):
     finally:
         current_org_id.reset(token)
         await engine.dispose()
+
+
+async def test_multi_tenant_startup_rejects_rls_bypass_role(pg, monkeypatch):
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    from app.config import settings
+    from app.tenancy import assert_safe_postgres_role
+
+    monkeypatch.setattr(settings, "multi_tenancy_enabled", True)
+    app_engine = create_async_engine(
+        pg["app"].replace("postgresql://", "postgresql+asyncpg://"),
+        poolclass=NullPool,
+    )
+    try:
+        await assert_safe_postgres_role(app_engine)
+    finally:
+        await app_engine.dispose()
+
+    admin = await asyncpg.connect(pg["admin"])
+    try:
+        is_super = await admin.fetchval(
+            "SELECT rolsuper FROM pg_roles WHERE rolname = current_user"
+        )
+    finally:
+        await admin.close()
+    if not is_super:
+        pytest.skip("admin URL is not a superuser; rejection case n/a")
+
+    admin_engine = create_async_engine(
+        pg["admin"].replace("postgresql://", "postgresql+asyncpg://"),
+        poolclass=NullPool,
+    )
+    try:
+        with pytest.raises(RuntimeError, match="NOBYPASSRLS"):
+            await assert_safe_postgres_role(admin_engine)
+    finally:
+        await admin_engine.dispose()

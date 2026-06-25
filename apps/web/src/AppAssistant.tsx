@@ -12,6 +12,7 @@ import { useNavigate } from "react-router-dom";
 
 import { api } from "./api";
 import { LLM_PROVIDER_VARIANTS } from "./llmProviders";
+import { safeGetItem, safeSetItem } from "./safeStorage";
 import type { AiWorkflowDraftResponse } from "./types";
 
 interface AssistantMessage {
@@ -36,19 +37,11 @@ const PROVIDER_KEY = "noodle.assistant.provider";
 const MODEL_KEY = "noodle.assistant.model";
 
 function readStored(key: string): string {
-  try {
-    return window.localStorage.getItem(key) || "";
-  } catch {
-    return "";
-  }
+  return safeGetItem(key) ?? "";
 }
 
 function writeStored(key: string, value: string): void {
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {
-    /* storage unavailable — selection just won't persist */
-  }
+  safeSetItem(key, value);
 }
 
 function curatedModels(provider: string): string[] {

@@ -7,7 +7,6 @@ import shutil
 import sys
 from pathlib import Path
 
-from app.config import settings
 from app.services.backends.base import _run, local_noodle_packages, venv_dir
 
 
@@ -40,6 +39,21 @@ async def _do_build(
     packages: list[str],
     index_urls: list[str] | None = None,
 ) -> tuple[str, str]:
+    # Validate index_urls through the SSRF guard before passing them to uv.
+    # A malicious or misconfigured index URL could exfiltrate internal metadata
+    # (e.g. http://169.254.169.254/pypi redirecting to the EC2 metadata service).
+    if index_urls:
+        from noodle_nodes.http_security import assert_public_http_url
+        for url in index_urls:
+            try:
+                assert_public_http_url(url, context="package index URL")
+            except ValueError as exc:
+                return "error", (
+                    f"Package index URL is not allowed: {url!r} — {exc}. "
+                    "Private network addresses are blocked to prevent SSRF. "
+                    "Set NOODLE_ALLOW_PRIVATE_EGRESS=1 to allow private registries."
+                )
+
     target = venv_dir(env_id)
     try:
         if target.exists():

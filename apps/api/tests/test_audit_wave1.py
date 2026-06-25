@@ -5,12 +5,11 @@ Each test maps to a finding ID in docs/production-readiness-audit.md.
 
 import asyncio
 import json
-
-import pytest
 from unittest.mock import AsyncMock, patch
 
-from app.config import settings
+import pytest
 
+from app.config import settings
 
 # ---------------------------------------------------------------------------
 # SEC-2 — internal API token must be compared in constant time
@@ -206,9 +205,10 @@ async def test_runtime_run_cancels_callbacks_on_error():
 
 @pytest.mark.asyncio
 async def test_upload_artifact_rejects_path_traversal(client):
+    from sqlalchemy import select
+
     from app.models import Artifact
     from app.services import retention
-    from sqlalchemy import select
 
     malicious = "../../../../../../tmp/noodle_pwned.txt"
     r = await client.post(

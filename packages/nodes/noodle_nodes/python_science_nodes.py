@@ -11,13 +11,11 @@ from __future__ import annotations
 
 import ast
 import io
-import json
 import re
 from typing import Any
 
-from noodle.artifacts import is_artifact_ref
+from noodle.artifacts import is_artifact_ref, write_bytes
 from noodle.artifacts import read_bytes as read_artifact_bytes
-from noodle.artifacts import write_bytes
 from noodle.sdk import node
 from noodle_nodes.http_security import assert_public_http_url
 
@@ -41,7 +39,9 @@ def _to_list_of_dicts(data: Any) -> list[dict[str, Any]]:
             # columnar → row format
             keys = list(data.keys())
             length = max(len(v) for v in data.values())
-            return [{k: data[k][i] if i < len(data[k]) else None for k in keys} for i in range(length)]
+            return [
+                {k: data[k][i] if i < len(data[k]) else None for k in keys} for i in range(length)
+            ]
         return [data]
     raise ValueError(f"Expected list or dict data, got {type(data).__name__}")
 
@@ -67,6 +67,7 @@ def _coerce_value(val_str: str) -> Any:
 
 def _resolve_image_bytes(image: Any) -> bytes:
     import base64 as _b64  # noqa: PLC0415
+
     if isinstance(image, bytes):
         return image
     if is_artifact_ref(image):
@@ -75,8 +76,8 @@ def _resolve_image_bytes(image: Any) -> bytes:
         try:
             return _b64.b64decode(image)
         except Exception as exc:
-            raise ValueError(f"opencv_process: invalid image input") from exc
-    raise ValueError(f"opencv_process: image must be bytes, base64 string, or artifact ref")
+            raise ValueError("opencv_process: invalid image input") from exc
+    raise ValueError("opencv_process: image must be bytes, base64 string, or artifact ref")
 
 
 # ---------------------------------------------------------------------------
@@ -84,8 +85,16 @@ def _resolve_image_bytes(image: Any) -> bytes:
 # ---------------------------------------------------------------------------
 
 PANDAS_OPS = [
-    "filter", "select_columns", "group_by", "sort", "merge",
-    "pivot", "melt", "fill_na", "drop_duplicates", "apply",
+    "filter",
+    "select_columns",
+    "group_by",
+    "sort",
+    "merge",
+    "pivot",
+    "melt",
+    "fill_na",
+    "drop_duplicates",
+    "apply",
 ]
 FILTER_OPS = ["==", "!=", ">", "<", ">=", "<=", "contains", "is_null", "not_null", "between", "in"]
 
@@ -108,16 +117,32 @@ FILTER_OPS = ["==", "!=", ">", "<", ">=", "<=", "contains", "is_null", "not_null
     params={
         "operation": {"choices": PANDAS_OPS, "description": "DataFrame operation to perform."},
         "filter_column": {"description": "[filter] Column to filter on.", "group": "Filter"},
-        "filter_operator": {"choices": FILTER_OPS, "description": "[filter] Comparison operator.", "group": "Filter"},
+        "filter_operator": {
+            "choices": FILTER_OPS,
+            "description": "[filter] Comparison operator.",
+            "group": "Filter",
+        },
         "filter_value": {"description": "[filter] Value to compare against.", "group": "Filter"},
-        "columns": {"placeholder": "col1, col2", "description": "[select/group_by/sort] Column(s).", "group": "Group/Sort"},
-        "aggregations": {"type": "key_value", "description": "[group_by] Agg specs: {col: 'sum'}.", "group": "Group/Sort"},
+        "columns": {
+            "placeholder": "col1, col2",
+            "description": "[select/group_by/sort] Column(s).",
+            "group": "Group/Sort",
+        },
+        "aggregations": {
+            "type": "key_value",
+            "description": "[group_by] Agg specs: {col: 'sum'}.",
+            "group": "Group/Sort",
+        },
         "sort_ascending": {"description": "[sort] Sort ascending if true.", "group": "Group/Sort"},
         "pivot_index": {"description": "[pivot] Index column.", "group": "Pivot"},
         "pivot_columns": {"description": "[pivot] Columns field.", "group": "Pivot"},
         "pivot_values": {"description": "[pivot] Values field.", "group": "Pivot"},
         "fill_value": {"description": "[fill_na] Fill NA with this value.", "group": "Output"},
-        "output_as": {"choices": ["json", "dataset"], "description": "Output format.", "group": "Output"},
+        "output_as": {
+            "choices": ["json", "dataset"],
+            "description": "Output format.",
+            "group": "Output",
+        },
     },
 )
 def pandas_transform(
@@ -172,7 +197,10 @@ def pandas_transform(
             df = df[col.notna()]
         elif op == "between":
             parts = str(filter_value).split(",")
-            lo, hi = _coerce_value(parts[0].strip()), _coerce_value(parts[1].strip() if len(parts) > 1 else parts[0].strip())
+            lo, hi = (
+                _coerce_value(parts[0].strip()),
+                _coerce_value(parts[1].strip() if len(parts) > 1 else parts[0].strip()),
+            )
             df = df[col.between(lo, hi)]
         elif op == "in":
             vals = [_coerce_value(v.strip()) for v in str(filter_value).split(",")]
@@ -201,11 +229,17 @@ def pandas_transform(
 
     elif operation == "pivot":
         try:
-            df = df.pivot(index=pivot_index or None, columns=pivot_columns or None, values=pivot_values or None)
+            df = df.pivot(
+                index=pivot_index or None,
+                columns=pivot_columns or None,
+                values=pivot_values or None,
+            )
             df = df.reset_index()
             df.columns = [str(c) for c in df.columns]
         except ValueError as exc:
-            raise ValueError(f"pandas_transform pivot failed: {exc}. Try using group_by with aggregation first.") from exc
+            raise ValueError(
+                f"pandas_transform pivot failed: {exc}. Try using group_by with aggregation first."
+            ) from exc
 
     elif operation == "melt":
         id_cols = col_list
@@ -240,11 +274,17 @@ NUMPY_MATH_OPS = ["add", "sub", "mul", "div"]
     outputs=["main"],
     params={
         "operation": {"choices": NUMPY_OPS, "description": "Array operation."},
-        "math_op": {"choices": NUMPY_MATH_OPS, "description": "[math] Operation: add/sub/mul/div scalar."},
+        "math_op": {
+            "choices": NUMPY_MATH_OPS,
+            "description": "[math] Operation: add/sub/mul/div scalar.",
+        },
         "scalar": {"description": "[math/clip] Scalar value."},
         "axis": {"description": "Axis for operation. Leave empty for flattened."},
         "new_shape": {"placeholder": "3, 4", "description": "[reshape] New shape dimensions."},
-        "stats_list": {"placeholder": "mean, std, min, max", "description": "[stats] Statistics to compute."},
+        "stats_list": {
+            "placeholder": "mean, std, min, max",
+            "description": "[stats] Statistics to compute.",
+        },
         "percentile": {"description": "[stats] Percentile value (0-100)."},
         "clip_min": {"description": "[clip] Minimum clamp value."},
         "clip_max": {"description": "[clip] Maximum clamp value."},
@@ -276,9 +316,13 @@ def numpy_array_ops(
         result: dict[str, Any] = {}
         for stat in requested:
             if stat == "mean":
-                result["mean"] = float(np.mean(arr, axis=ax)) if ax is not None else float(np.mean(arr))
+                result["mean"] = (
+                    float(np.mean(arr, axis=ax)) if ax is not None else float(np.mean(arr))
+                )
             elif stat == "median":
-                result["median"] = float(np.median(arr, axis=ax) if ax is not None else np.median(arr))
+                result["median"] = float(
+                    np.median(arr, axis=ax) if ax is not None else np.median(arr)
+                )
             elif stat == "std":
                 result["std"] = float(np.std(arr, axis=ax) if ax is not None else np.std(arr))
             elif stat == "min":
@@ -332,7 +376,10 @@ def numpy_array_ops(
             raise ValueError("numpy_array_ops dot_product: input must be [array_a, array_b]")
         a, b = np.array(input[0]), np.array(input[1])
         out = np.dot(a, b)
-        return {"result": out.tolist() if hasattr(out, "tolist") else float(out), "shape": list(np.shape(out))}
+        return {
+            "result": out.tolist() if hasattr(out, "tolist") else float(out),
+            "shape": list(np.shape(out)),
+        }
 
     elif operation == "clip":
         lo = float(clip_min) if clip_min is not None else None
@@ -368,17 +415,35 @@ COLOR_SCHEMES = ["default", "viridis", "plasma", "dark", "pastel"]
     requirements=["matplotlib>=3.8"],
     inputs=["main"],
     outputs=["main"],
-    param_groups={"Axes": ["title", "x_label", "y_label"], "Style": ["color_scheme", "figsize", "dpi", "output_format"]},
+    param_groups={
+        "Axes": ["title", "x_label", "y_label"],
+        "Style": ["color_scheme", "figsize", "dpi", "output_format"],
+    },
     params={
         "chart_type": {"choices": CHART_TYPES, "description": "Chart type to generate."},
         "x_column": {"description": "Column for X axis data."},
-        "y_columns": {"placeholder": "col1, col2", "description": "Comma-separated Y axis columns."},
+        "y_columns": {
+            "placeholder": "col1, col2",
+            "description": "Comma-separated Y axis columns.",
+        },
         "title": {"description": "Chart title.", "group": "Axes"},
         "x_label": {"description": "X axis label.", "group": "Axes"},
         "y_label": {"description": "Y axis label.", "group": "Axes"},
-        "figsize": {"placeholder": "10,6", "description": "Figure size as width,height (inches).", "group": "Style"},
-        "color_scheme": {"choices": COLOR_SCHEMES, "description": "Color palette.", "group": "Style"},
-        "output_format": {"choices": ["png", "svg", "pdf"], "description": "Output image format.", "group": "Style"},
+        "figsize": {
+            "placeholder": "10,6",
+            "description": "Figure size as width,height (inches).",
+            "group": "Style",
+        },
+        "color_scheme": {
+            "choices": COLOR_SCHEMES,
+            "description": "Color palette.",
+            "group": "Style",
+        },
+        "output_format": {
+            "choices": ["png", "svg", "pdf"],
+            "description": "Output image format.",
+            "group": "Style",
+        },
         "dpi": {"description": "Output resolution (DPI).", "group": "Style"},
     },
 )
@@ -398,11 +463,13 @@ def matplotlib_chart(
     """Generate a chart using Matplotlib and return it as an artifact."""
     try:
         import matplotlib  # noqa: PLC0415
+
         matplotlib.use("Agg")  # non-interactive backend
         import matplotlib.pyplot as plt  # noqa: PLC0415
-        import matplotlib.cm as cm  # noqa: PLC0415
     except ImportError:
-        raise ImportError("matplotlib_chart requires matplotlib>=3.8. Install with: pip install matplotlib")
+        raise ImportError(
+            "matplotlib_chart requires matplotlib>=3.8. Install with: pip install matplotlib"
+        )
 
     rows = _to_list_of_dicts(input) if input is not None else []
 
@@ -422,15 +489,28 @@ def matplotlib_chart(
     y_cols = [c.strip() for c in y_columns.split(",") if c.strip()] if y_columns else []
 
     if not rows:
-        ax.text(0.5, 0.5, "No data", transform=ax.transAxes, ha="center", va="center", fontsize=14, color="gray")
+        ax.text(
+            0.5,
+            0.5,
+            "No data",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=14,
+            color="gray",
+        )
     elif chart_type == "line":
-        x_vals = [r.get(x_column, i) for i, r in enumerate(rows)] if x_column else list(range(len(rows)))
+        x_vals = (
+            [r.get(x_column, i) for i, r in enumerate(rows)] if x_column else list(range(len(rows)))
+        )
         for y_col in y_cols or (list(rows[0].keys())[1:] if len(rows[0]) > 1 else []):
             y_vals = [r.get(y_col) for r in rows]
             ax.plot(x_vals, y_vals, label=y_col)
         ax.legend() if y_cols else None
     elif chart_type == "bar":
-        x_vals = [r.get(x_column, i) for i, r in enumerate(rows)] if x_column else list(range(len(rows)))
+        x_vals = (
+            [r.get(x_column, i) for i, r in enumerate(rows)] if x_column else list(range(len(rows)))
+        )
         for y_col in y_cols or (list(rows[0].keys())[1:] if len(rows[0]) > 1 else []):
             y_vals = [r.get(y_col) for r in rows]
             ax.bar([str(x) for x in x_vals], y_vals, label=y_col)
@@ -438,7 +518,9 @@ def matplotlib_chart(
     elif chart_type == "scatter":
         if len(rows) > 10000:
             rows = rows[:10000]
-        x_vals = [r.get(x_column, i) for i, r in enumerate(rows)] if x_column else list(range(len(rows)))
+        x_vals = (
+            [r.get(x_column, i) for i, r in enumerate(rows)] if x_column else list(range(len(rows)))
+        )
         for y_col in y_cols or (list(rows[0].keys())[1:] if len(rows[0]) > 1 else []):
             y_vals = [r.get(y_col) for r in rows]
             ax.scatter(x_vals, y_vals, label=y_col, rasterized=len(rows) > 1000, s=5)
@@ -462,11 +544,16 @@ def matplotlib_chart(
     elif chart_type == "pie":
         col = y_cols[0] if y_cols else (x_column or list(rows[0].keys())[0])
         vals = [r.get(col) for r in rows]
-        labs = [str(r.get(x_column, i)) for i, r in enumerate(rows)] if x_column else [str(i) for i in range(len(rows))]
+        labs = (
+            [str(r.get(x_column, i)) for i, r in enumerate(rows)]
+            if x_column
+            else [str(i) for i in range(len(rows))]
+        )
         ax.pie(vals, labels=labs, autopct="%1.1f%%")
     elif chart_type == "heatmap":
         try:
             import numpy as np  # noqa: PLC0415
+
             numeric_cols = [k for k, v in rows[0].items() if isinstance(v, (int, float))]
             mat = [[r.get(c, 0) for c in numeric_cols] for r in rows]
             im = ax.imshow(np.array(mat, dtype=float), aspect="auto", cmap=cmap or "viridis")
@@ -490,7 +577,9 @@ def matplotlib_chart(
     buf.seek(0)
     img_bytes = buf.read()
 
-    content_type = {"png": "image/png", "svg": "image/svg+xml", "pdf": "application/pdf"}.get(fmt, "image/png")
+    content_type = {"png": "image/png", "svg": "image/svg+xml", "pdf": "application/pdf"}.get(
+        fmt, "image/png"
+    )
     artifact = write_bytes(img_bytes, name=f"chart.{fmt}", content_type=content_type)
     return {"chart": artifact, "format": fmt, "chart_type": chart_type, "rows": len(rows)}
 
@@ -499,8 +588,23 @@ def matplotlib_chart(
 # Task 33 — Pydantic Schema Validation
 # ---------------------------------------------------------------------------
 
-_BLOCKED_IMPORTS = {"os", "subprocess", "socket", "sys", "shutil", "pathlib", "importlib",
-                    "builtins", "ctypes", "eval", "exec", "open", "pty", "signal", "resource"}
+_BLOCKED_IMPORTS = {
+    "os",
+    "subprocess",
+    "socket",
+    "sys",
+    "shutil",
+    "pathlib",
+    "importlib",
+    "builtins",
+    "ctypes",
+    "eval",
+    "exec",
+    "open",
+    "pty",
+    "signal",
+    "resource",
+}
 
 
 def _validate_schema_ast(code: str) -> None:
@@ -525,20 +629,31 @@ def _validate_schema_ast(code: str) -> None:
                     )
         if isinstance(node_, ast.Call):
             if isinstance(node_.func, ast.Name) and node_.func.id in ("eval", "exec", "__import__"):
-                raise ValueError(f"pydantic_validate: schema uses '{node_.func.id}()' which is not allowed.")
+                raise ValueError(
+                    f"pydantic_validate: schema uses '{node_.func.id}()' which is not allowed."
+                )
 
 
 def _build_model_from_schema(schema_str: str, BaseModel: type) -> type:
     """Build a Pydantic model from a schema string via AST — no exec."""
     import typing  # noqa: PLC0415
+
     from pydantic import create_model  # noqa: PLC0415
 
     _SAFE: dict[str, Any] = {
-        "str": str, "int": int, "float": float, "bool": bool,
-        "list": list, "dict": dict, "tuple": tuple, "set": set,
+        "str": str,
+        "int": int,
+        "float": float,
+        "bool": bool,
+        "list": list,
+        "dict": dict,
+        "tuple": tuple,
+        "set": set,
         "Any": typing.Any,
-        "Optional": typing.Optional, "List": typing.List,
-        "Dict": typing.Dict, "Union": typing.Union,
+        "Optional": typing.Optional,
+        "List": list,
+        "Dict": dict,
+        "Union": typing.Union,
     }
 
     def _resolve(node: ast.expr) -> Any:
@@ -550,23 +665,29 @@ def _build_model_from_schema(schema_str: str, BaseModel: type) -> type:
             outer = node.value.id if isinstance(node.value, ast.Name) else ""
             sl = node.slice
             if outer == "Optional":
-                return typing.Optional[_resolve(sl)]
+                return typing.Optional[_resolve(sl)]  # noqa: UP045 - dynamic type expression
             if outer == "List":
-                return typing.List[_resolve(sl)]
+                return list[_resolve(sl)]
             if outer == "Dict":
                 if isinstance(sl, ast.Tuple) and len(sl.elts) == 2:
-                    return typing.Dict[_resolve(sl.elts[0]), _resolve(sl.elts[1])]
+                    return dict[_resolve(sl.elts[0]), _resolve(sl.elts[1])]
                 return dict
             if outer == "Union":
                 if isinstance(sl, ast.Tuple):
-                    return typing.Union[tuple(_resolve(e) for e in sl.elts)]  # type: ignore[return-value]
+                    return typing.Union[  # type: ignore[return-value]  # noqa: UP007
+                        tuple(_resolve(e) for e in sl.elts)
+                    ]
             raise ValueError(f"pydantic_validate: unsupported generic '{outer}'")
         raise ValueError(f"pydantic_validate: unsupported annotation {ast.dump(node)}")
 
     tree = ast.parse(schema_str)
     cls_node: ast.ClassDef | None = next(
-        (s for s in tree.body if isinstance(s, ast.ClassDef)
-         and any(isinstance(b, ast.Name) and b.id == "BaseModel" for b in s.bases)),
+        (
+            s
+            for s in tree.body
+            if isinstance(s, ast.ClassDef)
+            and any(isinstance(b, ast.Name) and b.id == "BaseModel" for b in s.bases)
+        ),
         None,
     )
     if cls_node is None:
@@ -620,7 +741,9 @@ def pydantic_validate(
         import pydantic  # noqa: PLC0415
         from pydantic import BaseModel  # noqa: PLC0415
     except ImportError:
-        raise ImportError("pydantic_validate requires pydantic>=2.0. Install with: pip install pydantic")
+        raise ImportError(
+            "pydantic_validate requires pydantic>=2.0. Install with: pip install pydantic"
+        )
 
     if not schema:
         raise ValueError("pydantic_validate: schema is required")
@@ -644,7 +767,9 @@ def pydantic_validate(
         except pydantic.ValidationError as exc:
             if on_error == "raise":
                 raise ValueError(f"pydantic_validate: validation failed: {exc}") from exc
-            errors = [{"loc": list(e["loc"]), "msg": e["msg"], "type": e["type"]} for e in exc.errors()]
+            errors = [
+                {"loc": list(e["loc"]), "msg": e["msg"], "type": e["type"]} for e in exc.errors()
+            ]
             if on_error == "filter":
                 invalid_items.append({"item": item, "errors": errors})
             else:  # flag
@@ -666,8 +791,15 @@ def pydantic_validate(
 # ---------------------------------------------------------------------------
 
 OPENCV_OPS = [
-    "detect_faces", "detect_edges", "blur", "sharpen", "threshold",
-    "contours", "color_balance", "denoise", "grayscale",
+    "detect_faces",
+    "detect_edges",
+    "blur",
+    "sharpen",
+    "threshold",
+    "contours",
+    "color_balance",
+    "denoise",
+    "grayscale",
 ]
 
 
@@ -684,13 +816,20 @@ OPENCV_OPS = [
     params={
         "operation": {"choices": OPENCV_OPS, "description": "Image processing operation."},
         "threshold_value": {"description": "[threshold] Threshold 0-255.", "group": "Options"},
-        "blur_kernel": {"description": "[blur/denoise] Kernel size (odd number).", "group": "Options"},
+        "blur_kernel": {
+            "description": "[blur/denoise] Kernel size (odd number).",
+            "group": "Options",
+        },
         "cascade_file": {
             "placeholder": "haarcascade_frontalface_default",
             "description": "[detect_faces] OpenCV cascade classifier name.",
             "group": "Options",
         },
-        "output_format": {"choices": ["png", "jpg"], "description": "Output image format.", "group": "Options"},
+        "output_format": {
+            "choices": ["png", "jpg"],
+            "description": "Output image format.",
+            "group": "Options",
+        },
     },
 )
 def opencv_process(
@@ -726,7 +865,9 @@ def opencv_process(
             cascade = cv2.CascadeClassifier(cascade_path)
             faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
             metadata["face_count"] = len(faces)
-            metadata["faces"] = [{"x": int(x), "y": int(y), "w": int(w), "h": int(h)} for x, y, w, h in faces]
+            metadata["faces"] = [
+                {"x": int(x), "y": int(y), "w": int(w), "h": int(h)} for x, y, w, h in faces
+            ]
             for x, y, w, h in faces:
                 cv2.rectangle(img, (x, y), (x + w, y + h), (255, 0, 0), 2)
             out_img = img
@@ -746,6 +887,7 @@ def opencv_process(
 
     elif operation == "sharpen":
         import numpy as np  # noqa: PLC0415
+
         kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
         out_img = cv2.filter2D(img, -1, kernel)
 
@@ -794,8 +936,16 @@ def opencv_process(
 # ---------------------------------------------------------------------------
 
 SCIPY_TESTS = [
-    "ttest", "chi2", "anova", "mannwhitney", "ks",
-    "pearsonr", "spearmanr", "zscore", "describe", "normaltest",
+    "ttest",
+    "chi2",
+    "anova",
+    "mannwhitney",
+    "ks",
+    "pearsonr",
+    "spearmanr",
+    "zscore",
+    "describe",
+    "normaltest",
 ]
 
 
@@ -866,11 +1016,17 @@ def scipy_stats(
             stat, p = sp_stats.ttest_ind(groups[keys[0]], groups[keys[1]])
         else:
             stat, p = sp_stats.ttest_1samp(sample or [], 0)
-        return {"statistic": float(stat), "p_value": float(p), "significant": float(p) < alpha_val, "alpha": alpha_val}
+        return {
+            "statistic": float(stat),
+            "p_value": float(p),
+            "significant": float(p) < alpha_val,
+            "alpha": alpha_val,
+        }
 
     elif test == "chi2":
         if rows and group_column:
             from collections import Counter  # noqa: PLC0415
+
             observed = list(Counter(_col(group_column)).values())
         else:
             observed = sample or []
@@ -880,7 +1036,9 @@ def scipy_stats(
     elif test == "anova":
         if rows and group_column:
             groups = {}
-            vcol = value_column or [k for k in rows[0].keys() if k != group_column][0] if rows else ""
+            vcol = (
+                value_column or [k for k in rows[0].keys() if k != group_column][0] if rows else ""
+            )
             for r in rows:
                 k = str(r.get(group_column))
                 groups.setdefault(k, []).append(r.get(vcol))
@@ -892,7 +1050,11 @@ def scipy_stats(
     elif test == "mannwhitney":
         if rows and samples_column:
             groups = {}
-            vcol = value_column or [k for k in rows[0].keys() if k != samples_column][0] if rows else ""
+            vcol = (
+                value_column or [k for k in rows[0].keys() if k != samples_column][0]
+                if rows
+                else ""
+            )
             for r in rows:
                 k = str(r.get(samples_column))
                 groups.setdefault(k, []).append(r.get(vcol))
@@ -923,7 +1085,6 @@ def scipy_stats(
         return {"rho": float(r), "p_value": float(p), "significant": float(p) < alpha_val}
 
     elif test == "zscore":
-        import numpy as np  # noqa: PLC0415
         zscores = sp_stats.zscore(sample or []).tolist()
         return {"zscores": zscores, "count": len(zscores)}
 
@@ -1014,13 +1175,17 @@ def spacy_nlp(
 
     if "pos" in requested:
         result["tokens"] = [
-            {"text": tok.text, "pos": tok.pos_, "tag": tok.tag_, "lemma": tok.lemma_}
-            for tok in doc
+            {"text": tok.text, "pos": tok.pos_, "tag": tok.tag_, "lemma": tok.lemma_} for tok in doc
         ]
 
     if "dep" in requested:
         result["dependency_tree"] = [
-            {"text": tok.text, "dep": tok.dep_, "head": tok.head.text, "children": [c.text for c in tok.children]}
+            {
+                "text": tok.text,
+                "dep": tok.dep_,
+                "head": tok.head.text,
+                "children": [c.text for c in tok.children],
+            }
             for tok in doc
         ]
 
@@ -1041,9 +1206,15 @@ def spacy_nlp(
 # ---------------------------------------------------------------------------
 
 NETWORKX_OPS = [
-    "shortest_path", "all_shortest_paths", "betweenness_centrality",
-    "degree_centrality", "pagerank", "clustering", "connected_components",
-    "minimum_spanning_tree", "neighbors",
+    "shortest_path",
+    "all_shortest_paths",
+    "betweenness_centrality",
+    "degree_centrality",
+    "pagerank",
+    "clustering",
+    "connected_components",
+    "minimum_spanning_tree",
+    "neighbors",
 ]
 
 
@@ -1076,7 +1247,9 @@ def networkx_graph_ops(
     try:
         import networkx as nx  # noqa: PLC0415
     except ImportError:
-        raise ImportError("networkx_graph_ops requires networkx>=3.2. Install with: pip install networkx")
+        raise ImportError(
+            "networkx_graph_ops requires networkx>=3.2. Install with: pip install networkx"
+        )
 
     # Build graph from edge list: [{source, target[, weight, ...]}]
     G: Any = nx.DiGraph() if directed else nx.Graph()
@@ -1095,11 +1268,13 @@ def networkx_graph_ops(
     elif isinstance(input, dict):
         # Adjacency dict: {node: [neighbor, ...]}
         for node_, neighbors in input.items():
-            for nbr in (neighbors if isinstance(neighbors, list) else []):
+            for nbr in neighbors if isinstance(neighbors, list) else []:
                 G.add_edge(str(node_), str(nbr))
 
     if G.number_of_nodes() == 0:
-        raise ValueError("networkx_graph_ops: could not build graph from input — expected list of {source, target} dicts")
+        raise ValueError(
+            "networkx_graph_ops: could not build graph from input — expected list of {source, target} dicts"
+        )
 
     weight_attr = weight_column or None
 
@@ -1109,7 +1284,9 @@ def networkx_graph_ops(
         if target:
             try:
                 path = nx.shortest_path(G, source=source, target=target, weight=weight_attr)
-                length = nx.shortest_path_length(G, source=source, target=target, weight=weight_attr)
+                length = nx.shortest_path_length(
+                    G, source=source, target=target, weight=weight_attr
+                )
                 return {"path": path, "length": length, "hops": len(path) - 1}
             except nx.NetworkXNoPath:
                 return {"path": None, "length": None, "hops": None, "error": "No path found"}
@@ -1121,7 +1298,9 @@ def networkx_graph_ops(
 
     elif operation == "all_shortest_paths":
         if not source or not target:
-            raise ValueError("networkx_graph_ops all_shortest_paths: source and target are required")
+            raise ValueError(
+                "networkx_graph_ops all_shortest_paths: source and target are required"
+            )
         try:
             paths = list(nx.all_shortest_paths(G, source, target, weight=weight_attr))
         except nx.NetworkXNoPath:
@@ -1156,10 +1335,16 @@ def networkx_graph_ops(
 
     elif operation == "minimum_spanning_tree":
         if directed:
-            raise ValueError("networkx_graph_ops: minimum_spanning_tree requires an undirected graph")
+            raise ValueError(
+                "networkx_graph_ops: minimum_spanning_tree requires an undirected graph"
+            )
         mst = nx.minimum_spanning_tree(G, weight=weight_attr or "weight")
         edges = [{"source": u, "target": v, **(d if d else {})} for u, v, d in mst.edges(data=True)]
-        return {"edges": edges, "node_count": mst.number_of_nodes(), "edge_count": mst.number_of_edges()}
+        return {
+            "edges": edges,
+            "node_count": mst.number_of_nodes(),
+            "edge_count": mst.number_of_edges(),
+        }
 
     elif operation == "neighbors":
         if not source:
@@ -1223,7 +1408,9 @@ def beautifulsoup_scrape(
     if url:
         assert_public_http_url(url)
         import urllib.parse as _up  # noqa: PLC0415
+
         import requests as _req  # noqa: PLC0415
+
         _headers = {"User-Agent": "noodle-scraper/1.0"}
         resp = _req.get(url, timeout=30, allow_redirects=False, headers=_headers)
         # Follow redirects manually so each hop is validated against SSRF rules.
@@ -1281,7 +1468,17 @@ def beautifulsoup_scrape(
 # Task 39 — SymPy Symbolic Math
 # ---------------------------------------------------------------------------
 
-SYMPY_OPS = ["solve", "simplify", "expand", "factor", "diff", "integrate", "limit", "matrix_ops", "latex"]
+SYMPY_OPS = [
+    "solve",
+    "simplify",
+    "expand",
+    "factor",
+    "diff",
+    "integrate",
+    "limit",
+    "matrix_ops",
+    "latex",
+]
 
 
 @node(
@@ -1330,13 +1527,37 @@ def sympy_math(
     local_dict = {var_name: var}
 
     # sympify uses eval internally; use parse_expr with an explicit identifier allowlist instead.
-    _ALLOWED_IDENTIFIERS = frozenset({
-        var_name,
-        "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
-        "sinh", "cosh", "tanh", "exp", "log", "sqrt",
-        "Abs", "sign", "floor", "ceiling", "factorial",
-        "pi", "E", "I", "oo", "zoo", "nan", "re", "im",
-    })
+    _ALLOWED_IDENTIFIERS = frozenset(
+        {
+            var_name,
+            "sin",
+            "cos",
+            "tan",
+            "asin",
+            "acos",
+            "atan",
+            "atan2",
+            "sinh",
+            "cosh",
+            "tanh",
+            "exp",
+            "log",
+            "sqrt",
+            "Abs",
+            "sign",
+            "floor",
+            "ceiling",
+            "factorial",
+            "pi",
+            "E",
+            "I",
+            "oo",
+            "zoo",
+            "nan",
+            "re",
+            "im",
+        }
+    )
     unknown_ids = set(re.findall(r"\b[A-Za-z_]\w*\b", expr_str)) - _ALLOWED_IDENTIFIERS
     if unknown_ids:
         raise ValueError(
@@ -1345,10 +1566,15 @@ def sympy_math(
         )
     try:
         from sympy.parsing.sympy_parser import (  # noqa: PLC0415
-            parse_expr, standard_transformations, implicit_multiplication_application,
+            implicit_multiplication_application,
+            parse_expr,
+            standard_transformations,
         )
+
         _transforms = standard_transformations + (implicit_multiplication_application,)
-        expr = parse_expr(expr_str, local_dict=local_dict, transformations=_transforms, evaluate=False)
+        expr = parse_expr(
+            expr_str, local_dict=local_dict, transformations=_transforms, evaluate=False
+        )
     except Exception as exc:
         raise ValueError(f"sympy_math: could not parse expression '{expr_str}': {exc}") from exc
 
@@ -1403,7 +1629,9 @@ def sympy_math(
             "det": _to_str(mat.det()) if mat.is_square else None,
             "rank": int(mat.rank()),
             "shape": list(mat.shape),
-            "eigenvalues": {_to_str(k): int(v) for k, v in mat.eigenvals().items()} if mat.is_square else {},
+            "eigenvalues": {_to_str(k): int(v) for k, v in mat.eigenvals().items()}
+            if mat.is_square
+            else {},
         }
 
     elif operation == "latex":

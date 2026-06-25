@@ -99,6 +99,7 @@ def poll_mqtt(ctx: ProviderTriggerPollContext) -> ProviderTriggerPollResult:
             raise RuntimeError(f"mqtt_trigger: {error_holder[0]}")
         # Collect messages for up to 3 seconds
         import time
+
         time.sleep(3)
     finally:
         client.loop_stop()

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from noodle_nodes.ai_extra import elevenlabs_tts
 from noodle_nodes.integrations_v2.providers.elevenlabs_convai.operations import (
     create_agent,
     get_agent,
@@ -15,7 +16,6 @@ from noodle_nodes.integrations_v2.providers.elevenlabs_convai.operations import 
     list_agents,
     list_conversations,
 )
-from noodle_nodes.ai_extra import elevenlabs_tts
 
 _CREDS = {"api_key": "el_test_key"}
 _TRANSPORT_PATH = (

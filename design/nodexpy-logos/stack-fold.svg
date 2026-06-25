@@ -1,0 +1,7 @@
+<svg width="400" height="100" viewBox="0 0 400 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Stack Fold logo">
+  <path d="M13 63L48 83L83 63L48 43L13 63Z" fill="#493A83" stroke="#8B75FF" stroke-width="3"/>
+  <path d="M13 48L48 68L83 48L48 28L13 48Z" fill="#2D4170" stroke="#5B8CFF" stroke-width="3"/>
+  <path d="M13 33L48 53L83 33L48 13L13 33Z" fill="#173F45" stroke="#35D4D0" stroke-width="3"/>
+  <path d="M33 24V42L48 33L63 42V24" stroke="#F3F7FA" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="112" y="65" fill="#F3F7FA" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">Node</text><text x="217" y="65" fill="#8B75FF" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">x</text><text x="239" y="65" fill="#35D4D0" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">py</text>
+</svg>

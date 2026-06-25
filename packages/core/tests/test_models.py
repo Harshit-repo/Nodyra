@@ -4,7 +4,6 @@ from noodle.models import (
     CredentialSpec,
     Edge,
     GraphNode,
-    ItemMeta,
     NodeManifest,
     NodeRole,
     NodeRunResult,
@@ -18,7 +17,6 @@ from noodle.models import (
     RunStatus,
     WorkflowGraph,
 )
-
 
 # ---------------------------------------------------------------------------
 # NoodleItem.wrap

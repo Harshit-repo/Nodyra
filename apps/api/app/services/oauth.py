@@ -70,9 +70,7 @@ def oauth_type_spec(type_id: str) -> CredentialTypeSpec:
 def oauth_client_config(type_id: str) -> OAuthClientConfig:
     setting_names = _CLIENT_SETTING_NAMES.get(type_id)
     if setting_names is None:
-        raise OAuthError(
-            f"Credential type '{type_id}' has no OAuth client configuration mapping."
-        )
+        raise OAuthError(f"Credential type '{type_id}' has no OAuth client configuration mapping.")
     client_id = str(getattr(settings, setting_names[0], "") or "").strip()
     client_secret = str(getattr(settings, setting_names[1], "") or "").strip()
     if not client_id or not client_secret:
@@ -140,10 +138,7 @@ def build_authorization_url(
 
 def _flatten_form_payload(text: str) -> dict[str, Any]:
     parsed = parse_qs(text, keep_blank_values=True)
-    return {
-        key: values[-1] if len(values) == 1 else values
-        for key, values in parsed.items()
-    }
+    return {key: values[-1] if len(values) == 1 else values for key, values in parsed.items()}
 
 
 async def _post_token_form(url: str, data: dict[str, str]) -> dict[str, Any]:
@@ -313,7 +308,7 @@ def should_refresh_credential_data(data: dict[str, Any]) -> bool:
 async def refresh_stored_credential(
     credential: Credential,
     data: dict[str, Any],
-    session: "AsyncSession",
+    session: AsyncSession,
 ) -> dict[str, str]:
     oauth_type_spec(credential.type)
     refresh_token = str(data.get("refresh_token") or "").strip()
@@ -345,7 +340,7 @@ async def refresh_stored_credential(
 async def refresh_credential_if_needed(
     credential: Credential,
     data: dict[str, Any],
-    session: "AsyncSession",
+    session: AsyncSession,
 ) -> dict[str, Any]:
     spec = get_credential_type(credential.type)
     if spec is None or spec.auth_method != "oauth2":
@@ -357,8 +352,5 @@ async def refresh_credential_if_needed(
 
 def redacted_token_payload(payload: dict[str, Any]) -> str:
     """Small debug helper for tests/logs without exposing token values."""
-    clean = {
-        key: ("***" if "token" in key else value)
-        for key, value in payload.items()
-    }
+    clean = {key: ("***" if "token" in key else value) for key, value in payload.items()}
     return json.dumps(clean, sort_keys=True)

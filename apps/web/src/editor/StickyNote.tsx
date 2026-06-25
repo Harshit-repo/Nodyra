@@ -1,6 +1,6 @@
 import { NodeResizer } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
-import { useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
 import { useEditor } from "./store";
 
@@ -24,13 +24,19 @@ const COLORS: { id: string; hex: string; label: string }[] = [
 const COLOR_MAP = Object.fromEntries(COLORS.map((c) => [c.id, c.hex]));
 const FONT_SIZES = [11, 13, 15, 18, 22, 28];
 
-export function StickyNote({ data, id }: NodeProps) {
+function StickyNoteComponent({ data, id }: NodeProps) {
   const stickyData = data as unknown as StickyNoteData;
   const [content, setContent] = useState(stickyData.content ?? "");
   const [hovered, setHovered] = useState(false);
   const lingerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onNodesChange = useEditor((s) => s.onNodesChange);
-  const nodes = useEditor((s) => s.nodes);
+
+  useEffect(
+    () => () => {
+      if (lingerRef.current) clearTimeout(lingerRef.current);
+    },
+    [],
+  );
 
   const colorId = stickyData.color ?? "yellow";
   const bg = COLOR_MAP[colorId] ?? COLOR_MAP["yellow"]!;
@@ -38,14 +44,13 @@ export function StickyNote({ data, id }: NodeProps) {
   const fontSize = stickyData.fontSize ?? 13;
 
   function patch(updates: Partial<StickyNoteData>) {
-    const changes = nodes
-      .filter((n) => n.id === id)
-      .map((n) => ({
-        type: "replace" as const,
-        id: n.id,
-        item: { ...n, data: { ...n.data, ...updates } },
-      }));
-    if (changes.length > 0) onNodesChange(changes);
+    const node = useEditor.getState().nodes.find((item) => item.id === id);
+    if (!node) return;
+    onNodesChange([{
+      type: "replace",
+      id: node.id,
+      item: { ...node, data: { ...node.data, ...updates } },
+    }]);
   }
 
   function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
@@ -149,3 +154,8 @@ export function StickyNote({ data, id }: NodeProps) {
     </div>
   );
 }
+
+export const StickyNote = memo(
+  StickyNoteComponent,
+  (previous, next) => previous.id === next.id && previous.data === next.data,
+);

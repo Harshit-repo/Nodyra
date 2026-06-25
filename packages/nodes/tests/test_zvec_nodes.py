@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import sys
 import types
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,6 +15,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # zvec mock factory
 # ---------------------------------------------------------------------------
+
 
 class _FakeStatus:
     def __init__(self, ok=True, msg=""):
@@ -103,9 +103,13 @@ class _FakeCollection:
     def fetch(self, ids, output_fields=None, include_vector=True):
         return {i: self._docs[i] for i in ids if i in self._docs}
 
-    def query(self, queries, topk=10, filter=None, include_vector=False, output_fields=None, reranker=None):
+    def query(
+        self, queries, topk=10, filter=None, include_vector=False, output_fields=None, reranker=None
+    ):
         docs = list(self._docs.values())[:topk]
-        return _FakeDocList([_FakeDoc(d.id, score=0.9, vectors=d.vectors, fields=d.fields) for d in docs])
+        return _FakeDocList(
+            [_FakeDoc(d.id, score=0.9, vectors=d.vectors, fields=d.fields) for d in docs]
+        )
 
     def flush(self):
         pass
@@ -122,10 +126,16 @@ def _make_zvec_mock() -> types.ModuleType:
 
     # --- Types ---
     DataType = types.SimpleNamespace(
-        STRING="STRING", INT32="INT32", INT64="INT64",
-        UINT32="UINT32", UINT64="UINT64",
-        FLOAT="FLOAT", DOUBLE="DOUBLE", BOOL="BOOL",
-        VECTOR_FP32="VECTOR_FP32", VECTOR_FP16="VECTOR_FP16",
+        STRING="STRING",
+        INT32="INT32",
+        INT64="INT64",
+        UINT32="UINT32",
+        UINT64="UINT64",
+        FLOAT="FLOAT",
+        DOUBLE="DOUBLE",
+        BOOL="BOOL",
+        VECTOR_FP32="VECTOR_FP32",
+        VECTOR_FP16="VECTOR_FP16",
         VECTOR_INT8="VECTOR_INT8",
     )
     MetricType = types.SimpleNamespace(L2="L2", IP="IP", COSINE="COSINE")
@@ -261,9 +271,11 @@ def _make_zvec_mock() -> types.ModuleType:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _reset_init_flag():
     """Reset the module-level _initialized flag between tests."""
     import noodle_nodes.zvec_nodes as zn  # noqa
+
     zn._initialized = False
 
 
@@ -271,13 +283,14 @@ def _reset_init_flag():
 # Tests: zvec_create_collection
 # ---------------------------------------------------------------------------
 
-class TestZvecCreateCollection:
 
+class TestZvecCreateCollection:
     def test_creates_new_collection(self, tmp_path):
         zvec = _make_zvec_mock()
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_create_collection
+
             col_path = str(tmp_path / "col")
             result = zvec_create_collection(
                 collection_path=col_path,
@@ -295,10 +308,12 @@ class TestZvecCreateCollection:
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "existing_col")
         import os
+
         os.makedirs(col_path)  # simulate existing collection on disk
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_create_collection
+
             result = zvec_create_collection(collection_path=col_path, overwrite=False)
         assert result["status"] == "opened"
 
@@ -306,10 +321,12 @@ class TestZvecCreateCollection:
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
         import os
+
         os.makedirs(col_path)
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_create_collection
+
             result = zvec_create_collection(collection_path=col_path, overwrite=True)
         assert result["status"] == "created"
 
@@ -319,6 +336,7 @@ class TestZvecCreateCollection:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_create_collection
+
             result = zvec_create_collection(
                 collection_path=col_path,
                 index_type="hnsw",
@@ -334,6 +352,7 @@ class TestZvecCreateCollection:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_create_collection
+
             result = zvec_create_collection(
                 collection_path=col_path, index_type="flat", metric_type="l2"
             )
@@ -345,6 +364,7 @@ class TestZvecCreateCollection:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_create_collection
+
             result = zvec_create_collection(
                 collection_path=col_path, fts_field="content", fts_language="en"
             )
@@ -354,6 +374,7 @@ class TestZvecCreateCollection:
         with patch.dict(sys.modules, {"zvec": None}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_create_collection
+
             with pytest.raises(ImportError, match="zvec"):
                 zvec_create_collection(collection_path="/tmp/x")
 
@@ -362,12 +383,14 @@ class TestZvecCreateCollection:
 # Tests: zvec_upsert
 # ---------------------------------------------------------------------------
 
-class TestZvecUpsert:
 
+class TestZvecUpsert:
     def test_upsert_list_of_dicts(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         docs = [
             {"id": "1", "embedding": [0.1, 0.2, 0.3, 0.4], "title": "hello"},
             {"id": "2", "embedding": [0.5, 0.6, 0.7, 0.8], "title": "world"},
@@ -375,6 +398,7 @@ class TestZvecUpsert:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_upsert
+
             result = zvec_upsert(input=docs, collection_path=col_path, vector_field="embedding")
         assert result["inserted"] == 2
         assert result["errors"] == []
@@ -382,22 +406,28 @@ class TestZvecUpsert:
     def test_upsert_auto_id(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         docs = [{"embedding": [0.1, 0.2, 0.3, 0.4]}]
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_upsert
+
             result = zvec_upsert(input=docs, collection_path=col_path, vector_field="embedding")
         assert result["inserted"] == 1
 
     def test_upsert_missing_vector_logged_as_error(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         docs = [{"id": "1", "title": "no vector here"}]
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_upsert
+
             result = zvec_upsert(input=docs, collection_path=col_path, vector_field="embedding")
         assert result["inserted"] == 0
         assert len(result["errors"]) == 1
@@ -406,10 +436,13 @@ class TestZvecUpsert:
     def test_upsert_none_input(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_upsert
+
             result = zvec_upsert(input=None, collection_path=col_path)
         assert result["inserted"] == 0
 
@@ -419,6 +452,7 @@ class TestZvecUpsert:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_upsert
+
             with pytest.raises(ValueError, match="not found"):
                 zvec_upsert(input=[{"embedding": [0.1]}], collection_path=col_path)
 
@@ -426,6 +460,7 @@ class TestZvecUpsert:
         with patch.dict(sys.modules, {"zvec": None}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_upsert
+
             with pytest.raises(ImportError, match="zvec"):
                 zvec_upsert(input=[], collection_path="/tmp/x")
 
@@ -434,14 +469,18 @@ class TestZvecUpsert:
 # Tests: zvec_search
 # ---------------------------------------------------------------------------
 
-class TestZvecSearch:
 
+class TestZvecSearch:
     def _setup(self, tmp_path, zvec):
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         col = zvec._collection
         col._docs.clear()
-        doc = zvec.Doc(id="a", vectors={"embedding": [0.1, 0.2, 0.3, 0.4]}, fields={"title": "doc A"})
+        doc = zvec.Doc(
+            id="a", vectors={"embedding": [0.1, 0.2, 0.3, 0.4]}, fields={"title": "doc A"}
+        )
         col._docs["a"] = doc
         return col_path
 
@@ -451,6 +490,7 @@ class TestZvecSearch:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_search
+
             result = zvec_search(
                 input=[0.1, 0.2, 0.3, 0.4],
                 collection_path=col_path,
@@ -465,6 +505,7 @@ class TestZvecSearch:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_search
+
             result = zvec_search(
                 input={"vector": [0.1, 0.2, 0.3, 0.4]},
                 collection_path=col_path,
@@ -477,6 +518,7 @@ class TestZvecSearch:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_search
+
             result = zvec_search(
                 input={"embedding": [0.1, 0.2, 0.3, 0.4]},
                 collection_path=col_path,
@@ -489,6 +531,7 @@ class TestZvecSearch:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_search
+
             result = zvec_search(
                 input=[0.1, 0.2, 0.3, 0.4],
                 collection_path=col_path,
@@ -502,20 +545,26 @@ class TestZvecSearch:
     def test_search_invalid_input_raises(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_search
+
             with pytest.raises(ValueError):
                 zvec_search(input="not a vector", collection_path=col_path)
 
     def test_search_dict_missing_vector_raises(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_search
+
             with pytest.raises(ValueError, match="query_vector"):
                 zvec_search(input={"title": "no vector"}, collection_path=col_path)
 
@@ -523,6 +572,7 @@ class TestZvecSearch:
         with patch.dict(sys.modules, {"zvec": None}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_search
+
             with pytest.raises(ImportError, match="zvec"):
                 zvec_search(input=[0.1], collection_path="/tmp/x")
 
@@ -531,15 +581,18 @@ class TestZvecSearch:
 # Tests: zvec_fts_search
 # ---------------------------------------------------------------------------
 
-class TestZvecFtsSearch:
 
+class TestZvecFtsSearch:
     def test_fts_match_mode(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_fts_search
+
             result = zvec_fts_search(
                 input="machine learning",
                 collection_path=col_path,
@@ -553,10 +606,13 @@ class TestZvecFtsSearch:
     def test_fts_query_mode(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_fts_search
+
             result = zvec_fts_search(
                 input="+machine -learning",
                 collection_path=col_path,
@@ -567,20 +623,26 @@ class TestZvecFtsSearch:
     def test_empty_query_raises(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_fts_search
+
             with pytest.raises(ValueError, match="query string"):
                 zvec_fts_search(input="", collection_path=col_path)
 
     def test_none_input_raises(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_fts_search
+
             with pytest.raises(ValueError, match="query string"):
                 zvec_fts_search(input=None, collection_path=col_path)
 
@@ -588,6 +650,7 @@ class TestZvecFtsSearch:
         with patch.dict(sys.modules, {"zvec": None}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_fts_search
+
             with pytest.raises(ImportError, match="zvec"):
                 zvec_fts_search(input="test", collection_path="/tmp/x")
 
@@ -596,15 +659,18 @@ class TestZvecFtsSearch:
 # Tests: zvec_hybrid_search
 # ---------------------------------------------------------------------------
 
-class TestZvecHybridSearch:
 
+class TestZvecHybridSearch:
     def test_hybrid_dict_input(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_hybrid_search
+
             result = zvec_hybrid_search(
                 input={"vector": [0.1, 0.2, 0.3, 0.4], "text": "machine learning"},
                 collection_path=col_path,
@@ -616,10 +682,13 @@ class TestZvecHybridSearch:
     def test_hybrid_vector_only(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_hybrid_search
+
             result = zvec_hybrid_search(
                 input=[0.1, 0.2, 0.3, 0.4],
                 collection_path=col_path,
@@ -629,10 +698,13 @@ class TestZvecHybridSearch:
     def test_hybrid_text_only(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_hybrid_search
+
             result = zvec_hybrid_search(
                 input="neural search",
                 collection_path=col_path,
@@ -642,10 +714,13 @@ class TestZvecHybridSearch:
     def test_hybrid_weighted_reranker(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_hybrid_search
+
             result = zvec_hybrid_search(
                 input={"vector": [0.1, 0.2, 0.3, 0.4], "text": "topic"},
                 collection_path=col_path,
@@ -658,20 +733,26 @@ class TestZvecHybridSearch:
     def test_empty_input_raises(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_hybrid_search
+
             with pytest.raises(ValueError, match="at least one"):
                 zvec_hybrid_search(input={}, collection_path=col_path)
 
     def test_invalid_input_type_raises(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_hybrid_search
+
             with pytest.raises(ValueError):
                 zvec_hybrid_search(input=42, collection_path=col_path)
 
@@ -679,6 +760,7 @@ class TestZvecHybridSearch:
         with patch.dict(sys.modules, {"zvec": None}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_hybrid_search
+
             with pytest.raises(ImportError, match="zvec"):
                 zvec_hybrid_search(input={"text": "x"}, collection_path="/tmp/x")
 
@@ -687,15 +769,21 @@ class TestZvecHybridSearch:
 # Tests: zvec_fetch
 # ---------------------------------------------------------------------------
 
-class TestZvecFetch:
 
+class TestZvecFetch:
     def _setup(self, tmp_path, zvec):
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         col = zvec._collection
         col._docs.clear()
-        col._docs["doc1"] = zvec.Doc(id="doc1", fields={"title": "First doc"}, vectors={"embedding": [0.1]})
-        col._docs["doc2"] = zvec.Doc(id="doc2", fields={"title": "Second doc"}, vectors={"embedding": [0.2]})
+        col._docs["doc1"] = zvec.Doc(
+            id="doc1", fields={"title": "First doc"}, vectors={"embedding": [0.1]}
+        )
+        col._docs["doc2"] = zvec.Doc(
+            id="doc2", fields={"title": "Second doc"}, vectors={"embedding": [0.2]}
+        )
         return col_path
 
     def test_fetch_string_id(self, tmp_path):
@@ -704,6 +792,7 @@ class TestZvecFetch:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_fetch
+
             result = zvec_fetch(input="doc1", collection_path=col_path)
         assert result["found"] == 1
         assert "doc1" in result["docs"]
@@ -714,6 +803,7 @@ class TestZvecFetch:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_fetch
+
             result = zvec_fetch(input=["doc1", "doc2"], collection_path=col_path)
         assert result["found"] == 2
 
@@ -723,6 +813,7 @@ class TestZvecFetch:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_fetch
+
             result = zvec_fetch(input={"id": "doc1"}, collection_path=col_path)
         assert result["found"] == 1
 
@@ -732,6 +823,7 @@ class TestZvecFetch:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_fetch
+
             result = zvec_fetch(input="nonexistent", collection_path=col_path)
         assert result["found"] == 0
 
@@ -741,6 +833,7 @@ class TestZvecFetch:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_fetch
+
             with pytest.raises(ValueError):
                 zvec_fetch(input=123, collection_path=col_path)
 
@@ -748,6 +841,7 @@ class TestZvecFetch:
         with patch.dict(sys.modules, {"zvec": None}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_fetch
+
             with pytest.raises(ImportError, match="zvec"):
                 zvec_fetch(input="id1", collection_path="/tmp/x")
 
@@ -756,11 +850,13 @@ class TestZvecFetch:
 # Tests: zvec_delete
 # ---------------------------------------------------------------------------
 
-class TestZvecDelete:
 
+class TestZvecDelete:
     def _setup(self, tmp_path, zvec):
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         col = zvec._collection
         col._docs.clear()
         col._docs["doc1"] = zvec.Doc(id="doc1", fields={"title": "A"})
@@ -773,6 +869,7 @@ class TestZvecDelete:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_delete
+
             result = zvec_delete(input="doc1", collection_path=col_path, delete_by="ids")
         assert result["deleted"] == 1
 
@@ -782,6 +879,7 @@ class TestZvecDelete:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_delete
+
             result = zvec_delete(input=["doc1", "doc2"], collection_path=col_path, delete_by="ids")
         assert result["deleted"] == 2
 
@@ -791,6 +889,7 @@ class TestZvecDelete:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_delete
+
             result = zvec_delete(
                 input=None,
                 collection_path=col_path,
@@ -806,6 +905,7 @@ class TestZvecDelete:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_delete
+
             with pytest.raises(ValueError, match="filter expression"):
                 zvec_delete(input=None, collection_path=col_path, delete_by="filter", filter="")
 
@@ -813,6 +913,7 @@ class TestZvecDelete:
         with patch.dict(sys.modules, {"zvec": None}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_delete
+
             with pytest.raises(ImportError, match="zvec"):
                 zvec_delete(input="id1", collection_path="/tmp/x")
 
@@ -821,15 +922,18 @@ class TestZvecDelete:
 # Tests: zvec_collection_stats
 # ---------------------------------------------------------------------------
 
-class TestZvecCollectionStats:
 
+class TestZvecCollectionStats:
     def test_stats_returns_doc_count(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_collection_stats
+
             result = zvec_collection_stats(collection_path=col_path)
         assert "doc_count" in result
         assert result["doc_count"] == 3
@@ -838,20 +942,26 @@ class TestZvecCollectionStats:
     def test_stats_with_optimize(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_collection_stats
+
             result = zvec_collection_stats(collection_path=col_path, optimize=True)
         assert "doc_count" in result
 
     def test_stats_schema_structure(self, tmp_path):
         zvec = _make_zvec_mock()
         col_path = str(tmp_path / "col")
-        import os; os.makedirs(col_path)
+        import os
+
+        os.makedirs(col_path)
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_collection_stats
+
             result = zvec_collection_stats(collection_path=col_path)
         schema = result["schema"]
         assert isinstance(schema["scalar_fields"], list)
@@ -864,6 +974,7 @@ class TestZvecCollectionStats:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_collection_stats
+
             with pytest.raises(ValueError, match="not found"):
                 zvec_collection_stats(collection_path=col_path)
 
@@ -871,6 +982,7 @@ class TestZvecCollectionStats:
         with patch.dict(sys.modules, {"zvec": None}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import zvec_collection_stats
+
             with pytest.raises(ImportError, match="zvec"):
                 zvec_collection_stats(collection_path="/tmp/x")
 
@@ -879,8 +991,8 @@ class TestZvecCollectionStats:
 # Tests: init is idempotent
 # ---------------------------------------------------------------------------
 
-class TestZvecInit:
 
+class TestZvecInit:
     def test_init_only_called_once(self, tmp_path):
         """_ensure_init should be safe to call multiple times."""
         zvec = _make_zvec_mock()
@@ -898,6 +1010,7 @@ class TestZvecInit:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import _ensure_init
+
             _ensure_init()
             _ensure_init()
             _ensure_init()
@@ -916,5 +1029,6 @@ class TestZvecInit:
         with patch.dict(sys.modules, {"zvec": zvec}):
             _reset_init_flag()
             from noodle_nodes.zvec_nodes import _ensure_init
+
             # Should not propagate the RuntimeError
             _ensure_init()

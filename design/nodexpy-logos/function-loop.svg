@@ -1,0 +1,6 @@
+<svg width="400" height="100" viewBox="0 0 400 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Function Loop logo">
+  <path d="M17 78L43 20L70 78M31 52H63" stroke="#55D6A8" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M68 28C89 28 91 72 69 72" stroke="#4C9EFF" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="17" cy="78" r="6" fill="#4C9EFF"/><rect x="64" y="67" width="11" height="11" rx="3" fill="#55D6A8"/>
+  <text x="112" y="65" fill="#F3F7FA" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">Node</text><text x="217" y="65" fill="#55D6A8" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">x</text><text x="239" y="65" fill="#4C9EFF" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">py</text>
+</svg>

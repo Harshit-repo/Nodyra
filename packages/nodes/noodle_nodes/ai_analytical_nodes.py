@@ -18,7 +18,6 @@ import math
 import re
 from typing import Any
 
-import requests as _requests
 from jinja2 import Template
 
 from noodle.ai_runtime import (
@@ -31,6 +30,7 @@ from noodle.ai_runtime import (
 from noodle.artifacts import is_artifact_ref
 from noodle.artifacts import read_bytes as read_artifact_bytes
 from noodle.sdk import node
+from noodle_nodes.http_security import safe_request
 
 AI_CATEGORY = "AI"
 
@@ -91,7 +91,7 @@ def _chunk_text(text: str, chunk_size: int) -> list[str]:
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(x * x for x in b))
     if norm_a == 0 or norm_b == 0:
@@ -115,7 +115,7 @@ def _parse_json_response(text: str) -> Any:
         except (json.JSONDecodeError, ValueError):
             pass
     # Try finding first { or [ and parse to its matching close
-    for start_char, end_char in [("{", "}"), ("[", "]")]:
+    for start_char in ("{", "["):
         idx = text.find(start_char)
         if idx != -1:
             try:
@@ -404,7 +404,11 @@ def ai_sentiment_analysis(
         system_parts.append(
             "Return a JSON object with: "
             '{"sentiment": "positive"|"negative"|"neutral", "score": <float -1.0 to 1.0>'
-            + (', "sentences": [{"text": ..., "sentiment": ..., "score": ...}]' if granularity == "sentence" else "")
+            + (
+                ', "sentences": [{"text": ..., "sentiment": ..., "score": ...}]'
+                if granularity == "sentence"
+                else ""
+            )
             + (', "aspects": {"aspect": {"sentiment": ..., "score": ...}}' if aspect_list else "")
             + "}."
         )
@@ -412,15 +416,27 @@ def ai_sentiment_analysis(
         system_parts.append(
             "Return a JSON object with: "
             '{"sentiment": ..., "score": <float>, "explanation": <string>'
-            + (', "sentences": [{"text": ..., "sentiment": ..., "score": ...}]' if granularity == "sentence" else "")
-            + (', "aspects": {"aspect": {"sentiment": ..., "score": ..., "explanation": ...}}' if aspect_list else "")
+            + (
+                ', "sentences": [{"text": ..., "sentiment": ..., "score": ...}]'
+                if granularity == "sentence"
+                else ""
+            )
+            + (
+                ', "aspects": {"aspect": {"sentiment": ..., "score": ..., "explanation": ...}}'
+                if aspect_list
+                else ""
+            )
             + "}."
         )
     else:
         system_parts.append(
             "Return a JSON object with: "
             '{"sentiment": "positive"|"negative"|"neutral"'
-            + (', "sentences": [{"text": ..., "sentiment": ...}]' if granularity == "sentence" else "")
+            + (
+                ', "sentences": [{"text": ..., "sentiment": ...}]'
+                if granularity == "sentence"
+                else ""
+            )
             + (', "aspects": {"aspect": {"sentiment": ...}}' if aspect_list else "")
             + "}."
         )
@@ -488,7 +504,9 @@ def ai_semantic_search(
     doc_pairs: list[tuple[str, str]] = []
     for i, doc in enumerate(raw_docs):
         if isinstance(doc, dict):
-            doc_pairs.append((str(doc.get("id") or i), str(doc.get("text") or doc.get("content") or "")))
+            doc_pairs.append(
+                (str(doc.get("id") or i), str(doc.get("text") or doc.get("content") or ""))
+            )
         else:
             doc_pairs.append((str(i), str(doc)))
 
@@ -506,7 +524,7 @@ def ai_semantic_search(
     doc_vecs = embed_resp.embeddings[1:]
 
     results = []
-    for (doc_id, doc_text), doc_vec in zip(doc_pairs, doc_vecs):
+    for (doc_id, doc_text), doc_vec in zip(doc_pairs, doc_vecs, strict=False):
         score = _cosine_similarity(query_vec, doc_vec)
         if score >= float(min_score or 0.0):
             results.append({"id": doc_id, "text": doc_text, "score": round(score, 6)})
@@ -592,7 +610,12 @@ def huggingface_inference(
 
     api_token = ""
     if isinstance(credentials, dict):
-        api_token = str(credentials.get("api_token") or credentials.get("token") or credentials.get("api_key") or "")
+        api_token = str(
+            credentials.get("api_token")
+            or credentials.get("token")
+            or credentials.get("api_key")
+            or ""
+        )
     elif isinstance(credentials, str):
         api_token = credentials
 
@@ -610,9 +633,18 @@ def huggingface_inference(
         payload: dict[str, Any] = {"inputs": effective_inputs}
         if extra_params:
             payload["parameters"] = extra_params
-        resp = _requests.post(url, json=payload, headers=headers, timeout=120)
+        resp = safe_request(
+            "POST",
+            url,
+            json=payload,
+            headers=headers,
+            timeout=120,
+            context="huggingface_inference endpoint",
+        )
         if resp.status_code >= 400:
-            raise RuntimeError(f"huggingface_inference endpoint error {resp.status_code}: {resp.text[:500]}")
+            raise RuntimeError(
+                f"huggingface_inference endpoint error {resp.status_code}: {resp.text[:500]}"
+            )
         try:
             result = resp.json()
         except ValueError:
@@ -639,7 +671,10 @@ def huggingface_inference(
     else:
         # Fallback to raw POST
         result = client.post(
-            json={"inputs": effective_inputs, **({"parameters": extra_params} if extra_params else {})},
+            json={
+                "inputs": effective_inputs,
+                **({"parameters": extra_params} if extra_params else {}),
+            },
             model=model,
         )
 
@@ -720,9 +755,6 @@ def ai_batch_processor(
     batches: list[list[Any]] = []
     for i in range(0, len(items), batch_sz):
         batches.append(items[i : i + batch_sz])
-
-    results: list[dict[str, Any]] = []
-    errors = 0
 
     def _process_batch(batch: list[Any]) -> list[dict[str, Any]]:
         batch_results: list[dict[str, Any]] = []
@@ -824,7 +856,7 @@ def ai_image_classifier(
 
     if not labels:
         raise ValueError("ai_image_classifier: labels are required")
-    label_list = [l.strip() for l in labels.split(",") if l.strip()]
+    label_list = [label.strip() for label in labels.split(",") if label.strip()]
 
     raw_images = input if isinstance(input, list) else ([input] if input is not None else [])
     if not raw_images:
@@ -933,10 +965,15 @@ def ai_code_review(
         raise ValueError("ai_code_review: code input is required")
 
     aspects = [a.strip() for a in review_aspects.split(",") if a.strip()] or [
-        "bugs", "security", "performance", "style"
+        "bugs",
+        "security",
+        "performance",
+        "style",
     ]
     lang_hint = f" The code is written in {language}." if language else ""
-    threshold_idx = SEVERITY_ORDER.index(severity_threshold) if severity_threshold in SEVERITY_ORDER else 1
+    threshold_idx = (
+        SEVERITY_ORDER.index(severity_threshold) if severity_threshold in SEVERITY_ORDER else 1
+    )
 
     system = (
         f"You are an expert code reviewer.{lang_hint} "
@@ -957,14 +994,19 @@ def ai_code_review(
     response = adapter.complete(request)
     parsed = _parse_json_response(response.text)
     if not isinstance(parsed, dict):
-        return {"issues": [], "summary": response.text.strip(), "language": language, "raw": response.text}
+        return {
+            "issues": [],
+            "summary": response.text.strip(),
+            "language": language,
+            "raw": response.text,
+        }
 
     # Filter by severity threshold
     all_issues: list[dict[str, Any]] = parsed.get("issues") or []
     filtered_issues = [
-        issue for issue in all_issues
-        if SEVERITY_ORDER.index(str(issue.get("severity") or "low").lower())
-        >= threshold_idx
+        issue
+        for issue in all_issues
+        if SEVERITY_ORDER.index(str(issue.get("severity") or "low").lower()) >= threshold_idx
         if str(issue.get("severity") or "low").lower() in SEVERITY_ORDER
     ]
 

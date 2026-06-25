@@ -328,18 +328,27 @@ def _dispatch(pool, run_id, org="org1", env="env1"):
     )
 
 
+async def _wait_until(predicate, timeout: float = 5.0) -> None:
+    """Wait for an async dispatch milestone without fixed-sleep flakes."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not predicate():
+        if asyncio.get_running_loop().time() >= deadline:
+            raise AssertionError("sandbox dispatch did not reach the expected state")
+        await asyncio.sleep(0.01)
+
+
 def test_warm_reuse_within_key():
     client = FakeDockerClient()
 
     async def scenario():
         pool = _make_pool(client)
         t1 = asyncio.create_task(_dispatch(pool, "r1"))
-        await asyncio.sleep(0.2)
+        await _wait_until(lambda: len(client.containers_made) >= 1)
         client.containers_made[0].sock._sock.feed({"type": "result", "status": "success"})
         assert await t1 == "success"
         # second run, same key: reuses the warm container
         t2 = asyncio.create_task(_dispatch(pool, "r2"))
-        await asyncio.sleep(0.2)
+        await _wait_until(lambda: "r2" in pool._active)
         client.containers_made[0].sock._sock.feed({"type": "result", "status": "success"})
         assert await t2 == "success"
 
@@ -353,11 +362,11 @@ def test_no_cross_key_reuse():
     async def scenario():
         pool = _make_pool(client)
         t1 = asyncio.create_task(_dispatch(pool, "r1", org="orgA"))
-        await asyncio.sleep(0.2)
+        await _wait_until(lambda: len(client.containers_made) >= 1)
         client.containers_made[0].sock._sock.feed({"type": "result", "status": "success"})
         await t1
         t2 = asyncio.create_task(_dispatch(pool, "r2", org="orgB"))  # different org!
-        await asyncio.sleep(0.2)
+        await _wait_until(lambda: len(client.containers_made) >= 2)
         client.containers_made[1].sock._sock.feed({"type": "result", "status": "success"})
         await t2
 
@@ -371,11 +380,11 @@ def test_dirty_exit_not_pooled():
     async def scenario():
         pool = _make_pool(client)
         t1 = asyncio.create_task(_dispatch(pool, "r1"))
-        await asyncio.sleep(0.2)
+        await _wait_until(lambda: len(client.containers_made) >= 1)
         client.containers_made[0].sock._sock.feed_eof()  # crash
         assert await t1 == "error"
         t2 = asyncio.create_task(_dispatch(pool, "r2"))
-        await asyncio.sleep(0.2)
+        await _wait_until(lambda: len(client.containers_made) >= 2)
         client.containers_made[1].sock._sock.feed({"type": "result", "status": "success"})
         await t2
 
@@ -391,7 +400,7 @@ def test_stale_image_not_reused():
     async def scenario():
         pool = _make_pool(client)
         t1 = asyncio.create_task(_dispatch(pool, "r1"))
-        await asyncio.sleep(0.2)
+        await _wait_until(lambda: len(client.containers_made) >= 1)
         client.containers_made[0].sock._sock.feed({"type": "result", "status": "success"})
         await t1
 
@@ -416,7 +425,7 @@ def test_stale_image_not_reused():
                 on_event=on_event,
             )
         )
-        await asyncio.sleep(0.2)
+        await _wait_until(lambda: len(client.containers_made) >= 2)
         client.containers_made[1].sock._sock.feed({"type": "result", "status": "success"})
         await t2
 
@@ -431,9 +440,11 @@ def test_recycle_after_max_runs(monkeypatch):
 
     async def scenario():
         pool = _make_pool(client)
-        for rid in ("r1", "r2"):
+        for expected_count, rid in enumerate(("r1", "r2"), start=1):
             t = asyncio.create_task(_dispatch(pool, rid))
-            await asyncio.sleep(0.2)
+            await _wait_until(
+                lambda count=expected_count: len(client.containers_made) >= count
+            )
             client.containers_made[-1].sock._sock.feed({"type": "result", "status": "success"})
             await t
 
@@ -448,9 +459,13 @@ def test_warm_total_cap_evicts_lru(monkeypatch):
 
     async def scenario():
         pool = _make_pool(client)
-        for rid, org in (("r1", "orgA"), ("r2", "orgB")):
+        for expected_count, (rid, org) in enumerate(
+            (("r1", "orgA"), ("r2", "orgB")), start=1
+        ):
             t = asyncio.create_task(_dispatch(pool, rid, org=org))
-            await asyncio.sleep(0.2)
+            await _wait_until(
+                lambda count=expected_count: len(client.containers_made) >= count
+            )
             client.containers_made[-1].sock._sock.feed({"type": "result", "status": "success"})
             await t
 
@@ -466,7 +481,7 @@ def test_cancel_force_removes():
     async def scenario():
         pool = _make_pool(client)
         t = asyncio.create_task(_dispatch(pool, "r1"))
-        await asyncio.sleep(0.2)
+        await _wait_until(lambda: "r1" in pool._active)
         assert await pool.cancel("r1") is True
         # the read loop now sees EOF/error from the removed container
         client.containers_made[0].sock._sock.feed_eof()
@@ -484,7 +499,7 @@ def test_flush_closes_idle():
     async def scenario():
         pool = _make_pool(client)
         t = asyncio.create_task(_dispatch(pool, "r1"))
-        await asyncio.sleep(0.2)
+        await _wait_until(lambda: len(client.containers_made) >= 1)
         client.containers_made[0].sock._sock.feed({"type": "result", "status": "success"})
         await t
         await pool.flush()

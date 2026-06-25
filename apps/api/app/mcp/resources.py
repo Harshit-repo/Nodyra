@@ -10,22 +10,32 @@ from sqlalchemy.orm import selectinload
 from app.models import Workflow
 from noodle.sdk import registry as node_registry
 
+RESOURCE_PAGE_SIZE = 50
 
-async def list_resources(session: AsyncSession) -> list[dict[str, Any]]:
-    resources: list[dict[str, Any]] = [
-        {
-            "uri": "noodle://node-types",
-            "name": "Node Type Catalogue",
-            "description": "All available node types with ids, categories, and descriptions.",
-            "mimeType": "application/json",
-        }
-    ]
-    workflows = (
-        await session.scalars(
-            select(Workflow).order_by(Workflow.updated_at.desc()).limit(100)
+
+async def list_resources(
+    session: AsyncSession, *, offset: int = 0
+) -> tuple[list[dict[str, Any]], bool]:
+    resources: list[dict[str, Any]] = []
+    if offset == 0:
+        resources.append(
+            {
+                "uri": "noodle://node-types",
+                "name": "Node Type Catalogue",
+                "description": "All available node types with ids, categories, and descriptions.",
+                "mimeType": "application/json",
+            }
         )
-    ).all()
-    for wf in workflows:
+    workflows = list((
+        await session.scalars(
+            select(Workflow)
+            .order_by(Workflow.updated_at.desc(), Workflow.id)
+            .offset(max(0, offset))
+            .limit(RESOURCE_PAGE_SIZE + 1)
+        )
+    ).all())
+    has_more = len(workflows) > RESOURCE_PAGE_SIZE
+    for wf in workflows[:RESOURCE_PAGE_SIZE]:
         resources.append(
             {
                 "uri": f"noodle://workflow/{wf.id}",
@@ -34,7 +44,18 @@ async def list_resources(session: AsyncSession) -> list[dict[str, Any]]:
                 "mimeType": "application/json",
             }
         )
-    return resources
+    return resources, has_more
+
+
+def list_resource_templates() -> list[dict[str, Any]]:
+    return [
+        {
+            "uriTemplate": "noodle://workflow/{workflow_id}",
+            "name": "Workflow",
+            "description": "A workflow's current graph and metadata by id.",
+            "mimeType": "application/json",
+        }
+    ]
 
 
 async def read_resource(session: AsyncSession, uri: str) -> dict[str, Any]:

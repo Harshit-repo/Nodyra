@@ -56,7 +56,7 @@ def test_nodes_with_raw_http_use_the_shared_guard() -> None:
         "These node modules make raw requests.<verb>() calls without importing "
         "the http_security guard. Route user-controlled hosts through "
         "safe_request(), or add the module to the documented allowlist if its "
-        f"host is a fixed first-party endpoint:\n  " + "\n  ".join(offenders)
+        "host is a fixed first-party endpoint:\n  " + "\n  ".join(offenders)
     )
 
 

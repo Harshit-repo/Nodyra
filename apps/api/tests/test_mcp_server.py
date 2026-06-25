@@ -75,9 +75,47 @@ async def test_initialize(client: AsyncClient) -> None:
     assert result["protocolVersion"] == "2025-06-18"
     assert result["serverInfo"]["name"] == "noodle"
     assert "tools" in result["capabilities"]
-    assert result["capabilities"]["tools"]["listChanged"] is True
+    assert result["capabilities"]["tools"]["listChanged"] is False
     assert "resources" in result["capabilities"]
     assert "prompts" in result["capabilities"]
+
+
+async def test_initialize_latest_protocol(client: AsyncClient) -> None:
+    response = await client.post(
+        "/mcp",
+        json=rpc(
+            "initialize",
+            {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "pytest", "version": "0"},
+            },
+        ),
+    )
+    assert response.json()["result"]["protocolVersion"] == "2025-11-25"
+
+
+async def test_invalid_origin_is_rejected(client: AsyncClient) -> None:
+    response = await client.post(
+        "/mcp", headers={"Origin": "https://evil.example"}, json=rpc("ping")
+    )
+    assert response.status_code == 403
+
+
+async def test_unsupported_protocol_header_is_rejected(client: AsyncClient) -> None:
+    response = await client.post(
+        "/mcp",
+        headers={"MCP-Protocol-Version": "2099-01-01"},
+        json=rpc("ping"),
+    )
+    assert response.status_code == 400
+
+
+async def test_protected_resource_metadata(client: AsyncClient) -> None:
+    response = await client.get("/.well-known/oauth-protected-resource/mcp")
+    assert response.status_code == 200
+    assert response.json()["resource"].endswith("/mcp")
+    assert "workflow:run" in response.json()["scopes_supported"]
 
 
 async def test_notification_returns_202(client: AsyncClient) -> None:
@@ -91,8 +129,8 @@ async def test_get_is_405(client: AsyncClient) -> None:
     assert (await client.get("/mcp")).status_code == 405
 
 
-async def test_batch_requests(client: AsyncClient) -> None:
-    """Batch of two requests returns two responses."""
+async def test_batch_requests_are_rejected(client: AsyncClient) -> None:
+    """Streamable HTTP accepts exactly one MCP message per POST."""
     resp = await client.post(
         "/mcp",
         json=[
@@ -100,16 +138,11 @@ async def test_batch_requests(client: AsyncClient) -> None:
             rpc("ping", req_id=2),
         ],
     )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert isinstance(body, list)
-    assert len(body) == 2
-    ids = {item["id"] for item in body}
-    assert ids == {1, 2}
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == -32600
 
 
-async def test_batch_with_notification(client: AsyncClient) -> None:
-    """Notifications in a batch produce no response entry."""
+async def test_batch_with_notification_is_rejected(client: AsyncClient) -> None:
     resp = await client.post(
         "/mcp",
         json=[
@@ -117,25 +150,57 @@ async def test_batch_with_notification(client: AsyncClient) -> None:
             {"jsonrpc": "2.0", "method": "notifications/initialized"},
         ],
     )
-    body = resp.json()
-    assert isinstance(body, list)
-    assert len(body) == 1
-    assert body[0]["id"] == 1
+    assert resp.status_code == 400
 
 
-async def test_batch_all_notifications(client: AsyncClient) -> None:
-    """A batch of only notifications returns 202."""
+async def test_batch_all_notifications_is_rejected(client: AsyncClient) -> None:
     resp = await client.post(
         "/mcp",
         json=[{"jsonrpc": "2.0", "method": "notifications/initialized"}],
     )
-    assert resp.status_code == 202
+    assert resp.status_code == 400
 
 
 async def test_tools_list_contains_static_tools(client: AsyncClient) -> None:
     resp = await client.post("/mcp", json=rpc("tools/list"))
     names = {t["name"] for t in resp.json()["result"]["tools"]}
     assert {"run_workflow", "set_workflow_graph", "list_node_types"} <= names
+    descriptor = next(
+        item for item in resp.json()["result"]["tools"] if item["name"] == "run_workflow"
+    )
+    assert descriptor["outputSchema"]["type"] == "object"
+    assert descriptor["annotations"]["openWorldHint"] is True
+    assert descriptor["execution"]["taskSupport"] == "forbidden"
+
+
+async def test_tool_arguments_are_validated(client: AsyncClient) -> None:
+    response = await client.post(
+        "/mcp",
+        json=rpc("tools/call", {"name": "create_workflow", "arguments": {}}),
+    )
+    result = response.json()["result"]
+    assert result["isError"] is True
+    assert "name" in result["content"][0]["text"]
+
+
+async def test_validate_graph_rejects_cycles(client: AsyncClient) -> None:
+    graph = {
+        "nodes": [
+            {"id": "trigger", "type": "manual_trigger", "params": {}},
+            {"id": "code", "type": "code", "params": {"code": "output = input"}},
+        ],
+        "edges": [
+            {"source": "trigger", "target": "code"},
+            {"source": "code", "target": "trigger"},
+        ],
+    }
+    response = await client.post(
+        "/mcp",
+        json=rpc("tools/call", {"name": "validate_graph", "arguments": {"graph": graph}}),
+    )
+    result = response.json()["result"]
+    assert result["isError"] is True
+    assert "cycle" in result["content"][0]["text"].lower()
 
 
 def _tool_payload(resp) -> dict:
@@ -690,6 +755,8 @@ async def test_rollback_workflow(client: AsyncClient) -> None:
 
 async def test_schedule_crud(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "Sched WF")
+    publish = await client.post(f"/workflows/{workflow_id}/publish", json={})
+    assert publish.status_code == 200
 
     created = _tool_payload(
         await client.post(
@@ -719,6 +786,24 @@ async def test_schedule_crud(client: AsyncClient) -> None:
         )
     )
     assert any(s["schedule_id"] == schedule_id for s in listing["schedules"])
+
+    updated = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc(
+                "tools/call",
+                {
+                    "name": "update_schedule",
+                    "arguments": {
+                        "schedule_id": schedule_id,
+                        "name": "Every two hours",
+                        "schedule_cron": "0 */2 * * *",
+                    },
+                },
+            ),
+        )
+    )
+    assert updated["name"] == "Every two hours"
 
     # toggle off
     toggled = _tool_payload(
@@ -767,6 +852,12 @@ async def test_resources_list(client: AsyncClient) -> None:
     assert "resources" in result
     uris = {r["uri"] for r in result["resources"]}
     assert "noodle://node-types" in uris
+
+
+async def test_resource_templates_list(client: AsyncClient) -> None:
+    response = await client.post("/mcp", json=rpc("resources/templates/list"))
+    templates = response.json()["result"]["resourceTemplates"]
+    assert templates[0]["uriTemplate"] == "noodle://workflow/{workflow_id}"
 
 
 async def test_resources_list_includes_workflows(client: AsyncClient) -> None:
@@ -838,6 +929,14 @@ async def test_prompts_get_build_workflow(client: AsyncClient) -> None:
     assert "messages" in result
     assert len(result["messages"]) >= 1
     assert "send a daily email" in result["messages"][0]["content"]["text"]
+
+
+async def test_prompts_validate_required_arguments(client: AsyncClient) -> None:
+    response = await client.post(
+        "/mcp",
+        json=rpc("prompts/get", {"name": "build_workflow", "arguments": {}}),
+    )
+    assert response.json()["error"]["code"] == -32602
 
 
 async def test_prompts_get_debug_run(client: AsyncClient) -> None:
@@ -932,6 +1031,7 @@ async def test_mcp_get_prompt_loopback(client: AsyncClient, monkeypatch) -> None
 async def test_mcp_call_tool_image_result(client: AsyncClient, monkeypatch) -> None:
     """mcp_call_tool returns image dict when server responds with image content."""
     from types import SimpleNamespace
+
     from noodle_nodes.ai_v2 import mcp as mcp_module
 
     @asynccontextmanager
@@ -1089,3 +1189,66 @@ async def test_enable_disable_mcp_tool(client: AsyncClient) -> None:
     dis = await _tool(client, "disable_mcp_tool", {"workflow_id": wf_id})
     dis_data = json.loads(dis["content"][0]["text"])
     assert dis_data["mcp_enabled"] is False
+
+
+async def test_enable_mcp_tool_rejects_tenant_local_name_collision(client: AsyncClient) -> None:
+    first = await make_workflow(client, "First Agent")
+    second = await make_workflow(client, "Second Agent")
+    enabled = await _tool(
+        client, "enable_mcp_tool", {"workflow_id": first, "tool_name": "same_name"}
+    )
+    assert enabled["isError"] is False
+    collision = await _tool(
+        client, "enable_mcp_tool", {"workflow_id": second, "tool_name": "same_name"}
+    )
+    assert collision["isError"] is True
+    assert "already" in collision["content"][0]["text"].lower()
+
+
+async def test_enable_mcp_tool_returns_generated_name(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "Generated Name")
+    result = await _tool(client, "enable_mcp_tool", {"workflow_id": workflow_id})
+    data = json.loads(result["content"][0]["text"])
+    assert data["tool_name"].startswith("workflow_generated_name_")
+
+
+async def test_workflow_settings_and_version_tools(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "Versioned")
+    published = await client.post(f"/workflows/{workflow_id}/publish", json={})
+    assert published.status_code == 200
+    version = published.json()["version"]
+
+    settings_result = await _tool(
+        client,
+        "update_workflow_settings",
+        {
+            "workflow_id": workflow_id,
+            "allow_concurrent": False,
+            "run_timeout_seconds": 45,
+            "mcp_parameters_schema": {
+                "type": "object",
+                "properties": {"value": {"type": "integer"}},
+                "required": ["value"],
+            },
+        },
+    )
+    settings_data = json.loads(settings_result["content"][0]["text"])
+    assert settings_data["allow_concurrent"] is False
+    assert settings_data["run_timeout_seconds"] == 45
+
+    version_result = await _tool(
+        client,
+        "get_workflow_version",
+        {"workflow_id": workflow_id, "version": version},
+    )
+    version_data = json.loads(version_result["content"][0]["text"])
+    assert version_data["version"] == version
+    assert version_data["graph"]["nodes"]
+
+    diff_result = await _tool(
+        client,
+        "diff_workflow_versions",
+        {"workflow_id": workflow_id, "from_version": version},
+    )
+    diff_data = json.loads(diff_result["content"][0]["text"])
+    assert diff_data["changed"] is False

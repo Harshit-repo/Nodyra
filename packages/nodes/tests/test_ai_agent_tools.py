@@ -7,7 +7,12 @@ import pytest
 
 import noodle_nodes  # noqa: F401 - registers nodes
 from noodle.sdk import registry
-from noodle_nodes.ai_v2.agent_tools import CalculatorToolAdapter, CodeExecToolAdapter, WebSearchToolAdapter, _ast_security_check
+from noodle_nodes.ai_v2.agent_tools import (
+    CalculatorToolAdapter,
+    CodeExecToolAdapter,
+    WebSearchToolAdapter,
+    _ast_security_check,
+)
 
 
 def _result(adapter, **args) -> dict:
@@ -15,43 +20,59 @@ def _result(adapter, **args) -> dict:
 
 
 def test_calc_basic_arithmetic() -> None:
-    adapter = CalculatorToolAdapter(name="calculate", description="", precision=10, allow_complex=False)
+    adapter = CalculatorToolAdapter(
+        name="calculate", description="", precision=10, allow_complex=False
+    )
     assert _result(adapter, expression="2 + 2")["result"] == 4.0
 
 
 def test_calc_sqrt() -> None:
-    adapter = CalculatorToolAdapter(name="calculate", description="", precision=10, allow_complex=False)
+    adapter = CalculatorToolAdapter(
+        name="calculate", description="", precision=10, allow_complex=False
+    )
     assert _result(adapter, expression="sqrt(144)")["result"] == 12.0
 
 
 def test_calc_trig() -> None:
-    adapter = CalculatorToolAdapter(name="calculate", description="", precision=10, allow_complex=False)
+    adapter = CalculatorToolAdapter(
+        name="calculate", description="", precision=10, allow_complex=False
+    )
     assert round(_result(adapter, expression="sin(pi/2)")["result"], 6) == 1.0
 
 
 def test_calc_blocks_import() -> None:
-    adapter = CalculatorToolAdapter(name="calculate", description="", precision=10, allow_complex=False)
+    adapter = CalculatorToolAdapter(
+        name="calculate", description="", precision=10, allow_complex=False
+    )
     assert "error" in _result(adapter, expression="__import__('os')")
 
 
 def test_calc_division_by_zero() -> None:
-    adapter = CalculatorToolAdapter(name="calculate", description="", precision=10, allow_complex=False)
+    adapter = CalculatorToolAdapter(
+        name="calculate", description="", precision=10, allow_complex=False
+    )
     assert _result(adapter, expression="1/0")["error"] == "Division by zero"
 
 
 def test_calc_overflow() -> None:
-    adapter = CalculatorToolAdapter(name="calculate", description="", precision=10, allow_complex=False)
+    adapter = CalculatorToolAdapter(
+        name="calculate", description="", precision=10, allow_complex=False
+    )
     out = _result(adapter, expression="10**10000")
     assert "error" in out
 
 
 def test_calc_empty_expression() -> None:
-    adapter = CalculatorToolAdapter(name="calculate", description="", precision=10, allow_complex=False)
+    adapter = CalculatorToolAdapter(
+        name="calculate", description="", precision=10, allow_complex=False
+    )
     assert _result(adapter, expression="")["error"] == "No expression provided"
 
 
 def test_calc_factorial_capped() -> None:
-    adapter = CalculatorToolAdapter(name="calculate", description="", precision=10, allow_complex=False)
+    adapter = CalculatorToolAdapter(
+        name="calculate", description="", precision=10, allow_complex=False
+    )
     assert "error" in _result(adapter, expression="factorial(5000)")
 
 
@@ -71,8 +92,14 @@ def _code(adapter, code, **extra) -> dict:
 
 
 def _py_adapter(**kw):
-    defaults = dict(name="run_code", description="", language="python",
-                    allowed_modules="", timeout_seconds=10, max_output_chars=8000)
+    defaults = dict(
+        name="run_code",
+        description="",
+        language="python",
+        allowed_modules="",
+        timeout_seconds=10,
+        max_output_chars=8000,
+    )
     defaults.update(kw)
     return CodeExecToolAdapter(**defaults)
 
@@ -158,32 +185,56 @@ class _FakeHttpResponse:
 
 
 def _tavily_adapter(**kw):
-    defaults = dict(provider="tavily", credentials={"api_key": "k"}, name="web_search",
-                    description="", max_results=5, search_depth="basic",
-                    include_content=False, timeout_seconds=15)
+    defaults = dict(
+        provider="tavily",
+        credentials={"api_key": "k"},
+        name="web_search",
+        description="",
+        max_results=5,
+        search_depth="basic",
+        include_content=False,
+        timeout_seconds=15,
+    )
     defaults.update(kw)
     return WebSearchToolAdapter(**defaults)
 
 
 def test_web_search_missing_creds_raises() -> None:
     with pytest.raises(ValueError):
-        WebSearchToolAdapter(provider="tavily", credentials={}, name="web_search",
-                             description="", max_results=5, search_depth="basic",
-                             include_content=False, timeout_seconds=15)
+        WebSearchToolAdapter(
+            provider="tavily",
+            credentials={},
+            name="web_search",
+            description="",
+            max_results=5,
+            search_depth="basic",
+            include_content=False,
+            timeout_seconds=15,
+        )
 
 
 def test_web_search_duckduckgo_no_creds_ok() -> None:
-    WebSearchToolAdapter(provider="duckduckgo", credentials={}, name="web_search",
-                         description="", max_results=5, search_depth="basic",
-                         include_content=False, timeout_seconds=15)
+    WebSearchToolAdapter(
+        provider="duckduckgo",
+        credentials={},
+        name="web_search",
+        description="",
+        max_results=5,
+        search_depth="basic",
+        include_content=False,
+        timeout_seconds=15,
+    )
 
 
 def test_web_search_formats_tavily() -> None:
-    payload = {"results": [
-        {"title": "T1", "url": "https://a.com", "content": "snippet one", "score": 0.9},
-    ]}
-    with patch("noodle_nodes.ai_v2.agent_tools.httpx.post",
-               return_value=_FakeHttpResponse(payload)):
+    payload = {
+        "results": [
+            {"title": "T1", "url": "https://a.com", "content": "snippet one", "score": 0.9},
+        ]
+    }
+    with patch(
+        "noodle_nodes.ai_v2.agent_tools.httpx.post", return_value=_FakeHttpResponse(payload)
+    ):
         out = json.loads(_tavily_adapter().invoke({"query": "indexing"}))
     assert out["total"] == 1
     assert out["results"][0]["url"] == "https://a.com"
@@ -191,24 +242,29 @@ def test_web_search_formats_tavily() -> None:
 
 
 def test_web_search_empty_results() -> None:
-    with patch("noodle_nodes.ai_v2.agent_tools.httpx.post",
-               return_value=_FakeHttpResponse({"results": []})):
+    with patch(
+        "noodle_nodes.ai_v2.agent_tools.httpx.post", return_value=_FakeHttpResponse({"results": []})
+    ):
         out = json.loads(_tavily_adapter().invoke({"query": "x"}))
     assert out == {"results": [], "total": 0, "provider": "tavily"}
 
 
 def test_web_search_rate_limit() -> None:
-    with patch("noodle_nodes.ai_v2.agent_tools.httpx.post",
-               return_value=_FakeHttpResponse({}, status_code=429)):
+    with patch(
+        "noodle_nodes.ai_v2.agent_tools.httpx.post",
+        return_value=_FakeHttpResponse({}, status_code=429),
+    ):
         out = json.loads(_tavily_adapter().invoke({"query": "x"}))
     assert "error" in out
 
 
 def test_web_search_truncates_snippet() -> None:
-    payload = {"results": [{"title": "T", "url": "https://a.com",
-                            "content": "z" * 2000, "score": 0.1}]}
-    with patch("noodle_nodes.ai_v2.agent_tools.httpx.post",
-               return_value=_FakeHttpResponse(payload)):
+    payload = {
+        "results": [{"title": "T", "url": "https://a.com", "content": "z" * 2000, "score": 0.1}]
+    }
+    with patch(
+        "noodle_nodes.ai_v2.agent_tools.httpx.post", return_value=_FakeHttpResponse(payload)
+    ):
         out = json.loads(_tavily_adapter().invoke({"query": "x"}))
     assert len(out["results"][0]["snippet"]) <= 500
 
@@ -223,23 +279,38 @@ from noodle_nodes.ai_v2.agent_tools import BrowserToolAdapter  # noqa: E402
 
 
 def _browser(**kw):
-    defaults = dict(name="browse_web", description="",
-                    allowed_actions="navigate,extract,get_links",
-                    wait_strategy="load", timeout_seconds=30, max_content_chars=20000)
+    defaults = dict(
+        name="browse_web",
+        description="",
+        allowed_actions="navigate,extract,get_links",
+        wait_strategy="load",
+        timeout_seconds=30,
+        max_content_chars=20000,
+    )
     defaults.update(kw)
     return BrowserToolAdapter(**defaults)
 
 
 def test_browser_ssrf_blocked() -> None:
-    out = json.loads(asyncio.run(_browser().invoke_async(
-        {"action": "navigate", "url": "http://192.168.1.1"})))
+    out = json.loads(
+        asyncio.run(_browser().invoke_async({"action": "navigate", "url": "http://192.168.1.1"}))
+    )
     assert "error" in out
 
 
 def test_browser_disallowed_action() -> None:
-    out = json.loads(asyncio.run(_browser().invoke_async(
-        {"action": "fill_and_submit", "url": "https://example.com",
-         "fields": {}, "submit_selector": "x"})))
+    out = json.loads(
+        asyncio.run(
+            _browser().invoke_async(
+                {
+                    "action": "fill_and_submit",
+                    "url": "https://example.com",
+                    "fields": {},
+                    "submit_selector": "x",
+                }
+            )
+        )
+    )
     assert "error" in out and "allowed" in out["error"].lower()
 
 
@@ -275,8 +346,14 @@ class _FakeRetriever(RetrieverAdapter):
 
 
 def _rag(retriever, **kw):
-    defaults = dict(retriever=retriever, name="search_knowledge_base", description="",
-                    top_k=5, max_doc_chars=2000, include_metadata=True)
+    defaults = dict(
+        retriever=retriever,
+        name="search_knowledge_base",
+        description="",
+        top_k=5,
+        max_doc_chars=2000,
+        include_metadata=True,
+    )
     defaults.update(kw)
     return RetrieverToolAdapter(**defaults)
 
@@ -321,19 +398,28 @@ def test_rag_node_registered() -> None:
 # Sub-Agent adapter tests
 # ---------------------------------------------------------------------------
 
-from noodle.ai_runtime import AIMessage, ChatResponse, ToolCall  # noqa: E402
+from tests.test_ai_v2_nodes import DummyTool, ScriptedChatModel  # noqa: E402
+
+from noodle.ai_runtime import ChatResponse, ToolCall  # noqa: E402
 from noodle_nodes.ai_v2.agent_tools import (  # noqa: E402
     SubAgentAdapter,
     SubAgentToolAdapter,
     subagent_tool_adapters,
 )
-from tests.test_ai_v2_nodes import DummyTool, ScriptedChatModel  # noqa: E402
 
 
 def _subagent(model, tools=(), **kw):
-    defaults = dict(name="researcher", description="Finds facts.", system="You research.",
-                    model=model, tools=list(tools), max_steps=4, temperature=0.2,
-                    max_tokens=None, side_effecting=True)
+    defaults = dict(
+        name="researcher",
+        description="Finds facts.",
+        system="You research.",
+        model=model,
+        tools=list(tools),
+        max_steps=4,
+        temperature=0.2,
+        max_tokens=None,
+        side_effecting=True,
+    )
     defaults.update(kw)
     return SubAgentAdapter(**defaults)
 
@@ -353,10 +439,14 @@ def test_subagent_runs_to_final_answer() -> None:
 
 
 def test_subagent_executes_tool_then_answers() -> None:
-    model = ScriptedChatModel([
-        ChatResponse(text="", tool_calls=[ToolCall(id="c1", name="lookup", arguments={"query": "x"})]),
-        ChatResponse(text="found it"),
-    ])
+    model = ScriptedChatModel(
+        [
+            ChatResponse(
+                text="", tool_calls=[ToolCall(id="c1", name="lookup", arguments={"query": "x"})]
+            ),
+            ChatResponse(text="found it"),
+        ]
+    )
     tool = SubAgentToolAdapter(_subagent(model, tools=[DummyTool("lookup")]))
     out = json.loads(asyncio.run(tool.invoke_async({"task": "go"})))
     assert out["answer"] == "found it"
@@ -364,8 +454,12 @@ def test_subagent_executes_tool_then_answers() -> None:
 
 
 def test_subagent_max_steps_caps_loop() -> None:
-    looping = [ChatResponse(text="", tool_calls=[ToolCall(id=f"c{i}", name="lookup", arguments={"query": "x"})])
-               for i in range(10)]
+    looping = [
+        ChatResponse(
+            text="", tool_calls=[ToolCall(id=f"c{i}", name="lookup", arguments={"query": "x"})]
+        )
+        for i in range(10)
+    ]
     model = ScriptedChatModel(looping)
     tool = SubAgentToolAdapter(_subagent(model, tools=[DummyTool("lookup")], max_steps=2))
     out = json.loads(asyncio.run(tool.invoke_async({"task": "go"})))
@@ -376,10 +470,13 @@ def test_subagent_tool_error_caught() -> None:
     class _Boom(DummyTool):
         def invoke(self, arguments):
             raise RuntimeError("kaboom")
-    model = ScriptedChatModel([
-        ChatResponse(text="", tool_calls=[ToolCall(id="c1", name="lookup", arguments={})]),
-        ChatResponse(text="recovered"),
-    ])
+
+    model = ScriptedChatModel(
+        [
+            ChatResponse(text="", tool_calls=[ToolCall(id="c1", name="lookup", arguments={})]),
+            ChatResponse(text="recovered"),
+        ]
+    )
     tool = SubAgentToolAdapter(_subagent(model, tools=[_Boom("lookup")]))
     out = json.loads(asyncio.run(tool.invoke_async({"task": "go"})))
     assert "kaboom" in out["intermediate_steps"][0]["result"]
@@ -404,6 +501,7 @@ def test_subagent_dup_names_raise() -> None:
 
 def test_subagent_node_requires_model() -> None:
     from noodle_nodes.ai_v2.agent_tools import ai_sub_agent
+
     with pytest.raises(ValueError):
         ai_sub_agent(model=None)
 
@@ -418,9 +516,16 @@ def test_subagent_node_output_kind() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("node_id", [
-    "ai_calculator_tool", "ai_code_execution_tool", "ai_web_search_tool",
-    "ai_browser_tool", "ai_rag_tool", "ai_sub_agent",
-])
+@pytest.mark.parametrize(
+    "node_id",
+    [
+        "ai_calculator_tool",
+        "ai_code_execution_tool",
+        "ai_web_search_tool",
+        "ai_browser_tool",
+        "ai_rag_tool",
+        "ai_sub_agent",
+    ],
+)
 def test_all_phase1_nodes_registered(node_id) -> None:
     assert node_id in registry

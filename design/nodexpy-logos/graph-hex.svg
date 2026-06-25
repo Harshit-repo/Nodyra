@@ -1,0 +1,10 @@
+<svg width="360" height="96" viewBox="0 0 360 96" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Graph Hex logo">
+  <path d="M48 7L82 27V69L48 89L14 69V27L48 7Z" fill="#102033" stroke="#36506F" stroke-width="3"/>
+  <path d="M31 65V36L48 49L65 36V65" stroke="#4C9EFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="31" cy="65" r="6" fill="#57C98A"/>
+  <circle cx="48" cy="49" r="6" fill="#35D4D0"/>
+  <circle cx="65" cy="65" r="6" fill="#4C9EFF"/>
+  <text x="104" y="62" fill="#102033" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">Node</text>
+  <text x="209" y="62" fill="#4C9EFF" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">x</text>
+  <text x="231" y="62" fill="#35D4D0" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">py</text>
+</svg>

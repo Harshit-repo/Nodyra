@@ -1,0 +1,9 @@
+<svg width="380" height="96" viewBox="0 0 380 96" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy NX Monogram logo">
+  <rect x="9" y="9" width="78" height="78" rx="20" fill="#111A27" stroke="#34445C" stroke-width="2"/>
+  <path d="M25 69V27L56 69V27" stroke="#4C9EFF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M47 34L73 62M73 34L47 62" stroke="#35D4D0" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="25" cy="69" r="5" fill="#4C9EFF"/><rect x="68" y="57" width="10" height="10" rx="3" fill="#35D4D0"/>
+  <text x="108" y="62" fill="#EDF3FA" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">Node</text>
+  <text x="213" y="62" fill="#4C9EFF" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">x</text>
+  <text x="235" y="62" fill="#35D4D0" font-family="Inter, Segoe UI, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">py</text>
+</svg>

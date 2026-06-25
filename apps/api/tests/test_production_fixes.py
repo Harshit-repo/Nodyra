@@ -5,12 +5,7 @@ Each test targets a specific bug found in the production audit.
 Tests are written before the fix; they must FAIL before and PASS after.
 """
 
-import asyncio
-import time
-from collections import deque
-from unittest.mock import AsyncMock, patch
 
-import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +67,7 @@ def test_scheduler_tick_guards_empty_versions():
     IndexError, which propagates through scheduler_loop and kills the tick.
     """
     import inspect
+
     from app.services import triggers as triggers_module
 
     source = inspect.getsource(triggers_module._tick)
@@ -103,6 +99,7 @@ def test_retention_prune_uses_batched_deletes():
     The fix fetches and deletes in batches of at most BATCH_SIZE.
     """
     import inspect
+
     from app.services import retention
 
     source = inspect.getsource(retention.prune_old_runs)
@@ -133,6 +130,7 @@ def test_remote_dispatch_uses_get_running_loop():
     different loop, causing futures to resolve on the wrong loop and hang.
     """
     import inspect
+
     from app.services import remote_dispatch
 
     source = inspect.getsource(remote_dispatch)
@@ -184,6 +182,7 @@ def test_runner_run_events_has_cap():
     With max_steps=500 and 256KB per capped event, peak RAM is ~128MB per run.
     """
     import inspect
+
     from app.services import runner as runner_module
 
     # _execute_run is a thin tracing wrapper (A5); the execution body —

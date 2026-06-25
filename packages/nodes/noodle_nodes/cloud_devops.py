@@ -11,6 +11,8 @@ Credential metadata replaces inline secret fields with a single
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json as json_mod
 import shutil
 import time
@@ -391,11 +393,12 @@ def aws_sns_publish(
             **cred_multi(
                 "ssh",
                 "SSH credentials",
-                ["username", "password", "private_key"],
+                ["username", "password", "private_key", "host_key"],
             ),
             "description": (
                 "SSH username plus either password or private_key (PEM). "
-                "Both auth methods can be present; password takes precedence."
+                "Both auth methods can be present; password takes precedence. "
+                "host_key is the server's OpenSSH public host key."
             ),
         },
         "command": {
@@ -422,6 +425,7 @@ def ssh_execute(
     username = str(creds.get("username") or "")
     password = str(creds.get("password") or "")
     private_key = str(creds.get("private_key") or "")
+    host_key = str(creds.get("host_key") or "").strip()
     if not host or not username or not command:
         raise ValueError(
             "ssh_execute: host, command, and credentials (username) are required"
@@ -438,7 +442,24 @@ def ssh_execute(
         raise _missing_driver("SSH", "paramiko") from exc
 
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    # Never trust a first-seen SSH host key: doing so makes command execution
+    # vulnerable to an active network MITM. System known_hosts is supported;
+    # isolated runtimes can pin the OpenSSH public key in the credential.
+    client.load_system_host_keys()
+    if host_key:
+        try:
+            key_type, encoded_key, *_comment = host_key.split()
+            pinned_key = paramiko.PKey.from_type_string(
+                key_type,
+                base64.b64decode(encoded_key, validate=True),
+            )
+        except (ValueError, TypeError, binascii.Error) as exc:
+            raise ValueError(
+                "ssh_execute: host_key must be an OpenSSH public key"
+            ) from exc
+        lookup_host = host if int(port or 22) == 22 else f"[{host}]:{int(port)}"
+        client.get_host_keys().add(lookup_host, pinned_key.get_name(), pinned_key)
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
     pkey = None
     if private_key:
         try:

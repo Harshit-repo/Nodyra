@@ -43,8 +43,20 @@ depends_on: str | Sequence[str] | None = None
 _FKS = [
     ("fk_credentials_workflow_id", "credentials", "workflow_id", "workflows", "CASCADE"),
     ("fk_credentials_environment_id", "credentials", "environment_id", "environments", "CASCADE"),
-    ("fk_deployments_workflow_version_id", "deployments", "workflow_version_id", "workflow_versions", "SET NULL"),
-    ("fk_deployments_error_workflow_id", "deployments", "error_workflow_id", "workflows", "SET NULL"),
+    (
+        "fk_deployments_workflow_version_id",
+        "deployments",
+        "workflow_version_id",
+        "workflow_versions",
+        "SET NULL",
+    ),
+    (
+        "fk_deployments_error_workflow_id",
+        "deployments",
+        "error_workflow_id",
+        "workflows",
+        "SET NULL",
+    ),
     ("fk_runs_workflow_version_id", "runs", "workflow_version_id", "workflow_versions", "SET NULL"),
     ("fk_runs_deployment_id", "runs", "deployment_id", "deployments", "SET NULL"),
     ("fk_runs_triggered_by_error_run_id", "runs", "triggered_by_error_run_id", "runs", "SET NULL"),

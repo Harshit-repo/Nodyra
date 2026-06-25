@@ -1,4 +1,5 @@
 """File reading nodes — local path and browser-upload (artifact) sources."""
+
 from __future__ import annotations
 
 import pathlib
@@ -64,9 +65,7 @@ def read_text_file(
         p = pathlib.Path(path)
         text = p.read_text(encoding=encoding or "utf-8")
         return {"text": text, "filename": p.name, "size_bytes": p.stat().st_size}
-    raise ValueError(
-        "read_text_file: either path or file (artifact_id) must be provided"
-    )
+    raise ValueError("read_text_file: either path or file (artifact_id) must be provided")
 
 
 _DATASET_TOGGLE = {"param": "output_as_dataset", "true": "dataset", "false": "any"}
@@ -92,7 +91,9 @@ def _parse_file_bytes(
     if fmt == "csv":
         text = content_bytes.decode("utf-8")
         if output_as_dataset:
-            return csv_parse(input=None, text=text, delimiter=delimiter or ",", has_header=has_header)
+            return csv_parse(
+                input=None, text=text, delimiter=delimiter or ",", has_header=has_header
+            )
         import csv as _csv
 
         reader = _csv.reader(_io.StringIO(text), delimiter=delimiter or ",")
@@ -125,6 +126,7 @@ def _parse_file_bytes(
         import tempfile
 
         import duckdb as _duckdb_mod
+
         from noodle.datasets import reserve_artifact_path
         from noodle_nodes.datasets import _finalize_parquet
 
@@ -200,14 +202,10 @@ def read_csv_file(
         text = p.read_text(encoding="utf-8")
         filename = p.name
     else:
-        raise ValueError(
-            "read_csv_file: either path or file (artifact_id) must be provided"
-        )
+        raise ValueError("read_csv_file: either path or file (artifact_id) must be provided")
 
     if output_as_dataset:
-        return csv_parse(
-            input=None, text=text, delimiter=delimiter or ",", has_header=has_header
-        )
+        return csv_parse(input=None, text=text, delimiter=delimiter or ",", has_header=has_header)
 
     reader = csv.reader(_io.StringIO(text), delimiter=delimiter or ",")
     all_rows = list(reader)
@@ -267,19 +265,14 @@ def read_json_file(
         text = p.read_text(encoding="utf-8")
         filename = p.name
     else:
-        raise ValueError(
-            "read_json_file: either path or file (artifact_id) must be provided"
-        )
+        raise ValueError("read_json_file: either path or file (artifact_id) must be provided")
 
     data = _json.loads(text)
 
     if output_as_dataset:
-        if not isinstance(data, list) or not all(
-            isinstance(row, dict) for row in data
-        ):
+        if not isinstance(data, list) or not all(isinstance(row, dict) for row in data):
             raise ValueError(
-                "read_json_file: output_as_dataset requires the JSON root to be "
-                "an array of objects"
+                "read_json_file: output_as_dataset requires the JSON root to be an array of objects"
             )
         import csv as _csv
         import io as _io
@@ -344,15 +337,11 @@ def read_xml_file(
         text = p.read_text(encoding="utf-8")
         filename = p.name
     else:
-        raise ValueError(
-            "read_xml_file: either path or file (artifact_id) must be provided"
-        )
+        raise ValueError("read_xml_file: either path or file (artifact_id) must be provided")
 
     if output_as_dataset:
         if not row_xpath:
-            raise ValueError(
-                "read_xml_file: row_xpath is required when output_as_dataset is true"
-            )
+            raise ValueError("read_xml_file: row_xpath is required when output_as_dataset is true")
         try:
             root = ET.fromstring(text)
         except (ET.ParseError, DefusedXmlException) as exc:
@@ -466,14 +455,16 @@ def read_s3_file(
     )
 
 
-_REDIRECT_AUTH_HEADERS = frozenset({
-    "authorization",
-    "cookie",
-    "proxy-authorization",
-    "x-api-key",
-    "x-auth-token",
-    "x-access-token",
-})
+_REDIRECT_AUTH_HEADERS = frozenset(
+    {
+        "authorization",
+        "cookie",
+        "proxy-authorization",
+        "x-api-key",
+        "x-auth-token",
+        "x-access-token",
+    }
+)
 
 
 def _ssrf_safe_fetch(url: str, headers: dict, *, timeout: int = 60) -> tuple[bytes, str]:
@@ -492,8 +483,9 @@ def _ssrf_safe_fetch(url: str, headers: dict, *, timeout: int = 60) -> tuple[byt
     """
     import ipaddress
     import socket
-    import urllib3
     from urllib.parse import urlparse
+
+    import urllib3
 
     from noodle_nodes.http_security import private_egress_allowed
 
@@ -519,9 +511,7 @@ def _ssrf_safe_fetch(url: str, headers: dict, *, timeout: int = 60) -> tuple[byt
         try:
             infos = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
         except socket.gaierror as exc:
-            raise ValueError(
-                f"read_url_file: cannot resolve hostname {hostname!r}: {exc}"
-            ) from exc
+            raise ValueError(f"read_url_file: cannot resolve hostname {hostname!r}: {exc}") from exc
         if not infos:
             raise ValueError(f"read_url_file: no addresses for {hostname!r}")
         for info in infos:
@@ -555,8 +545,12 @@ def _ssrf_safe_fetch(url: str, headers: dict, *, timeout: int = 60) -> tuple[byt
             pool = urllib3.HTTPConnectionPool(validated_ip, port=port)
 
         resp = pool.request(
-            "GET", path, headers=req_headers,
-            redirect=False, preload_content=True, timeout=timeout,
+            "GET",
+            path,
+            headers=req_headers,
+            redirect=False,
+            preload_content=True,
+            timeout=timeout,
         )
 
         if resp.status in (301, 302, 303, 307, 308) and max_redirects > 0:
@@ -566,13 +560,15 @@ def _ssrf_safe_fetch(url: str, headers: dict, *, timeout: int = 60) -> tuple[byt
             # Resolve relative Location headers (e.g. "/new-path") against the
             # current URL so same-origin redirects continue to work correctly.
             from urllib.parse import urljoin as _urljoin
+
             resolved_location = _urljoin(current_url, location)
             redirect_hostname = urlparse(resolved_location).hostname
             if redirect_hostname and redirect_hostname != hostname:
                 # Cross-host redirect: strip auth-class headers so credentials
                 # are never forwarded to an attacker-controlled domain.
                 current_headers = {
-                    k: v for k, v in current_headers.items()
+                    k: v
+                    for k, v in current_headers.items()
                     if k.lower() not in _REDIRECT_AUTH_HEADERS
                 }
             current_url = resolved_location
@@ -673,9 +669,7 @@ def read_url_file(
         try:
             parsed_headers = _json.loads(request_headers)
         except _json.JSONDecodeError as exc:
-            raise ValueError(
-                f"read_url_file: request_headers must be valid JSON: {exc}"
-            ) from exc
+            raise ValueError(f"read_url_file: request_headers must be valid JSON: {exc}") from exc
         if not isinstance(parsed_headers, dict):
             raise ValueError("read_url_file: request_headers must be a JSON object")
         headers = parsed_headers
@@ -756,6 +750,7 @@ def stream_large_file(
     import tempfile
 
     import duckdb as _duckdb
+
     from noodle.context import emit_chunk
     from noodle.datasets import reserve_artifact_path
     from noodle_nodes.datasets import _finalize_parquet

@@ -5,11 +5,18 @@ import pytest_asyncio
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
+from starlette.requests import Request
 
 from app import models
 from app.config import settings
 from app.db import Base
-from app.security import require_role, resolve_org_for as resolve_org
+from app.security import (
+    require_instance_permission,
+    require_role,
+)
+from app.security import (
+    resolve_org_for as resolve_org,
+)
 from app.services.crypto import hash_password
 from app.tenancy import DEFAULT_ORG_ID, current_org_id, install_org_filter
 
@@ -61,6 +68,22 @@ def mt_on(monkeypatch):
     current_org_id.reset(token)
 
 
+@pytest.fixture
+def fake_request() -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "headers": [],
+            "query_string": b"",
+            "server": ("test", 80),
+            "client": ("test", 123),
+            "scheme": "http",
+        }
+    )
+
+
 async def test_resolve_org_flag_off_is_none(session, fixtures, monkeypatch):
     monkeypatch.setattr(settings, "multi_tenancy_enabled", False)
     assert await resolve_org("org-x", fixtures["alice"], session) is None
@@ -91,7 +114,7 @@ async def test_resolve_org_anonymous_only_default(session, fixtures, mt_on):
     assert exc.value.status_code == 401
 
 
-async def test_role_comes_from_membership_not_user(session, fixtures, mt_on):
+async def test_role_comes_from_membership_not_user(session, fixtures, mt_on, fake_request):
     """alice's global User.role is viewer, but she is admin of org-x: the
     org membership must win with the flag on."""
     dependency = require_role("admin")
@@ -99,11 +122,12 @@ async def test_role_comes_from_membership_not_user(session, fixtures, mt_on):
         user=fixtures["alice"],
         org_id=await resolve_org("org-x", fixtures["alice"], session),
         session=session,
+        request=fake_request,
     )
     assert user is fixtures["alice"]
 
 
-async def test_role_is_per_org(session, fixtures, mt_on):
+async def test_role_is_per_org(session, fixtures, mt_on, fake_request):
     """The same user is only viewer in org-y: editor-gated work is refused."""
     dependency = require_role("editor")
     with pytest.raises(HTTPException) as exc:
@@ -111,12 +135,28 @@ async def test_role_is_per_org(session, fixtures, mt_on):
             user=fixtures["alice"],
             org_id=await resolve_org("org-y", fixtures["alice"], session),
             session=session,
+            request=fake_request,
         )
     assert exc.value.status_code == 403
 
 
-async def test_flag_off_falls_back_to_user_role(session, fixtures, monkeypatch):
+async def test_flag_off_falls_back_to_user_role(session, fixtures, monkeypatch, fake_request):
     monkeypatch.setattr(settings, "multi_tenancy_enabled", False)
     dependency = require_role("owner")
-    user = await dependency(user=fixtures["bob"], org_id=None, session=session)
+    user = await dependency(
+        user=fixtures["bob"], org_id=None, session=session, request=fake_request
+    )
+    assert user is fixtures["bob"]
+
+
+async def test_workspace_admin_cannot_gain_instance_global_permissions(fixtures, mt_on, fake_request):
+    dependency = require_instance_permission("user:manage")
+    with pytest.raises(HTTPException) as exc:
+        await dependency(user=fixtures["alice"], request=fake_request)
+    assert exc.value.status_code == 403
+
+
+async def test_global_owner_keeps_instance_global_permissions(fixtures, mt_on, fake_request):
+    dependency = require_instance_permission("user:manage")
+    user = await dependency(user=fixtures["bob"], request=fake_request)
     assert user is fixtures["bob"]

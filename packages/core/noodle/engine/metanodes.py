@@ -2,15 +2,13 @@
 as a nested engine run."""
 
 import time
-from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from noodle.models import NodeRunResult, NodeStatus, RunStatus, WorkflowGraph
-from noodle.sdk import NodeRegistry
-
 from noodle.engine.scheduler import execute
 from noodle.engine.types import EventCallback
+from noodle.models import NodeRunResult, NodeStatus, RunStatus, WorkflowGraph
+from noodle.sdk import NodeRegistry
 
 if TYPE_CHECKING:
     from noodle.process_isolation import ProcessIsolator
@@ -45,8 +43,7 @@ def _expand_graph_dict(data: dict[str, Any]) -> dict[str, Any]:
         ports = (m.get("params") or {}).get("ports") or {}
         for p in ports.get("inputs") or []:
             targets = [
-                (t["target"], t.get("target_input", "input"))
-                for t in (p.get("targets") or [])
+                (t["target"], t.get("target_input", "input")) for t in (p.get("targets") or [])
             ]
             port_in[(mid, p["port"])] = targets
         for p in ports.get("outputs") or []:
@@ -107,7 +104,11 @@ def _expand_graph_dict(data: dict[str, Any]) -> dict[str, Any]:
             ne["source_output"] = source_output
             ne["target"] = tid
             ne["target_input"] = tin
-            ne["id"] = f"{e.get('id', f'{source}->{tid}')}#{idx}" if len(targets) > 1 else e.get("id", f"{source}->{tid}")
+            ne["id"] = (
+                f"{e.get('id', f'{source}->{tid}')}#{idx}"
+                if len(targets) > 1
+                else e.get("id", f"{source}->{tid}")
+            )
             out_edges.append(ne)
 
     return {**data, "nodes": out_nodes, "edges": out_edges}
@@ -156,30 +157,42 @@ async def _run_metanode(
             src, out = edges_in[port]
             value = (node_outputs.get(src) or {}).get(out)
         sid = f"__mn_{mid}_{port}"
-        aug_nodes.append({"id": sid, "type": "__metanode_input__", "params": {},
-                          "position": {"x": 0, "y": 0}})
+        aug_nodes.append(
+            {"id": sid, "type": "__metanode_input__", "params": {}, "position": {"x": 0, "y": 0}}
+        )
         cache[sid] = {"main": value}
         for t in p.get("targets") or []:
-            aug_edges.append({
-                "id": f"{sid}->{t['target']}", "source": sid, "source_output": "main",
-                "target": t["target"], "target_input": t.get("target_input", "input"),
-            })
+            aug_edges.append(
+                {
+                    "id": f"{sid}->{t['target']}",
+                    "source": sid,
+                    "source_output": "main",
+                    "target": t["target"],
+                    "target_input": t.get("target_input", "input"),
+                }
+            )
 
     try:
         sub_graph = WorkflowGraph.model_validate({"nodes": aug_nodes, "edges": aug_edges})
         sub_result = await execute(
-            sub_graph, registry, cache=cache,
+            sub_graph,
+            registry,
+            cache=cache,
             default_timeouts=default_timeouts,
             max_node_output_bytes=max_node_output_bytes,
             process_isolator=process_isolator,
         )
     except Exception as exc:  # noqa: BLE001 - surface as a node error
         node_outputs[mid] = {}
-        await finish(NodeRunResult(
-            node_id=mid, status=NodeStatus.error,
-            error=f"{type(exc).__name__}: {exc}",
-            started_at=started, finished_at=time.time(),
-        ))
+        await finish(
+            NodeRunResult(
+                node_id=mid,
+                status=NodeStatus.error,
+                error=f"{type(exc).__name__}: {exc}",
+                started_at=started,
+                finished_at=time.time(),
+            )
+        )
         return RunStatus.error
 
     outputs: dict[str, Any] = {}
@@ -191,14 +204,24 @@ async def _run_metanode(
 
     node_outputs[mid] = outputs
     if str(sub_result.status) == "error":
-        await finish(NodeRunResult(
-            node_id=mid, status=NodeStatus.error,
-            error="metanode sub-graph failed", outputs=outputs,
-            started_at=started, finished_at=time.time(),
-        ))
+        await finish(
+            NodeRunResult(
+                node_id=mid,
+                status=NodeStatus.error,
+                error="metanode sub-graph failed",
+                outputs=outputs,
+                started_at=started,
+                finished_at=time.time(),
+            )
+        )
         return RunStatus.error
-    await finish(NodeRunResult(
-        node_id=mid, status=NodeStatus.success, outputs=outputs,
-        started_at=started, finished_at=time.time(),
-    ))
+    await finish(
+        NodeRunResult(
+            node_id=mid,
+            status=NodeStatus.success,
+            outputs=outputs,
+            started_at=started,
+            finished_at=time.time(),
+        )
+    )
     return RunStatus.success

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -153,15 +153,20 @@ class TestMqttTrigger:
         from noodle_nodes.integrations_v2.providers.mqtt_trigger.triggers import poll_mqtt
 
         mock_mqtt_module = MagicMock()
-        with patch.dict(sys.modules, {"paho": mock_mqtt_module, "paho.mqtt": mock_mqtt_module, "paho.mqtt.client": mock_mqtt_module}):
+        with patch.dict(
+            sys.modules,
+            {
+                "paho": mock_mqtt_module,
+                "paho.mqtt": mock_mqtt_module,
+                "paho.mqtt.client": mock_mqtt_module,
+            },
+        ):
             ctx = _ctx({"credentials": {"broker_url": "localhost"}, "topic": ""})
             with pytest.raises(ValueError, match="required"):
                 poll_mqtt(ctx)
 
     def test_poll_collects_messages(self):
         from noodle_nodes.integrations_v2.providers.mqtt_trigger.triggers import poll_mqtt
-
-        received_payloads: list[dict] = []
 
         class FakeMqttClient:
             MQTTv5 = 5
@@ -219,11 +224,16 @@ class TestMqttTrigger:
         mock_paho.mqtt.client.Client = FakeMqttClient
         mock_paho.mqtt.client.MQTTv5 = 5
 
-        with patch.dict(sys.modules, {"paho": mock_paho, "paho.mqtt": mock_paho.mqtt, "paho.mqtt.client": mock_paho.mqtt.client}):
+        with patch.dict(
+            sys.modules,
+            {
+                "paho": mock_paho,
+                "paho.mqtt": mock_paho.mqtt,
+                "paho.mqtt.client": mock_paho.mqtt.client,
+            },
+        ):
             with patch("time.sleep"):
-                ctx = _ctx(
-                    {"credentials": {"broker_url": "localhost"}, "topic": "sensors/temp"}
-                )
+                ctx = _ctx({"credentials": {"broker_url": "localhost"}, "topic": "sensors/temp"})
                 result = poll_mqtt(ctx)
 
         assert len(result.events) == 1
@@ -268,7 +278,9 @@ class TestPostgresListenTrigger:
         mock_psycopg = MagicMock()
         mock_psycopg.connect.return_value = mock_conn
         mock_psycopg.sql = MagicMock()
-        mock_psycopg.sql.SQL.return_value = MagicMock(format=MagicMock(return_value="LISTEN events"))
+        mock_psycopg.sql.SQL.return_value = MagicMock(
+            format=MagicMock(return_value="LISTEN events")
+        )
         mock_psycopg.sql.Identifier.return_value = "events"
 
         with patch.dict(sys.modules, {"psycopg": mock_psycopg}):
@@ -316,9 +328,7 @@ class TestS3EventTrigger:
 
         mock_sqs = MagicMock()
         mock_sqs.receive_message.return_value = {
-            "Messages": [
-                {"Body": sqs_body, "ReceiptHandle": "rh-1"}
-            ]
+            "Messages": [{"Body": sqs_body, "ReceiptHandle": "rh-1"}]
         }
 
         mock_boto3 = MagicMock()
@@ -327,7 +337,11 @@ class TestS3EventTrigger:
         with patch.dict(sys.modules, {"boto3": mock_boto3}):
             ctx = _ctx(
                 {
-                    "credentials": {"access_key_id": "k", "secret_access_key": "s", "region": "us-east-1"},
+                    "credentials": {
+                        "access_key_id": "k",
+                        "secret_access_key": "s",
+                        "region": "us-east-1",
+                    },
                     "queue_url": "https://sqs.us-east-1.amazonaws.com/123/q",
                 }
             )

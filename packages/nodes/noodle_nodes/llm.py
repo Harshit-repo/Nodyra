@@ -23,7 +23,7 @@ from noodle.datasets import is_dataset_ref
 from noodle.sdk import node
 from noodle_nodes._creds import cred_multi, cred_single
 from noodle_nodes.datasets import materialize_dataset, records_to_dataset
-from noodle_nodes.http_security import assert_public_http_url
+from noodle_nodes.http_security import assert_public_http_url, safe_request
 
 AI_CATEGORY = "AI"
 DEFAULT_TIMEOUT = 75
@@ -711,7 +711,8 @@ def _extract_json_object(text: str) -> Any:
 def _render_template(template: str, context: dict[str, Any]) -> str:
     from jinja2 import Environment, StrictUndefined, Undefined
 
-    env = Environment(
+    # This produces plain LLM prompt text, not trusted HTML.
+    env = Environment(  # nosec B701
         autoescape=False,
         undefined=StrictUndefined if context.get("_strict_undefined") else Undefined,
     )
@@ -879,13 +880,18 @@ async def _execute_tool(tool: dict[str, Any], arguments: dict[str, Any]) -> Any:
         url = str(tool.get("url") or "")
         if not url:
             raise ValueError(f"tool {tool.get('name')}: url is required")
-        assert_public_http_url(url, context=f"tool:{tool.get('name')}")
         kwargs: dict[str, Any] = {"timeout": 45}
         if method in {"POST", "PUT", "PATCH", "DELETE"}:
             kwargs["json"] = arguments
         else:
             kwargs["params"] = arguments
-        response = await asyncio.to_thread(requests.request, method, url, **kwargs)
+        response = await asyncio.to_thread(
+            safe_request,
+            method,
+            url,
+            context=f"tool:{tool.get('name')}",
+            **kwargs,
+        )
         return _expect_json(response, f"tool:{tool.get('name')}")
     if tool_type == "workflow":
         workflow_id = str(tool.get("workflow_id") or "")
@@ -2072,7 +2078,12 @@ def ai_image_generate(
         url = first.get("url")
         if not url:
             raise RuntimeError("ai_image_generate: provider returned no image")
-        image_response = requests.get(str(url), timeout=180)
+        image_response = safe_request(
+            "GET",
+            str(url),
+            timeout=180,
+            context="ai_image_generate provider image",
+        )
         if image_response.status_code >= 400:
             raise RuntimeError(f"ai_image_generate: image URL HTTP {image_response.status_code}")
         data_bytes = image_response.content

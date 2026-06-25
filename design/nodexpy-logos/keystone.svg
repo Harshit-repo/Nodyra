@@ -1,0 +1,7 @@
+<svg width="400" height="100" viewBox="0 0 400 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodexpy Keystone logo">
+  <path d="M19 18H78L88 42L79 82H18L8 42L19 18Z" fill="#161D29" stroke="#596B85" stroke-width="3"/>
+  <path d="M28 68V33L49 58L70 33V68" stroke="#F3F7FA" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M34 35L66 66M66 35L34 66" stroke="#FF5A67" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="49" cy="58" r="5" fill="#4C9EFF"/>
+  <text x="116" y="65" fill="#F3F7FA" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">Node</text><text x="221" y="65" fill="#FF5A67" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">x</text><text x="243" y="65" fill="#4C9EFF" font-family="Arial, sans-serif" font-size="44" font-weight="750" letter-spacing="-2">py</text>
+</svg>

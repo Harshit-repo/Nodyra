@@ -10,9 +10,9 @@ No server-initiated streams, no resumability, no ``Mcp-Session-Id``.
 import json
 from typing import Any
 
-PROTOCOL_VERSION = "2025-06-18"
+PROTOCOL_VERSION = "2025-11-25"
 SUPPORTED_PROTOCOL_VERSIONS = frozenset(
-    {"2025-06-18", "2025-03-26", "2024-11-05"}
+    {"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
 )
 
 PARSE_ERROR = -32700
@@ -23,7 +23,9 @@ INTERNAL_ERROR = -32603
 
 SERVER_INFO = {"name": "noodle", "version": "0.0.1"}
 SERVER_CAPABILITIES: dict[str, Any] = {
-    "tools": {"listChanged": True},
+    # This endpoint is intentionally stateless and opens no server-initiated
+    # stream, so it cannot truthfully emit tools/list_changed notifications.
+    "tools": {"listChanged": False},
     "resources": {"subscribe": False, "listChanged": False},
     "prompts": {"listChanged": False},
 }

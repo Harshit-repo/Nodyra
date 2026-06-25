@@ -85,7 +85,7 @@ async def test_webhook_capture_evicts_stale_entries(client: AsyncClient) -> None
     assert response.status_code == 200
 
     assert "old-path" not in webhooks._captured
-    assert "fresh-path" in webhooks._captured
+    assert "default:fresh-path" in webhooks._captured
 
 
 async def test_webhook_capture_cap_evicts_oldest(client: AsyncClient) -> None:
@@ -102,7 +102,7 @@ async def test_webhook_capture_cap_evicts_oldest(client: AsyncClient) -> None:
     assert response.status_code == 200
 
     assert "path-0" not in webhooks._captured
-    assert "path-new" in webhooks._captured
+    assert "default:path-new" in webhooks._captured
     assert len(webhooks._captured) == cap
 
 
@@ -143,18 +143,14 @@ async def test_secret_cache_expires_after_ttl(client: AsyncClient) -> None:
     # Direct DB mutation simulates "another replica rotated this credential"
     # — no local invalidate call.
     async with SessionLocal() as session:
-        cred = (
-            await session.scalars(select(Credential).where(Credential.id == cred_id))
-        ).one()
+        cred = (await session.scalars(select(Credential).where(Credential.id == cred_id))).one()
         cred.encrypted_data, cred.encrypted_dek = encrypt_credential(
             {"token": "rotated-secret-value-5678"}
         )
         await session.commit()
 
     # Without TTL the cache would still return the old value. Force it stale.
-    redaction._secret_cache_loaded_at = time.monotonic() - (
-        redaction.SECRET_CACHE_TTL_SECONDS + 1
-    )
+    redaction._secret_cache_loaded_at = time.monotonic() - (redaction.SECRET_CACHE_TTL_SECONDS + 1)
 
     async with SessionLocal() as session:
         values = await redaction.load_secret_values(session)
@@ -169,9 +165,7 @@ def test_required_composite_indices_declared_on_models() -> None:
     """Model-side ``__table_args__`` must declare the indices the migration
     adds, so test fixtures using ``Base.metadata.create_all`` get them too."""
     runs_indices = {ix.name for ix in Base.metadata.tables["runs"].indexes}
-    node_runs_indices = {
-        ix.name for ix in Base.metadata.tables["node_runs"].indexes
-    }
+    node_runs_indices = {ix.name for ix in Base.metadata.tables["node_runs"].indexes}
     assert "ix_runs_workflow_id_started_at" in runs_indices
     assert "ix_runs_status_started_at" in runs_indices
     assert "ix_node_runs_run_id_node_id" in node_runs_indices
@@ -209,14 +203,28 @@ async def test_subworkflow_routes_through_subprocess_for_sub_env(
             "environment_id": env["id"],
             "graph": {
                 "nodes": [
-                    {"id": "t", "type": "manual_trigger", "params": {},
-                     "position": {"x": 0, "y": 0}},
-                    {"id": "c", "type": "code",
-                     "params": {"code": "output = input"},
-                     "position": {"x": 200, "y": 0}},
+                    {
+                        "id": "t",
+                        "type": "manual_trigger",
+                        "params": {},
+                        "position": {"x": 0, "y": 0},
+                    },
+                    {
+                        "id": "c",
+                        "type": "code",
+                        "params": {"code": "output = input"},
+                        "position": {"x": 200, "y": 0},
+                    },
                 ],
-                "edges": [{"id": "e", "source": "t", "source_output": "main",
-                           "target": "c", "target_input": "input"}],
+                "edges": [
+                    {
+                        "id": "e",
+                        "source": "t",
+                        "source_output": "main",
+                        "target": "c",
+                        "target_input": "input",
+                    }
+                ],
             },
         },
     )
@@ -245,18 +253,22 @@ async def test_subworkflow_routes_through_subprocess_for_sub_env(
         captured["meta"] = subworkflow_meta
         # Mimic a successful sub run: emit node_finished events so leaf
         # extraction returns something useful.
-        await on_event({
-            "type": "node_finished",
-            "node_id": "t",
-            "status": "success",
-            "outputs": {"main": {"echo": True}},
-        })
-        await on_event({
-            "type": "node_finished",
-            "node_id": "c",
-            "status": "success",
-            "outputs": {"main": {"echo": True}},
-        })
+        await on_event(
+            {
+                "type": "node_finished",
+                "node_id": "t",
+                "status": "success",
+                "outputs": {"main": {"echo": True}},
+            }
+        )
+        await on_event(
+            {
+                "type": "node_finished",
+                "node_id": "c",
+                "status": "success",
+                "outputs": {"main": {"echo": True}},
+            }
+        )
         return "success"
 
     previous_mode = live_settings.use_subprocess_runner
@@ -265,8 +277,11 @@ async def test_subworkflow_routes_through_subprocess_for_sub_env(
     pool_module.pool.dispatch_subworkflow = fake_dispatch_subworkflow  # type: ignore[method-assign]
     try:
         call = SubworkflowCall(
-            workflow_id=sub["id"], parameters={"echo": True},
-            use_published=True, parent_run_id=None, depth=1,
+            workflow_id=sub["id"],
+            parameters={"echo": True},
+            use_published=True,
+            parent_run_id=None,
+            depth=1,
             call_chain=frozenset({"parent-wf", sub["id"]}),
         )
         result = await resolve_subworkflow(call)
@@ -290,21 +305,28 @@ async def test_subworkflow_routes_through_subprocess_for_sub_env(
 # --- Sub-workflow inline-same-subprocess optimization -----------------------
 
 
-async def _build_sub_with_env(
-    client: AsyncClient, env_id: str | None, code: str
-) -> str:
+async def _build_sub_with_env(client: AsyncClient, env_id: str | None, code: str) -> str:
     sub = (await client.post("/workflows", json={"name": "InlineSub"})).json()
     body: dict = {
         "graph": {
             "nodes": [
-                {"id": "t", "type": "manual_trigger", "params": {},
-                 "position": {"x": 0, "y": 0}},
-                {"id": "c", "type": "code",
-                 "params": {"code": code},
-                 "position": {"x": 200, "y": 0}},
+                {"id": "t", "type": "manual_trigger", "params": {}, "position": {"x": 0, "y": 0}},
+                {
+                    "id": "c",
+                    "type": "code",
+                    "params": {"code": code},
+                    "position": {"x": 200, "y": 0},
+                },
             ],
-            "edges": [{"id": "e", "source": "t", "source_output": "main",
-                       "target": "c", "target_input": "input"}],
+            "edges": [
+                {
+                    "id": "e",
+                    "source": "t",
+                    "source_output": "main",
+                    "target": "c",
+                    "target_input": "input",
+                }
+            ],
         },
     }
     if env_id is not None:
@@ -318,8 +340,11 @@ def _sub_call(workflow_id: str, value, **kw):
     from noodle.engine.subworkflows import SubworkflowCall
 
     defaults = dict(
-        parameters=value, use_published=True, parent_run_id=None,
-        depth=1, call_chain=frozenset({workflow_id}),
+        parameters=value,
+        use_published=True,
+        parent_run_id=None,
+        depth=1,
+        call_chain=frozenset({workflow_id}),
     )
     defaults.update(kw)
     return SubworkflowCall(workflow_id=workflow_id, **defaults)
@@ -336,31 +361,46 @@ async def test_subworkflow_inline_even_with_nested_workflow_call(
     from app.services.subworkflows import resolve_subworkflow
     from noodle.engine.subworkflows import InlineSubworkflow
 
-    env = (await client.post(
-        "/environments",
-        json={"name": "Mixed Env", "python_version": "3.12", "packages": []},
-    )).json()
+    env = (
+        await client.post(
+            "/environments",
+            json={"name": "Mixed Env", "python_version": "3.12", "packages": []},
+        )
+    ).json()
 
     # A "leaf" sub the nested call would target.
     inner = await _build_sub_with_env(client, env["id"], "output = input")
 
     # Sub that calls inner — nested execute_workflow, same env → still inline.
-    nested = (await client.post(
-        "/workflows", json={"name": "Nested"})).json()
+    nested = (await client.post("/workflows", json={"name": "Nested"})).json()
     await client.put(
         f"/workflows/{nested['id']}",
         json={
             "environment_id": env["id"],
             "graph": {
                 "nodes": [
-                    {"id": "t", "type": "manual_trigger", "params": {},
-                     "position": {"x": 0, "y": 0}},
-                    {"id": "call", "type": "execute_workflow",
-                     "params": {"workflow_id": inner},
-                     "position": {"x": 200, "y": 0}},
+                    {
+                        "id": "t",
+                        "type": "manual_trigger",
+                        "params": {},
+                        "position": {"x": 0, "y": 0},
+                    },
+                    {
+                        "id": "call",
+                        "type": "execute_workflow",
+                        "params": {"workflow_id": inner},
+                        "position": {"x": 200, "y": 0},
+                    },
                 ],
-                "edges": [{"id": "e", "source": "t", "source_output": "main",
-                           "target": "call", "target_input": "input"}],
+                "edges": [
+                    {
+                        "id": "e",
+                        "source": "t",
+                        "source_output": "main",
+                        "target": "call",
+                        "target_input": "input",
+                    }
+                ],
             },
         },
     )
@@ -392,23 +432,39 @@ async def test_subworkflow_spawns_when_env_differs(
     from app.services.subworkflows import resolve_subworkflow
     from noodle.engine.subworkflows import InlineSubworkflow
 
-    env = (await client.post(
-        "/environments",
-        json={"name": "Sub-only Env", "python_version": "3.12", "packages": []},
-    )).json()
+    env = (
+        await client.post(
+            "/environments",
+            json={"name": "Sub-only Env", "python_version": "3.12", "packages": []},
+        )
+    ).json()
     sub_id = await _build_sub_with_env(client, env["id"], "output = input")
 
     captured: dict[str, object] = {}
 
     async def fake_dispatch(
-        run_id, env_id, graph, cache, targets, on_event,
-        subworkflow_resolver=None, subworkflow_meta=None, workflow_modules=None,
+        run_id,
+        env_id,
+        graph,
+        cache,
+        targets,
+        on_event,
+        subworkflow_resolver=None,
+        subworkflow_meta=None,
+        workflow_modules=None,
     ) -> str:
         captured["env_id"] = env_id
-        await on_event({"type": "node_finished", "node_id": "t",
-                        "status": "success", "outputs": {"main": {}}})
-        await on_event({"type": "node_finished", "node_id": "c",
-                        "status": "success", "outputs": {"main": "called"}})
+        await on_event(
+            {"type": "node_finished", "node_id": "t", "status": "success", "outputs": {"main": {}}}
+        )
+        await on_event(
+            {
+                "type": "node_finished",
+                "node_id": "c",
+                "status": "success",
+                "outputs": {"main": "called"},
+            }
+        )
         return "success"
 
     previous_mode = live_settings.use_subprocess_runner
@@ -467,8 +523,14 @@ async def test_subworkflow_pool_writes_inline_response_field(
 
     await pool_module._RuntimeProcess._handle_call_workflow(
         fake,  # type: ignore[arg-type]
-        {"callback_id": "cb1", "workflow_id": "wf1", "input": None,
-         "use_published": False, "depth": 2, "call_chain": ["wf0", "wf1"]},
+        {
+            "callback_id": "cb1",
+            "workflow_id": "wf1",
+            "input": None,
+            "use_published": False,
+            "depth": 2,
+            "call_chain": ["wf0", "wf1"],
+        },
         resolver,
     )
 
@@ -498,17 +560,23 @@ async def test_retention_skips_running_runs(client: AsyncClient) -> None:
     from app.models import Run
     from app.services import retention
 
-    workflow_id = (
-        await client.post("/workflows", json={"name": "Long-running"})
-    ).json()["id"]
+    workflow_id = (await client.post("/workflows", json={"name": "Long-running"})).json()["id"]
     # Give the workflow a trigger so start_run doesn't reject it.
     await client.put(
         f"/workflows/{workflow_id}",
-        json={"graph": {
-            "nodes": [{"id": "t", "type": "manual_trigger", "params": {},
-                       "position": {"x": 0, "y": 0}}],
-            "edges": [],
-        }},
+        json={
+            "graph": {
+                "nodes": [
+                    {
+                        "id": "t",
+                        "type": "manual_trigger",
+                        "params": {},
+                        "position": {"x": 0, "y": 0},
+                    }
+                ],
+                "edges": [],
+            }
+        },
     )
     run_resp = await client.post(f"/workflows/{workflow_id}/run", json={})
     assert run_resp.status_code in (200, 202), run_resp.text
@@ -608,7 +676,7 @@ def test_run_id_context_var_injected_into_log_records() -> None:
     """Log records emitted with a run_id ContextVar set must carry run_id."""
     import logging
 
-    from app.services.runner import _RunIdFilter, _log_run_id
+    from app.services.runner import _log_run_id, _RunIdFilter
 
     logger = logging.getLogger("noodle.test_run_id")
     handler_records: list[logging.LogRecord] = []
@@ -777,11 +845,16 @@ def test_retention_loop_logs_exceptions(monkeypatch) -> None:
             logged.append(record.getMessage())
 
     import logging as _logging
+
     rt_logger = _logging.getLogger("noodle.retention")
     # The module may use getLogger(__name__) which resolves to app.services.retention
     mod_logger = _logging.getLogger("app.services.retention")
 
-    for lg in (rt_logger, mod_logger, retention_module.logger if hasattr(retention_module, "logger") else mod_logger):
+    for lg in (
+        rt_logger,
+        mod_logger,
+        retention_module.logger if hasattr(retention_module, "logger") else mod_logger,
+    ):
         lg.addHandler(_Cap())
         lg.setLevel(logging.ERROR)
 
@@ -821,7 +894,7 @@ async def test_graph_for_run_logs_warning_when_version_missing(
     is gone (deleted or corrupted FK) and falls back to the draft graph."""
     import logging
 
-    from app.models import Run, WorkflowVersion
+    from app.models import Run
     from app.routers.runs import _graph_for_run
     from app.services.runner import SessionLocal
 
@@ -839,6 +912,7 @@ async def test_graph_for_run_logs_warning_when_version_missing(
                 captured_warnings.append(record.getMessage())
 
     import logging as _logging
+
     runs_logger = _logging.getLogger("app.routers.runs")
     handler = _WarnCap()
     runs_logger.addHandler(handler)
@@ -846,9 +920,10 @@ async def test_graph_for_run_logs_warning_when_version_missing(
 
     try:
         async with SessionLocal() as session:
-            from app.models import Workflow
-            from sqlalchemy.orm import selectinload
             from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+
+            from app.models import Workflow
 
             wf = await session.scalar(
                 select(Workflow)
@@ -870,9 +945,9 @@ async def test_graph_for_run_logs_warning_when_version_missing(
     finally:
         runs_logger.removeHandler(handler)
 
-    assert any("nonexistent-version-id" in w or "version" in w.lower() for w in captured_warnings), (
-        f"Expected version-missing warning; got: {captured_warnings}"
-    )
+    assert any(
+        "nonexistent-version-id" in w or "version" in w.lower() for w in captured_warnings
+    ), f"Expected version-missing warning; got: {captured_warnings}"
 
 
 # --- #20: Redis-backed auth rate limiter -------------------------------------
@@ -882,6 +957,7 @@ def test_enforce_auth_rate_limit_is_async() -> None:
     """_enforce_auth_rate_limit must be a coroutine (async def) so it can
     make Redis INCR/EXPIRE calls when queue_backend=redis."""
     import asyncio
+
     from app.routers.auth import _enforce_auth_rate_limit
 
     assert asyncio.iscoroutinefunction(_enforce_auth_rate_limit), (
@@ -927,9 +1003,7 @@ async def test_enforce_auth_rate_limit_uses_redis_when_backend_configured(
 
     assert eval_calls, "Redis (atomic eval) should have been used"
     key, window = eval_calls[0]
-    assert "noodle:rl" in key, (
-        f"key should be namespaced 'noodle:rl:…'; got: {key}"
-    )
+    assert "noodle:rl" in key, f"key should be namespaced 'noodle:rl:…'; got: {key}"
     assert window > 0 and ttls.get(key) == window, (
         "TTL must be established atomically with the increment"
     )
@@ -955,12 +1029,14 @@ async def test_dispatch_webhook_passes_shared_session_to_resolve_node_auth(
         version = 1
         id = "ver-x"
         graph = {
-            "nodes": [{
-                "id": "wh1",
-                "type": "webhook_trigger",
-                "params": {"path": "test-dispatch-session"},
-                "position": {"x": 0, "y": 0},
-            }],
+            "nodes": [
+                {
+                    "id": "wh1",
+                    "type": "webhook_trigger",
+                    "params": {"path": "test-dispatch-session"},
+                    "position": {"x": 0, "y": 0},
+                }
+            ],
             "edges": [],
         }
 
@@ -981,9 +1057,7 @@ async def test_dispatch_webhook_passes_shared_session_to_resolve_node_auth(
         return "run-fake-id"
 
     monkeypatch.setattr(triggers_module, "_active_workflows", fake_active_workflows)
-    monkeypatch.setattr(
-        triggers_module, "_latest_versions_by_id", fake_latest_versions
-    )
+    monkeypatch.setattr(triggers_module, "_latest_versions_by_id", fake_latest_versions)
     monkeypatch.setattr(triggers_module, "_resolve_node_auth", spy_resolve)
     monkeypatch.setattr(triggers_module, "_webhook_dedup_key", lambda p, r: None)
     # triggers.py binds start_run at import time (``from app.services.runner

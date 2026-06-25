@@ -9,9 +9,8 @@ from __future__ import annotations
 import base64
 from typing import Any
 
-from noodle.artifacts import is_artifact_ref
+from noodle.artifacts import is_artifact_ref, write_bytes
 from noodle.artifacts import read_bytes as read_artifact_bytes
-from noodle.artifacts import write_bytes
 from noodle.sdk import node
 from noodle_nodes._creds import cred_multi
 
@@ -90,9 +89,7 @@ def _run_stt(
     push_stream = speechsdk.audio.PushAudioInputStream()
     audio_config = speechsdk.audio.AudioConfig(stream=push_stream)
 
-    recognizer = speechsdk.SpeechRecognizer(
-        speech_config=speech_config, audio_config=audio_config
-    )
+    recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config, audio_config=audio_config)
 
     push_stream.write(audio_bytes)
     push_stream.close()
@@ -108,6 +105,7 @@ def _run_stt(
         if detailed and hasattr(result, "json"):
             try:
                 import json as _json
+
                 detail = _json.loads(result.json)
                 output["detail"] = detail
             except Exception:

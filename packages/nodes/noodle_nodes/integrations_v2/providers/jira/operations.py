@@ -281,6 +281,7 @@ def _transport(credentials: Any, site: str) -> ProviderTransport:
     if not email or not api_token:
         raise ValueError("jira: email and api_token are required")
     import base64
+
     token = base64.b64encode(f"{email}:{api_token}".encode()).decode()
     return ProviderTransport(
         provider="jira",
@@ -356,7 +357,7 @@ def create_issue(
     if priority:
         fields["priority"] = {"name": priority}
     if labels:
-        fields["labels"] = [str(l) for l in labels if str(l).strip()]
+        fields["labels"] = [str(label) for label in labels if str(label).strip()]
     result = _transport(credentials, site).request(
         "POST",
         "/rest/api/3/issue",

@@ -29,11 +29,8 @@ interface ToastContextValue {
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
-// Auto-dismiss timing. Errors are sticky (manual dismiss only) so a real
-// failure can't vanish before the user reads it; transient confirmations clear
-// on their own.
-const TOAST_TTL_MS: Record<ToastTone, number | null> = {
-  error: null,
+const TOAST_TTL_MS: Record<ToastTone, number> = {
+  error: 8000,
   success: 3600,
   info: 4200,
 };
@@ -54,9 +51,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const scheduleDismiss = useCallback(
     (id: number, tone: ToastTone) => {
-      const ttl = TOAST_TTL_MS[tone];
-      if (ttl === null) return; // sticky (errors)
-      const handle = window.setTimeout(() => dismiss(id), ttl);
+      const handle = window.setTimeout(() => dismiss(id), TOAST_TTL_MS[tone]);
       timers.current.set(id, handle);
     },
     [dismiss],

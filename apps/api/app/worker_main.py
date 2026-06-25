@@ -32,7 +32,7 @@ from app.services.runtime_pool import pool as runtime_pool
 from app.services.sandbox_policy import enforce_sandbox_policy
 from app.services.sandbox_pool import init_sandbox
 from app.services.sandbox_pool import pool as sandbox_pool
-from app.tenancy import run_as_system
+from app.tenancy import assert_safe_postgres_role, run_as_system
 
 logger = logging.getLogger("noodle.worker")
 
@@ -61,6 +61,11 @@ def _as_system(loop_fn):
 
 async def _amain() -> None:
     _validate()
+    from app.services.licensing import reconcile_capabilities
+
+    for warning in await reconcile_capabilities():
+        logger.warning("licensing: %s", warning)
+    await assert_safe_postgres_role(engine)
     # A5: no-ops unless OTEL_ENABLED=true. The worker has no HTTP surface, so
     # only SQLAlchemy gets instrumented; run spans come from the runner hooks.
     tracing.setup_tracing("noodle-worker")

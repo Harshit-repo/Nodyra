@@ -1,297 +1,345 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  Buildings,
+  CaretDown,
+  GearSix,
+  SignOut,
+  UserCircle,
+} from "@phosphor-icons/react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 
-import { api, errorMessage, getOrgId, getUser, setOrgId } from "./api";
-import { usePrompt } from "./ConfirmProvider";
+import { api, errorMessage, getOrgId, setOrgId } from "./api";
+import { useConfirm, usePrompt } from "./ConfirmProvider";
 import { Logo } from "./Logo";
+import {
+  discardDirtyInstanceSettings,
+  hasDirtyInstanceSettings,
+  useInstanceSettingsDirty,
+} from "./settingsDirty";
+import { GlobalCommandMenu } from "./shell/GlobalCommandMenu";
+import { getRouteScope, getRouteTitle } from "./shell/navigation";
+import { requestShellOverlayOwnership } from "./shell/overlay";
+import { resolveWorkspaceSelection } from "./shell/workspace";
 import { useToast } from "./ToastProvider";
 import type { OrgInfo } from "./types";
+import { useSignOutCallback } from "./AuthRuntime";
+import { useWorkspaceAccessContext } from "./WorkspaceAccess";
 
-/** Org switcher — rendered only when the backend reports multi-tenancy on
- *  and the user belongs to at least one org. Switching persists the org and
- *  reloads so every page refetches under the new X-Org-Id. */
-function OrgSwitcher() {
-  const [orgs, setOrgs] = useState<OrgInfo[] | null>(null);
+function initialsFor(value: string): string {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "N";
+}
+
+function useDismissiblePopover(open: boolean, onClose: () => void) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const animationFrame = window.requestAnimationFrame(() => {
+      containerRef.current
+        ?.querySelector<HTMLElement>(".noodle-shell-popover a, .noodle-shell-popover button")
+        ?.focus();
+    });
+    function onPointerDown(event: MouseEvent): void {
+      if (!containerRef.current?.contains(event.target as Node)) onClose();
+    }
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.key !== "Escape") return;
+      onClose();
+      triggerRef.current?.focus();
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [onClose, open]);
+
+  return { containerRef, triggerRef };
+}
+
+function useDirtyActionGuard() {
+  const confirm = useConfirm();
+  return useCallback(
+    async ({ title, body, confirmLabel }: { title: string; body: string; confirmLabel: string }) => {
+      const wasDirty = hasDirtyInstanceSettings();
+      if (!wasDirty) return { allowed: true, wasDirty: false };
+      requestShellOverlayOwnership();
+      const allowed = await confirm({ title, body, confirmLabel });
+      if (allowed) discardDirtyInstanceSettings();
+      return { allowed, wasDirty };
+    },
+    [confirm],
+  );
+}
+
+export function useCurrentWorkspaceRole(): string | null {
+  return useWorkspaceAccessContext().role;
+}
+
+export function OrganizationSwitcher() {
+  const workspace = useWorkspaceAccessContext();
+  const settingsDirty = useInstanceSettingsDirty();
+  const user = workspace.user;
   const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [switchingId, setSwitchingId] = useState<string | null>(null);
+  const guardDirtyAction = useDirtyActionGuard();
   const prompt = usePrompt();
   const { notify } = useToast();
+  const close = useCallback(() => setOpen(false), []);
+  const { containerRef, triggerRef } = useDismissiblePopover(open, close);
+  const orgs = workspace.organizations;
+  const multiTenancyEnabled = workspace.multiTenancyEnabled;
+  const resolved = resolveWorkspaceSelection(orgs, getOrgId());
+  const current = workspace.current;
 
   useEffect(() => {
-    let cancelled = false;
-    api
-      .authRequired()
-      .then((state) => {
-        if (cancelled || !state.multi_tenancy || !state.signed_in) return null;
-        return api.listMyOrgs().then((mine) => {
-          if (!cancelled) setOrgs(mine);
-        });
-      })
-      .catch(() => {
-        /* org switcher is best-effort chrome; never block the header */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (!workspace.isSuccess || !resolved.needsReconcile || settingsDirty) return;
+    setOrgId(resolved.nextStoredId);
+    window.location.replace("/");
+  }, [resolved.needsReconcile, resolved.nextStoredId, settingsDirty, workspace.isSuccess]);
 
   useEffect(() => {
-    function onDocumentClick(event: MouseEvent): void {
-      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
+    if (
+      workspace.isSuccess &&
+      multiTenancyEnabled &&
+      !workspace.hasActiveWorkspace &&
+      getOrgId()
+    ) {
+      setOrgId(null);
     }
-    document.addEventListener("mousedown", onDocumentClick);
-    return () => document.removeEventListener("mousedown", onDocumentClick);
-  }, []);
+  }, [multiTenancyEnabled, workspace.hasActiveWorkspace, workspace.isSuccess]);
 
-  if (!orgs || orgs.length === 0) return null;
-  const currentId = getOrgId() ?? "default";
-  const current =
-    orgs.find((org) => org.id === currentId) ??
-    orgs.find((org) => org.id === "default") ??
-    orgs[0];
+  if (!user) {
+    return (
+      <div className="noodle-shell-workspace-static">
+        <span className="noodle-shell-org-mark">N</span>
+        <span className="noodle-shell-org-copy"><strong>Noodle</strong><small>Local workspace</small></span>
+      </div>
+    );
+  }
 
-  function switchTo(org: OrgInfo): void {
-    setOpen(false);
-    if (org.id === current.id) return;
+  if (workspace.loading) {
+    return <div className="noodle-shell-workspace-skeleton" aria-label="Loading workspace" />;
+  }
+
+  if (workspace.isSuccess && !multiTenancyEnabled) {
+    const workspaceName = user.company || "Noodle";
+    return (
+      <div className="noodle-shell-workspace-static">
+        <span className="noodle-shell-org-mark">{initialsFor(workspaceName).slice(0, 1)}</span>
+        <span className="noodle-shell-org-copy"><strong>{workspaceName}</strong><small>Instance workspace</small></span>
+      </div>
+    );
+  }
+
+  const currentName = current?.name || (!workspace.hasActiveWorkspace ? "No active workspace" : resolved.needsReconcile ? "Refreshing workspace…" : "Loading workspace");
+  const currentRole = current?.role;
+
+  async function switchTo(org: OrgInfo): Promise<void> {
+    if (switchingId || org.id === current?.id) {
+      close();
+      return;
+    }
+    close();
+    const { allowed } = await guardDirtyAction({
+      title: "Discard unsaved instance changes?",
+      body: "Switching workspace reloads Noodle. Your unsaved runtime and retention changes will be lost.",
+      confirmLabel: "Discard and switch",
+    });
+    if (!allowed) return;
+    setSwitchingId(org.id);
     setOrgId(org.id === "default" ? null : org.id);
     window.location.assign("/");
   }
 
-  async function createOrg(): Promise<void> {
+  async function createOrganization(): Promise<void> {
+    close();
+    requestShellOverlayOwnership();
     const name = await prompt({
-      title: "New organization",
-      label: "Name",
+      title: "New workspace",
+      label: "Workspace name",
       placeholder: "Acme Inc.",
-      confirmLabel: "Create",
+      confirmLabel: "Create workspace",
     });
     if (!name?.trim()) return;
+    const { allowed } = await guardDirtyAction({
+      title: "Discard unsaved instance changes?",
+      body: "Creating a workspace reloads Noodle. Your unsaved runtime and retention changes will be lost.",
+      confirmLabel: "Discard and create",
+    });
+    if (!allowed) return;
     try {
+      setSwitchingId("new");
       const created = await api.createOrg({ name: name.trim() });
       setOrgId(created.id);
       window.location.assign("/");
     } catch (err) {
-      notify(errorMessage(err), "error");
+      setSwitchingId(null);
+      notify(`Could not create workspace. ${errorMessage(err)}`, "error");
     }
   }
 
   return (
-    <div className="profile-menu org-switcher" ref={menuRef}>
+    <div className="noodle-shell-org" ref={containerRef}>
       <button
+        ref={triggerRef}
+        className="noodle-shell-org-trigger"
         type="button"
-        className="profile-trigger"
         aria-expanded={open}
-        aria-haspopup="menu"
-        aria-label="Switch organization"
+        aria-haspopup="dialog"
+        disabled={Boolean(switchingId)}
         onClick={() => setOpen((value) => !value)}
       >
-        <span className="profile-trigger-text">
-          <span>{current.name}</span>
-          <small>organization</small>
-        </span>
+        <span className="noodle-shell-org-mark">{initialsFor(currentName).slice(0, 1)}</span>
+        <span className="noodle-shell-org-copy"><strong>{switchingId ? "Switching…" : currentName}</strong><small>{!workspace.hasActiveWorkspace ? "Action required" : currentRole ? `${currentRole} in workspace` : "Workspace"}</small></span>
+        <CaretDown size={15} aria-hidden="true" />
       </button>
+
       {open && (
-        <div className="profile-dropdown" role="menu">
-          {orgs.map((org) => (
-            <button
-              key={org.id}
-              type="button"
-              role="menuitem"
-              aria-current={org.id === current.id ? "true" : undefined}
-              onClick={() => switchTo(org)}
-            >
-              {org.name}
-              {org.role ? ` — ${org.role}` : ""}
-              {org.id === current.id ? " ✓" : ""}
-            </button>
-          ))}
-          <Link
-            to="/organization"
-            role="menuitem"
-            onClick={() => setOpen(false)}
-          >
-            Manage organization
-          </Link>
-          <button type="button" role="menuitem" onClick={createOrg}>
-            + New organization
-          </button>
+        <div className="noodle-shell-popover noodle-shell-org-popover" role="dialog" aria-label="Switch workspace">
+          <div className="noodle-shell-popover-title">Workspaces</div>
+          {workspace.loading ? (
+            <div className="noodle-shell-popover-state">Loading workspaces…</div>
+          ) : workspace.isError ? (
+            <div className="noodle-shell-popover-state is-error">
+              <span>{errorMessage(workspace.error)}</span>
+              <button type="button" onClick={() => void workspace.refetch()}>Retry</button>
+            </div>
+          ) : (
+            <div className="noodle-shell-org-list">
+              {orgs.map((org) => (
+                <button
+                  key={org.id}
+                  type="button"
+                  className={org.id === current?.id ? "is-current" : ""}
+                  disabled={Boolean(switchingId) || org.status !== "active"}
+                  onClick={() => void switchTo(org)}
+                >
+                  <span className="noodle-shell-org-mark">{initialsFor(org.name).slice(0, 1)}</span>
+                  <span><strong>{org.name}</strong><small>{org.status !== "active" ? org.status : org.role ? `${org.role} in workspace` : "Workspace member"}</small></span>
+                  {org.id === current?.id && <span className="noodle-shell-current-dot" aria-label="Current workspace" />}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="noodle-shell-popover-divider" />
+          {(currentRole === "admin" || currentRole === "owner") && <Link to="/organization" onClick={close}><Buildings size={17} aria-hidden="true" />Manage workspace</Link>}
+          <button type="button" onClick={() => void createOrganization()}>+ New workspace</button>
         </div>
       )}
     </div>
   );
 }
 
+function useSignOut(): () => void {
+  const guardDirtyAction = useDirtyActionGuard();
+  const handler = useSignOutCallback();
+  return () => void (async () => {
+    const { allowed } = await guardDirtyAction({
+      title: "Discard unsaved instance changes?",
+      body: "Signing out will discard your unsaved runtime and retention changes.",
+      confirmLabel: "Discard and sign out",
+    });
+    if (!allowed) return;
+    handler?.();
+  })();
+}
+
+export function MobileAccountPanel() {
+  const user = useWorkspaceAccessContext().user;
+  const signOut = useSignOut();
+  if (!user) return null;
+  const displayName = user.name || user.email;
+  return (
+    <div className="noodle-shell-mobile-account">
+      <div className="noodle-shell-account-head">
+        <span className="noodle-shell-avatar">{initialsFor(displayName)}</span>
+        <span><strong>{displayName}</strong><small>{user.email}</small><em>Instance {user.role}</em></span>
+      </div>
+      <div className="noodle-shell-mobile-account-actions">
+        <Link to="/settings"><GearSix size={18} aria-hidden="true" />Account settings</Link>
+        <button type="button" className="is-danger" onClick={signOut}><SignOut size={18} aria-hidden="true" />Sign out</button>
+      </div>
+    </div>
+  );
+}
+
 export function HomeHeader() {
   const { pathname } = useLocation();
-  const user = getUser();
-  const canAdmin = user?.role === "owner" || user?.role === "admin";
-  const profileActive =
-    pathname.startsWith("/settings") ||
-    pathname.startsWith("/security") ||
-    pathname.startsWith("/activity") ||
-    pathname.startsWith("/credentials") ||
-    pathname.startsWith("/code-library");
+  const workspace = useWorkspaceAccessContext();
+  const user = workspace.user;
+  const workspaceRole = workspace.role;
+  const title = getRouteTitle(pathname, "Noodle");
+  const scope = getRouteScope(pathname);
   const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const displayName = user?.name || user?.email || "User";
-  const initials = displayName
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("") || "U";
+  const close = useCallback(() => setOpen(false), []);
+  const { containerRef, triggerRef } = useDismissiblePopover(open, close);
+  const signOut = useSignOut();
 
   useEffect(() => {
-    function onDocumentClick(event: MouseEvent): void {
-      if (!menuRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    }
-    function onDocumentKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", onDocumentClick);
-    document.addEventListener("keydown", onDocumentKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onDocumentClick);
-      document.removeEventListener("keydown", onDocumentKeyDown);
-    };
-  }, []);
+    document.title = `${title} · Noodle`;
+    close();
+  }, [close, title]);
 
-  function signOut(): void {
-    const handler = (window as unknown as { __noodle_sign_out?: () => void })
-      .__noodle_sign_out;
-    setOpen(false);
-    handler?.();
-  }
+  const displayName = user?.name || user?.email || "Local workspace";
 
   return (
-    <header className="home-header">
-      <Link className="brand" to="/">
-        <Logo size={28} />
-        <span className="brand-name">noodle</span>
-      </Link>
-      <nav className="home-nav">
-        <Link
-          className={pathname === "/" ? "active" : ""}
-          aria-current={pathname === "/" ? "page" : undefined}
-          to="/"
-        >
-          Workflows
+    <header className="noodle-shell-topbar">
+      <div className="noodle-shell-page-context">
+        <Link className="noodle-shell-topbar-brand" to="/" aria-label="Noodle home">
+          <Logo size={22} />
+          <span>noodle</span>
         </Link>
-        <Link
-          className={pathname.startsWith("/deployments") ? "active" : ""}
-          aria-current={pathname.startsWith("/deployments") ? "page" : undefined}
-          to="/deployments"
-        >
-          Deployments
-        </Link>
-        <Link
-          className={pathname.startsWith("/executions") ? "active" : ""}
-          aria-current={pathname.startsWith("/executions") ? "page" : undefined}
-          to="/executions"
-        >
-          Executions
-        </Link>
-        <Link
-          className={pathname.startsWith("/environments") ? "active" : ""}
-          aria-current={
-            pathname.startsWith("/environments") ? "page" : undefined
-          }
-          to="/environments"
-        >
-          Environments
-        </Link>
-        <Link
-          className={pathname.startsWith("/runner-pools") ? "active" : ""}
-          aria-current={pathname.startsWith("/runner-pools") ? "page" : undefined}
-          to="/runner-pools"
-        >
-          Runners
-        </Link>
-        {user && <OrgSwitcher />}
-        {user && (
-          <div className="profile-menu" ref={menuRef}>
+        <span className="noodle-shell-page-scope">{scope ? `${scope[0].toUpperCase()}${scope.slice(1)}` : "Noodle"}</span>
+        <strong>{title}</strong>
+      </div>
+      <GlobalCommandMenu
+        user={user}
+        workspaceRole={workspaceRole}
+        localMode={!user}
+        multiTenancyEnabled={workspace.multiTenancyEnabled}
+      />
+      <div className="noodle-shell-top-actions">
+        {user ? (
+          <div className="noodle-shell-account" ref={containerRef}>
             <button
+              ref={triggerRef}
+              className="noodle-shell-account-trigger"
               type="button"
-              className={`profile-trigger${profileActive ? " active" : ""}`}
               aria-expanded={open}
-              aria-haspopup="menu"
-              aria-label="User profile menu"
+              aria-haspopup="dialog"
               onClick={() => setOpen((value) => !value)}
             >
-              <span className="profile-avatar">{initials}</span>
-              <span className="profile-trigger-text">
-                <span>{displayName}</span>
-                <small>{user.company || user.email}</small>
-              </span>
+              <span className="noodle-shell-avatar">{initialsFor(displayName)}</span>
+              <span className="noodle-shell-account-trigger-copy"><strong>{displayName}</strong><small>Instance {user.role}</small></span>
+              <CaretDown size={15} aria-hidden="true" />
             </button>
             {open && (
-              <div className="profile-dropdown" role="menu">
-                <div className="profile-dropdown-head">
-                  <span className="profile-avatar large">{initials}</span>
-                  <div>
-                    <strong>{displayName}</strong>
-                    <span>{user.email}</span>
-                    {user.company && <span>{user.company}</span>}
-                    <span className={`home-user-role role-${user.role}`}>
-                      {user.role}
-                    </span>
-                  </div>
+              <div className="noodle-shell-popover noodle-shell-account-popover" role="dialog" aria-label="Account menu">
+                <div className="noodle-shell-account-head">
+                  <span className="noodle-shell-avatar is-large">{initialsFor(displayName)}</span>
+                  <span><strong>{displayName}</strong><small>{user.email}</small>{user.company && <small>{user.company}</small>}<em>Instance {user.role}</em></span>
                 </div>
-                <Link
-                  to="/settings"
-                  role="menuitem"
-                  onClick={() => setOpen(false)}
-                >
-                  Settings
-                </Link>
-                <Link
-                  to="/credentials"
-                  role="menuitem"
-                  onClick={() => setOpen(false)}
-                >
-                  Credentials
-                </Link>
-                <Link
-                  to="/code-library"
-                  role="menuitem"
-                  onClick={() => setOpen(false)}
-                >
-                  Code Library
-                </Link>
-                {canAdmin && (
-                  <>
-                    <Link
-                      to="/security"
-                      role="menuitem"
-                      onClick={() => setOpen(false)}
-                    >
-                      Security
-                    </Link>
-                    <Link
-                      to="/activity"
-                      role="menuitem"
-                      onClick={() => setOpen(false)}
-                    >
-                      Activity
-                    </Link>
-                    <Link
-                      to="/environments"
-                      role="menuitem"
-                      onClick={() => setOpen(false)}
-                    >
-                      Environments
-                    </Link>
-                  </>
-                )}
-                <button type="button" role="menuitem" onClick={signOut}>
-                  Sign out
-                </button>
+                <div className="noodle-shell-popover-divider" />
+                <Link to="/settings" onClick={close}><UserCircle size={17} aria-hidden="true" />Account settings</Link>
+                {workspace.multiTenancyEnabled && (workspaceRole === "admin" || workspaceRole === "owner") && <Link to="/organization" onClick={close}><Buildings size={17} aria-hidden="true" />Manage workspace</Link>}
+                <div className="noodle-shell-popover-divider" />
+                <button type="button" className="is-danger" onClick={signOut}><SignOut size={17} aria-hidden="true" />Sign out</button>
               </div>
             )}
           </div>
+        ) : (
+          <div className="noodle-shell-local-status">Local workspace</div>
         )}
-      </nav>
+      </div>
     </header>
   );
 }

@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import difflib
-import hashlib
-import html
 import json
 import re
 import textwrap
-import uuid
 from typing import Any
 
 from noodle.sdk import node
@@ -95,11 +92,26 @@ def text_truncate(
     original_length = len(raw)
     max_len = max(0, int(max_length or 100))
     if original_length <= max_len:
-        return {"text": raw, "truncated": False, "original_length": original_length, "truncated_length": original_length}
+        return {
+            "text": raw,
+            "truncated": False,
+            "original_length": original_length,
+            "truncated_length": original_length,
+        }
     if max_len == 0:
-        return {"text": "", "truncated": True, "original_length": original_length, "truncated_length": 0}
+        return {
+            "text": "",
+            "truncated": True,
+            "original_length": original_length,
+            "truncated_length": 0,
+        }
     if len(ellipsis) >= max_len:
-        return {"text": ellipsis[:max_len], "truncated": True, "original_length": original_length, "truncated_length": max_len}
+        return {
+            "text": ellipsis[:max_len],
+            "truncated": True,
+            "original_length": original_length,
+            "truncated_length": max_len,
+        }
     target = max_len - len(ellipsis)
     if word_boundary:
         truncated = raw[:target]
@@ -109,7 +121,12 @@ def text_truncate(
     else:
         truncated = raw[:target]
     result = truncated + ellipsis
-    return {"text": result, "truncated": True, "original_length": original_length, "truncated_length": len(result)}
+    return {
+        "text": result,
+        "truncated": True,
+        "original_length": original_length,
+        "truncated_length": len(result),
+    }
 
 
 def _to_snake(text: str) -> str:
@@ -215,7 +232,9 @@ def text_word_count(
     words = raw.split()
     word_count = len(words)
     char_count = len(raw)
-    char_count_no_spaces = len(raw.replace(" ", "").replace("\t", "").replace("\n", "").replace("\r", ""))
+    char_count_no_spaces = len(
+        raw.replace(" ", "").replace("\t", "").replace("\n", "").replace("\r", "")
+    )
     line_count = len(raw.splitlines())
     sentence_count = len(re.split(r"[.!?]+", raw)) - 1
     paragraph_count = len([p for p in re.split(r"\n\s*\n", raw) if p.strip()])
@@ -265,11 +284,22 @@ def text_diff(
     n = max(0, int(context_lines or 3))
     old_lines = old.splitlines(keepends=True)
     new_lines = new.splitlines(keepends=True)
-    diff_lines = list(difflib.unified_diff(old_lines, new_lines, fromfile="original", tofile="modified", n=n))
+    diff_lines = list(
+        difflib.unified_diff(old_lines, new_lines, fromfile="original", tofile="modified", n=n)
+    )
     diff = "".join(diff_lines)
-    additions = sum(1 for l in diff_lines if l.startswith("+") and not l.startswith("+++"))
-    deletions = sum(1 for l in diff_lines if l.startswith("-") and not l.startswith("---"))
-    return {"diff": diff, "has_changes": bool(diff.strip()), "additions": additions, "deletions": deletions}
+    additions = sum(
+        1 for line in diff_lines if line.startswith("+") and not line.startswith("+++")
+    )
+    deletions = sum(
+        1 for line in diff_lines if line.startswith("-") and not line.startswith("---")
+    )
+    return {
+        "diff": diff,
+        "has_changes": bool(diff.strip()),
+        "additions": additions,
+        "deletions": deletions,
+    }
 
 
 @node(

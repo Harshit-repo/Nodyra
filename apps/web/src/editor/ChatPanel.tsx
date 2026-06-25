@@ -23,9 +23,12 @@ import {
   type RunTimelineEvent,
   subscribeToRunEvents,
 } from "../api";
+import { useTimeout } from "../hooks/useTimeout";
+import { useMountedRef } from "../hooks/useMountedRef";
 import type { ChatTurnResponse, RunEvent } from "../types";
 
-marked.use({ gfm: true, breaks: true });
+// async: false forces marked.parse() to always return string (not Promise<string>)
+marked.use({ gfm: true, breaks: true, async: false });
 
 /** A single tool the agent invoked during a turn, reconstructed from the run
  *  timeline (or live run events) so the chat surface can show what the agent
@@ -432,14 +435,18 @@ function ApprovalPrompt({
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   const [failed, setFailed] = useState(false);
+  const scheduleTimeout = useTimeout();
+  const mountedRef = useMountedRef();
   async function copy(): Promise<void> {
     try {
       await navigator.clipboard.writeText(text);
+      if (!mountedRef.current) return;
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 1400);
+      scheduleTimeout(() => setCopied(false), 1400);
     } catch {
+      if (!mountedRef.current) return;
       setFailed(true);
-      window.setTimeout(() => setFailed(false), 1400);
+      scheduleTimeout(() => setFailed(false), 1400);
     }
   }
   return (

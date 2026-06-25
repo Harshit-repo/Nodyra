@@ -322,7 +322,11 @@ def get_member(
         raise ValueError("mailchimp_get_member_v2: list_id is required")
     if not email_address:
         raise ValueError("mailchimp_get_member_v2: email_address is required")
-    subscriber_hash = hashlib.md5(email_address.lower().encode("utf-8")).hexdigest()
+    # Mailchimp's API contract identifies members by this MD5 digest; it is not
+    # used for authentication, integrity, or password storage.
+    subscriber_hash = hashlib.md5(
+        email_address.lower().encode("utf-8"), usedforsecurity=False
+    ).hexdigest()
     return _transport(credentials).request(
         "GET",
         f"/lists/{list_id}/members/{subscriber_hash}",

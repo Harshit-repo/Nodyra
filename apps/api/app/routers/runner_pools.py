@@ -56,7 +56,7 @@ from app.schemas import (
     SSHOnboardResponse,
 )
 from app.security import require_permission
-from app.services.artifacts import _artifact_path
+from app.services.artifacts import _artifact_path, atomic_write_bytes
 from app.services.crypto import (
     create_payload_token,
     decode_payload_token,
@@ -64,7 +64,7 @@ from app.services.crypto import (
 )
 from app.services.graph_utils import first_trigger_node
 from app.services.remote_dispatch import dispatcher
-from app.services.runner import start_run
+from app.services.runner import cancel_run, start_run
 from app.services.ssh_onboard import onboard_machine
 
 router = APIRouter(prefix="/runner-pools", tags=["runner-pools"])
@@ -478,7 +478,12 @@ async def create_registration_token(
 
     ttl = 86_400  # 24 hours
     token = create_payload_token(
-        {"sub": runner.id, "pool_id": pool_id, "kind": "runner_registration"},
+        {
+            "sub": runner.id,
+            "pool_id": pool_id,
+            "org_id": runner.org_id,
+            "kind": "runner_registration",
+        },
         ttl_seconds=ttl,
     )
     expires_at = datetime.fromtimestamp(
@@ -542,7 +547,12 @@ async def ssh_onboard(
     await session.refresh(runner)
 
     token = create_payload_token(
-        {"sub": runner.id, "pool_id": pool_id, "kind": "runner_registration"},
+        {
+            "sub": runner.id,
+            "pool_id": pool_id,
+            "org_id": runner.org_id,
+            "kind": "runner_registration",
+        },
         ttl_seconds=86_400,
     )
 
@@ -593,21 +603,38 @@ async def runner_ws(
         await ws.close(code=1008)
         return
 
-    await ws.accept()
-
     # For K8s single-run agents, use the dedicated handler.
     if payload.get("kind") == "k8s_run":
-        await dispatcher.handle_k8s_runner_connect(runner_id, ws)
+        await ws.accept()
+        from app.tenancy import run_as_org
+
+        with run_as_org(str(payload.get("org_id") or "") or None):
+            await dispatcher.handle_k8s_runner_connect(runner_id, ws)
         return
 
-    # Verify runner row exists.
-    async with SessionLocal() as session:
-        runner = await session.get(Runner, runner_id)
-        if runner is None:
-            await ws.close(code=1008)
-            return
+    # Runner-token requests have no user/org header. Resolve the globally unique
+    # runner id without request scoping, then pin the long-lived connection to
+    # the runner's verified org. Merely setting skip_org_filter is insufficient
+    # on Postgres because RLS still applies underneath.
+    from app.tenancy import run_as_org, run_as_system
 
-    await dispatcher.handle_runner_connect(runner_id, ws)
+    with run_as_system():
+        async with SessionLocal() as session:
+            runner = await session.get(Runner, runner_id)
+    if runner is None:
+        await ws.close(code=1008)
+        return
+    if payload.get("pool_id") != runner.pool_id:
+        await ws.close(code=1008)
+        return
+    token_org = payload.get("org_id")
+    if token_org is not None and str(token_org) != runner.org_id:
+        await ws.close(code=1008)
+        return
+
+    await ws.accept()
+    with run_as_org(runner.org_id):
+        await dispatcher.handle_runner_connect(runner_id, ws)
 
 
 # ---------------------------------------------------------------------------
@@ -648,12 +675,19 @@ async def upload_artifact(
     # instead of staying valid until its 24h expiry.
     # Runner auth uses runner-registration tokens, not X-Org-Id — query
     # org-blind so the lookup works regardless of the request's org context.
-    runner = await session.get(
-        Runner, payload.get("sub"),
-        execution_options={"skip_org_filter": True},
-    )
+    from app.tenancy import run_as_system
+
+    with run_as_system():
+        runner = await session.get(Runner, payload.get("sub"))
+        run = await session.get(Run, run_id)
+        existing = await session.get(Artifact, artifact_id)
     if runner is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Runner has been revoked")
+    if payload.get("pool_id") not in (None, runner.pool_id):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Runner token pool mismatch")
+    token_org = payload.get("org_id")
+    if token_org is not None and str(token_org) != runner.org_id:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Runner token organization mismatch")
 
     try:
         path = _artifact_path(storage_key)
@@ -669,12 +703,11 @@ async def upload_artifact(
     # always arrive after) and are not bound here.
     # Runner auth is the gate here, not the request org context (runners send
     # no X-Org-Id) — look the run up org-blind or non-default orgs would 404.
-    run = await session.scalar(
-        select(Run).where(Run.id == run_id).execution_options(skip_org_filter=True)
-    )
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
-    if run.runner_id is not None and run.runner_id != payload.get("sub"):
+    if runner.org_id != run.org_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Runner and run organizations differ")
+    if run.runner_id != payload.get("sub"):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "Runner is not assigned to this run"
         )
@@ -683,18 +716,44 @@ async def upload_artifact(
     # prefix. Legacy unprefixed keys are rejected too once MT is on; the
     # runner protocol ships artifact_key_prefix with every assignment.
     if settings.multi_tenancy_enabled and run.org_id:
-        if not storage_key.startswith(f"{run.org_id}/"):
+        required_prefix = f"{run.org_id}/runs/{run_id}/"
+        if not storage_key.startswith(required_prefix):
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                "Artifact storage key must be namespaced under the run's "
-                "organization.",
+                "Artifact storage key must be namespaced under the assigned run.",
             )
+    elif not storage_key.startswith(f"runs/{run_id}/"):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Artifact storage key must be namespaced under the assigned run.",
+        )
+    if existing is not None and (
+        existing.org_id != run.org_id
+        or existing.run_id != run_id
+        or existing.node_id != node_id
+        or existing.storage_key != storage_key
+    ):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Artifact id belongs to another run")
 
-    body = await data.read()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(body)
+    max_bytes = settings.max_artifact_bytes
+    body = await data.read(max_bytes + 1 if max_bytes > 0 else -1)
+    if max_bytes > 0 and len(body) > max_bytes:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            f"Artifact exceeds maximum size of {max_bytes} bytes",
+        )
+    if size_bytes not in (0, len(body)):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Declared artifact size does not match the uploaded bytes",
+        )
+    # Write to a sibling temporary file then atomically replace the destination.
+    # A process crash must not leave a truncated artifact that still has a
+    # durable metadata row claiming the upload succeeded. Keep blocking disk IO
+    # off the request event loop.
+    import asyncio
+    await asyncio.to_thread(atomic_write_bytes, path, body)
 
-    existing = await session.get(Artifact, artifact_id)
     if existing is None:
         session.add(
             Artifact(
@@ -709,14 +768,19 @@ async def upload_artifact(
                 name=name,
                 kind=kind,
                 content_type=content_type,
-                size_bytes=size_bytes or len(body),
+                size_bytes=len(body),
                 storage_backend="local",
                 storage_key=storage_key,
                 artifact_metadata={},
                 preview=None,
             )
         )
-        await session.commit()
+    else:
+        existing.name = name
+        existing.kind = kind
+        existing.content_type = content_type
+        existing.size_bytes = len(body)
+    await session.commit()
 
     return {"artifact_id": artifact_id, "status": "accepted"}
 
@@ -776,31 +840,50 @@ async def create_batch_run(
         runner_pool_id=runner_pool_id,
         status="running",
         total_runs=len(body.parameters),
+        parameters=body.parameters,
     )
     session.add(batch)
     await session.commit()
     await session.refresh(batch)
 
     run_ids: list[str] = []
-    for params in body.parameters:
-        run_id = await start_run(
-            workflow_id,
-            graph_dict,
-            version.version,
-            workflow_version_id=version.id,
-            mode="batch",
-            trigger_type="batch",
-            trigger_node_id=body.trigger_node_id or trigger_id,
-            parameters=params,
-        )
-        # Tag the run with the batch id.
-        async with SessionLocal() as s:
-            run = await s.get(Run, run_id)
-            if run is not None:
-                run.batch_id = batch.id
-                run.runner_pool_id = runner_pool_id
-                await s.commit()
-        run_ids.append(run_id)
+    try:
+        for params in body.parameters:
+            run_id = await start_run(
+                workflow_id,
+                graph_dict,
+                version.version,
+                workflow_version_id=version.id,
+                mode="batch",
+                trigger_type="batch",
+                trigger_node_id=body.trigger_node_id or trigger_id,
+                parameters=params,
+                batch_id=batch.id,
+                runner_pool_id=runner_pool_id,
+            )
+            run_ids.append(run_id)
+    except Exception:
+        # A batch is an all-or-cancel operation. If admission fails part-way
+        # through, stop already-created children and retain an inspectable error
+        # batch rather than leaving a permanently "running" partial batch.
+        for created_run_id in run_ids:
+            await cancel_run(created_run_id)
+        async with SessionLocal() as failed_session:
+            failed_batch = await failed_session.get(RunBatch, batch.id)
+            if failed_batch is not None:
+                failed_batch.status = "error"
+                failed_batch.finished_at = datetime.now(UTC)
+                from app.services.run_batches import reconcile_batch
+
+                await reconcile_batch(failed_session, failed_batch.id)
+                await failed_session.commit()
+        raise
+
+    from app.services.run_batches import reconcile_batch
+
+    async with SessionLocal() as reconcile_session:
+        await reconcile_batch(reconcile_session, batch.id)
+        await reconcile_session.commit()
 
     return {
         "batch_id": batch.id,
@@ -813,9 +896,12 @@ async def create_batch_run(
 async def get_batch(
     batch_id: str, session: AsyncSession = Depends(get_session)
 ) -> RunBatchInfo:
-    batch = await session.get(RunBatch, batch_id)
+    from app.services.run_batches import reconcile_batch
+
+    batch = await reconcile_batch(session, batch_id)
     if batch is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Batch not found")
+    await session.commit()
     return RunBatchInfo(
         id=batch.id,
         workflow_id=batch.workflow_id,
@@ -855,6 +941,9 @@ async def cancel_batch(
         await cancel_run(run.id)
         cancelled += 1
 
+    from app.services.run_batches import reconcile_batch
+
+    await reconcile_batch(session, batch.id)
     batch.status = "cancelled"
     batch.finished_at = datetime.now(UTC)
     await session.commit()

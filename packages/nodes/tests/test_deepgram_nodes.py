@@ -115,7 +115,7 @@ async def test_sends_all_chunks_to_deepgram():
     adapter = _MockAdapter(chunks)
     mock_module, connection = _build_deepgram_mock()
     with _patch_deepgram(mock_module):
-        result = await deepgram_realtime_stt(input=adapter, credentials="dg_key")
+        await deepgram_realtime_stt(input=adapter, credentials="dg_key")
     assert connection.send.await_count == 3
     connection.start.assert_awaited_once()
     connection.finish.assert_awaited_once()

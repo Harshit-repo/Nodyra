@@ -82,7 +82,7 @@ def test_get_call():
 def test_list_calls():
     patcher, transport = _mock_transport({"calls": [{"call_id": "c1"}]})
     try:
-        result = list_calls(credentials=_CREDS, limit=10)
+        list_calls(credentials=_CREDS, limit=10)
     finally:
         patcher.stop()
     _, kw = transport.request.call_args
@@ -92,7 +92,7 @@ def test_list_calls():
 def test_stop_call():
     patcher, transport = _mock_transport({"status": "stopped"})
     try:
-        result = stop_call(credentials=_CREDS, call_id="call1")
+        stop_call(credentials=_CREDS, call_id="call1")
     finally:
         patcher.stop()
     args, _ = transport.request.call_args

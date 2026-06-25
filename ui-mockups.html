@@ -1,0 +1,1817 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Noodle UI — Design Proposals</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #090b10;
+  --canvas: #0b0e14;
+  --surface: #10141c;
+  --surface-2: #161b25;
+  --surface-3: #1f2632;
+  --line: #242c3a;
+  --line-2: #1a2029;
+  --ink: #e9eef6;
+  --ink-2: #98a4ba;
+  --ink-3: #6a7589;
+  --accent: #4c9eff;
+  --accent-2: #79b6ff;
+  --accent-deep: #1f4f8f;
+  --accent-glow: rgba(76,158,255,0.18);
+  --radius: 11px;
+  --radius-sm: 7px;
+  --font-display: 'Bricolage Grotesque', sans-serif;
+  --font-sans: 'Hanken Grotesk', sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+
+  /* category colors */
+  --cat-ai: #24c78e;
+  --cat-logic: #b48bff;
+  --cat-trigger: #4c9eff;
+  --cat-data: #37c8a8;
+  --cat-transform: #3fd0e0;
+  --cat-api: #2f9bff;
+  --cat-integration: #ff6f91;
+  --cat-utility: #8a93a8;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #050709;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.5;
+}
+
+/* ── TOC nav ── */
+.toc {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  background: rgba(9,11,16,0.92);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 4px;
+  padding: 0 24px; height: 46px;
+}
+.toc-brand { font-family: var(--font-display); font-weight: 800; font-size: 15px; letter-spacing: -0.04em; color: var(--ink); margin-right: 16px; }
+.toc-brand span { color: var(--accent); }
+.toc a { font-size: 12px; font-weight: 500; color: var(--ink-2); text-decoration: none; padding: 5px 10px; border-radius: 6px; white-space: nowrap; }
+.toc a:hover { background: var(--surface-2); color: var(--ink); }
+.toc-new { font-size: 9px; font-family: var(--font-mono); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; background: rgba(76,158,255,0.14); color: var(--accent); border: 1px solid rgba(76,158,255,0.3); border-radius: 4px; padding: 2px 5px; margin-left: 4px; }
+
+/* ── page layout ── */
+.page { padding: 80px 40px 80px; max-width: 1320px; margin: 0 auto; }
+.section { margin-bottom: 80px; }
+.section-label {
+  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-3);
+  margin-bottom: 8px;
+}
+.section-title { font-family: var(--font-display); font-size: 26px; font-weight: 700; letter-spacing: -0.025em; margin-bottom: 6px; }
+.section-desc { font-size: 14px; color: var(--ink-2); max-width: 560px; margin-bottom: 28px; line-height: 1.6; }
+.badge-new {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--font-mono); font-size: 9px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  background: rgba(76,158,255,0.12); color: var(--accent-2);
+  border: 1px solid rgba(76,158,255,0.25); border-radius: 5px;
+  padding: 3px 7px; vertical-align: middle; margin-left: 8px;
+}
+.badge-improved {
+  display: inline-flex; align-items: center;
+  font-family: var(--font-mono); font-size: 9px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  background: rgba(36,199,142,0.1); color: #24c78e;
+  border: 1px solid rgba(36,199,142,0.25); border-radius: 5px;
+  padding: 3px 7px; vertical-align: middle; margin-left: 8px;
+}
+.divider { height: 1px; background: var(--line); margin: 60px 0; }
+
+/* ── mockup frame ── */
+.mockup-frame {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.mockup-caption {
+  font-size: 12px; color: var(--ink-3); margin-top: 10px; text-align: center;
+  font-family: var(--font-mono);
+}
+
+
+/* ══════════════════════════════════════════
+   § 1  HOME DASHBOARD
+══════════════════════════════════════════ */
+
+.home-shell { display: flex; height: 620px; }
+
+/* sidebar */
+.sidebar {
+  width: 210px; flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  display: flex; flex-direction: column;
+  padding: 16px 10px;
+  gap: 2px;
+}
+.sidebar-brand {
+  display: flex; align-items: center; gap: 9px;
+  padding: 6px 8px; margin-bottom: 12px;
+}
+.sidebar-logo {
+  width: 28px; height: 28px; border-radius: 7px;
+  background: linear-gradient(135deg, var(--accent) 0%, #6e3eff 100%);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 800; color: #fff; letter-spacing: -0.05em;
+  font-family: var(--font-display);
+}
+.sidebar-name { font-family: var(--font-display); font-weight: 800; font-size: 16px; letter-spacing: -0.04em; }
+
+.nav-section-label {
+  font-family: var(--font-mono); font-size: 9.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.09em; color: var(--ink-3);
+  padding: 4px 8px; margin-top: 10px; margin-bottom: 2px;
+}
+.nav-link {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 9px; border-radius: 7px;
+  font-size: 13px; font-weight: 500; color: var(--ink-2);
+  cursor: pointer; transition: all 120ms;
+}
+.nav-link.active {
+  background: var(--accent-glow);
+  color: var(--accent);
+  border: 1px solid rgba(76,158,255,0.22);
+  font-weight: 600;
+}
+.nav-link:hover:not(.active) { background: var(--surface-2); color: var(--ink); }
+.nav-icon {
+  width: 16px; height: 16px; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; flex-shrink: 0;
+}
+
+/* new: org switcher at bottom of sidebar */
+.sidebar-footer {
+  margin-top: auto;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.org-switcher {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 9px; border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface-2);
+}
+.org-avatar {
+  width: 22px; height: 22px; border-radius: 5px;
+  background: linear-gradient(135deg,#6e3eff,#c084fc);
+  font-size: 10px; font-weight: 700; color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.org-name { font-size: 12px; font-weight: 600; color: var(--ink); flex: 1; }
+.org-caret { color: var(--ink-3); font-size: 10px; }
+
+/* main area */
+.home-main { flex: 1; overflow-y: auto; background: var(--bg); }
+
+.home-topbar {
+  height: 52px; display: flex; align-items: center;
+  padding: 0 24px; gap: 12px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(9,11,16,0.88);
+  backdrop-filter: blur(16px);
+  position: sticky; top: 0; z-index: 10;
+}
+.topbar-title { font-family: var(--font-display); font-weight: 700; font-size: 15px; letter-spacing: -0.02em; flex: 1; }
+.topbar-search {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 7px; padding: 6px 10px; width: 220px;
+  font-size: 12.5px; color: var(--ink-3); font-family: var(--font-sans);
+}
+.topbar-search kbd {
+  margin-left: auto; font-family: var(--font-mono); font-size: 10px;
+  color: var(--ink-3); background: var(--surface-3); border-radius: 4px;
+  padding: 1px 5px; border: 1px solid var(--line);
+}
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 13px; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: var(--font-sans); white-space: nowrap; }
+.btn-primary { background: linear-gradient(180deg, var(--accent-2) 0%, var(--accent) 100%); border-color: transparent; color: #fff; box-shadow: 0 2px 12px rgba(76,158,255,0.35); }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
+
+.home-content { padding: 24px; }
+
+/* ── IMPROVED stat cards ── */
+.stat-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin-bottom: 28px; }
+.stat-card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 16px 18px;
+  display: flex; flex-direction: column; gap: 6px;
+  position: relative; overflow: hidden;
+}
+.stat-card::after {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: var(--cat-color, var(--line));
+  opacity: 0.7;
+}
+.stat-label { font-family: var(--font-mono); font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.09em; color: var(--ink-3); }
+.stat-value { font-family: var(--font-display); font-size: 28px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; }
+.stat-delta { font-size: 11.5px; color: var(--ink-3); display: flex; align-items: center; gap: 4px; }
+.stat-delta.up { color: var(--cat-ai); }
+.stat-delta.down { color: #f0747a; }
+/* new: sparkline inside stat card */
+.stat-sparkline { margin-top: 4px; }
+.sparkline-bars { display: flex; align-items: flex-end; gap: 2px; height: 22px; }
+.spark-bar { flex: 1; border-radius: 2px; background: var(--surface-3); min-height: 3px; }
+.spark-bar.lit { background: color-mix(in srgb, var(--cat-color, var(--accent)) 70%, transparent); }
+.spark-bar.full { background: var(--cat-color, var(--accent)); }
+
+/* ── section header row ── */
+.list-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.list-header-title { font-family: var(--font-display); font-size: 15px; font-weight: 700; letter-spacing: -0.02em; flex: 1; }
+.view-toggle { display: flex; gap: 2px; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; padding: 2px; }
+.view-toggle-btn { width: 26px; height: 26px; border-radius: 5px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--ink-3); cursor: pointer; }
+.view-toggle-btn.active { background: var(--surface-3); color: var(--ink); }
+
+.filter-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 500; border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); cursor: pointer; }
+.filter-chip.active { background: var(--accent-glow); border-color: rgba(76,158,255,0.3); color: var(--accent); }
+
+/* ── IMPROVED workflow cards ── */
+.workflow-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(215px,1fr)); gap: 10px; }
+.workflow-card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 16px;
+  display: flex; flex-direction: column; gap: 0;
+  cursor: pointer; position: relative; overflow: hidden;
+  transition: border-color 140ms, box-shadow 140ms;
+  min-height: 130px;
+}
+.workflow-card:hover { border-color: var(--line-hover, rgba(76,158,255,0.35)); box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
+/* folder-color accent stripe on top */
+.workflow-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: var(--folder-color, var(--line)); opacity: 0;
+  transition: opacity 140ms;
+}
+.workflow-card:hover::before { opacity: 1; }
+
+.wf-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 8px; }
+.wf-icon { width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 15px; flex-shrink: 0; }
+.wf-menu { width: 22px; height: 22px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--ink-3); opacity: 0; cursor: pointer; }
+.workflow-card:hover .wf-menu { opacity: 1; }
+
+.wf-name { font-size: 13px; font-weight: 650; color: var(--ink); line-height: 1.3; margin-bottom: 4px; }
+.wf-desc { font-size: 11.5px; color: var(--ink-3); line-height: 1.4; flex: 1; margin-bottom: 10px; }
+
+.wf-footer { display: flex; align-items: center; gap: 6px; margin-top: auto; }
+/* NEW: run history sparkline on card */
+.wf-runs { display: flex; align-items: flex-end; gap: 1.5px; height: 14px; flex: 1; }
+.run-pip { width: 5px; border-radius: 1.5px; }
+
+.wf-status { display: flex; align-items: center; gap: 4px; }
+.status-dot { width: 6px; height: 6px; border-radius: 50%; }
+.status-dot.ok { background: #8fd06f; box-shadow: 0 0 4px rgba(143,208,111,0.6); }
+.status-dot.err { background: #f0747a; }
+.status-dot.idle { background: var(--surface-3); }
+.wf-time { font-family: var(--font-mono); font-size: 10px; color: var(--ink-3); }
+
+.trigger-badge {
+  font-family: var(--font-mono); font-size: 9px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  padding: 2px 6px; border-radius: 4px; border: 1px solid;
+}
+
+
+/* ══════════════════════════════════════════
+   § 2  NODE TILES — CATEGORY GLOW
+══════════════════════════════════════════ */
+
+.canvas-mock {
+  background: var(--canvas);
+  background-image: radial-gradient(circle, #242c3a 1px, transparent 1px);
+  background-size: 24px 24px;
+  padding: 40px;
+  display: flex; gap: 32px; align-items: center; flex-wrap: wrap;
+  min-height: 280px;
+}
+
+.node-group { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.node-group-label { font-family: var(--font-mono); font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); }
+
+.node-tile {
+  width: 72px; height: 72px; border-radius: 17px;
+  border: 1.5px solid var(--line);
+  background: var(--surface-2);
+  display: flex; align-items: center; justify-content: center;
+  position: relative; cursor: pointer; transition: all 140ms;
+}
+/* category tint overlay */
+.node-tile::before {
+  content: ''; position: absolute; inset: 0; border-radius: 16px;
+  background: var(--cat-color, var(--accent));
+  opacity: 0.1; pointer-events: none;
+}
+.node-label { font-size: 11.5px; font-weight: 600; color: var(--ink-2); text-align: center; max-width: 90px; line-height: 1.3; }
+
+/* default: blue ring */
+.node-tile.selected-default {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow), 0 9px 22px -11px rgba(0,0,0,0.9);
+}
+
+/* NEW: category-colored selection ring */
+.node-tile.selected-cat {
+  border-color: var(--cat-color);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cat-color) 25%, transparent),
+              0 0 18px -4px color-mix(in srgb, var(--cat-color) 45%, transparent),
+              0 9px 22px -11px rgba(0,0,0,0.9);
+}
+.node-tile.selected-cat::before { opacity: 0.18; }
+
+.node-icon-inner { font-size: 22px; position: relative; z-index: 1; }
+
+/* run-state overlays */
+.node-tile.running {
+  animation: node-pulse 1.4s ease-in-out infinite;
+}
+@keyframes node-pulse {
+  0%,100% { box-shadow: 0 0 0 2px rgba(76,158,255,0.3); }
+  50%      { box-shadow: 0 0 0 5px rgba(76,158,255,0.12), 0 0 20px rgba(76,158,255,0.25); }
+}
+.node-tile.success { border-color: rgba(143,208,111,0.6); }
+.node-tile.success::after {
+  content: '✓'; position: absolute; bottom: 5px; right: 6px;
+  font-size: 9px; font-weight: 700; color: #8fd06f;
+}
+.node-tile.errored { border-color: rgba(240,116,122,0.6); }
+.node-tile.errored::after {
+  content: '✕'; position: absolute; bottom: 5px; right: 6px;
+  font-size: 9px; font-weight: 700; color: #f0747a;
+}
+
+/* streaming text preview inside tile (LLM nodes) */
+.node-stream-preview {
+  position: absolute; inset: 8px; border-radius: 10px;
+  background: rgba(9,11,16,0.75); backdrop-filter: blur(4px);
+  font-family: var(--font-mono); font-size: 7px; color: var(--cat-ai);
+  overflow: hidden; padding: 4px;
+  display: flex; flex-direction: column; gap: 1px; z-index: 2;
+}
+.stream-line { height: 2px; border-radius: 1px; background: currentColor; opacity: 0.7; }
+
+/* comparison labels */
+.compare-row { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 8px; }
+.compare-col { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.compare-label { font-family: var(--font-mono); font-size: 9.5px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.07em; }
+.before-tag { color: #f0747a; }
+.after-tag { color: var(--cat-ai); }
+
+
+/* ══════════════════════════════════════════
+   § 3  INSPECTOR — CATEGORY-REACTIVE HEADER
+══════════════════════════════════════════ */
+
+.inspector-mock {
+  width: 320px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); overflow: hidden; flex-shrink: 0;
+}
+.inspector-header {
+  padding: 14px 16px 12px;
+  position: relative; overflow: hidden;
+  border-bottom: 1px solid var(--line);
+}
+/* THE SIGNATURE ELEMENT: category-tinted inspector header */
+.inspector-header::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--cat-color, var(--accent)) 12%, transparent) 0%,
+    transparent 70%);
+  pointer-events: none;
+}
+.inspector-header::after {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, var(--cat-color, var(--accent)), transparent 60%);
+}
+.insp-title-row { display: flex; align-items: center; gap: 10px; position: relative; z-index: 1; }
+.insp-node-icon { width: 34px; height: 34px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 16px; border: 1px solid color-mix(in srgb, var(--cat-color, var(--accent)) 30%, transparent); background: color-mix(in srgb, var(--cat-color, var(--accent)) 12%, var(--surface-2)); }
+.insp-node-name { font-family: var(--font-display); font-size: 15px; font-weight: 700; letter-spacing: -0.02em; }
+.insp-node-type { font-family: var(--font-mono); font-size: 9.5px; font-weight: 500; color: color-mix(in srgb, var(--cat-color, var(--accent)) 80%, var(--ink-2)); text-transform: uppercase; letter-spacing: 0.07em; }
+
+.inspector-tabs { display: flex; border-bottom: 1px solid var(--line); padding: 0 12px; gap: 0; }
+.insp-tab { font-size: 12px; font-weight: 500; color: var(--ink-3); padding: 9px 10px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color 120ms; }
+.insp-tab.active { color: var(--cat-color, var(--accent)); border-bottom-color: var(--cat-color, var(--accent)); font-weight: 600; }
+
+.insp-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+
+/* param group */
+.param-group { }
+.param-group-header {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 9.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.09em; color: var(--ink-3);
+  margin-bottom: 8px; cursor: pointer;
+}
+.param-group-header::before { content: '▾'; font-size: 8px; color: var(--ink-3); }
+.param-row { margin-bottom: 8px; }
+.param-label { font-size: 11.5px; font-weight: 600; color: var(--ink-2); margin-bottom: 4px; display: flex; align-items: center; gap: 5px; }
+.param-required { color: #f0747a; font-size: 10px; }
+.param-input {
+  width: 100%; background: var(--bg); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 7px 10px;
+  font-size: 12.5px; color: var(--ink); font-family: var(--font-sans);
+}
+.param-input.focused {
+  border-color: var(--cat-color, var(--accent));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cat-color, var(--accent)) 18%, transparent);
+}
+/* expression field purple subtheme */
+.param-input.expr { background: rgba(124,58,237,0.07); border-color: rgba(139,92,246,0.4); color: #c4b5fd; font-family: var(--font-mono); font-size: 11.5px; }
+
+.param-select {
+  width: 100%; background: var(--bg); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 7px 10px;
+  font-size: 12.5px; color: var(--ink); appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%236a7589' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+  padding-right: 28px;
+}
+
+.toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 3px 0; }
+.toggle-label { font-size: 12.5px; color: var(--ink-2); font-weight: 500; }
+.toggle-track { width: 34px; height: 19px; border-radius: 999px; background: var(--surface-3); position: relative; cursor: pointer; transition: background 140ms; }
+.toggle-track.on { background: var(--cat-color, var(--accent)); }
+.toggle-thumb { width: 13px; height: 13px; border-radius: 50%; background: var(--ink-2); position: absolute; top: 3px; left: 3px; transition: left 140ms, background 140ms; }
+.toggle-track.on .toggle-thumb { left: 18px; background: #06101e; }
+
+/* new: inline docs snippet */
+.insp-docs-teaser {
+  margin-top: 4px; padding: 10px 12px; border-radius: 7px;
+  background: var(--surface-2); border: 1px solid var(--line-2);
+  font-size: 11.5px; color: var(--ink-2); line-height: 1.55;
+}
+.insp-docs-teaser a { color: var(--cat-color, var(--accent)); text-decoration: none; }
+
+
+/* ══════════════════════════════════════════
+   § 4  RUN TIMELINE (NEW FEATURE)
+══════════════════════════════════════════ */
+
+.timeline-panel {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); overflow: hidden;
+}
+.timeline-topbar {
+  height: 40px; display: flex; align-items: center; gap: 10px;
+  padding: 0 16px; border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.timeline-title { font-size: 12px; font-weight: 650; color: var(--ink); flex: 1; }
+.timeline-meta { font-family: var(--font-mono); font-size: 10px; color: var(--ink-3); }
+.timeline-total { font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--cat-ai); }
+
+.timeline-body { padding: 12px 16px; display: flex; flex-direction: column; gap: 4px; }
+.timeline-header-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-family: var(--font-mono); font-size: 9.5px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.08em; }
+.tl-name-col { width: 160px; flex-shrink: 0; }
+.tl-bar-col { flex: 1; position: relative; }
+
+.timeline-row { display: flex; align-items: center; gap: 8px; height: 26px; }
+.tl-node-name { width: 160px; flex-shrink: 0; font-size: 12px; font-weight: 500; color: var(--ink-2); display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tl-node-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.tl-bar-area { flex: 1; position: relative; height: 100%; display: flex; align-items: center; }
+
+/* time axis ticks */
+.time-axis { flex: 1; position: relative; height: 14px; display: flex; align-items: flex-end; }
+.time-tick { position: absolute; bottom: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.tick-line { width: 1px; height: 4px; background: var(--line); }
+.tick-label { font-family: var(--font-mono); font-size: 8.5px; color: var(--ink-3); }
+
+.tl-bar {
+  position: absolute; height: 14px; border-radius: 4px;
+  background: var(--cat-color, var(--accent));
+  opacity: 0.8;
+}
+.tl-bar-duration { position: absolute; right: -30px; font-family: var(--font-mono); font-size: 9px; color: var(--ink-3); white-space: nowrap; }
+
+/* new: total row */
+.timeline-total-row {
+  display: flex; align-items: center; gap: 8px;
+  border-top: 1px solid var(--line); padding-top: 10px; margin-top: 4px;
+}
+.tl-total-label { width: 160px; flex-shrink: 0; font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); }
+.tl-total-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 999px; font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+  background: rgba(143,208,111,0.1); color: #8fd06f; border: 1px solid rgba(143,208,111,0.3);
+}
+
+
+/* ══════════════════════════════════════════
+   § 5  NDV — THREE-COLUMN MODAL
+══════════════════════════════════════════ */
+
+.ndv-mock {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 14px; overflow: hidden;
+}
+.ndv-topbar {
+  height: 48px; display: flex; align-items: center; gap: 12px;
+  padding: 0 20px; border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.ndv-node-pill {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 10px; border-radius: 7px;
+  background: color-mix(in srgb, var(--cat-color, var(--accent)) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--cat-color, var(--accent)) 25%, transparent);
+  font-size: 12.5px; font-weight: 650;
+}
+.ndv-columns { display: grid; grid-template-columns: 1fr 280px 1fr; min-height: 400px; }
+.ndv-col { border-right: 1px solid var(--line); }
+.ndv-col:last-child { border-right: none; }
+.ndv-col-header {
+  padding: 10px 16px; border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface-2);
+}
+.ndv-col-title { font-size: 11.5px; font-weight: 650; color: var(--ink-2); flex: 1; }
+.ndv-col-meta { font-family: var(--font-mono); font-size: 9.5px; color: var(--ink-3); }
+.ndv-col-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+
+/* data preview rows */
+.data-row {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 7px 10px; background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: 6px;
+  font-size: 11.5px;
+}
+.data-key { font-family: var(--font-mono); color: var(--ink-3); min-width: 80px; flex-shrink: 0; font-size: 10.5px; }
+.data-val { font-family: var(--font-mono); color: var(--ink); font-size: 10.5px; word-break: break-all; }
+.data-val.str { color: #8fd06f; }
+.data-val.num { color: #79b6ff; }
+.data-val.bool { color: #f6b44b; }
+.data-val.arr { color: #c084fc; }
+
+/* coerce type selector — improved */
+.coerce-bar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 14px; border-top: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.coerce-label { font-family: var(--font-mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); }
+.coerce-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.coerce-chip { padding: 3px 8px; border-radius: 5px; font-family: var(--font-mono); font-size: 9.5px; font-weight: 600; border: 1px solid var(--line); color: var(--ink-3); cursor: pointer; }
+.coerce-chip.active { background: rgba(76,158,255,0.12); border-color: rgba(76,158,255,0.35); color: var(--accent); }
+
+
+/* ══════════════════════════════════════════
+   § 6  COMMAND PALETTE — UPGRADE
+══════════════════════════════════════════ */
+
+.cmd-mock {
+  width: 580px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 14px; overflow: hidden;
+  box-shadow: 0 30px 90px rgba(0,0,0,0.7);
+}
+.cmd-input-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 16px; height: 54px; border-bottom: 1px solid var(--line);
+}
+.cmd-search-icon { font-size: 16px; color: var(--ink-3); flex-shrink: 0; }
+.cmd-input-field { flex: 1; background: transparent; border: none; outline: none; font-size: 14px; color: var(--ink); font-family: var(--font-sans); }
+.cmd-mode-pill { font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; padding: 3px 8px; border-radius: 5px; background: var(--surface-3); color: var(--ink-3); }
+
+/* NEW: context tabs in command palette */
+.cmd-tabs { display: flex; gap: 0; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+.cmd-tab { font-size: 11.5px; font-weight: 500; color: var(--ink-3); padding: 4px 10px; border-radius: 5px; cursor: pointer; display: flex; align-items: center; gap: 5px; }
+.cmd-tab.active { background: var(--surface-3); color: var(--ink); font-weight: 600; }
+.cmd-tab-count { font-family: var(--font-mono); font-size: 9px; background: var(--surface-3); padding: 1px 5px; border-radius: 4px; }
+.cmd-tab.active .cmd-tab-count { background: rgba(76,158,255,0.15); color: var(--accent); }
+
+.cmd-results { max-height: 340px; overflow-y: auto; padding: 6px; }
+.cmd-section-label { font-family: var(--font-mono); font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-3); padding: 6px 10px 3px; }
+.cmd-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 7px; cursor: pointer; }
+.cmd-item.active { background: var(--surface-2); }
+.cmd-item-icon { width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; border: 1px solid color-mix(in srgb, var(--cat-color, var(--line)) 40%, var(--line)); background: color-mix(in srgb, var(--cat-color, var(--surface-2)) 12%, var(--surface-2)); }
+.cmd-item-info { flex: 1; }
+.cmd-item-name { font-size: 13px; font-weight: 600; color: var(--ink); }
+.cmd-item-cat { font-size: 11px; color: var(--ink-3); }
+.cmd-item-kbd { display: flex; gap: 3px; }
+.cmd-kbd { font-family: var(--font-mono); font-size: 9.5px; background: var(--surface-3); border: 1px solid var(--line); border-radius: 4px; padding: 2px 5px; color: var(--ink-3); }
+/* NEW: node preview card on right */
+.cmd-preview {
+  border-left: 1px solid var(--line);
+  width: 200px; flex-shrink: 0;
+  padding: 14px;
+  background: var(--surface-2);
+}
+.cmd-preview-icon { width: 40px; height: 40px; border-radius: 10px; margin: 0 auto 10px; display: flex; align-items: center; justify-content: center; font-size: 20px; background: color-mix(in srgb, var(--cat-color, var(--accent)) 12%, var(--surface)); border: 1px solid color-mix(in srgb, var(--cat-color, var(--accent)) 30%, transparent); }
+.cmd-preview-name { font-size: 12.5px; font-weight: 700; text-align: center; margin-bottom: 4px; }
+.cmd-preview-cat { font-family: var(--font-mono); font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; text-align: center; color: var(--cat-color, var(--accent)); margin-bottom: 10px; }
+.cmd-preview-desc { font-size: 11px; color: var(--ink-3); line-height: 1.5; }
+.cmd-preview-ports { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.cmd-preview-port { display: flex; align-items: center; gap: 5px; font-size: 10.5px; }
+.port-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.cmd-layout { display: flex; }
+
+
+/* ══════════════════════════════════════════
+   § 7  CREDENTIALS & ENVIRONMENT HEALTH
+══════════════════════════════════════════ */
+
+.cred-card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 14px 16px;
+  display: flex; align-items: center; gap: 12px;
+}
+.cred-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; background: var(--surface-2); border: 1px solid var(--line); flex-shrink: 0; }
+.cred-info { flex: 1; }
+.cred-name { font-size: 13px; font-weight: 650; color: var(--ink); margin-bottom: 2px; }
+.cred-meta { font-size: 11.5px; color: var(--ink-3); }
+.health-pill {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 999px;
+  font-family: var(--font-mono); font-size: 9.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.health-pill.ok { background: rgba(143,208,111,0.1); color: #8fd06f; border: 1px solid rgba(143,208,111,0.3); }
+.health-pill.warn { background: rgba(255,212,121,0.1); color: #ffd479; border: 1px solid rgba(255,212,121,0.3); }
+.health-pill.err { background: rgba(240,116,122,0.12); color: #f0747a; border: 1px solid rgba(240,116,122,0.3); }
+.health-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.health-last { font-family: var(--font-mono); font-size: 9px; color: var(--ink-3); }
+.cred-workflows { display: flex; gap: 4px; }
+.cred-wf-chip { font-size: 10px; padding: 2px 6px; border-radius: 4px; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-3); font-family: var(--font-mono); }
+
+.env-card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 14px 16px;
+  display: flex; align-items: center; gap: 12px;
+}
+.env-indicator { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.env-name { font-size: 13px; font-weight: 650; color: var(--ink); flex: 1; }
+.env-badge { font-family: var(--font-mono); font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; padding: 2px 7px; border-radius: 4px; }
+
+
+/* ══════════════════════════════════════════
+   § 8  EMPTY STATES
+══════════════════════════════════════════ */
+
+.empty-state {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; padding: 60px 32px; text-align: center;
+  min-height: 320px; border: 1px dashed var(--line);
+  border-radius: var(--radius); background: var(--surface);
+}
+.empty-glyph {
+  width: 64px; height: 64px; border-radius: 16px;
+  background: var(--surface-2); border: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 28px; margin-bottom: 20px;
+}
+.empty-title { font-family: var(--font-display); font-size: 17px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 8px; }
+.empty-desc { font-size: 13px; color: var(--ink-3); max-width: 300px; line-height: 1.6; margin-bottom: 20px; }
+
+
+/* ══════════════════════════════════════════
+   UTILITY
+══════════════════════════════════════════ */
+.flex { display: flex; }
+.flex-col { display: flex; flex-direction: column; }
+.gap-8 { gap: 8px; }
+.gap-12 { gap: 12px; }
+.gap-16 { gap: 16px; }
+.gap-20 { gap: 20px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.full-w { width: 100%; }
+.muted { color: var(--ink-3); }
+.mono { font-family: var(--font-mono); }
+.mt-8 { margin-top: 8px; }
+.mt-12 { margin-top: 12px; }
+</style>
+</head>
+<body>
+
+<!-- ── NAV ── -->
+<nav class="toc">
+  <div class="toc-brand">noo<span>dle</span></div>
+  <a href="#home">Home Dashboard</a>
+  <a href="#nodes">Node Tiles</a>
+  <a href="#inspector">Inspector <span class="toc-new">Signature</span></a>
+  <a href="#timeline">Run Timeline <span class="toc-new">New</span></a>
+  <a href="#ndv">NDV Modal</a>
+  <a href="#command">Command Palette</a>
+  <a href="#credentials">Credentials</a>
+  <a href="#empty">Empty States</a>
+</nav>
+
+<div class="page">
+
+<!-- ══════════════════════════════════════════
+     § 1  HOME DASHBOARD
+══════════════════════════════════════════ -->
+<section class="section" id="home">
+  <div class="section-label">01 — Home Dashboard</div>
+  <div class="section-title">Dashboard <span class="badge-improved">Improved</span></div>
+  <div class="section-desc">Run history sparklines on stat cards, workflow cards with inline last-run status, folder color stripes, and a cleaner filter bar.</div>
+
+  <div class="mockup-frame">
+    <div class="home-shell">
+
+      <!-- sidebar -->
+      <div class="sidebar">
+        <div class="sidebar-brand">
+          <div class="sidebar-logo">N</div>
+          <div class="sidebar-name">Noodle</div>
+        </div>
+
+        <div class="nav-section-label">Workspace</div>
+        <div class="nav-link active">
+          <div class="nav-icon">⬡</div>
+          Workflows
+        </div>
+        <div class="nav-link">
+          <div class="nav-icon">▶</div>
+          Executions
+        </div>
+        <div class="nav-link">
+          <div class="nav-icon">◈</div>
+          Environments
+        </div>
+        <div class="nav-link">
+          <div class="nav-icon">⬢</div>
+          Credentials
+        </div>
+
+        <div class="nav-section-label">System</div>
+        <div class="nav-link">
+          <div class="nav-icon">⚙</div>
+          Settings
+        </div>
+        <div class="nav-link">
+          <div class="nav-icon">◫</div>
+          Runner Pools
+        </div>
+
+        <div class="sidebar-footer">
+          <div class="org-switcher">
+            <div class="org-avatar">H</div>
+            <div class="org-name">Harry's Org</div>
+            <div class="org-caret">⌄</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- main -->
+      <div class="home-main">
+        <div class="home-topbar">
+          <div class="topbar-title">Workflows</div>
+          <div class="topbar-search">
+            <span style="font-size:13px;color:var(--ink-3)">⌕</span>
+            Search workflows…
+            <kbd>⌘K</kbd>
+          </div>
+          <button class="btn btn-primary btn-sm">+ New workflow</button>
+        </div>
+
+        <div class="home-content">
+
+          <!-- stat cards with sparklines -->
+          <div class="stat-grid">
+            <div class="stat-card" style="--cat-color: var(--accent)">
+              <div class="stat-label">Workflows</div>
+              <div class="stat-value">24</div>
+              <div class="stat-delta up">↑ 3 this week</div>
+              <div class="stat-sparkline">
+                <div class="sparkline-bars">
+                  <div class="spark-bar lit" style="height:8px"></div>
+                  <div class="spark-bar lit" style="height:12px"></div>
+                  <div class="spark-bar lit" style="height:7px"></div>
+                  <div class="spark-bar lit" style="height:15px"></div>
+                  <div class="spark-bar lit" style="height:10px"></div>
+                  <div class="spark-bar full" style="height:18px"></div>
+                  <div class="spark-bar full" style="height:22px"></div>
+                </div>
+              </div>
+            </div>
+            <div class="stat-card" style="--cat-color: var(--cat-ai)">
+              <div class="stat-label">Runs today</div>
+              <div class="stat-value">1,842</div>
+              <div class="stat-delta up">↑ 12% vs yesterday</div>
+              <div class="stat-sparkline">
+                <div class="sparkline-bars">
+                  <div class="spark-bar lit" style="height:14px"></div>
+                  <div class="spark-bar lit" style="height:9px"></div>
+                  <div class="spark-bar lit" style="height:18px"></div>
+                  <div class="spark-bar full" style="height:22px"></div>
+                  <div class="spark-bar full" style="height:17px"></div>
+                  <div class="spark-bar full" style="height:20px"></div>
+                  <div class="spark-bar full" style="height:22px"></div>
+                </div>
+              </div>
+            </div>
+            <div class="stat-card" style="--cat-color: #f0747a">
+              <div class="stat-label">Error rate</div>
+              <div class="stat-value">2.1<span style="font-size:14px;font-weight:500;color:var(--ink-2)">%</span></div>
+              <div class="stat-delta down">↑ 0.4% vs yesterday</div>
+              <div class="stat-sparkline">
+                <div class="sparkline-bars">
+                  <div class="spark-bar lit" style="height:5px;--cat-color:#f0747a"></div>
+                  <div class="spark-bar lit" style="height:4px;--cat-color:#f0747a"></div>
+                  <div class="spark-bar lit" style="height:7px;--cat-color:#f0747a"></div>
+                  <div class="spark-bar lit" style="height:4px;--cat-color:#f0747a"></div>
+                  <div class="spark-bar full" style="height:8px;--cat-color:#f0747a"></div>
+                  <div class="spark-bar full" style="height:10px;--cat-color:#f0747a"></div>
+                  <div class="spark-bar full" style="height:9px;--cat-color:#f0747a"></div>
+                </div>
+              </div>
+            </div>
+            <div class="stat-card" style="--cat-color: var(--cat-logic)">
+              <div class="stat-label">Avg duration</div>
+              <div class="stat-value">1.4<span style="font-size:14px;font-weight:500;color:var(--ink-2)">s</span></div>
+              <div class="stat-delta" style="color:var(--ink-3)">→ stable</div>
+              <div class="stat-sparkline">
+                <div class="sparkline-bars">
+                  <div class="spark-bar lit" style="height:12px;--cat-color:var(--cat-logic)"></div>
+                  <div class="spark-bar lit" style="height:14px;--cat-color:var(--cat-logic)"></div>
+                  <div class="spark-bar lit" style="height:13px;--cat-color:var(--cat-logic)"></div>
+                  <div class="spark-bar lit" style="height:11px;--cat-color:var(--cat-logic)"></div>
+                  <div class="spark-bar full" style="height:13px;--cat-color:var(--cat-logic)"></div>
+                  <div class="spark-bar full" style="height:12px;--cat-color:var(--cat-logic)"></div>
+                  <div class="spark-bar full" style="height:14px;--cat-color:var(--cat-logic)"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- list header -->
+          <div class="list-header">
+            <div class="list-header-title">All workflows</div>
+            <div class="filter-chip active">All</div>
+            <div class="filter-chip">Active</div>
+            <div class="filter-chip">Errored</div>
+            <div class="filter-chip">Scheduled</div>
+            <div style="margin-left:auto" class="flex gap-8">
+              <div class="view-toggle">
+                <div class="view-toggle-btn active">▦</div>
+                <div class="view-toggle-btn">☰</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- workflow grid with run sparklines -->
+          <div class="workflow-grid">
+
+            <!-- card 1: AI workflow, healthy -->
+            <div class="workflow-card" style="--folder-color: var(--cat-ai)">
+              <div class="wf-header">
+                <div class="wf-icon" style="background:color-mix(in srgb,var(--cat-ai) 12%,var(--surface-2));border:1px solid color-mix(in srgb,var(--cat-ai) 25%,transparent)">🤖</div>
+                <div class="wf-menu">⋯</div>
+              </div>
+              <div class="wf-name">Customer Support Agent</div>
+              <div class="wf-desc">Triages tickets and drafts replies via GPT-4o</div>
+              <div class="wf-footer">
+                <div class="wf-runs">
+                  <div class="run-pip" style="height:8px;background:#8fd06f;opacity:0.8"></div>
+                  <div class="run-pip" style="height:10px;background:#8fd06f;opacity:0.8"></div>
+                  <div class="run-pip" style="height:7px;background:#8fd06f;opacity:0.8"></div>
+                  <div class="run-pip" style="height:12px;background:#8fd06f"></div>
+                  <div class="run-pip" style="height:9px;background:#8fd06f"></div>
+                  <div class="run-pip" style="height:11px;background:#8fd06f"></div>
+                  <div class="run-pip" style="height:14px;background:#8fd06f"></div>
+                </div>
+                <div class="wf-status">
+                  <div class="status-dot ok"></div>
+                  <div class="wf-time mono" style="font-size:9.5px">2m ago</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- card 2: API workflow, recent error -->
+            <div class="workflow-card" style="--folder-color: #f0747a">
+              <div class="wf-header">
+                <div class="wf-icon" style="background:color-mix(in srgb,#f0747a 12%,var(--surface-2));border:1px solid color-mix(in srgb,#f0747a 25%,transparent)">🔗</div>
+                <div class="wf-menu">⋯</div>
+              </div>
+              <div class="wf-name">Stripe Invoice Sync</div>
+              <div class="wf-desc">Mirrors invoices into Airtable on payment events</div>
+              <div class="wf-footer">
+                <div class="wf-runs">
+                  <div class="run-pip" style="height:10px;background:#8fd06f;opacity:0.7"></div>
+                  <div class="run-pip" style="height:12px;background:#8fd06f;opacity:0.7"></div>
+                  <div class="run-pip" style="height:8px;background:#8fd06f;opacity:0.7"></div>
+                  <div class="run-pip" style="height:9px;background:#8fd06f;opacity:0.7"></div>
+                  <div class="run-pip" style="height:7px;background:#f0747a;opacity:0.8"></div>
+                  <div class="run-pip" style="height:11px;background:#f0747a"></div>
+                  <div class="run-pip" style="height:14px;background:#f0747a"></div>
+                </div>
+                <div class="wf-status">
+                  <div class="status-dot err"></div>
+                  <div class="wf-time mono" style="font-size:9.5px;color:#f0747a">Failed</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- card 3: scheduled -->
+            <div class="workflow-card" style="--folder-color: var(--cat-logic)">
+              <div class="wf-header">
+                <div class="wf-icon" style="background:color-mix(in srgb,var(--cat-logic) 12%,var(--surface-2));border:1px solid color-mix(in srgb,var(--cat-logic) 25%,transparent)">📊</div>
+                <div class="wf-menu">⋯</div>
+              </div>
+              <div class="wf-name">Weekly Report Generator</div>
+              <div class="wf-desc">Emails a PDF summary of KPIs every Monday</div>
+              <div class="wf-footer">
+                <div class="wf-runs">
+                  <div class="run-pip" style="height:14px;background:#8fd06f;opacity:0.6"></div>
+                  <div class="run-pip" style="height:3px;background:var(--surface-3)"></div>
+                  <div class="run-pip" style="height:3px;background:var(--surface-3)"></div>
+                  <div class="run-pip" style="height:3px;background:var(--surface-3)"></div>
+                  <div class="run-pip" style="height:3px;background:var(--surface-3)"></div>
+                  <div class="run-pip" style="height:3px;background:var(--surface-3)"></div>
+                  <div class="run-pip" style="height:14px;background:#8fd06f"></div>
+                </div>
+                <div class="wf-status">
+                  <div class="status-dot idle"></div>
+                  <div class="wf-time mono" style="font-size:9.5px">Mon 09:00</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- card 4: idle -->
+            <div class="workflow-card">
+              <div class="wf-header">
+                <div class="wf-icon" style="background:var(--surface-2);border:1px solid var(--line)">🔔</div>
+                <div class="wf-menu">⋯</div>
+              </div>
+              <div class="wf-name">Slack Alert Router</div>
+              <div class="wf-desc">Posts PagerDuty alerts to the right channel</div>
+              <div class="wf-footer">
+                <div class="wf-runs" style="opacity:0.4">
+                  <div class="run-pip" style="height:8px;background:var(--surface-3)"></div>
+                  <div class="run-pip" style="height:8px;background:var(--surface-3)"></div>
+                  <div class="run-pip" style="height:8px;background:var(--surface-3)"></div>
+                  <div class="run-pip" style="height:8px;background:var(--surface-3)"></div>
+                  <div class="run-pip" style="height:8px;background:var(--surface-3)"></div>
+                  <div class="run-pip" style="height:8px;background:var(--surface-3)"></div>
+                  <div class="run-pip" style="height:8px;background:var(--surface-3)"></div>
+                </div>
+                <div class="wf-status">
+                  <div class="status-dot idle"></div>
+                  <div class="wf-time mono" style="font-size:9.5px">Inactive</div>
+                </div>
+              </div>
+            </div>
+
+          </div><!-- /grid -->
+        </div><!-- /content -->
+      </div><!-- /main -->
+    </div><!-- /shell -->
+  </div>
+  <div class="mockup-caption">Stat cards now show 7-day sparklines. Workflow cards expose last-7-run history inline + live status dot.</div>
+</section>
+
+<div class="divider"></div>
+
+
+<!-- ══════════════════════════════════════════
+     § 2  NODE TILES
+══════════════════════════════════════════ -->
+<section class="section" id="nodes">
+  <div class="section-label">02 — Canvas</div>
+  <div class="section-title">Node tiles <span class="badge-improved">Improved</span></div>
+  <div class="section-desc">Selection glow now adopts the node's category color rather than always blue. Run states get clearer inline badges. LLM streaming preview fills the tile body.</div>
+
+  <div class="mockup-frame">
+    <div class="canvas-mock">
+
+      <div class="compare-col">
+        <div class="compare-label before-tag">Before — always blue</div>
+        <div class="node-group">
+          <div class="node-tile selected-default" style="--cat-color:var(--cat-ai)">
+            <div class="node-icon-inner">🤖</div>
+          </div>
+          <div class="node-label">AI Agent</div>
+        </div>
+      </div>
+
+      <div style="color:var(--ink-3);font-size:18px;align-self:center;padding-top:16px">→</div>
+
+      <div class="compare-col">
+        <div class="compare-label after-tag">After — category glow</div>
+        <div class="node-group">
+          <div class="node-tile selected-cat" style="--cat-color:var(--cat-ai)">
+            <div class="node-icon-inner">🤖</div>
+          </div>
+          <div class="node-label" style="color:var(--ink)">AI Agent</div>
+        </div>
+      </div>
+
+      <div style="width:1px;background:var(--line);align-self:stretch;margin:0 8px"></div>
+
+      <!-- More category examples -->
+      <div class="node-group">
+        <div class="compare-label" style="color:var(--cat-logic)">Logic</div>
+        <div class="node-tile selected-cat" style="--cat-color:var(--cat-logic)">
+          <div class="node-icon-inner">⑂</div>
+        </div>
+        <div class="node-label">If / Else</div>
+      </div>
+
+      <div class="node-group">
+        <div class="compare-label" style="color:var(--cat-integration)">Integration</div>
+        <div class="node-tile selected-cat" style="--cat-color:var(--cat-integration)">
+          <div class="node-icon-inner">✉</div>
+        </div>
+        <div class="node-label">Send Email</div>
+      </div>
+
+      <div class="node-group">
+        <div class="compare-label" style="color:var(--cat-data)">Data</div>
+        <div class="node-tile selected-cat" style="--cat-color:var(--cat-data)">
+          <div class="node-icon-inner">⊞</div>
+        </div>
+        <div class="node-label">Dataset</div>
+      </div>
+
+      <div style="width:1px;background:var(--line);align-self:stretch;margin:0 8px"></div>
+
+      <!-- run states -->
+      <div class="compare-col">
+        <div class="compare-label">Running</div>
+        <div class="node-group">
+          <div class="node-tile running" style="--cat-color:var(--cat-ai)">
+            <div class="node-icon-inner">🤖</div>
+          </div>
+          <div class="node-label">AI Agent</div>
+        </div>
+      </div>
+
+      <div class="compare-col">
+        <div class="compare-label after-tag">Success</div>
+        <div class="node-group">
+          <div class="node-tile success" style="--cat-color:var(--cat-ai)">
+            <div class="node-icon-inner">🤖</div>
+          </div>
+          <div class="node-label">AI Agent</div>
+        </div>
+      </div>
+
+      <div class="compare-col">
+        <div class="compare-label before-tag">Error</div>
+        <div class="node-group">
+          <div class="node-tile errored" style="--cat-color:var(--cat-ai)">
+            <div class="node-icon-inner">🤖</div>
+          </div>
+          <div class="node-label">AI Agent</div>
+        </div>
+      </div>
+
+      <div class="compare-col">
+        <div class="compare-label">LLM streaming</div>
+        <div class="node-group">
+          <div class="node-tile" style="--cat-color:var(--cat-ai)">
+            <div class="node-stream-preview">
+              <div class="stream-line" style="width:90%"></div>
+              <div class="stream-line" style="width:75%"></div>
+              <div class="stream-line" style="width:85%"></div>
+              <div class="stream-line" style="width:60%"></div>
+              <div class="stream-line" style="width:40%"></div>
+            </div>
+          </div>
+          <div class="node-label">GPT-4o</div>
+        </div>
+      </div>
+
+    </div><!-- /canvas-mock -->
+  </div>
+</section>
+
+<div class="divider"></div>
+
+
+<!-- ══════════════════════════════════════════
+     § 3  INSPECTOR — SIGNATURE ELEMENT
+══════════════════════════════════════════ -->
+<section class="section" id="inspector">
+  <div class="section-label">03 — Inspector Panel · Signature Element</div>
+  <div class="section-title">Category-reactive inspector <span class="badge-new">Signature</span></div>
+  <div class="section-desc">When you select a node, the inspector header adopts a subtle gradient wash of that category's color. Tabs and focused inputs follow suit. The tool feels aware of what you're working with — not just a generic sidebar.</div>
+
+  <div class="flex gap-20" style="flex-wrap:wrap;align-items:flex-start">
+
+    <!-- AI node selected -->
+    <div>
+      <div class="compare-label after-tag" style="margin-bottom:8px;font-size:10px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.08em">AI node selected</div>
+      <div class="inspector-mock" style="--cat-color:var(--cat-ai)">
+        <div class="inspector-header">
+          <div class="insp-title-row">
+            <div class="insp-node-icon">🤖</div>
+            <div>
+              <div class="insp-node-name">AI Agent</div>
+              <div class="insp-node-type">AI · ai_agent_v2</div>
+            </div>
+          </div>
+        </div>
+        <div class="inspector-tabs">
+          <div class="insp-tab active">Parameters</div>
+          <div class="insp-tab">Settings</div>
+          <div class="insp-tab">Logs</div>
+          <div class="insp-tab">Docs</div>
+        </div>
+        <div class="insp-body">
+          <div class="param-group">
+            <div class="param-group-header">Model</div>
+            <div class="param-row">
+              <div class="param-label">Provider <span class="param-required">*</span></div>
+              <select class="param-select" style="font-family:var(--font-sans)">
+                <option>OpenAI</option>
+              </select>
+            </div>
+            <div class="param-row">
+              <div class="param-label">Model <span class="param-required">*</span></div>
+              <select class="param-select focused" style="font-family:var(--font-sans);border-color:var(--cat-ai);box-shadow:0 0 0 3px color-mix(in srgb,var(--cat-ai) 18%,transparent)">
+                <option>gpt-4o</option>
+              </select>
+            </div>
+          </div>
+          <div class="param-group">
+            <div class="param-group-header">Prompts</div>
+            <div class="param-row">
+              <div class="param-label">System prompt</div>
+              <textarea class="param-input" style="height:56px;resize:none;font-family:var(--font-sans)">You are a helpful customer support agent…</textarea>
+            </div>
+          </div>
+          <div class="param-group">
+            <div class="param-group-header">Options</div>
+            <div class="toggle-row">
+              <div class="toggle-label">Stream output</div>
+              <div class="toggle-track on" style="background:var(--cat-ai)"><div class="toggle-thumb"></div></div>
+            </div>
+            <div class="toggle-row">
+              <div class="toggle-label">Return full message</div>
+              <div class="toggle-track"><div class="toggle-thumb"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Logic node selected -->
+    <div>
+      <div class="compare-label" style="margin-bottom:8px;font-size:10px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.08em;color:var(--cat-logic)">Logic node selected</div>
+      <div class="inspector-mock" style="--cat-color:var(--cat-logic)">
+        <div class="inspector-header">
+          <div class="insp-title-row">
+            <div class="insp-node-icon">⑂</div>
+            <div>
+              <div class="insp-node-name">If / Else</div>
+              <div class="insp-node-type">Logic · if_else</div>
+            </div>
+          </div>
+        </div>
+        <div class="inspector-tabs">
+          <div class="insp-tab active">Parameters</div>
+          <div class="insp-tab">Settings</div>
+          <div class="insp-tab">Logs</div>
+          <div class="insp-tab">Docs</div>
+        </div>
+        <div class="insp-body">
+          <div class="param-group">
+            <div class="param-group-header">Conditions</div>
+            <div class="param-row">
+              <div class="param-label">Expression</div>
+              <input class="param-input expr" type="text" value="{{ $input.status == 'active' }}" readonly>
+            </div>
+          </div>
+          <div class="param-group">
+            <div class="param-group-header">Options</div>
+            <div class="toggle-row">
+              <div class="toggle-label">Loose type matching</div>
+              <div class="toggle-track on" style="background:var(--cat-logic)"><div class="toggle-thumb"></div></div>
+            </div>
+          </div>
+          <div class="insp-docs-teaser">
+            Routes execution to <strong style="color:var(--ink)">True</strong> or <strong style="color:var(--ink)">False</strong> based on whether all conditions pass. <a href="#">See examples →</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Integration node selected -->
+    <div>
+      <div class="compare-label" style="margin-bottom:8px;font-size:10px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.08em;color:var(--cat-integration)">Integration node selected</div>
+      <div class="inspector-mock" style="--cat-color:var(--cat-integration)">
+        <div class="inspector-header">
+          <div class="insp-title-row">
+            <div class="insp-node-icon">✉</div>
+            <div>
+              <div class="insp-node-name">Send Email</div>
+              <div class="insp-node-type">Integrations · email_send</div>
+            </div>
+          </div>
+        </div>
+        <div class="inspector-tabs">
+          <div class="insp-tab active">Parameters</div>
+          <div class="insp-tab">Credentials</div>
+          <div class="insp-tab">Logs</div>
+          <div class="insp-tab">Docs</div>
+        </div>
+        <div class="insp-body">
+          <div class="param-group">
+            <div class="param-group-header">Recipient</div>
+            <div class="param-row">
+              <div class="param-label">To <span class="param-required">*</span></div>
+              <input class="param-input" type="text" value="{{ $input.user_email }}" style="font-family:var(--font-mono);font-size:11.5px;color:#c4b5fd;background:rgba(124,58,237,0.07);border-color:rgba(139,92,246,0.4);" readonly>
+            </div>
+            <div class="param-row">
+              <div class="param-label">Subject <span class="param-required">*</span></div>
+              <input class="param-input" type="text" value="Your order is confirmed" readonly>
+            </div>
+          </div>
+          <div class="param-group">
+            <div class="param-group-header">Credential</div>
+            <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:rgba(255,111,145,0.06);border:1px solid rgba(255,111,145,0.2);border-radius:7px;">
+              <span style="font-size:13px">🔑</span>
+              <span style="font-size:12px;font-weight:600;color:var(--ink)">Postmark Production</span>
+              <span style="margin-left:auto" class="health-pill ok" style="scale:0.85"><span class="health-dot"></span>OK</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /inspector row -->
+</section>
+
+<div class="divider"></div>
+
+
+<!-- ══════════════════════════════════════════
+     § 4  RUN TIMELINE
+══════════════════════════════════════════ -->
+<section class="section" id="timeline">
+  <div class="section-label">04 — Bottom Panel</div>
+  <div class="section-title">Run Timeline <span class="badge-new">New Feature</span></div>
+  <div class="section-desc">Replaces the raw port-data dump with a Gantt-style execution view. See which nodes ran in parallel, how long each took, and where time was spent. Click any bar to jump to that node's output in the NDV.</div>
+
+  <div class="timeline-panel">
+    <div class="timeline-topbar">
+      <div class="timeline-title">Execution · Run #847</div>
+      <div class="flex gap-8" style="align-items:center">
+        <div class="health-pill ok"><span class="health-dot"></span>Completed</div>
+        <div class="timeline-meta">Jun 22, 14:32:08</div>
+        <div class="timeline-total">1.84s total</div>
+        <button class="btn btn-ghost btn-sm">View output</button>
+      </div>
+    </div>
+
+    <div class="timeline-body">
+      <!-- header -->
+      <div class="timeline-header-row">
+        <div class="tl-name-col">Node</div>
+        <div class="tl-bar-col">
+          <!-- time axis -->
+          <div class="time-axis">
+            <div class="time-tick" style="left:0%"><div class="tick-line"></div><div class="tick-label">0ms</div></div>
+            <div class="time-tick" style="left:25%"><div class="tick-line"></div><div class="tick-label">460ms</div></div>
+            <div class="time-tick" style="left:50%"><div class="tick-line"></div><div class="tick-label">920ms</div></div>
+            <div class="time-tick" style="left:75%"><div class="tick-line"></div><div class="tick-label">1380ms</div></div>
+            <div class="time-tick" style="left:100%"><div class="tick-line"></div><div class="tick-label">1840ms</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- rows -->
+      <div class="timeline-row">
+        <div class="tl-node-name">
+          <div class="tl-node-dot" style="background:var(--cat-trigger)"></div>
+          Webhook Trigger
+        </div>
+        <div class="tl-bar-area">
+          <div class="tl-bar" style="--cat-color:var(--cat-trigger);left:0%;width:3%"></div>
+          <span class="tl-bar-duration" style="left:4%">58ms</span>
+        </div>
+      </div>
+
+      <div class="timeline-row">
+        <div class="tl-node-name">
+          <div class="tl-node-dot" style="background:var(--cat-data)"></div>
+          Parse JSON
+        </div>
+        <div class="tl-bar-area">
+          <div class="tl-bar" style="--cat-color:var(--cat-data);left:3%;width:2%"></div>
+          <span class="tl-bar-duration" style="left:6%">36ms</span>
+        </div>
+      </div>
+
+      <div class="timeline-row">
+        <div class="tl-node-name">
+          <div class="tl-node-dot" style="background:var(--cat-logic)"></div>
+          If / Else
+        </div>
+        <div class="tl-bar-area">
+          <div class="tl-bar" style="--cat-color:var(--cat-logic);left:5%;width:1%"></div>
+          <span class="tl-bar-duration" style="left:7%">14ms</span>
+        </div>
+      </div>
+
+      <div class="timeline-row" style="background:rgba(76,158,255,0.03);border-radius:4px">
+        <div class="tl-node-name" style="color:var(--ink)">
+          <div class="tl-node-dot" style="background:var(--cat-ai)"></div>
+          <strong>AI Agent</strong>
+        </div>
+        <div class="tl-bar-area">
+          <div class="tl-bar" style="--cat-color:var(--cat-ai);left:6%;width:75%;opacity:0.9"></div>
+          <span class="tl-bar-duration" style="left:82%;color:var(--cat-ai)">1380ms</span>
+        </div>
+      </div>
+
+      <!-- parallel nodes (same row, two bars stacked) -->
+      <div class="timeline-row">
+        <div class="tl-node-name">
+          <div class="tl-node-dot" style="background:var(--cat-integration)"></div>
+          Send Email
+        </div>
+        <div class="tl-bar-area">
+          <div class="tl-bar" style="--cat-color:var(--cat-integration);left:81%;width:12%"></div>
+          <span class="tl-bar-duration" style="left:94%">210ms</span>
+        </div>
+      </div>
+
+      <div class="timeline-row">
+        <div class="tl-node-name">
+          <div class="tl-node-dot" style="background:var(--cat-api)"></div>
+          HTTP Request
+        </div>
+        <div class="tl-bar-area">
+          <div class="tl-bar" style="--cat-color:var(--cat-api);left:81%;width:10%"></div>
+          <span class="tl-bar-duration" style="left:92%">184ms</span>
+        </div>
+      </div>
+
+      <!-- total -->
+      <div class="timeline-total-row">
+        <div class="tl-total-label">Wall-clock total</div>
+        <div class="tl-total-pill"><span>✓</span>1,840ms</div>
+        <div style="margin-left:12px;font-size:11.5px;color:var(--ink-3)">Send Email + HTTP Request ran in parallel — saved ~210ms</div>
+      </div>
+    </div>
+  </div>
+  <div class="mockup-caption">Click any bar → jumps to that node in NDV. Parallel rows are visually aligned by start time.</div>
+</section>
+
+<div class="divider"></div>
+
+
+<!-- ══════════════════════════════════════════
+     § 5  NDV MODAL
+══════════════════════════════════════════ -->
+<section class="section" id="ndv">
+  <div class="section-label">05 — Node Detail View</div>
+  <div class="section-title">NDV Modal <span class="badge-improved">Improved</span></div>
+  <div class="section-desc">Category-colored node pill in the header. Coerce-type chips moved into a persistent bar at the bottom of the output column. Column headers show item counts.</div>
+
+  <div class="ndv-mock">
+    <div class="ndv-topbar" style="--cat-color:var(--cat-ai)">
+      <div class="ndv-node-pill" style="--cat-color:var(--cat-ai)">
+        <span>🤖</span>
+        AI Agent
+        <span style="color:var(--ink-3);font-size:11px;font-family:var(--font-mono)">ai_agent_v2</span>
+      </div>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost btn-sm">← Prev run</button>
+      <button class="btn btn-ghost btn-sm">Next run →</button>
+      <button class="btn btn-ghost btn-sm" style="margin-left:8px">✕</button>
+    </div>
+
+    <div class="ndv-columns">
+      <!-- input -->
+      <div class="ndv-col">
+        <div class="ndv-col-header">
+          <div class="ndv-col-title">Input</div>
+          <div class="ndv-col-meta">1 item</div>
+        </div>
+        <div class="ndv-col-body">
+          <div class="data-row">
+            <div class="data-key">message</div>
+            <div class="data-val str">"How do I reset my password?"</div>
+          </div>
+          <div class="data-row">
+            <div class="data-key">user_id</div>
+            <div class="data-val num">48291</div>
+          </div>
+          <div class="data-row">
+            <div class="data-key">plan</div>
+            <div class="data-val str">"pro"</div>
+          </div>
+          <div class="data-row">
+            <div class="data-key">timestamp</div>
+            <div class="data-val str">"2026-06-22T14:32:07Z"</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- parameters (center) -->
+      <div class="ndv-col">
+        <div class="ndv-col-header" style="--cat-color:var(--cat-ai)">
+          <div class="ndv-col-title" style="text-align:center;color:var(--cat-ai)">Parameters</div>
+        </div>
+        <div class="ndv-col-body">
+          <div class="param-row">
+            <div class="param-label" style="font-size:11px">Provider</div>
+            <select class="param-select" style="font-family:var(--font-sans);font-size:12px"><option>OpenAI</option></select>
+          </div>
+          <div class="param-row">
+            <div class="param-label" style="font-size:11px">Model</div>
+            <select class="param-select" style="font-family:var(--font-sans);font-size:12px;border-color:var(--cat-ai);box-shadow:0 0 0 2px color-mix(in srgb,var(--cat-ai) 15%,transparent)"><option>gpt-4o</option></select>
+          </div>
+          <div class="param-row">
+            <div class="param-label" style="font-size:11px">System prompt</div>
+            <textarea class="param-input" style="height:64px;resize:none;font-family:var(--font-sans);font-size:11.5px">You are a helpful customer support agent for Acme Corp…</textarea>
+          </div>
+          <div class="toggle-row" style="margin-top:4px">
+            <div class="toggle-label" style="font-size:12px">Stream output</div>
+            <div class="toggle-track on" style="background:var(--cat-ai)"><div class="toggle-thumb"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- output -->
+      <div class="ndv-col" style="display:flex;flex-direction:column">
+        <div class="ndv-col-header">
+          <div class="ndv-col-title">Output</div>
+          <div class="ndv-col-meta">1 item · 312 tokens</div>
+        </div>
+        <div class="ndv-col-body" style="flex:1">
+          <div class="data-row">
+            <div class="data-key">text</div>
+            <div class="data-val str" style="font-size:10px">"To reset your password, visit Settings → Security and click…"</div>
+          </div>
+          <div class="data-row">
+            <div class="data-key">model</div>
+            <div class="data-val str">"gpt-4o-2024-08"</div>
+          </div>
+          <div class="data-row">
+            <div class="data-key">tokens</div>
+            <div class="data-val num">312</div>
+          </div>
+          <div class="data-row">
+            <div class="data-key">finish</div>
+            <div class="data-val str">"stop"</div>
+          </div>
+        </div>
+        <div class="coerce-bar">
+          <div class="coerce-label">View as</div>
+          <div class="coerce-chips">
+            <div class="coerce-chip active">JSON</div>
+            <div class="coerce-chip">Table</div>
+            <div class="coerce-chip">Raw</div>
+            <div class="coerce-chip">Schema</div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /columns -->
+  </div>
+</section>
+
+<div class="divider"></div>
+
+
+<!-- ══════════════════════════════════════════
+     § 6  COMMAND PALETTE
+══════════════════════════════════════════ -->
+<section class="section" id="command">
+  <div class="section-label">06 — Command Palette</div>
+  <div class="section-title">Command palette <span class="badge-improved">Improved</span></div>
+  <div class="section-desc">Context tabs narrow results to Nodes / Actions / Workflows / Docs. Hovering a node result shows a live preview card on the right with port info and description.</div>
+
+  <div style="display:flex;justify-content:center">
+    <div class="cmd-mock" style="--cat-color:var(--cat-ai)">
+      <div class="cmd-layout">
+        <div style="flex:1;min-width:0">
+          <div class="cmd-input-row">
+            <div class="cmd-search-icon">⌕</div>
+            <input class="cmd-input-field" type="text" value="ai agent" placeholder="Search nodes, actions, workflows…" readonly>
+            <div class="cmd-mode-pill">Node</div>
+          </div>
+
+          <div class="cmd-tabs">
+            <div class="cmd-tab">All</div>
+            <div class="cmd-tab active">Nodes <span class="cmd-tab-count">8</span></div>
+            <div class="cmd-tab">Actions <span class="cmd-tab-count">3</span></div>
+            <div class="cmd-tab">Workflows <span class="cmd-tab-count">2</span></div>
+          </div>
+
+          <div class="cmd-results">
+            <div class="cmd-section-label">AI</div>
+            <div class="cmd-item active" style="--cat-color:var(--cat-ai)">
+              <div class="cmd-item-icon">🤖</div>
+              <div class="cmd-item-info">
+                <div class="cmd-item-name">AI Agent</div>
+                <div class="cmd-item-cat">Conversational agent with tool use</div>
+              </div>
+              <div class="cmd-item-kbd">
+                <div class="cmd-kbd">↵</div>
+              </div>
+            </div>
+            <div class="cmd-item" style="--cat-color:var(--cat-ai)">
+              <div class="cmd-item-icon">💬</div>
+              <div class="cmd-item-info">
+                <div class="cmd-item-name">Chat Model</div>
+                <div class="cmd-item-cat">Raw LLM call, no agent loop</div>
+              </div>
+            </div>
+            <div class="cmd-item" style="--cat-color:var(--cat-ai)">
+              <div class="cmd-item-icon">📝</div>
+              <div class="cmd-item-info">
+                <div class="cmd-item-name">Prompt Template</div>
+                <div class="cmd-item-cat">Build structured prompts</div>
+              </div>
+            </div>
+            <div class="cmd-section-label" style="margin-top:8px">Integrations</div>
+            <div class="cmd-item" style="--cat-color:var(--cat-integration)">
+              <div class="cmd-item-icon">🔌</div>
+              <div class="cmd-item-info">
+                <div class="cmd-item-name">OpenAI Assistant</div>
+                <div class="cmd-item-cat">Use an Assistants API agent</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- preview panel -->
+        <div class="cmd-preview" style="--cat-color:var(--cat-ai)">
+          <div class="cmd-preview-icon">🤖</div>
+          <div class="cmd-preview-name">AI Agent</div>
+          <div class="cmd-preview-cat">AI</div>
+          <div class="cmd-preview-desc">Runs an agentic loop with access to tools. Sends messages to an LLM and executes any tool calls until the model produces a final response.</div>
+          <div class="cmd-preview-ports">
+            <div style="font-family:var(--font-mono);font-size:8.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">Inputs</div>
+            <div class="cmd-preview-port"><div class="port-dot" style="background:#6ea8ff"></div><span style="color:var(--ink-2)">model</span><span class="muted" style="margin-left:auto;font-size:9.5px;font-family:var(--font-mono)">AI LLM</span></div>
+            <div class="cmd-preview-port"><div class="port-dot" style="background:#57c98a"></div><span style="color:var(--ink-2)">memory</span><span class="muted" style="margin-left:auto;font-size:9.5px;font-family:var(--font-mono)">AI Memory</span></div>
+            <div class="cmd-preview-port"><div class="port-dot" style="background:#f6b44b"></div><span style="color:var(--ink-2)">tool</span><span class="muted" style="margin-left:auto;font-size:9.5px;font-family:var(--font-mono)">AI Tool ×N</span></div>
+            <div style="font-family:var(--font-mono);font-size:8.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:0.08em;margin:8px 0 4px">Outputs</div>
+            <div class="cmd-preview-port"><div class="port-dot" style="background:#94a3b8"></div><span style="color:var(--ink-2)">main</span></div>
+          </div>
+        </div>
+
+      </div><!-- /cmd-layout -->
+
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 14px;border-top:1px solid var(--line);background:var(--surface-2)">
+        <span class="muted" style="font-size:11px;font-family:var(--font-mono)">↑↓ navigate</span>
+        <span class="muted" style="font-size:11px;font-family:var(--font-mono)">↵ add to canvas</span>
+        <span class="muted" style="font-size:11px;font-family:var(--font-mono)">⌘↵ add + open NDV</span>
+        <span style="margin-left:auto" class="muted mono" style="font-size:10px">esc</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+
+<!-- ══════════════════════════════════════════
+     § 7  CREDENTIALS & ENVIRONMENTS
+══════════════════════════════════════════ -->
+<section class="section" id="credentials">
+  <div class="section-label">07 — Credentials & Environments</div>
+  <div class="section-title">Health indicators <span class="badge-new">New</span></div>
+  <div class="section-desc">Credentials show a live health status badge — tested against the provider on save and periodically. Environments get a deployment model chip and a runner-count indicator.</div>
+
+  <div class="grid-2">
+
+    <!-- credentials -->
+    <div class="flex-col gap-8">
+      <div class="section-label" style="margin-bottom:4px">Credentials</div>
+
+      <div class="cred-card">
+        <div class="cred-icon">🔑</div>
+        <div class="cred-info">
+          <div class="cred-name">Postmark Production</div>
+          <div class="cred-meta">API Key · email_postmark</div>
+        </div>
+        <div class="flex-col gap-8" style="align-items:flex-end">
+          <div class="health-pill ok"><span class="health-dot"></span>Verified</div>
+          <div class="health-last">Tested 4m ago</div>
+        </div>
+      </div>
+
+      <div class="cred-card">
+        <div class="cred-icon">🔑</div>
+        <div class="cred-info">
+          <div class="cred-name">OpenAI GPT-4o</div>
+          <div class="cred-meta">API Key · openai</div>
+          <div class="cred-workflows mt-8">
+            <div class="cred-wf-chip">AI Agent</div>
+            <div class="cred-wf-chip">+3</div>
+          </div>
+        </div>
+        <div class="flex-col gap-8" style="align-items:flex-end">
+          <div class="health-pill ok"><span class="health-dot"></span>Verified</div>
+          <div class="health-last">Tested 1h ago</div>
+        </div>
+      </div>
+
+      <div class="cred-card">
+        <div class="cred-icon">🔑</div>
+        <div class="cred-info">
+          <div class="cred-name">Stripe Test Key</div>
+          <div class="cred-meta">API Key · stripe</div>
+        </div>
+        <div class="flex-col gap-8" style="align-items:flex-end">
+          <div class="health-pill warn"><span class="health-dot"></span>Expiring</div>
+          <div class="health-last">Rotate by Jul 1</div>
+        </div>
+      </div>
+
+      <div class="cred-card">
+        <div class="cred-icon">🔑</div>
+        <div class="cred-info">
+          <div class="cred-name">Slack Bot Token</div>
+          <div class="cred-meta">OAuth · slack</div>
+        </div>
+        <div class="flex-col gap-8" style="align-items:flex-end">
+          <div class="health-pill err"><span class="health-dot"></span>Invalid</div>
+          <div class="health-last">Revoked</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- environments -->
+    <div class="flex-col gap-8">
+      <div class="section-label" style="margin-bottom:4px">Environments</div>
+
+      <div class="env-card">
+        <div class="env-indicator" style="background:#8fd06f;box-shadow:0 0 5px rgba(143,208,111,0.5)"></div>
+        <div>
+          <div class="env-name">Production</div>
+          <div class="cred-meta">3 active runners · Docker</div>
+        </div>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+          <div class="env-badge" style="background:rgba(143,208,111,0.1);color:#8fd06f;border:1px solid rgba(143,208,111,0.3)">Active</div>
+          <div class="env-badge" style="background:var(--surface-2);color:var(--ink-3);border:1px solid var(--line)">3 runners</div>
+        </div>
+      </div>
+
+      <div class="env-card">
+        <div class="env-indicator" style="background:var(--accent)"></div>
+        <div>
+          <div class="env-name">Staging</div>
+          <div class="cred-meta">1 active runner · Docker</div>
+        </div>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+          <div class="env-badge" style="background:rgba(76,158,255,0.1);color:var(--accent);border:1px solid rgba(76,158,255,0.3)">Active</div>
+          <div class="env-badge" style="background:var(--surface-2);color:var(--ink-3);border:1px solid var(--line)">1 runner</div>
+        </div>
+      </div>
+
+      <div class="env-card">
+        <div class="env-indicator" style="background:var(--surface-3)"></div>
+        <div>
+          <div class="env-name">Development</div>
+          <div class="cred-meta">Local process · no runners</div>
+        </div>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+          <div class="env-badge" style="background:var(--surface-2);color:var(--ink-3);border:1px solid var(--line)">Local</div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+</section>
+
+<div class="divider"></div>
+
+
+<!-- ══════════════════════════════════════════
+     § 8  EMPTY STATES
+══════════════════════════════════════════ -->
+<section class="section" id="empty">
+  <div class="section-label">08 — Empty States</div>
+  <div class="section-title">Empty states <span class="badge-improved">Improved</span></div>
+  <div class="section-desc">Each empty state explains what's missing, why it matters, and what to do next — no vague "No items found" copy.</div>
+
+  <div class="grid-3">
+
+    <div class="empty-state">
+      <div class="empty-glyph">⬡</div>
+      <div class="empty-title">No workflows yet</div>
+      <div class="empty-desc">Workflows connect your tools and automate your processes. Start from a template or build from scratch.</div>
+      <button class="btn btn-primary">Browse templates</button>
+    </div>
+
+    <div class="empty-state">
+      <div class="empty-glyph">▶</div>
+      <div class="empty-title">Nothing has run yet</div>
+      <div class="empty-desc">Execution history appears here after a workflow runs. Trigger one manually or wait for a scheduled run.</div>
+      <button class="btn">Go to workflows</button>
+    </div>
+
+    <div class="empty-state">
+      <div class="empty-glyph">🔑</div>
+      <div class="empty-title">No credentials saved</div>
+      <div class="empty-desc">Credentials let nodes authenticate with external APIs. Add one now and it'll be available to all your workflows.</div>
+      <button class="btn btn-primary">Add credential</button>
+    </div>
+
+  </div>
+</section>
+
+
+<!-- ══════════════════════════════════════════
+     SUMMARY
+══════════════════════════════════════════ -->
+<div class="divider"></div>
+<section class="section">
+  <div class="section-label">Summary</div>
+  <div class="section-title">What's proposed</div>
+  <div class="flex-col gap-12" style="max-width:680px">
+
+    <div style="display:flex;gap:12px;align-items:flex-start">
+      <div class="badge-improved">Improved</div>
+      <div>
+        <div style="font-size:13px;font-weight:650;margin-bottom:2px">Home dashboard stats</div>
+        <div style="font-size:12.5px;color:var(--ink-3)">7-day sparklines on each stat card. Category-colored top-edge accent on cards.</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:12px;align-items:flex-start">
+      <div class="badge-improved">Improved</div>
+      <div>
+        <div style="font-size:13px;font-weight:650;margin-bottom:2px">Workflow cards</div>
+        <div style="font-size:12.5px;color:var(--ink-3)">Inline 7-run history bar + live status dot. Folder color appears as top stripe on hover.</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:12px;align-items:flex-start">
+      <div class="badge-improved">Improved</div>
+      <div>
+        <div style="font-size:13px;font-weight:650;margin-bottom:2px">Node selection glow</div>
+        <div style="font-size:12.5px;color:var(--ink-3)">Selection ring color = node category color, not always blue. Makes multi-category canvases readable at a glance.</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:12px;align-items:flex-start">
+      <div class="badge-new">Signature</div>
+      <div>
+        <div style="font-size:13px;font-weight:650;margin-bottom:2px">Category-reactive inspector</div>
+        <div style="font-size:12.5px;color:var(--ink-3)">Inspector header tints to the selected node's category color. Tab underlines and input focus rings follow. The tool feels alive — not a generic sidebar.</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:12px;align-items:flex-start">
+      <div class="badge-new">New</div>
+      <div>
+        <div style="font-size:13px;font-weight:650;margin-bottom:2px">Run Timeline drawer</div>
+        <div style="font-size:12.5px;color:var(--ink-3)">Gantt-style execution view replacing raw port data. Shows node durations, parallel execution, total wall-clock time. Click bar → opens that node in NDV.</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:12px;align-items:flex-start">
+      <div class="badge-improved">Improved</div>
+      <div>
+        <div style="font-size:13px;font-weight:650;margin-bottom:2px">NDV modal</div>
+        <div style="font-size:12.5px;color:var(--ink-3)">Category-colored node pill in header. "View as" chips moved to persistent bottom bar. Column item counts visible at a glance.</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:12px;align-items:flex-start">
+      <div class="badge-improved">Improved</div>
+      <div>
+        <div style="font-size:13px;font-weight:650;margin-bottom:2px">Command palette</div>
+        <div style="font-size:12.5px;color:var(--ink-3)">Context tabs (Nodes / Actions / Workflows / Docs). Live node preview panel on right — shows description + typed port list before adding to canvas.</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:12px;align-items:flex-start">
+      <div class="badge-new">New</div>
+      <div>
+        <div style="font-size:13px;font-weight:650;margin-bottom:2px">Credential health badges</div>
+        <div style="font-size:12.5px;color:var(--ink-3)">Verified / Expiring / Invalid pills on each credential. Shows last-tested time. Catches revoked tokens before a workflow breaks at runtime.</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:12px;align-items:flex-start">
+      <div class="badge-improved">Improved</div>
+      <div>
+        <div style="font-size:13px;font-weight:650;margin-bottom:2px">Empty states</div>
+        <div style="font-size:12.5px;color:var(--ink-3)">Copy explains what's missing, why it matters, and what to do — replaces generic "No items" messages.</div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+</div><!-- /page -->
+</body>
+</html>

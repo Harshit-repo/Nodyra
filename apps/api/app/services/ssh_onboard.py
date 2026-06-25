@@ -27,7 +27,7 @@ def _install_script(req: SSHOnboardRequest, api_url: str, token: str, name: str)
     q_name = shlex.quote(name)
 
     nohup = (
-        'nohup /usr/bin/env python3 -m noodle_runner_agent.agent start '
+        "nohup /usr/bin/env python3 -m noodle_runner_agent.agent start "
         '> "$HOME/noodle-runner.log" 2>&1 &'
     )
 
@@ -70,7 +70,7 @@ def _install_script(req: SSHOnboardRequest, api_url: str, token: str, name: str)
         start = f'{nohup}\necho "[noodle] started via nohup"\n'
 
     register = (
-        '/usr/bin/env python3 -m noodle_runner_agent.agent register '
+        "/usr/bin/env python3 -m noodle_runner_agent.agent register "
         f"--api-url {q_api} --token {q_token} --name {q_name}"
     )
     return (
@@ -84,9 +84,7 @@ def _install_script(req: SSHOnboardRequest, api_url: str, token: str, name: str)
     )
 
 
-async def onboard_machine(
-    req: SSHOnboardRequest, api_url: str, token: str, name: str
-) -> str:
+async def onboard_machine(req: SSHOnboardRequest, api_url: str, token: str, name: str) -> str:
     """Connect over SSH, install + register + start the runner. Returns the
     combined command log. Raises ``RuntimeError`` on connection or install
     failure (the caller turns it into a 400)."""
@@ -123,9 +121,7 @@ async def onboard_machine(
             result = await conn.run(script, check=False)
             log = f"{result.stdout or ''}{result.stderr or ''}".strip()
             if result.exit_status != 0:
-                raise RuntimeError(
-                    f"remote install failed (exit {result.exit_status}):\n{log}"
-                )
+                raise RuntimeError(f"remote install failed (exit {result.exit_status}):\n{log}")
             return log
     except RuntimeError:
         raise

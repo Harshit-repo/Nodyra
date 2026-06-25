@@ -5,7 +5,7 @@ from __future__ import annotations
 import fnmatch
 import os
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from noodle_nodes.integrations_v2.registry import register_provider_trigger
@@ -44,7 +44,7 @@ def _scan_directory(
     except PermissionError:
         return results
 
-    for dirpath, dirnames, filenames in walk:
+    for dirpath, _dirnames, filenames in walk:
         for fname in filenames:
             if not _matches_patterns(fname, patterns):
                 continue
@@ -68,7 +68,7 @@ def _scan_directory(
 
 
 def _format_mtime(mtime: float) -> str:
-    return datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(mtime, tz=UTC).isoformat()
 
 
 def poll_file_watcher(ctx: ProviderTriggerPollContext) -> ProviderTriggerPollResult:
@@ -82,9 +82,7 @@ def poll_file_watcher(ctx: ProviderTriggerPollContext) -> ProviderTriggerPollRes
     events_raw = str(params.get("events") or "create")
     events_wanted = {e.strip().lower() for e in events_raw.split(",") if e.strip()}
     recursive = str(params.get("recursive", "true")).lower() not in ("false", "0", "no")
-    include_content = str(params.get("include_content", "false")).lower() in (
-        "true", "1", "yes"
-    )
+    include_content = str(params.get("include_content", "false")).lower() in ("true", "1", "yes")
     encoding = str(params.get("encoding") or "utf-8")
     try:
         max_file_size = int(params.get("max_file_size") or 52_428_800)

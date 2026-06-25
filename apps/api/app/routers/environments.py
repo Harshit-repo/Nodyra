@@ -7,6 +7,7 @@ import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
 from app.db import get_session
 from app.models import Environment, RunnerPool, User, Workflow
 from app.schemas import (
+    SUPPORTED_PYTHON_VERSIONS,
     EnvironmentCreate,
     EnvironmentInfo,
     EnvironmentUpdate,
@@ -126,6 +127,11 @@ async def create_environment(
     session: AsyncSession = Depends(get_session),
     actor: User | None = Depends(optional_current_user),
 ):
+    if body.backend not in {"venv", "conda", "pixi"}:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "backend must be one of: venv, conda, pixi",
+        )
     _validate_pool(body.runner_pool_size, body.runner_pool_max)
     await _validate_pool_ref(session, body.runner_pool_id)
     from app.services.isolation import validate_pool_assignment
@@ -242,6 +248,7 @@ async def list_backends() -> dict:
 
     return {
         "platform": sys.platform,
+        "supported_python_versions": list(SUPPORTED_PYTHON_VERSIONS),
         "venv": {
             "available": uv_path is not None,
             "version": None,

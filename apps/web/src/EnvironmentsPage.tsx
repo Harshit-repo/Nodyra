@@ -1,3 +1,4 @@
+import { WarningCircle } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { errorMessage } from "./api";
@@ -26,6 +27,8 @@ const BACKEND_BADGE: Record<string, { label: string; color: string }> = {
 };
 
 type BackendTab = "venv" | "conda" | "pixi";
+
+export const SUPPORTED_PYTHON_VERSIONS = ["3.12", "3.13", "3.14"] as const;
 
 const BUILD_POLL_TIMEOUT_MS = 20 * 60 * 1000;
 
@@ -155,36 +158,44 @@ function PoolModeFields({
 
   return (
     <>
-      <label className="field-label">Pool mode</label>
-      <div className="pool-mode-radios">
-        <label className="pool-mode-radio">
-          <input
-            type="radio"
-            checked={mode === "fixed"}
-            onChange={() => setMode("fixed")}
-          />
-          <span>Fixed</span>
-          <InfoTip text={FIXED_HELP} />
-        </label>
-        <label className="pool-mode-radio">
-          <input
-            type="radio"
-            checked={mode === "elastic"}
-            onChange={() => setMode("elastic")}
-          />
-          <span>Elastic</span>
-          <InfoTip text={ELASTIC_HELP} />
-        </label>
-        <label className="pool-mode-radio">
-          <input
-            type="radio"
-            checked={mode === "spawn"}
-            onChange={() => setMode("spawn")}
-          />
-          <span>Spawn-per-run</span>
-          <InfoTip text={SPAWN_HELP} />
-        </label>
-      </div>
+      <fieldset className="pool-mode-fieldset">
+        <legend className="field-label">Pool mode</legend>
+        <div className="pool-mode-radios">
+          <label className="pool-mode-radio">
+            <input
+              type="radio"
+              name="pool-mode"
+              value="fixed"
+              checked={mode === "fixed"}
+              onChange={() => setMode("fixed")}
+            />
+            <span>Fixed</span>
+            <InfoTip text={FIXED_HELP} />
+          </label>
+          <label className="pool-mode-radio">
+            <input
+              type="radio"
+              name="pool-mode"
+              value="elastic"
+              checked={mode === "elastic"}
+              onChange={() => setMode("elastic")}
+            />
+            <span>Elastic</span>
+            <InfoTip text={ELASTIC_HELP} />
+          </label>
+          <label className="pool-mode-radio">
+            <input
+              type="radio"
+              name="pool-mode"
+              value="spawn"
+              checked={mode === "spawn"}
+              onChange={() => setMode("spawn")}
+            />
+            <span>Spawn-per-run</span>
+            <InfoTip text={SPAWN_HELP} />
+          </label>
+        </div>
+      </fieldset>
 
       {mode === "fixed" && (
         <>
@@ -249,13 +260,13 @@ function PoolModeFields({
       )}
       {overCap && workspaceCap != null && (
         <p className="warn-text">
-          ⚠ Workspace cap of {workspaceCap} will limit this env's effective
+          <WarningCircle size={14} /> Workspace cap of {workspaceCap} will limit this env's effective
           concurrency to {workspaceCap}.
         </p>
       )}
       {overBudget && (
         <p className="warn-text">
-          ⚠ This pool could use up to {formatBytes(totalRssBytes)} at full
+          <WarningCircle size={14} /> This pool could use up to {formatBytes(totalRssBytes)} at full
           burst, more than the workspace soft budget of{" "}
           {formatBytes(rssSoftBudget)}. Consider lowering the maximum or
           moving heavy packages into a separate env.
@@ -394,9 +405,9 @@ function CreateEnvModal({
           value={python}
           onChange={(e) => setPython(e.target.value)}
         >
-          <option value="3.11">Python 3.11</option>
-          <option value="3.12">Python 3.12</option>
-          <option value="3.13">Python 3.13</option>
+          {SUPPORTED_PYTHON_VERSIONS.map((version) => (
+            <option key={version} value={version}>Python {version}</option>
+          ))}
         </select>
 
         <label className="field-label">

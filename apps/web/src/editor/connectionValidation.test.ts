@@ -100,6 +100,25 @@ describe("DatasetRef connection validation", () => {
     expect(issues[0].check.quickFixId).toBe("records_to_dataset");
   });
 
+  it("validates existing edges through a shared node lookup", () => {
+    const records = node("records", manifest("http_request", "any", "any"));
+    const sql = node("sql", manifest("duckdb_sql", "dataset", "dataset"), 300);
+    const nodes = [records, sql];
+    Object.defineProperty(nodes, "find", {
+      value: () => {
+        throw new Error("dataset validation must not scan nodes per edge");
+      },
+    });
+
+    expect(datasetConnectionIssues(nodes, [{
+      id: "e1",
+      source: "records",
+      sourceHandle: "main",
+      target: "sql",
+      targetHandle: "input",
+    }])).toHaveLength(1);
+  });
+
   it("reports missing endpoints instead of throwing", () => {
     const connection: Connection = {
       source: "missing",

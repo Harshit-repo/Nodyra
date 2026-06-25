@@ -60,8 +60,9 @@ async def test_seats_cap_via_helper(client):
 
 @pytest.mark.asyncio
 async def test_unlimited_never_blocks(client, monkeypatch):
-    from app.models import User
     from tests._license_keys import TEST_PUBLIC_KEY_PEM, enterprise_key
+
+    from app.models import User
 
     monkeypatch.setattr(settings, "license_public_key", TEST_PUBLIC_KEY_PEM)
     monkeypatch.setattr(settings, "license_key", enterprise_key())
