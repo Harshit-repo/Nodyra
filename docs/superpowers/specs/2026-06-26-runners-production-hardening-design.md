@@ -66,9 +66,18 @@ created_at < NOW() - ghost_ttl`.
 the existing `DELETE /runner-pools/{pool_id}/runners/{runner_id}` dynamic
 segment. Same safety gate as background task. Returns `{"cleaned": N}`.
 
+**Ghost count in RunnerPoolInfo:** Add `ghost_count: int` to `RunnerPoolInfo`
+and compute it in `_pool_info()` alongside `online_count`. This avoids a
+separate API call — the badge is visible without expanding the pool.
+
+**Background task registration:** Registered in `main.py` lifespan alongside
+existing background loops (`_retention_loop`, `_scheduler_loop`). The cleanup
+coroutine runs in a `while True: await asyncio.sleep(3600)` loop, same pattern
+as existing tasks.
+
 **UI:** Pool card header shows a `Clean up N unconnected` link (ghost-count
-badge) when ghosts > 0. Clicking triggers the manual endpoint and refreshes
-the pool.
+badge) when `pool.ghost_count > 0`. Clicking triggers the manual endpoint and
+refreshes the pool.
 
 **Edge cases:**
 - Runner connects at exactly the moment the cleanup query runs: `SELECT FOR
@@ -77,6 +86,9 @@ the pool.
 - Cleanup runs while the API is under load: `SKIP LOCKED` ensures the loop
   doesn't block waiting on locked rows.
 - `ghost_ttl = 0`: disable auto-cleanup (set to 0 to opt out in dev).
+- Draining runners with `last_seen_at IS NULL`: the cleanup `WHERE` clause
+  must include `AND status != 'draining'` so a runner that was drained before
+  ever connecting is never auto-deleted by the ghost sweeper.
 
 ---
 
@@ -99,10 +111,19 @@ connected so the agent can stop accepting new work gracefully.
 **Dispatch:** Dispatcher skips runners with `status = 'draining'` when
 looking for available capacity — they are treated as if at full capacity.
 
-**Auto-complete:** When a draining runner's `current_runs` reaches 0, the
-API sends a `{"type": "drain_complete"}` WS message. The runner may then
-disconnect cleanly. The runner row stays in `draining` state until the
-operator manually removes it or undrains it (no auto-delete on drain).
+**Auto-complete hook:** When a draining runner's `current_runs` reaches 0,
+the API sends a `{"type": "drain_complete"}` WS message. The implementation
+hook lives in the run-completion path in `runner.py` — specifically in the
+section that decrements `runner.current_runs` after a run finishes. After
+decrement: `if runner.status == 'draining' and runner.current_runs == 0:
+  await dispatcher.send_to_runner(runner_id, {"type": "drain_complete"})`.
+The runner may then disconnect cleanly. The runner row stays in `draining`
+state until the operator manually removes it or undrains it.
+
+Note: the `{"type": "drain"}` WS message sent on the drain API call is a
+**courtesy signal** only — drain correctness is enforced server-side by the
+dispatcher skipping `draining` runners. The WS message is advisory so the
+runner can log it; it does not change the dispatch outcome.
 
 **UI:** Each runner row in the expanded pool shows a `Drain` / `Undrain`
 toggle button. While draining, the status dot uses a distinct "draining"
@@ -115,8 +136,10 @@ colour (yellow). When `current_runs = 0` and status is draining, show
   because the drain flag is checked against DB status at dispatch time.
 - Operator deletes a draining runner that has active runs: follows existing
   delete path — in-flight runs are marked `interrupted` by the reaper.
-- Undrain while runs are in flight: allowed — sets `status = 'busy'` (derived
-  from `current_runs > 0`) or `'online'`. Dispatcher resumes dispatching.
+- Undrain: always set `status = 'online'`, never write `'busy'` directly.
+  `busy` is only written by the dispatcher when assigning a run — writing it
+  from the drain endpoint would be a lie about the runner's actual state.
+  The next dispatch tick or WS heartbeat will reflect the correct state.
 - Drain all runners in a pool simultaneously: runs queue up normally; they
   will execute once at least one runner is undraining.
 
@@ -133,30 +156,46 @@ operator must SSH in manually.
 **New endpoint:** `POST /runner-pools/{pool_id}/runners/{runner_id}/restart`
 (requires `runner_pool:write`). Returns `{"log": "..."}`.
 
-**Implementation:**
-1. Load runner, verify `ssh_host IS NOT NULL`, decrypt `ssh_credentials`.
-2. Build a minimal restart script (does NOT re-register — runner already has
-   a valid long-lived token after Slice 1.1):
-   - If `use_systemd=true` in stored creds: `sudo systemctl restart noodle-runner`
-   - Else: kill any running `noodle_runner_agent` process, then `nohup` start.
-3. Connect via asyncssh (30 s timeout), run the script, return combined stdout/
-   stderr.
-4. Roll back: if asyncssh is not installed, return HTTP 400 with actionable
-   message ("install asyncssh on the API host").
+**`ssh_host` in RunnerInfo:** Add `ssh_host: str | None` to the `RunnerInfo`
+Pydantic schema and populate it in `_runner_info()`. The frontend uses
+`ssh_host != null` to conditionally show the Restart button. The field
+carries only `"user@host:port"` — not the decrypted credentials.
 
-**UI:** Each SSH-onboarded runner row (identified by `ssh_host != null` in the
-response) shows a `Restart` button alongside Edit/Remove. Clicking opens a
-small modal with the restart log output.
+**Rate limiting:** The endpoint is guarded by an in-process rate limiter of
+**5 calls per runner per minute** (keyed on `runner_id`). Exceeding it returns
+HTTP 429. This prevents UI bugs or misbehaving clients from hammering external
+hosts with SSH connections.
+
+**Implementation:**
+1. Check rate limit (5/min per runner_id). Return 429 if exceeded.
+2. Load runner, verify `ssh_host IS NOT NULL` (400 if null — not SSH-onboarded).
+   Decrypt `ssh_credentials`.
+3. Build a minimal restart script that does NOT re-register (long-lived token
+   from Slice 1.1 is still valid):
+   - If `use_systemd=true` in stored creds:
+     `sudo systemctl restart noodle-runner`
+   - Else: `pkill -f noodle_runner_agent.agent || true` then
+     `nohup python3 -m noodle_runner_agent.agent start > ~/noodle-runner.log 2>&1 &`
+4. Connect via asyncssh (30 s timeout), run the script, return combined
+   stdout/stderr in `{"log": "..."}`.
+5. If asyncssh is not installed: HTTP 400 with message
+   "asyncssh is required on the API host for SSH operations".
+
+**UI:** `RunnerInfo.ssh_host` is non-null for SSH-onboarded runners. Each
+such runner row shows a `Restart` button alongside Edit/Remove. Clicking opens
+a small modal that calls the endpoint and streams the log output. After success
+the runners list auto-refreshes after 5 s (time for the agent to reconnect).
 
 **Edge cases:**
 - Runner is currently online/busy: allow restart (operator's choice). Show a
-  warning in the UI ("This runner has N active runs").
+  warning in the modal: "This runner has N active runs — restarting will
+  interrupt them."
 - SSH credentials are stale (password changed, key rotated): asyncssh raises
-  an auth error; surface as a 400 with the raw error message.
-- Restart script exits non-zero: return the log with an error indicator; do
-  not raise an unhandled exception.
-- Concurrent restarts: the endpoint is idempotent — two overlapping restart
-  calls may both succeed (systemd handles the second gracefully).
+  an auth error; surface as HTTP 400 with the raw error message.
+- Restart script exits non-zero: return the log with an error flag; do not
+  raise an unhandled 500.
+- Concurrent restarts: rate limiter prevents overlapping calls. systemd
+  handles a double-restart gracefully anyway.
 
 ---
 
@@ -174,10 +213,17 @@ never encrypted at rest.
 Stores `encrypt_data({"aws_secret_access_key": "<value>"})` (same Fernet
 helper used by `ssh_credentials`).
 
-**Save path:** When `provider_config` contains `aws_secret_access_key`:
-1. Encrypt and store in `aws_secret_key_enc`.
-2. Strip `aws_secret_access_key` from the `provider_config` JSON blob.
+**Save path (both CREATE and UPDATE):** The extract-encrypt-strip logic is
+factored into a shared helper `_extract_aws_secret(pool, provider_config)`
+called from both `create_runner_pool` and `update_runner_pool`. When
+`provider_config` contains `aws_secret_access_key`:
+1. Encrypt and store in `pool.aws_secret_key_enc`.
+2. Strip `aws_secret_access_key` from the `provider_config` dict.
 3. Commit both changes atomically.
+For PATCH: if the frontend sends `provider_config` without `aws_secret_access_key`
+(user didn't change the secret), and `aws_secret_key_enc` is already set,
+leave `aws_secret_key_enc` unchanged. Only overwrite when a new non-empty
+value is explicitly supplied.
 
 **Read path:** `RunnerPoolInfo` schema adds `aws_secret_configured: bool`.
 The `aws_secret_access_key` field is **never** included in API responses.
@@ -218,22 +264,32 @@ into thinking label routing works.
 `required_labels` dict. Manual run trigger UI exposes this as an advanced
 collapsible "Run on specific runner labels" field.
 
-**Dispatch filter:** When leasing a run to an agent runner, the query adds:
-
-```sql
-AND (
-  :required_labels IS NULL
-  OR runner.capabilities @> :required_labels
-)
-```
+**Dispatch filter — all paths:** The `capabilities @> required_labels` filter
+must be applied in **every** dispatch path to prevent labelled runs being
+routed to wrong runners:
+- `run_queue_dispatch_loop` in `queue.py` — the DB query that selects an
+  eligible runner from the pool must add:
+  ```sql
+  AND (run.required_labels IS NULL OR runner.capabilities @> run.required_labels)
+  ```
+- Any inline dispatch in `runner.py` — same filter applied before assigning.
 
 JSONB containment (`@>`) means a runner must have **at least** the required
 labels; extra labels on the runner are fine. Values are string-compared.
+SQLite (used in some dev environments) does not support `@>` — use Python-level
+dict subset check as a fallback when `settings.db_url` starts with `sqlite`.
 
-**Health signal:** New field `label_mismatch_queued: int` on `RunnerPoolHealth`
-— count of runs queued > 30 s whose `required_labels` don't match any
-currently-online runner in the pool. Computed in the health endpoint alongside
-the existing queue depth calculation.
+**Health signal — `label_mismatch_queued`:**
+New field on `RunnerPoolHealth`. Computed in the health endpoint as follows:
+1. For each pool, fetch all `RunQueueEntry` rows with `status='queued'` and
+   `available_at < NOW() - 30s` (already stuck). Join to `Run` to get
+   `required_labels`.
+2. Fetch all online runners for the pool (`status IN ('online', 'busy')`).
+3. A run is a mismatch if `required_labels IS NOT NULL AND required_labels != {}`
+   and no online runner satisfies `runner.capabilities @> required_labels`.
+4. `label_mismatch_queued` = count of such runs.
+This computation is O(queued_runs × online_runners) per pool, which is small
+in practice. Cap at 100 runs checked per pool to bound the cost.
 
 **UI:** `HealthStrip` shows `⚠ N label mismatch` in amber when
 `label_mismatch_queued > 0`. Tooltip: "These runs need labels not available
