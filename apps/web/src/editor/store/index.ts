@@ -244,7 +244,7 @@ function placeholderManifest(typeId: string): NodeManifest {
   } as NodeManifest;
 }
 
-function graphNodeToNode(
+export function graphNodeToNode(
   gn: GraphNodeLike,
   byId: Record<string, NodeManifest>,
 ): NoodleNode | null {
@@ -299,7 +299,7 @@ function edgeToGraphEdge(e: Edge): GraphEdgeLike {
   };
 }
 
-function graphEdgeToEdge(ge: GraphEdgeLike): Edge {
+export function graphEdgeToEdge(ge: GraphEdgeLike): Edge {
   return {
     id: ge.id,
     source: ge.source,
