@@ -1,19 +1,26 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useModalA11y } from "../useModalA11y";
-import type { WorkflowGraph, WorkflowVersionInfo } from "../types";
+import type { WorkflowVersionInfo } from "../types";
 
 interface Props {
   workflowId: string;
   onClose: () => void;
-  onRestore: (graph: WorkflowGraph) => void;
+  onRestore: (version: WorkflowVersionInfo) => void;
+  onCompare: (version: WorkflowVersionInfo) => void;
+  onVersionsLoaded?: (versions: WorkflowVersionInfo[]) => void;
 }
 
-export function WorkflowHistory({ workflowId, onClose, onRestore }: Props) {
+export function WorkflowHistory({
+  workflowId,
+  onClose,
+  onRestore,
+  onCompare,
+  onVersionsLoaded,
+}: Props) {
   const [versions, setVersions] = useState<WorkflowVersionInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<WorkflowVersionInfo | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalA11y(dialogRef, onClose);
 
@@ -22,53 +29,28 @@ export function WorkflowHistory({ workflowId, onClose, onRestore }: Props) {
     api
       .listWorkflowVersions(workflowId)
       .then((vs) => {
-        setVersions([...vs].sort((a, b) => b.version - a.version));
+        const sorted = [...vs].sort((a, b) => b.version - a.version);
+        setVersions(sorted);
+        onVersionsLoaded?.(sorted);
       })
       .catch(() => setError("Failed to load version history."))
       .finally(() => setLoading(false));
   }, [workflowId]);
 
   function formatDate(iso: string): string {
-    try { return new Date(iso).toLocaleString(); } catch { return iso; }
+    try {
+      return new Date(iso).toLocaleString();
+    } catch {
+      return iso;
+    }
   }
 
-  function nodeDiff(idx: number): string {
-    if (idx >= versions.length - 1) return "";
-    const a = versions[idx].graph?.nodes?.length ?? 0;
-    const b = versions[idx + 1].graph?.nodes?.length ?? 0;
-    const diff = a - b;
-    if (diff === 0) return "";
-    return diff > 0 ? ` +${diff}` : ` ${diff}`;
+  function nodeDelta(idx: number): number | null {
+    if (idx >= versions.length - 1) return null;
+    return versions[idx].node_count - versions[idx + 1].node_count;
   }
 
-  function nodeLabel(graph: WorkflowGraph, id: string): string {
-    const node = graph.nodes?.find((item) => item.id === id);
-    if (!node) return id;
-    const label = typeof node.label === "string" && node.label ? node.label : node.type;
-    return `${label} (${id})`;
-  }
-
-  function selectedDiff() {
-    if (!selected?.graph?.nodes) return null;
-    const idx = versions.findIndex((version) => version.id === selected.id);
-    if (idx < 0 || idx >= versions.length - 1) return null;
-    const previous = versions[idx + 1];
-    if (!previous.graph?.nodes) return null;
-    const currentIds = new Set(selected.graph.nodes.map((node) => node.id));
-    const previousIds = new Set(previous.graph.nodes.map((node) => node.id));
-    return {
-      previousVersion: previous.version,
-      added: selected.graph.nodes
-        .filter((node) => !previousIds.has(node.id))
-        .map((node) => nodeLabel(selected.graph, node.id)),
-      removed: previous.graph.nodes
-        .filter((node) => !currentIds.has(node.id))
-        .map((node) => nodeLabel(previous.graph, node.id)),
-      edgeDelta: (selected.graph.edges?.length ?? 0) - (previous.graph.edges?.length ?? 0),
-    };
-  }
-
-  const diff = selectedDiff();
+  const canCompare = versions.length >= 2;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -84,7 +66,9 @@ export function WorkflowHistory({ workflowId, onClose, onRestore }: Props) {
       >
         <header className="modal-head">
           <h2 id="history-title">Version History</h2>
-          <button className="ndv-close" onClick={onClose} aria-label="Close">×</button>
+          <button className="ndv-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
         </header>
 
         <div className="modal-body" style={{ maxHeight: "60vh", overflowY: "auto" }}>
@@ -95,59 +79,58 @@ export function WorkflowHistory({ workflowId, onClose, onRestore }: Props) {
           )}
           {!loading && !error && versions.length > 0 && (
             <ul className="history-list">
-              {versions.map((v, idx) => (
-                <li
-                  key={v.id}
-                  className={`history-item${selected?.id === v.id ? " history-item--selected" : ""}`}
-                  onClick={() => setSelected(selected?.id === v.id ? null : v)}
-                >
-                  <span className="history-version">v{v.version}</span>
-                  <span className="history-date muted">{formatDate(v.created_at)}</span>
-                  <div className="history-badges">
-                    {v.published && <span className="history-badge history-badge--published">published</span>}
-                    {nodeDiff(idx) && (
-                      <span className="history-badge">{v.graph?.nodes?.length ?? 0} nodes{nodeDiff(idx)}</span>
-                    )}
-                    {!nodeDiff(idx) && (
-                      <span className="muted" style={{ fontSize: 11 }}>{v.graph?.nodes?.length ?? 0} nodes</span>
-                    )}
-                  </div>
-                </li>
-              ))}
+              {versions.map((v, idx) => {
+                const delta = nodeDelta(idx);
+                return (
+                  <li key={v.id} className="history-item">
+                    <div className="history-item-meta">
+                      <span className="history-version">v{v.version}</span>
+                      <span className="history-date muted">{formatDate(v.created_at)}</span>
+                      <div className="history-badges">
+                        {v.published && (
+                          <span className="history-badge history-badge--published">published</span>
+                        )}
+                        {v.notes && (
+                          <span className="history-badge history-badge--notes">{v.notes}</span>
+                        )}
+                        {delta !== null && delta !== 0 ? (
+                          <span className="history-badge">
+                            {v.node_count} nodes{delta > 0 ? ` +${delta}` : ` ${delta}`}
+                          </span>
+                        ) : (
+                          <span className="muted" style={{ fontSize: 11 }}>
+                            {v.node_count} nodes
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="history-item-actions">
+                      {canCompare && (
+                        <button
+                          className="btn btn-sm btn-ghost"
+                          onClick={() => {
+                            onCompare(v);
+                            onClose();
+                          }}
+                          title="Compare this version visually"
+                        >
+                          Compare
+                        </button>
+                      )}
+                      <button
+                        className="btn btn-sm btn-primary"
+                        onClick={() => {
+                          onRestore(v);
+                          onClose();
+                        }}
+                      >
+                        Restore
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
-          )}
-
-          {selected && (
-            <div className="history-preview">
-              <p className="history-preview-title">v{selected.version} — {formatDate(selected.created_at)}</p>
-              <p className="muted" style={{ fontSize: 12 }}>
-                {selected.graph?.nodes?.length ?? 0} nodes · {selected.graph?.edges?.length ?? 0} edges
-              </p>
-              {diff ? (
-                <div className="history-diff">
-                  <div>
-                    <strong>Compared with v{diff.previousVersion}</strong>
-                    <span>{diff.added.length} added · {diff.removed.length} removed · {diff.edgeDelta >= 0 ? "+" : ""}{diff.edgeDelta} edges</span>
-                  </div>
-                  {diff.added.length > 0 && (
-                    <p><span>Added:</span> {diff.added.slice(0, 4).join(", ")}{diff.added.length > 4 ? `, +${diff.added.length - 4} more` : ""}</p>
-                  )}
-                  {diff.removed.length > 0 && (
-                    <p><span>Removed:</span> {diff.removed.slice(0, 4).join(", ")}{diff.removed.length > 4 ? `, +${diff.removed.length - 4} more` : ""}</p>
-                  )}
-                </div>
-              ) : (
-                <p className="muted" style={{ fontSize: 12 }}>
-                  No earlier version to compare.
-                </p>
-              )}
-              <button
-                className="btn btn-sm btn-primary"
-                onClick={() => { onRestore(selected.graph); onClose(); }}
-              >
-                Restore v{selected.version}
-              </button>
-            </div>
           )}
         </div>
       </div>

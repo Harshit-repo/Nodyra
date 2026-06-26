@@ -167,10 +167,13 @@ export interface WorkflowGraph {
 export interface WorkflowVersionInfo {
   id: string;
   version: number;
-  graph: WorkflowGraph;
+  notes: string;
   created_at: string;
   published: boolean;
+  node_count: number;
 }
+
+export type DiffStatus = "added" | "removed" | "changed" | "unchanged";
 
 export interface ProviderTriggerStatusCounts {
   total: number;

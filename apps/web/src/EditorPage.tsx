@@ -57,6 +57,7 @@ import type {
   RunnerPoolInfo,
   WorkflowDetail,
   WorkflowGraph,
+  WorkflowVersionInfo,
 } from "./types";
 
 const NodeDetailModal = lazy(() =>
@@ -309,7 +310,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   const [publishUpdateDeployments, setPublishUpdateDeployments] = useState(false);
   const [publishSummary, setPublishSummary] = useState<PublishSummary | null>(null);
   const [showHistory, setShowHistory] = useState(false);
-  const [restoreGraph, setRestoreGraph] = useState<WorkflowGraph | null>(null);
+  const [restoreVersion, setRestoreVersion] = useState<WorkflowVersionInfo | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [publishNotes, setPublishNotes] = useState("");
@@ -1797,8 +1798,9 @@ const aiAbortRef = useRef<AbortController | null>(null);
         <WorkflowHistory
           workflowId={id}
           onClose={() => setShowHistory(false)}
-          onRestore={(graph) => {
-            setRestoreGraph(graph);
+          onRestore={(version) => setRestoreVersion(version)}
+          onCompare={(_version) => {
+            /* wired in Task 7 */
           }}
         />
       )}
@@ -1811,15 +1813,17 @@ const aiAbortRef = useRef<AbortController | null>(null);
           onConfirm={() => blocker.proceed()}
         />
       )}
-      {restoreGraph && (
+      {restoreVersion && id && (
         <ConfirmDialog
           title="Restore this version?"
           body="This will replace your current draft. Any unsaved changes will be lost."
           confirmLabel="Restore"
-          onCancel={() => setRestoreGraph(null)}
+          onCancel={() => setRestoreVersion(null)}
           onConfirm={() => {
-            loadGraph(restoreGraph, { dirty: true });
-            setRestoreGraph(null);
+            api
+              .getVersionGraph(id, restoreVersion.id)
+              .then(({ graph }) => loadGraph(graph, { dirty: true }));
+            setRestoreVersion(null);
             setShowHistory(false);
           }}
         />

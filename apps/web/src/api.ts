@@ -358,6 +358,8 @@ export const api = {
 
   listWorkflowVersions: (workflowId: string) =>
     request<WorkflowVersionInfo[]>(`/workflows/${workflowId}/versions`),
+  getVersionGraph: (workflowId: string, versionId: string) =>
+    request<{ graph: WorkflowGraph }>(`/workflows/${workflowId}/versions/${versionId}/graph`),
   listWorkflowProviderTriggers: (workflowId: string, includeDeleted = true) =>
     request<ProviderTriggerSubscription[]>(
       `/workflows/${workflowId}/provider-triggers?include_deleted=${includeDeleted ? "true" : "false"}`,
