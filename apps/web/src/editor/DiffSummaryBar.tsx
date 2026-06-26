@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useReactFlow } from "@xyflow/react";
 
 interface Props {
@@ -12,14 +12,27 @@ export function DiffSummaryBar({ added, removed, changed, unchanged }: Props) {
   const reactFlow = useReactFlow();
   const hasChanges = added.length + removed.length + changed.length > 0;
 
+  // Keep a ref to the latest arrays so the effect closure doesn't go stale
+  // while still using primitive counts as deps to avoid firing on reference churn.
+  const latestRef = useRef({ added, removed, changed, reactFlow });
+  latestRef.current = { added, removed, changed, reactFlow };
+
+  const addedLen = added.length;
+  const removedLen = removed.length;
+  const changedLen = changed.length;
+
   useEffect(() => {
-    if (!hasChanges) return;
-    const ids = [...added, ...removed, ...changed];
+    if (addedLen + removedLen + changedLen === 0) return;
+    const { added: a, removed: r, changed: c, reactFlow: rf } = latestRef.current;
+    const ids = [...a, ...r, ...c];
     const timer = setTimeout(() => {
-      reactFlow.fitView({ nodes: ids.map((id) => ({ id })), padding: 0.3, duration: 300 });
+      rf.fitView({ nodes: ids.map((id) => ({ id })), padding: 0.3, duration: 300 });
     }, 50);
     return () => clearTimeout(timer);
-  }, [added, removed, changed, hasChanges, reactFlow]);
+  // Using primitive counts as deps: the effect fires when the changed-node set
+  // actually changes (different counts), not when array references rotate.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addedLen, removedLen, changedLen]);
 
   if (!hasChanges && unchanged.length === 0) return null;
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, Panel } from "@xyflow/react";
 import type { Edge, Node } from "@xyflow/react";
 import { api } from "../api";
@@ -42,7 +42,11 @@ function WorkflowDiffViewInner({ workflowId, initialVersion, versions, onClose }
   const manifestsById = useEditor((s) => s.manifestsById);
   const draftNodes = useEditor((s) => s.nodes);
   const draftEdges = useEditor((s) => s.edges);
-  const draftGraph: WorkflowGraph = {
+
+  // Stable graph representation of the current editor draft.
+  // useMemo ensures reference equality is preserved across re-renders so that
+  // downstream memos (result, statusMap) don't recompute unless the draft changes.
+  const draftGraph = useMemo((): WorkflowGraph => ({
     nodes: draftNodes.map((n: NoodleNode) => ({
       id: n.id,
       type: n.type ?? "noodle",
@@ -66,12 +70,7 @@ function WorkflowDiffViewInner({ workflowId, initialVersion, versions, onClose }
       target: e.target,
       target_input: e.targetHandle ?? "main",
     })) as WorkflowGraph["edges"],
-  };
-
-  function resolveGraph(id: string, fetch: GraphFetch): WorkflowGraph | null {
-    if (id === DRAFT_SENTINEL) return draftGraph;
-    return fetch.state === "loaded" ? fetch.graph : null;
-  }
+  }), [draftNodes, draftEdges]);
 
   const fetchGraph = useCallback(
     (versionId: string, setter: (f: GraphFetch) => void) => {
@@ -94,25 +93,39 @@ function WorkflowDiffViewInner({ workflowId, initialVersion, versions, onClose }
   useEffect(() => fetchGraph(compareId, setCompareFetch), [compareId, fetchGraph]);
   useEffect(() => fetchGraph(baseId, setBaseFetch), [baseId, fetchGraph]);
 
-  const compareGraph = resolveGraph(compareId, compareFetch);
-  const baseGraph = resolveGraph(baseId, baseFetch);
+  const compareGraph: WorkflowGraph | null =
+    compareId === DRAFT_SENTINEL ? draftGraph : (compareFetch.state === "loaded" ? compareFetch.graph : null);
+  const baseGraph: WorkflowGraph | null =
+    baseId === DRAFT_SENTINEL ? draftGraph : (baseFetch.state === "loaded" ? baseFetch.graph : null);
 
-  const result = compareGraph && baseGraph ? diffWorkflowGraphs(baseGraph, compareGraph) : null;
+  // Memoize the diff result — diffWorkflowGraphs is O(n) and must not run on
+  // every render (e.g. when selectedNodeId changes or the user interacts with the panel).
+  const result = useMemo(
+    () => (compareGraph && baseGraph ? diffWorkflowGraphs(baseGraph, compareGraph) : null),
+    [compareGraph, baseGraph],
+  );
 
-  const statusMap = result
-    ? new Map<string, DiffStatus>([
-        ...result.added.map((id) => [id, "added"] as const),
-        ...result.changed.map((id) => [id, "changed"] as const),
-        ...result.unchanged.map((id) => [id, "unchanged"] as const),
-        ...result.removed.map((id) => [id, "removed"] as const),
-      ])
-    : new Map<string, DiffStatus>();
+  // Stable Map so DiffNode's useContext reads the same reference between renders.
+  const statusMap = useMemo(
+    () =>
+      result
+        ? new Map<string, DiffStatus>([
+            ...result.added.map((id) => [id, "added"] as const),
+            ...result.changed.map((id) => [id, "changed"] as const),
+            ...result.unchanged.map((id) => [id, "unchanged"] as const),
+            ...result.removed.map((id) => [id, "removed"] as const),
+          ])
+        : new Map<string, DiffStatus>(),
+    [result],
+  );
 
-  let renderNodes: Node[] = [];
-  let renderEdges: Edge[] = [];
-  let truncated = false;
+  // Memoize the ReactFlow node/edge lists — converting GraphNode→NoodleNode via
+  // graphNodeToNode is expensive and only changes when the diff result changes.
+  const { renderNodes, renderEdges, truncated } = useMemo(() => {
+    if (!result || !compareGraph || !baseGraph) {
+      return { renderNodes: [] as Node[], renderEdges: [] as Edge[], truncated: false };
+    }
 
-  if (result && compareGraph && baseGraph) {
     const compareRF = compareGraph.nodes
       .map((gn) => graphNodeToNode(gn, manifestsById))
       .filter((n): n is NoodleNode => n !== null);
@@ -121,21 +134,19 @@ function WorkflowDiffViewInner({ workflowId, initialVersion, versions, onClose }
       .filter((n): n is NoodleNode => n !== null);
 
     const allNodes = [...compareRF, ...ghostRF];
-    truncated = allNodes.length > MAX_RENDER_NODES;
-    const filtered = truncated
+    const isTruncated = allNodes.length > MAX_RENDER_NODES;
+    const filtered = isTruncated
       ? allNodes.filter((n) => statusMap.get(n.id) !== "unchanged")
       : allNodes;
-
-    renderNodes = filtered;
 
     const renderNodeIds = new Set(filtered.map((n) => n.id));
 
     const compareEdgesRF = compareGraph.edges
       .filter((e) => renderNodeIds.has(e.source) && renderNodeIds.has(e.target))
-      .map((e) => {
-        const rf = graphEdgeToEdge(e);
-        return { ...rf, data: { diffStatus: result.addedEdges.includes(e.id) ? "added" : "unchanged" } };
-      });
+      .map((e) => ({
+        ...graphEdgeToEdge(e),
+        data: { diffStatus: result.addedEdges.includes(e.id) ? "added" : "unchanged" },
+      }));
 
     const removedEdgesRF = result.removedEdges
       .map((eid) => baseGraph.edges.find((e) => e.id === eid))
@@ -145,8 +156,12 @@ function WorkflowDiffViewInner({ workflowId, initialVersion, versions, onClose }
       )
       .map((e) => ({ ...graphEdgeToEdge(e), data: { diffStatus: "removed" as DiffStatus } }));
 
-    renderEdges = [...compareEdgesRF, ...removedEdgesRF];
-  }
+    return {
+      renderNodes: filtered as Node[],
+      renderEdges: [...compareEdgesRF, ...removedEdgesRF] as Edge[],
+      truncated: isTruncated,
+    };
+  }, [result, compareGraph, baseGraph, manifestsById, statusMap]);
 
   const selectedParams =
     result && selectedNodeId && result.changedParams[selectedNodeId]
