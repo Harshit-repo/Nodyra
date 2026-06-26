@@ -33,33 +33,18 @@ import { NodeIcon } from "../NodeIcon";
 import type { NodeManifest } from "../types";
 import { CANVAS_STARTERS } from "../workflowTemplates";
 import { useToast } from "../ToastProvider";
-import { LoopFrame } from "./LoopFrame";
 import { LOOP_FRAME_ID_PREFIX, computeLoopFrames } from "./loopFrames";
-import { MapGroupNode } from "./MapGroupNode";
-import { MetaBar } from "./MetaBar";
 import { MetanodeBreadcrumb } from "./MetanodeBreadcrumb";
 import {
   MiniMapNoodleNode,
   miniMapNodeClassName,
   miniMapNodeColor,
 } from "./MiniMapNoodleNode";
-import { NodeCard } from "./NodeCard";
-import { NodeGroup } from "./NodeGroup";
-import { NoodleEdge } from "./NoodleEdge";
+import { nodeTypes, edgeTypes } from "./nodeTypes";
 import { PortLegend } from "./PortLegend";
-import { StickyNote } from "./StickyNote";
 import { datasetConnectionIssues, validateConnection, type ConnectionCheck } from "./connectionValidation";
 import { pickEditorRunTrigger, useEditor, type NoodleNode } from "./store";
 
-const nodeTypes = {
-  noodle: NodeCard,
-  sticky: StickyNote,
-  group: NodeGroup,
-  mapGroup: MapGroupNode,
-  loopFrame: LoopFrame,
-  metaBar: MetaBar,
-};
-const edgeTypes = { default: NoodleEdge };
 const defaultEdgeOptions = { type: "default" };
 const CANVAS_QUICK_ADD_LIMIT = 8;
 const CANVAS_QUICK_ADD_WIDTH = 252;
