@@ -65,6 +65,11 @@ const NodeDetailModal = lazy(() =>
     default: module.NodeDetailModal,
   })),
 );
+const WorkflowDiffView = lazy(() =>
+  import("./editor/WorkflowDiffView").then((module) => ({
+    default: module.WorkflowDiffView,
+  })),
+);
 
 interface WebhookListenState {
   nodeId: string;
@@ -310,6 +315,8 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   const [publishUpdateDeployments, setPublishUpdateDeployments] = useState(false);
   const [publishSummary, setPublishSummary] = useState<PublishSummary | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [historyVersions, setHistoryVersions] = useState<WorkflowVersionInfo[]>([]);
+  const [diffVersion, setDiffVersion] = useState<WorkflowVersionInfo | null>(null);
   const [restoreVersion, setRestoreVersion] = useState<WorkflowVersionInfo | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1799,8 +1806,10 @@ const aiAbortRef = useRef<AbortController | null>(null);
           workflowId={id}
           onClose={() => setShowHistory(false)}
           onRestore={(version) => setRestoreVersion(version)}
-          onCompare={(_version) => {
-            /* wired in Task 7 */
+          onVersionsLoaded={(vs) => setHistoryVersions(vs)}
+          onCompare={(version) => {
+            setDiffVersion(version);
+            setShowHistory(false);
           }}
         />
       )}
@@ -1827,6 +1836,17 @@ const aiAbortRef = useRef<AbortController | null>(null);
             setShowHistory(false);
           }}
         />
+      )}
+
+      {diffVersion && id && (
+        <Suspense fallback={null}>
+          <WorkflowDiffView
+            workflowId={id}
+            initialVersion={diffVersion}
+            versions={historyVersions}
+            onClose={() => setDiffVersion(null)}
+          />
+        </Suspense>
       )}
 
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
