@@ -157,6 +157,8 @@ class WorkflowVersionInfo(BaseModel):
     version: int
     notes: str = ""
     created_at: datetime
+    node_count: int = 0
+    published: bool = False
 
 
 class WorkflowPublishRequest(BaseModel):

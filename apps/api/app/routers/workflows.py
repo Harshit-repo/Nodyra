@@ -1,6 +1,7 @@
 import re
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
+from pydantic import BaseModel
 from jsonschema.exceptions import SchemaError
 from jsonschema.validators import validator_for
 from sqlalchemy import func, select
@@ -410,6 +411,8 @@ async def list_versions(workflow_id: str, session: AsyncSession = Depends(get_se
             version=v.version,
             notes=v.notes,
             created_at=v.created_at,
+            node_count=len((v.graph or {}).get("nodes", [])),
+            published=(v.version == workflow.published_version),
         )
         for v in workflow.versions
     ]
@@ -609,7 +612,30 @@ async def get_version(
         if v.id == version_id:
             return WorkflowVersionInfo(
                 id=v.id, version=v.version, notes=v.notes, created_at=v.created_at,
+                node_count=len((v.graph or {}).get("nodes", [])),
+                published=(v.version == workflow.published_version),
             )
+    raise HTTPException(status.HTTP_404_NOT_FOUND, "Version not found")
+
+
+class WorkflowVersionGraph(BaseModel):
+    graph: dict
+
+
+@router.get(
+    "/{workflow_id}/versions/{version_id}/graph",
+    response_model=WorkflowVersionGraph,
+    dependencies=[Depends(require_permission("workflow:read"))],
+)
+async def get_version_graph(
+    workflow_id: str,
+    version_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    workflow = await _load(session, workflow_id)
+    for v in workflow.versions:
+        if v.id == version_id:
+            return WorkflowVersionGraph(graph=v.graph or {"nodes": [], "edges": []})
     raise HTTPException(status.HTTP_404_NOT_FOUND, "Version not found")
 
 
