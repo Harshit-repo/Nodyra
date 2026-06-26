@@ -8,7 +8,7 @@
 
 ## 1. Architecture
 
-The diff view is a **full-page overlay** rendered as a React portal above the editor canvas. It is opened from the existing `WorkflowHistory` modal via a "Compare" button (added alongside the existing "Restore" button). No new route is needed. Dismissed with × or Escape.
+The diff view is a **full-page overlay** rendered as a React portal above the editor canvas (z-index 1000, above the toolbar and existing modals). It is opened from the existing `WorkflowHistory` modal via a "Compare" button added alongside the existing "Restore" button. No new route is needed. Dismissed with × or Escape.
 
 Three layers:
 
@@ -20,15 +20,13 @@ Three layers:
 
 ---
 
-## 2. Components
-
-### `WorkflowDiffView`
-Top-level overlay. Owns version selection state, graph fetch lifecycle, `DiffResult` computation, and selected-node state. Renders picker bar, summary bar, canvas, and param panel.
-
-### `diffWorkflowGraphs(base, compare) → DiffResult`
-Pure function. The sole source of diff truth.
+## 2. Types & Shared Definitions
 
 ```ts
+type DiffStatus = 'added' | 'removed' | 'changed' | 'unchanged'
+
+type ParamDiff = { key: string; before: unknown; after: unknown }
+
 type DiffResult = {
   added: string[]           // node IDs in compare, not in base
   removed: string[]         // node IDs in base, not in compare
@@ -37,67 +35,90 @@ type DiffResult = {
   removedNodes: Node[]      // full node objects from base (for ghost rendering)
   addedEdges: string[]
   removedEdges: string[]
-  changedParams: Record<string, { key: string; before: unknown; after: unknown }[]>
+  changedParams: Record<string, ParamDiff[]>
 }
+
+// React context provided by WorkflowDiffView, consumed by DiffNode
+// Provides O(1) status lookup per node without prop-drilling
+const DiffContext = createContext<Map<string, DiffStatus>>(new Map())
 ```
+
+---
+
+## 3. Components
+
+### `WorkflowDiffView`
+Top-level overlay. Owns version selection state, graph fetch lifecycle, `DiffResult` computation, and selected-node state. Renders picker bar, summary bar, canvas, and param panel. Wraps the ReactFlow instance in `<DiffContext.Provider value={statusMap}>` so every `DiffNode` can look up its own status.
+
+### `diffWorkflowGraphs(base, compare) → DiffResult`
+Pure function. The sole source of diff truth.
 
 Rules:
 - `position` (`x`, `y`) is **excluded** from comparison — position-only moves are not "changes"
 - Same ID + different `node.type` → treated as remove + add (not a change)
 - Null/missing `nodes` or `edges` → defaults to `[]`, never throws
+- **Deep comparison uses a stable recursive equal function, not `JSON.stringify`** — `JSON.stringify` does not guarantee key order, so `{a:1, b:2}` and `{b:2, a:1}` would be falsely flagged as "changed". Use a key-sorted deep-equal (e.g. `import { deepEqual } from './diffUtils'` — a small utility that recursively compares values after sorting object keys).
 
-### `diffNodeTypes`
-Generated via `useMemo` by mapping every key in the existing `nodeTypes` registry to a `DiffNode`-wrapped version. Same pattern for `diffEdgeTypes`. This avoids manually listing every node type.
+### `diffNodeTypes` / `diffEdgeTypes`
+Generated via `useMemo` at module scope (outside the component) by mapping over the existing `nodeTypes` and `edgeTypes` registries. `nodeTypes` in Noodle is a stable module-level constant, so the `useMemo` dep array is `[]`.
 
 ```ts
-const diffNodeTypes = useMemo(() =>
-  Object.fromEntries(
-    Object.entries(nodeTypes).map(([type, Component]) => [
-      type,
-      (props) => <DiffNode {...props} WrappedComponent={Component} />,
-    ])
-  ), []);
+const diffNodeTypes = Object.fromEntries(
+  Object.entries(nodeTypes).map(([type, Component]) => [
+    type,
+    (props: NodeProps) => <DiffNode {...props} WrappedComponent={Component} />,
+  ])
+)
 ```
 
 ### `DiffNode`
-Thin wrapper around the existing node component. Reads diff status from `DiffContext`. Applies ring style:
+Thin wrapper around the existing node component. Reads its own `DiffStatus` from `DiffContext` via `useContext(DiffContext).get(props.id)`. Applies ring style:
 - Added → `box-shadow: 0 0 0 2px #22c55e`
 - Removed → `box-shadow: 0 0 0 2px #f87171`, opacity 40%, `pointer-events: none`
 - Changed → `box-shadow: 0 0 0 2px #f59e0b`, clickable
 - Unchanged → no ring, normal opacity
 
 ### `DiffEdge`
-Wraps `NoodleEdge`. Removed edges render with a dashed red stroke **only if both source and target node IDs exist in `renderNodes`** — prevents the dangling-edge ReactFlow crash.
+Wraps `NoodleEdge`. Removed edges render with a dashed red stroke **only if both source and target node IDs exist in the `renderNodes` id set** — prevents the dangling-edge ReactFlow crash.
 
 ### `DiffSummaryBar`
 Sticky strip below the picker bar:
 `● 3 added  ● 1 removed  ● 2 changed  · 47 unchanged`
-with coloured dots. Includes a **"Zoom to changes"** button that calls:
+with coloured dots. Includes a **"Zoom to changes"** button:
 ```ts
-reactFlow.fitView({ nodes: [...added, ...removed, ...changed].map(id => ({ id })), padding: 0.3 })
+reactFlow.fitView({
+  nodes: [...added, ...removed, ...changed].map(id => ({ id })),
+  padding: 0.3,
+})
 ```
-Fires in a `useEffect` (after render), not in `useMemo`. Hidden when `added.length + removed.length + changed.length === 0` (nothing to zoom to).
+This fires in a `useEffect` (after render), not synchronously. The button is **hidden** when `added.length + removed.length + changed.length === 0`.
+
+When all nodes are unchanged, the canvas shows a centred message: **"No differences — this workflow matches the selected version."**
 
 ### `NodeParamDiffPanel`
 Right sidebar, 280px. Two-column before/after table per changed param. Unchanged params collapsed. Closes on × or outside click.
 
 ### `VersionLabelModal`
-Shown on publish before the existing `POST /workflows/{id}/publish` call. Prompts for an optional label (empty = publish without label). On publish failure, overlay stays open with inline error and label value preserved in local state.
+**Triggered in `Canvas.tsx`**, which owns the publish handler passed to `PublishPill`. The existing `handlePublish` function is wrapped: before calling `api.publishWorkflow(...)`, it sets `showLabelModal: true`. The modal resolves with a `label: string | null`. If the user dismisses without entering a label, publish proceeds with `label: null`. On publish failure, the modal stays open with an inline error and the label value preserved.
+
+Published versions show a **"published" badge** in both version pickers — this already exists on `WorkflowVersionInfo.published` and simply needs to be rendered in the picker option.
 
 ---
 
-## 3. Data Flow
+## 4. Data Flow
 
 ### Entry point
-`WorkflowHistory` modal gains a "Compare" button on each version row. Clicking it passes the selected version to `WorkflowDiffView` and closes the modal.
+`WorkflowHistory` modal gains a "Compare" button on each version row (visible only when `versions.length >= 2`). Clicking it passes the selected version to `WorkflowDiffView` and closes the modal.
 
 ### Graph loading
-`GET /workflows/{id}/versions` is updated to return **metadata only** (no graph). A new endpoint `GET /workflows/{id}/versions/{version_id}/graph` returns the full graph for a single version. Graphs are lazy-fetched when a version is selected in either picker, not upfront.
+`GET /workflows/{id}/versions` is updated to return **metadata only** (no `graph` field). To preserve the existing node count display in `WorkflowHistory`, the response adds a `node_count: int` field computed server-side. The existing `nodeDiff` helper in `WorkflowHistory` is updated to use `v.node_count` instead of `v.graph?.nodes?.length`.
 
-Each picker manages its own fetch state. While fetching, the picker shows a spinner and the canvas shows a low-opacity (30%) overlay of whichever graph is already loaded — not a CSS blur (expensive on large canvases).
+A new endpoint `GET /workflows/{id}/versions/{version_id}/graph` returns `{ graph: WorkflowGraph }`. Graphs are lazy-fetched when a version is selected in either picker.
+
+Each picker manages its own fetch state (`idle | loading | error | loaded`). While loading, the picker shows a spinner and the canvas shows a 30% opacity overlay of whichever graph is already loaded.
 
 ### Ghost node injection
-After `diffWorkflowGraphs` runs, `WorkflowDiffView` builds the final ReactFlow node array:
+After `diffWorkflowGraphs` runs, `WorkflowDiffView` builds:
 
 ```ts
 const statusMap = new Map<string, DiffStatus>([
@@ -110,68 +131,84 @@ const renderNodes = [
   ...compare.nodes.map(n => ({ ...n, data: { ...n.data, diffStatus: statusMap.get(n.id) ?? 'unchanged' } })),
   ...result.removedNodes.map(n => ({ ...n, data: { ...n.data, diffStatus: 'removed' as DiffStatus } })),
 ]
+
+const renderNodeIds = new Set(renderNodes.map(n => n.id))
+
+const renderEdges = [
+  ...compare.edges.map(e => ({ ...e, data: { ...e.data, diffStatus: result.addedEdges.includes(e.id) ? 'added' : 'unchanged' } })),
+  ...result.removedEdges
+    .filter(id => {
+      const edge = base.edges.find(e => e.id === id)
+      return edge && renderNodeIds.has(edge.source) && renderNodeIds.has(edge.target)
+    })
+    .map(id => ({ ...base.edges.find(e => e.id === id)!, data: { diffStatus: 'removed' as DiffStatus } })),
+]
 ```
 
-Ghost node positions come from the base graph. Ghost edges are filtered to only those where both endpoints exist in `renderNodes`.
-
 ### Version picker constraints
-- The "Current draft (unsaved)" synthetic entry appears first in the Compare picker, sourced from the editor store (no fetch).
-- Each picker disables whichever version the other picker has selected (prevents same-version diff).
-- Versions with `graph: null` (old rows pre-dating graph storage) are shown with a `(no graph)` suffix and disabled.
+- "Current draft (unsaved)" appears first in the Compare picker; sourced from the editor store (no fetch needed).
+- Each picker disables whichever version the other picker has selected.
+- Versions with `graph: null` show `(no graph)` suffix and are disabled.
+- Published versions show a `published` badge in the option.
 
 ### Publish label flow
-`VersionLabelModal` captures an optional label before publish. The label is sent as a new optional field in the existing publish request body. `WorkflowVersion.label` is a new nullable `VARCHAR(255)` column (one migration, no breaking change to existing publish calls).
+`VersionLabelModal` is triggered in `Canvas.tsx` before `api.publishWorkflow(...)`. Label sent as optional `label?: string` in the request body. `WorkflowVersion.label` is a new nullable `VARCHAR(255)` column — no breaking change to existing publish calls.
 
 ---
 
-## 4. Error Handling
+## 5. Error Handling
 
 | Scenario | Handling |
 |---|---|
-| Graph fetch fails (network) | Version shows inline "Failed · Retry" link. Retry re-triggers the fetch. |
-| Graph fetch in-flight on unmount | `AbortController` tied to `useEffect` cleanup cancels the request. |
+| Graph fetch fails (network) | Version picker shows inline "Failed · Retry". Retry re-triggers the fetch. |
+| Graph fetch in-flight on unmount | `AbortController` tied to `useEffect` cleanup cancels the in-flight request. |
 | `graph: null` on a version | Version disabled in picker with `(no graph)` suffix. |
-| Null/missing `nodes` or `edges` | `diffWorkflowGraphs` defaults to `[]`, renders empty-state message: "No nodes found in this version." |
-| Same version in both pickers | Prevented by picker (other version disabled). Guard in `diffWorkflowGraphs`: returns all-unchanged if `base.id === compare.id`. |
+| Null/missing `nodes` or `edges` | `diffWorkflowGraphs` defaults to `[]`; canvas shows "No nodes found in this version." |
+| Same version in both pickers | Prevented by picker. Guard in `diffWorkflowGraphs`: returns all-unchanged if `base.id === compare.id`. |
 | Only one version exists | "Compare" button hidden in `WorkflowHistory`. Diff view unreachable. |
-| Node count > 300 after ghost injection | Warning banner: "Workflow too large to show all nodes — displaying changed nodes only." Unchanged nodes hidden. "Show all" toggle to override. |
+| All nodes unchanged | Canvas shows "No differences — this workflow matches the selected version." "Zoom to changes" hidden. |
+| Node count > 300 after ghost injection | Warning banner shown; unchanged nodes hidden. "Show all" toggle to override. |
 | Ghost node with `NaN`/`null` position | Sanitised to `{x: 0, y: 0}` before passing to ReactFlow. Console warning emitted. |
-| Publish API failure after label modal | Modal stays open with inline error. Label value preserved in input. |
-| Dangling ghost edge (endpoint missing) | Edge skipped silently (filtered before ReactFlow receives it). |
+| Publish API failure after label modal | Modal stays open with inline error. Label value preserved. |
+| Dangling ghost edge (endpoint not in renderNodes) | Edge filtered out before ReactFlow receives it. |
 
 ---
 
-## 5. Testing
+## 6. Testing
 
 ### Unit tests — `diffWorkflowGraphs` (Vitest)
-- Added node → `added[]`, correct ID
-- Removed node → `removed[]`, present in `removedNodes[]`
-- Changed node → `changed[]`, correct `changedParams` entry
+- Added node → in `added[]`, correct ID
+- Removed node → in `removed[]`, in `removedNodes[]`
+- Changed node → in `changed[]`, correct `changedParams` entry
 - **Position-only change → `unchanged[]`** (key correctness test)
+- Key-order-only change `{a:1,b:2}` vs `{b:2,a:1}` → `unchanged[]` (deep-equal correctness test)
 - Type change (same ID, different type) → remove + add, not changed
 - Both versions empty → empty diff, no crash
 - Null `nodes`/`edges` → defaults to `[]`, no crash
-- Same version both sides → all `unchanged`, empty `changedParams`
+- Same ID both sides → all `unchanged`, empty `changedParams`
 
 ### Unit tests — components (Vitest + React Testing Library)
+
 **`NodeParamDiffPanel`**
 - Renders before/after per changed param
 - Unchanged params hidden by default, visible after "Show all" toggle
 - Closes on × click
 
 **`VersionLabelModal`**
-- Empty label → publishes without label field
-- Non-empty label → label included in request body
-- Publish failure → error shown, label value preserved
+- Empty label → publishes without `label` field in request
+- Non-empty label → `label` included in request body
+- Publish failure → error shown, label value preserved in input
 
 ### Integration tests — `WorkflowDiffView` (Vitest + RTL, ReactFlow mocked)
 - Default versions correct (compare = clicked, base = one before)
 - "Current draft" appears first in compare picker
+- Published badge visible on published versions in picker
 - Same version disabled in opposite picker
 - Summary bar shows correct counts
+- All-unchanged diff → "No differences" message shown, "Zoom to changes" hidden
 - Clicking changed node opens param panel
 - Graph fetch failure → retry button visible, re-triggers fetch on click
-- `AbortController.abort()` called on unmount during fetch
+- `AbortController.abort()` called on unmount during in-flight fetch
 - Node count > 300 → warning banner, only diff'd nodes rendered
 
 ### E2E — `workflow-diff.e2e.ts` (Playwright)
@@ -180,25 +217,28 @@ Ghost node positions come from the base graph. Ghost edges are filtered to only 
 - Assert diff canvas visible
 - Assert node B has green ring (added)
 - Assert summary bar reads "1 added"
-- Assert version label "Added node B" appears in picker
-- Assert "Zoom to changes" button triggers `fitView`
+- Assert version label "Added node B" appears in picker with published badge
+- Assert "Zoom to changes" button triggers fitView
+- Assert comparing v1 to v1 shows "No differences" message
 
 ---
 
-## 6. Backend Changes
+## 7. Backend Changes
 
 | Change | Details |
 |---|---|
 | Migration | `WorkflowVersion.label VARCHAR(255) NULL` |
-| `GET /workflows/{id}/versions` | Strip `graph` from response (metadata only) |
+| `GET /workflows/{id}/versions` | Strip `graph` from response; add `node_count: int` computed server-side |
 | `GET /workflows/{id}/versions/{version_id}/graph` | New endpoint returning `{ graph: WorkflowGraph }` |
-| `POST /workflows/{id}/publish` | Accept optional `label: str` in request body, write to `WorkflowVersion.label` |
+| `POST /workflows/{id}/publish` | Accept optional `label: str \| None` in request body, write to `WorkflowVersion.label` |
+| `WorkflowVersionInfo` schema | Add `node_count: int`, `label: str | None` fields |
 
 ---
 
-## 7. Out of Scope
+## 8. Out of Scope
 
-- Line-level param diffs (showing which character in a string changed) — a word-level before/after is sufficient
-- Diff between workflows (cross-workflow comparison)
+- Line-level param diffs (character-level diffing within a string value)
+- Diff between different workflows (cross-workflow comparison)
 - Sharing a diff view via URL (no new route)
 - Real-time version list updates while diff view is open
+- Keyboard navigation between diff'd nodes (arrow keys)
