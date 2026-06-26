@@ -38,7 +38,6 @@ function WorkflowDiffViewInner({ workflowId, initialVersion, versions, onClose }
   const [compareFetch, setCompareFetch] = useState<GraphFetch>({ state: "idle", graph: null });
   const [baseFetch, setBaseFetch] = useState<GraphFetch>({ state: "idle", graph: null });
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [truncated, setTruncated] = useState(false);
 
   const manifestsById = useEditor((s) => s.manifestsById);
   const draftNodes = useEditor((s) => s.nodes);
@@ -111,6 +110,7 @@ function WorkflowDiffViewInner({ workflowId, initialVersion, versions, onClose }
 
   let renderNodes: Node[] = [];
   let renderEdges: Edge[] = [];
+  let truncated = false;
 
   if (result && compareGraph && baseGraph) {
     const compareRF = compareGraph.nodes
@@ -121,14 +121,10 @@ function WorkflowDiffViewInner({ workflowId, initialVersion, versions, onClose }
       .filter((n): n is NoodleNode => n !== null);
 
     const allNodes = [...compareRF, ...ghostRF];
-
-    let filtered = allNodes;
-    if (allNodes.length > MAX_RENDER_NODES) {
-      setTruncated(true);
-      filtered = allNodes.filter((n) => statusMap.get(n.id) !== "unchanged");
-    } else {
-      setTruncated(false);
-    }
+    truncated = allNodes.length > MAX_RENDER_NODES;
+    const filtered = truncated
+      ? allNodes.filter((n) => statusMap.get(n.id) !== "unchanged")
+      : allNodes;
 
     renderNodes = filtered;
 

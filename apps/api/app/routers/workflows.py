@@ -402,7 +402,11 @@ async def list_provider_triggers(
     return list(rows)
 
 
-@router.get("/{workflow_id}/versions", response_model=list[WorkflowVersionInfo])
+@router.get(
+    "/{workflow_id}/versions",
+    response_model=list[WorkflowVersionInfo],
+    dependencies=[Depends(require_permission("workflow:read"))],
+)
 async def list_versions(workflow_id: str, session: AsyncSession = Depends(get_session)):
     workflow = await _load(session, workflow_id)
     return [
@@ -601,6 +605,7 @@ async def patch_workflow(
 @router.get(
     "/{workflow_id}/versions/{version_id}",
     response_model=WorkflowVersionInfo,
+    dependencies=[Depends(require_permission("workflow:read"))],
 )
 async def get_version(
     workflow_id: str,

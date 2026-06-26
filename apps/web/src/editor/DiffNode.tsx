@@ -2,11 +2,10 @@ import { useContext } from "react";
 import type { NodeProps } from "@xyflow/react";
 import { DiffContext } from "./diffWorkflowGraphs";
 
-const ringStyles: Record<string, React.CSSProperties> = {
-  added: { boxShadow: "0 0 0 2px #22c55e", borderRadius: 8 },
-  removed: { boxShadow: "0 0 0 2px #f87171", borderRadius: 8, opacity: 0.4, pointerEvents: "none" },
-  changed: { boxShadow: "0 0 0 2px #f59e0b", borderRadius: 8 },
-  unchanged: {},
+const ringColor: Record<string, string> = {
+  added: "#22c55e",
+  removed: "#f87171",
+  changed: "#f59e0b",
 };
 
 interface DiffNodeProps extends NodeProps {
@@ -16,11 +15,24 @@ interface DiffNodeProps extends NodeProps {
 export function DiffNode({ WrappedComponent, ...props }: DiffNodeProps) {
   const statusMap = useContext(DiffContext);
   const status = statusMap.get(props.id) ?? "unchanged";
-  const style = ringStyles[status] ?? {};
+  const isRemoved = status === "removed";
 
   return (
-    <div style={style}>
+    // position:relative so the ring overlay positions against the node root
+    <div style={{ position: "relative", opacity: isRemoved ? 0.4 : 1, pointerEvents: isRemoved ? "none" : undefined }}>
       <WrappedComponent {...props} />
+      {status !== "unchanged" && (
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            inset: -2,
+            borderRadius: 8,
+            boxShadow: `0 0 0 2px ${ringColor[status]}`,
+            pointerEvents: "none",
+          }}
+        />
+      )}
     </div>
   );
 }
