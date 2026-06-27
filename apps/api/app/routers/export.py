@@ -2,6 +2,7 @@ import io
 import zipfile
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from noodle_importer import import_module
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +16,6 @@ from app.services.audit import log_audit
 from noodle.models import WorkflowGraph
 from noodle.sdk import registry as node_registry
 from noodle_exporter import docker_bundle, slugify, workflow_to_module, workflow_to_script
-from noodle_importer import import_module
 
 router = APIRouter(tags=["export"])
 

@@ -17,7 +17,6 @@ Revises: 0065_audit_events_index
 """
 from __future__ import annotations
 
-import sqlalchemy as sa
 from alembic import op
 
 revision = "0066_runner_fk_constraints"

@@ -742,8 +742,6 @@ async def test_concurrent_loop_iter_outputs_do_not_bleed_into_outer_node_outputs
     from noodle.sdk import node
     from noodle.sdk import registry as global_reg
 
-    seen_keys: list[set] = []
-
     @node(name="E09 Key Spy", id="e09_key_spy", registry=global_reg)
     async def e09_key_spy(input=None):
         await asyncio.sleep(0)  # yield so all iterations run concurrently

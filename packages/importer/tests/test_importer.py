@@ -1,9 +1,10 @@
 import pytest
+from noodle_importer import import_module
+
 import noodle_nodes  # noqa: F401 — registers built-ins
 from noodle.models import WorkflowGraph
 from noodle.sdk import registry
 from noodle_exporter import workflow_to_module
-from noodle_importer import import_module
 
 
 def _export(graph_dict: dict) -> str:

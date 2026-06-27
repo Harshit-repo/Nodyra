@@ -10,7 +10,6 @@ Revises: 0060_mcp_production_hardening
 """
 from __future__ import annotations
 
-import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0061_runs_dedup_unique"

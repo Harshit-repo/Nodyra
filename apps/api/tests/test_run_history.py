@@ -6,7 +6,7 @@ import pytest
 from httpx import AsyncClient
 
 import app.routers.runner_pools as rp
-from app.models import Run, RunnerPool, Workflow
+from app.models import Run, Workflow
 
 
 async def _make_pool(client: AsyncClient, name: str = "p") -> str:

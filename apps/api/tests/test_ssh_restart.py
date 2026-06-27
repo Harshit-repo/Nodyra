@@ -1,6 +1,5 @@
 """Tests for SSH runner restart endpoint."""
 
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest

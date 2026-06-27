@@ -238,7 +238,7 @@ def safe_request(
         _rfn = request_fn
         response = _with_ssrf_safe_socket(
             context,
-            lambda: _rfn(_m, _u, allow_redirects=False, **_bkw),
+            lambda _rfn=_rfn, _m=_m, _u=_u, _bkw=_bkw: _rfn(_m, _u, allow_redirects=False, **_bkw),
         )
         status = getattr(response, "status_code", None)
         headers = getattr(response, "headers", None) or {}

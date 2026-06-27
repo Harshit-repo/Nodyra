@@ -1,6 +1,5 @@
 """Shared container machinery: image tags, dockerfile generation, build."""
 import pytest
-from tests.sandbox_fakes import FakeDockerClient
 
 from app.services.container_runtime import (
     IMAGE_SCHEMA_VERSION,
@@ -9,6 +8,7 @@ from app.services.container_runtime import (
     ensure_docker_image,
     image_tag_for,
 )
+from tests.sandbox_fakes import FakeDockerClient
 
 
 def test_image_tag_includes_schema_version():

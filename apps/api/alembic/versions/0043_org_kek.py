@@ -21,7 +21,6 @@ Create Date: 2026-06-10
 """
 
 import base64
-import os
 from collections.abc import Sequence
 
 import sqlalchemy as sa

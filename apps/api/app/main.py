@@ -36,7 +36,6 @@ from app.routers import (
     export,
     expressions,
     folders,
-    github_sync as github_sync_router,
     health,
     internal,
     mcp,
@@ -51,8 +50,13 @@ from app.routers import (
     webhooks,
     workflows,
 )
+from app.routers import (
+    github_sync as github_sync_router,
+)
 from app.services import expr_preview
 from app.services.events import broker_reaper_loop
+from app.services.ghost_cleanup import ghost_cleanup_loop
+from app.services.github_sync_jobs import github_sync_dispatch_loop
 from app.services.queue import run_queue_dispatch_loop
 from app.services.remote_dispatch import (
     cloud_idle_terminate_loop,
@@ -67,8 +71,6 @@ from app.services.runner import (
 )
 from app.services.runtime_pool import idle_reaper_loop
 from app.services.runtime_pool import pool as runtime_pool
-from app.services.github_sync_jobs import github_sync_dispatch_loop
-from app.services.ghost_cleanup import ghost_cleanup_loop
 from app.services.triggers import scheduler_loop
 
 

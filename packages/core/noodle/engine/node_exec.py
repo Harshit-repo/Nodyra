@@ -6,14 +6,13 @@ import contextvars
 import json
 import random
 import sys
+import threading
 import time
 import types
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from noodle.ai_runtime import AgentActionRequest, AgentApprovalRequired
-import threading
-
 from noodle.context import cancel_event, current_node_id, iteration_path, node_debug, node_emitter
 from noodle.engine.agent import (
     _MAX_AGENT_LOOP_ITERATIONS,
@@ -483,7 +482,7 @@ async def _run_one_node(
                         asyncio.to_thread(node_def.func, **current_kwargs), timeout
                     )
                 return await asyncio.to_thread(node_def.func, **current_kwargs)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except (TimeoutError, asyncio.CancelledError):
                 run_cancel_event.set()
                 raise
 

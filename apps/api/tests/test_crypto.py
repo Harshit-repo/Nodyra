@@ -334,8 +334,6 @@ def test_master_kek_is_hkdf_derived_not_sha256_b08() -> None:
     """B-08: the Fernet key for the master KEK must come from HKDF-SHA256 with
     info=b'noodle-credential-kek', not a bare sha256 hash of the secret."""
     from cryptography.fernet import Fernet, InvalidToken
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
     from app.config import settings
 

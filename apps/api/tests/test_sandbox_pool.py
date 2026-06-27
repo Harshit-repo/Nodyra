@@ -3,11 +3,11 @@
 import asyncio
 
 import pytest
-from tests.sandbox_fakes import FakeDockerClient
 
 from app.config import settings
 from app.services.container_runtime import IMAGE_SCHEMA_VERSION
 from app.services.sandbox_pool import SandboxWorker
+from tests.sandbox_fakes import FakeDockerClient
 
 ENV = {"id": "env1", "packages_hash": "h1", "python_version": "3.12", "packages": []}
 

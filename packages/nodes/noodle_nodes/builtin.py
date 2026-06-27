@@ -1299,7 +1299,7 @@ def discover_code_output_ports(code: str) -> list[str]:
 # Import the shared blocked-modules set from noodle.expr (where _CodeValidator
 # also uses it for AST-level checking). Defence-in-depth: blocked at parse time
 # AND at runtime __import__ level. Real isolation requires ProcessPoolExecutor.
-from noodle.expr import CODE_NODE_BLOCKED_MODULES as _CODE_NODE_BLOCKED_IMPORTS
+from noodle.expr import CODE_NODE_BLOCKED_MODULES as _CODE_NODE_BLOCKED_IMPORTS  # noqa: E402
 
 
 def _make_sandboxed_import(original_import: Any) -> Any:

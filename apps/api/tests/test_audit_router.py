@@ -8,7 +8,6 @@ from app.db import get_session
 from app.main import app
 from app.models import AuditEvent
 
-
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 async def _seed_events(client: AsyncClient, *, n: int = 5, actor_id: str = "user-a") -> list[str]:

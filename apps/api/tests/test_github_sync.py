@@ -1,6 +1,4 @@
 """Tests for GitHub sync DB models and service logic."""
-import hmac
-import hashlib
 import secrets
 
 import pytest
@@ -14,7 +12,6 @@ from app import models  # noqa: F401 — registers ORM models on Base.metadata
 from app.db import Base
 from app.models import GithubSyncConfig, GithubSyncJob, Workflow
 from app.tenancy import DEFAULT_ORG_ID
-
 
 # ---------------------------------------------------------------------------
 # Shared DB fixture for service tests

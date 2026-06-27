@@ -203,9 +203,8 @@ def _license_enterprise_by_default():
     (test_licensing.py / test_license_caps.py monkeypatch ``license_key`` /
     ``license_public_key`` back down).
     """
-    from tests._license_keys import TEST_PUBLIC_KEY_PEM, enterprise_key
-
     from app.config import settings as _settings
+    from tests._license_keys import TEST_PUBLIC_KEY_PEM, enterprise_key
 
     prev_pub = _settings.license_public_key
     prev_key = _settings.license_key

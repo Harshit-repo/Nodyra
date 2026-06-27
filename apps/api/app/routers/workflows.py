@@ -1,9 +1,9 @@
 import re
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
-from pydantic import BaseModel
 from jsonschema.exceptions import SchemaError
 from jsonschema.validators import validator_for
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -295,12 +295,6 @@ async def list_workflows(
     # selectinload which pulls every historical version — T-04).
     if workflows:
         wf_ids = [w.id for w in workflows]
-        latest_ver_sq = (
-            select(func.max(WorkflowVersion.version))
-            .where(WorkflowVersion.workflow_id == WorkflowVersion.workflow_id)
-            .correlate(WorkflowVersion)
-            .scalar_subquery()
-        )
         # Use a window function to pick only the max version per workflow.
         max_ver_sq = (
             select(

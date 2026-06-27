@@ -50,7 +50,7 @@ async def github_sync_dispatch_loop() -> None:
             logger.exception("github_sync_dispatch_loop: error in dispatch cycle")
         try:
             await asyncio.wait_for(_get_wakeup().wait(), timeout=POLL_INTERVAL_SECONDS)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
 
 

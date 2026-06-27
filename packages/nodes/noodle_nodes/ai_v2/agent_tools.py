@@ -299,8 +299,9 @@ class CodeExecToolAdapter(ToolAdapter):
                     return json.dumps({"error": str(exc)})
             else:
                 # Blocklist mode: reject the dangerous module set from _CodeValidator.
-                from noodle.expr import CODE_NODE_BLOCKED_MODULES, _CodeValidator
                 import ast as _ast
+
+                from noodle.expr import _CodeValidator
                 try:
                     tree = _ast.parse(code)
                     _CodeValidator().visit(tree)

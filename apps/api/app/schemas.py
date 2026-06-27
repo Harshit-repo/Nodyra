@@ -349,7 +349,7 @@ class NodeRunInfo(BaseModel):
     def _dt_to_epoch(cls, v: Any) -> float | None:
         # D-12: DB now stores DateTime; keep API returning float (epoch seconds).
         if isinstance(v, datetime):
-            from datetime import UTC, timezone
+            from datetime import UTC
             if v.tzinfo is None:
                 v = v.replace(tzinfo=UTC)
             return v.timestamp()

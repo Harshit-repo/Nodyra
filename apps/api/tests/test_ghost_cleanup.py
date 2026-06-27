@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 import app.routers.runner_pools as rp
 from app.config import settings
-from app.models import Runner, RunnerPool
+from app.models import Runner
 from app.services.ghost_cleanup import cleanup_ghost_runners
 
 

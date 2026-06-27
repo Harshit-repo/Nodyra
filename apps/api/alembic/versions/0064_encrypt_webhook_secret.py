@@ -32,10 +32,8 @@ def upgrade() -> None:
     ).fetchall()
     for row in rows:
         try:
+
             from app.services.crypto import encrypt_credential
-            from app.services.kek_provider import kek_provider
-            from app.services import crypto
-            import asyncio
 
             # Try to get org KEK synchronously by re-using the master key path.
             # The org KEK may not be available at migration time (no live DB session),

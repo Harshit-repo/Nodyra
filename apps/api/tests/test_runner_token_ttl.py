@@ -1,10 +1,9 @@
 """Tests for long-lived runner tokens (1-year TTL)."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
 
 import app.routers.runner_pools as rp
 from app.config import settings
