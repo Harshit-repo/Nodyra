@@ -30,6 +30,34 @@ def upgrade() -> None:
     is_pg = bind.dialect.name == "postgresql"
 
     if is_pg:
+        # Nullify any orphaned FK references before adding constraints — stale
+        # IDs left behind by deleted pools/runners would cause the ALTER to fail.
+        op.execute(
+            "UPDATE runs SET runner_pool_id = NULL "
+            "WHERE runner_pool_id IS NOT NULL "
+            "AND runner_pool_id NOT IN (SELECT id FROM runner_pools)"
+        )
+        op.execute(
+            "UPDATE runs SET runner_id = NULL "
+            "WHERE runner_id IS NOT NULL "
+            "AND runner_id NOT IN (SELECT id FROM runners)"
+        )
+        op.execute(
+            "UPDATE deployments SET runner_pool_id = NULL "
+            "WHERE runner_pool_id IS NOT NULL "
+            "AND runner_pool_id NOT IN (SELECT id FROM runner_pools)"
+        )
+        op.execute(
+            "UPDATE workflows SET default_runner_pool_id = NULL "
+            "WHERE default_runner_pool_id IS NOT NULL "
+            "AND default_runner_pool_id NOT IN (SELECT id FROM runner_pools)"
+        )
+        op.execute(
+            "UPDATE credentials SET runner_pool_id = NULL "
+            "WHERE runner_pool_id IS NOT NULL "
+            "AND runner_pool_id NOT IN (SELECT id FROM runner_pools)"
+        )
+
         # runs.runner_pool_id
         op.execute(
             "ALTER TABLE runs ADD CONSTRAINT fk_runs_runner_pool_id "

@@ -25,12 +25,16 @@ COPY packages/nodes/pyproject.toml packages/nodes/
 COPY packages/exporter/pyproject.toml packages/exporter/
 COPY packages/runtime/pyproject.toml packages/runtime/
 COPY packages/importer/pyproject.toml packages/importer/
+COPY packages/runner/pyproject.toml packages/runner/
 
 # uv needs stub __init__.py files at each package root to recognise the
 # members during the dep-only install (editable installs require a dist-info).
-RUN for pkg in apps/api packages/core packages/nodes packages/exporter packages/runtime packages/importer; do \
+# packages/runner declares readme = "README.md" in its pyproject.toml, so
+# hatchling requires the file to exist even for an editable build.
+RUN for pkg in apps/api packages/core packages/nodes packages/exporter packages/runtime packages/importer packages/runner; do \
         mkdir -p "$pkg" && touch "$pkg/__init__.py"; \
-    done
+    done \
+    && touch packages/runner/README.md
 
 RUN uv sync --locked --no-dev --all-packages
 
@@ -50,7 +54,8 @@ RUN apt-get update \
 
 ENV UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
-    PATH="/app/.venv/bin:$PATH"
+    PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH=/app/apps/api:/app/packages/core:/app/packages/nodes:/app/packages/exporter:/app/packages/runtime:/app/packages/importer:/app/packages/runner
 
 WORKDIR /app
 
