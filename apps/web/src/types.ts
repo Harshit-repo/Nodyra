@@ -716,6 +716,23 @@ export interface OrgUsageDay {
   node_runs: number;
 }
 
+export interface RunHistoryBucket {
+  bucket_start: string;
+  success: number;
+  error: number;
+  total: number;
+  avg_duration_seconds: number | null;
+}
+
+export interface RecentRun {
+  id: string;
+  workflow_id: string;
+  status: string;
+  runner_id: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
 export interface RunnerPoolInfo {
   id: string;
   name: string;
@@ -724,6 +741,8 @@ export interface RunnerPoolInfo {
   max_concurrent_runs: number;
   runner_count: number;
   online_count: number;
+  ghost_count: number;
+  aws_secret_configured: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -740,6 +759,8 @@ export interface RunnerInfo {
   cached_env_ids: string[];
   created_at: string;
   updated_at: string;
+  token_expires_at: string | null;
+  ssh_host: string | null;
 }
 
 export interface RunnerPoolHealth {
@@ -753,6 +774,7 @@ export interface RunnerPoolHealth {
   runner_count: number;
   success_24h: number | null;
   dispatcher_reachable: boolean;
+  label_mismatch_queued: number;
 }
 
 export interface FleetSummary {

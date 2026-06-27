@@ -214,6 +214,7 @@ class RunnerPool(Base):
     provider: Mapped[str] = mapped_column(String(20), nullable=False, default="agent")
     provider_config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     max_concurrent_runs: Mapped[int] = mapped_column(Integer, default=4, nullable=False)
+    aws_secret_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -260,6 +261,9 @@ class Runner(Base):
     # blob of the SSH credentials so the machine can be restarted later.
     ssh_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
     ssh_credentials: Mapped[str | None] = mapped_column(Text, nullable=True)
+    token_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -671,6 +675,7 @@ class Run(Base):
         ForeignKey("runners.id", ondelete="SET NULL"), nullable=True, index=True
     )
     batch_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    required_labels: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     deduplication_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     # Synchronous webhook response recorded by a respond_to_webhook node
     # (Respond Node mode). Shape: {status, headers, body, content_type}.

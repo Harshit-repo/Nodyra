@@ -112,6 +112,13 @@ class Settings(BaseSettings):
     # single missed pong doesn't cause flapping.
     runner_heartbeat_interval_seconds: int = 15
     runner_offline_after_seconds: int = 60
+    # Token lifetime for runner registration tokens. Default 1 year (365 days).
+    # Tokens are revocable at any time by deleting the runner row.
+    runner_token_ttl_days: int = 365
+    # Ghost runner cleanup: delete runners that never connected (last_seen_at
+    # IS NULL) and were created more than this many hours ago. Set to 0 to
+    # disable auto-cleanup.
+    runner_ghost_ttl_hours: int = 48
     # Run the in-process schedule loop. Multi-replica deployments keep this
     # on and set scheduler_role=leader so one replica owns it (avoids
     # double-fire); set false to disable scheduling in this process entirely.

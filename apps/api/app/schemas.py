@@ -874,6 +874,8 @@ class RunnerPoolInfo(BaseModel):
     max_concurrent_runs: int
     runner_count: int = 0
     online_count: int = 0
+    ghost_count: int = 0
+    aws_secret_configured: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -892,6 +894,8 @@ class RunnerInfo(BaseModel):
     cached_env_ids: list[str]
     created_at: datetime
     updated_at: datetime
+    token_expires_at: datetime | None = None
+    ssh_host: str | None = None
 
 
 class RunnerPoolHealth(BaseModel):
@@ -908,6 +912,7 @@ class RunnerPoolHealth(BaseModel):
     runner_count: int
     success_24h: float | None  # 0..1 over runs finished in the last 24h
     dispatcher_reachable: bool
+    label_mismatch_queued: int = 0
 
 
 class FleetSummary(BaseModel):
@@ -946,6 +951,14 @@ class RegistrationTokenResponse(BaseModel):
     # otherwise the request's own base URL — never the web origin, which is wrong
     # for any split web/API deployment. The install snippet uses this verbatim.
     api_url: str
+
+
+class RunHistoryBucket(BaseModel):
+    bucket_start: datetime
+    success: int
+    error: int
+    total: int
+    avg_duration_seconds: float | None
 
 
 class RunnerUpdate(BaseModel):

@@ -68,6 +68,7 @@ from app.services.runner import (
 from app.services.runtime_pool import idle_reaper_loop
 from app.services.runtime_pool import pool as runtime_pool
 from app.services.github_sync_jobs import github_sync_dispatch_loop
+from app.services.ghost_cleanup import ghost_cleanup_loop
 from app.services.triggers import scheduler_loop
 
 
@@ -360,6 +361,7 @@ async def lifespan(app: FastAPI):
     cloud_idle = asyncio.create_task(_as_system(cloud_idle_terminate_loop)())
     heartbeat = asyncio.create_task(_as_system(runner_heartbeat_loop)())
     github_sync = asyncio.create_task(_as_system(github_sync_dispatch_loop)())
+    ghost_cleanup = asyncio.create_task(_as_system(ghost_cleanup_loop)())
     yield
     # Graceful drain on shutdown: stop the dispatch loop from leasing new
     # entries, give in-flight runs a bounded window to finish, then
@@ -369,7 +371,7 @@ async def lifespan(app: FastAPI):
     # (matters for tests that reuse the process).
     _prior_drain = settings.queue_drain
     settings.queue_drain = True
-    for task in (scheduler, retention, reaper, broker_reaper, queue_loop, cloud_idle, heartbeat, github_sync):
+    for task in (scheduler, retention, reaper, broker_reaper, queue_loop, cloud_idle, heartbeat, github_sync, ghost_cleanup):
         if task is None:
             continue
         task.cancel()

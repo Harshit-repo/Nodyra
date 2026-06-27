@@ -76,7 +76,13 @@ async def assign_agent_run(
     agent_action_resume: dict | None = None,
     subworkflow_meta: dict | None = None,
 ) -> str:
-    conn = await pick_agent(d, session_factory, pool_id)
+    required_labels: dict | None = None
+    async with session_factory() as session:
+        run = await session.get(Run, run_id)
+        if run is not None:
+            required_labels = run.required_labels
+
+    conn = await pick_agent(d, session_factory, pool_id, required_labels=required_labels)
     if conn is None:
         await d.queue_run(run_id)
         # Provision cloud instances if configured
@@ -131,7 +137,11 @@ async def assign_agent_run(
             runner = await session.get(Runner, conn.runner_id)
             if runner is not None:
                 runner.current_runs = max(0, runner.current_runs - 1)
-                if runner.current_runs == 0:
+                if runner.status == "draining":
+                    if runner.current_runs == 0:
+                        runner.status = "offline"
+                        await conn.send({"type": "drain_complete"})
+                elif runner.current_runs == 0:
                     runner.status = "online"
                 await session.commit()
         d.signal_capacity()
@@ -139,7 +149,12 @@ async def assign_agent_run(
     return status
 
 
-async def pick_agent(d: Any, session_factory, pool_id: str) -> _AgentConnection | None:
+async def pick_agent(
+    d: Any,
+    session_factory,
+    pool_id: str,
+    required_labels: dict | None = None,
+) -> _AgentConnection | None:
     """Return the least-loaded available agent connection in this pool.
 
     Enforces two ceilings before handing out a runner:
@@ -149,6 +164,9 @@ async def pick_agent(d: Any, session_factory, pool_id: str) -> _AgentConnection 
       stored but never honoured, so a single pool could be oversubscribed.
     * **Runner-level**: each runner's ``current_runs`` must stay below its
       own ``max_concurrent_runs``.
+
+    If ``required_labels`` is provided, only runners whose ``capabilities``
+    contain all the required key-value pairs are eligible (exact match).
 
     Among eligible *connected* agents we pick the one with the most free
     capacity (least-loaded) so traffic spreads evenly instead of always
@@ -166,6 +184,7 @@ async def pick_agent(d: Any, session_factory, pool_id: str) -> _AgentConnection 
             )
         ).all()
         pool_active = sum(max(0, r.current_runs) for r in runners)
+        runner_caps = {r.id: r.capabilities or {} for r in runners}
         runner_max = {r.id: r.max_concurrent_runs for r in runners}
         runner_db_load = {r.id: max(0, r.current_runs) for r in runners}
 
@@ -180,6 +199,11 @@ async def pick_agent(d: Any, session_factory, pool_id: str) -> _AgentConnection 
             cap = runner_max.get(runner_id)
             if cap is None:
                 continue  # connected agent not (yet) a known runner row
+            # Label filtering: required_labels must be a subset of the runner's capabilities.
+            if required_labels:
+                caps = runner_caps.get(runner_id, {})
+                if not all(caps.get(k) == v for k, v in required_labels.items()):
+                    continue
             # Use whichever load count is higher so a just-assigned run that
             # hasn't been flushed to the DB row still counts against the cap.
             live_load = max(runner_db_load.get(runner_id, 0), len(conn.active_runs))

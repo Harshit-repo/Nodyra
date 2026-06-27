@@ -17,6 +17,8 @@ import type {
   OrgMemberInfo,
   OrgSettingsInfo,
   RegistrationTokenResponse,
+  RecentRun,
+  RunHistoryBucket,
   RunnerInfo,
   RunnerPoolInfo,
   WorkflowGraph,
@@ -744,6 +746,86 @@ export function useDeleteRunnerMutation() {
         queryKey: queryKeys.runnerPoolRunners(String(vars.poolId)),
       });
     },
+  });
+}
+
+export function useDrainRunnerMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      poolId,
+      runnerId,
+      draining,
+    }: {
+      poolId: string;
+      runnerId: string;
+      draining: boolean;
+    }): Promise<RunnerInfo> => runnerPoolsApi.drainRunner(poolId, runnerId, draining),
+    onSuccess: (_result, vars) => {
+      invalidateRunnerPools(queryClient);
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.runnerPoolRunners(vars.poolId),
+      });
+    },
+  });
+}
+
+export function useRestartRunnerMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      poolId,
+      runnerId,
+    }: {
+      poolId: string;
+      runnerId: string;
+    }): Promise<{ runner_id: string; log: string }> =>
+      runnerPoolsApi.restartRunner(poolId, runnerId),
+    onSuccess: (_result, vars) => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.runnerPoolRunners(vars.poolId),
+      });
+    },
+  });
+}
+
+export function useCleanupGhostsMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (poolId: string): Promise<{ pool_id: string; deleted: number }> =>
+      runnerPoolsApi.cleanupGhosts(poolId),
+    onSuccess: () => invalidateRunnerPools(queryClient),
+  });
+}
+
+export function useRunnerPoolRunHistory(
+  poolId: string | null,
+  hours = 24,
+  buckets = 24,
+  options?: QueryControls<RunHistoryBucket[]>,
+) {
+  return useQuery({
+    queryKey: poolId
+      ? ["runner-pools", poolId, "run-history", hours, buckets]
+      : ["runner-pools", "no-pool", "run-history"],
+    queryFn: () => runnerPoolsApi.getRunHistory(poolId ?? "", hours, buckets),
+    enabled: Boolean(poolId) && (options?.enabled ?? true),
+    ...options,
+  });
+}
+
+export function useRunnerPoolRecentRuns(
+  poolId: string | null,
+  limit = 50,
+  options?: QueryControls<RecentRun[]>,
+) {
+  return useQuery({
+    queryKey: poolId
+      ? ["runner-pools", poolId, "recent-runs", limit]
+      : ["runner-pools", "no-pool", "recent-runs"],
+    queryFn: () => runnerPoolsApi.getRecentRuns(poolId ?? "", limit),
+    enabled: Boolean(poolId) && (options?.enabled ?? true),
+    ...options,
   });
 }
 

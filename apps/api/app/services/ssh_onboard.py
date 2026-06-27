@@ -127,3 +127,72 @@ async def onboard_machine(req: SSHOnboardRequest, api_url: str, token: str, name
         raise
     except Exception as exc:  # noqa: BLE001 - asyncssh connection errors
         raise RuntimeError(f"SSH connection/onboarding failed: {exc}") from exc
+
+
+def _restart_script(creds: dict) -> str:
+    """Shell script to restart the noodle-runner service on the remote machine."""
+    nohup = (
+        "nohup /usr/bin/env python3 -m noodle_runner_agent.agent start "
+        '> "$HOME/noodle-runner.log" 2>&1 &'
+    )
+    return (
+        "set -e\n"
+        "if command -v sudo >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1 "
+        "&& sudo systemctl is-active --quiet noodle-runner 2>/dev/null; then\n"
+        "  sudo systemctl restart noodle-runner\n"
+        '  echo "[noodle] restarted via systemd"\n'
+        "else\n"
+        "  pkill -f 'noodle_runner_agent.agent start' || true\n"
+        f"  {nohup}\n"
+        '  echo "[noodle] restarted via nohup"\n'
+        "fi\n"
+    )
+
+
+async def onboard_restart(creds: dict) -> str:
+    """SSH into a previously onboarded runner and restart the agent process.
+
+    ``creds`` is the decrypted dict stored in ``runner.ssh_credentials``.
+    Raises ``RuntimeError`` on failure (caller turns it into a 400).
+    """
+    try:
+        import asyncssh  # type: ignore[import-untyped]  # noqa: PLC0415
+    except ImportError as exc:
+        raise RuntimeError(
+            "SSH restart requires the 'asyncssh' package on the API host"
+        ) from exc
+
+    conn_kwargs: dict = {
+        "host": creds["host"],
+        "port": creds.get("port", 22),
+        "username": creds["username"],
+        "known_hosts": None,
+    }
+    if creds.get("auth_method") == "password":
+        if not creds.get("password"):
+            raise RuntimeError("password auth selected but no password stored")
+        conn_kwargs["password"] = creds["password"]
+    else:
+        if not creds.get("private_key"):
+            raise RuntimeError("key auth selected but no private_key stored")
+        try:
+            conn_kwargs["client_keys"] = [
+                asyncssh.import_private_key(
+                    creds["private_key"], creds.get("passphrase") or None
+                )
+            ]
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"could not parse private key: {exc}") from exc
+
+    script = _restart_script(creds)
+    try:
+        async with asyncssh.connect(**conn_kwargs, connect_timeout=30) as conn:
+            result = await conn.run(script, check=False)
+            log = f"{result.stdout or ''}{result.stderr or ''}".strip()
+            if result.exit_status != 0:
+                raise RuntimeError(f"remote restart failed (exit {result.exit_status}):\n{log}")
+            return log
+    except RuntimeError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"SSH connection failed during restart: {exc}") from exc

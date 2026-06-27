@@ -36,6 +36,8 @@ import type {
   OrgMemberInfo,
   OrgSettingsInfo,
   OrgUsageDay,
+  RecentRun,
+  RunHistoryBucket,
   RunnerFleetHealth,
   RunnerInfo,
   RunnerPoolInfo,
@@ -1174,4 +1176,30 @@ export const runnerPoolsApi = {
       `/runner-pools/run-batches/${batchId}/cancel`,
       { method: "POST" }
     ),
+
+  drainRunner: (poolId: string, runnerId: string, draining: boolean) =>
+    request<RunnerInfo>(`/runner-pools/${poolId}/runners/${runnerId}/drain`, {
+      method: "POST",
+      body: JSON.stringify({ draining }),
+    }),
+
+  restartRunner: (poolId: string, runnerId: string) =>
+    request<{ runner_id: string; log: string }>(
+      `/runner-pools/${poolId}/runners/${runnerId}/restart`,
+      { method: "POST" }
+    ),
+
+  cleanupGhosts: (poolId: string) =>
+    request<{ pool_id: string; deleted: number }>(
+      `/runner-pools/${poolId}/cleanup-ghosts`,
+      { method: "POST" }
+    ),
+
+  getRunHistory: (poolId: string, hours = 24, buckets = 24) =>
+    request<RunHistoryBucket[]>(
+      `/runner-pools/${poolId}/run-history?hours=${hours}&buckets=${buckets}`
+    ),
+
+  getRecentRuns: (poolId: string, limit = 50) =>
+    request<RecentRun[]>(`/runner-pools/${poolId}/recent-runs?limit=${limit}`),
 };

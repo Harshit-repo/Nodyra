@@ -1,15 +1,19 @@
-import { useRef, useState } from "react";
+﻿import { useRef, useState } from "react";
 
 import { useConfirm } from "./ConfirmProvider";
 import { useEntitlements } from "./entitlements";
 import { useCan } from "./permissions";
 import {
+  useCleanupGhostsMutation,
   useCreateRunnerPoolMutation,
   useCreateRunnerRegistrationTokenMutation,
   useDeleteRunnerMutation,
   useDeleteRunnerPoolMutation,
+  useDrainRunnerMutation,
   useEnvironments,
+  useRestartRunnerMutation,
   useRunnerFleetHealth,
+  useRunnerPoolRunHistory,
   useRunnerPoolRunners,
   useRunnerPools,
   useSshOnboardRunnerMutation,
@@ -20,6 +24,7 @@ import { useModalA11y } from "./useModalA11y";
 import { useTimeout } from "./hooks/useTimeout";
 import type {
   RegistrationTokenResponse,
+  RunHistoryBucket,
   RunnerFleetHealth,
   RunnerInfo,
   RunnerPoolHealth,
@@ -46,6 +51,27 @@ function relSecs(secs: number | null | undefined): string {
   if (mins < 60) return `${mins}m ${Math.round(secs % 60)}s`;
   const hours = Math.floor(mins / 60);
   return `${hours}h ${mins % 60}m`;
+}
+
+/** Mini bar-chart sparkline from run history buckets. */
+function RunSparkline({ buckets }: { buckets: RunHistoryBucket[] }) {
+  const max = Math.max(...buckets.map((b) => b.total), 1);
+  return (
+    <div className="run-sparkline" aria-label="Run history sparkline" title="Run activity (last 24h)">
+      {buckets.map((b, i) => {
+        const pct = (b.total / max) * 100;
+        const hasError = b.error > 0;
+        return (
+          <span
+            key={i}
+            className={`spark-bar ${hasError ? "spark-error" : "spark-ok"}`}
+            style={{ height: `${Math.max(pct, 4)}%` }}
+            title={`${b.success} ok / ${b.error} err`}
+          />
+        );
+      })}
+    </div>
+  );
 }
 
 type Config = Record<string, unknown>;
@@ -895,9 +921,11 @@ function EditRunnerDialog({
 function HealthStrip({
   pool,
   health,
+  history,
 }: {
   pool: RunnerPoolInfo;
   health?: RunnerPoolHealth;
+  history?: RunHistoryBucket[];
 }) {
   const capUsed = health?.capacity_used ?? 0;
   const capTotal = health?.capacity_total ?? pool.max_concurrent_runs;
@@ -906,6 +934,7 @@ function HealthStrip({
   const success = health?.success_24h ?? null;
   const reachable = health?.dispatcher_reachable ?? true;
   const queueStuck = queue > 0 && !reachable;
+  const labelMismatch = health?.label_mismatch_queued ?? 0;
   return (
     <div className="pool-health">
       <div className="phc">
@@ -927,12 +956,20 @@ function HealthStrip({
             oldest {relSecs(health?.oldest_queued_seconds)}
           </span>
         )}
+        {labelMismatch > 0 && (
+          <span className="phc-sub phc-warn" title="These queued runs require labels no online runner satisfies">
+            {labelMismatch} label mismatch
+          </span>
+        )}
       </div>
       <div className="phc">
         <span className="phc-k">Success (24h)</span>
         <span className="phc-v">
           {success == null ? "—" : `${Math.round(success * 100)}%`}
         </span>
+        {history && history.some((b) => b.total > 0) && (
+          <RunSparkline buckets={history} />
+        )}
       </div>
       <div className="phc">
         <span className="phc-k">Dispatcher</span>
@@ -962,14 +999,22 @@ function PoolCard({
   const [sshOpen, setSshOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editingRunner, setEditingRunner] = useState<RunnerInfo | null>(null);
+  const [restartLog, setRestartLog] = useState<{ runnerId: string; log: string } | null>(null);
   const confirm = useConfirm();
   const deletePool = useDeleteRunnerPoolMutation();
   const deleteRunner = useDeleteRunnerMutation();
+  const drainRunner = useDrainRunnerMutation();
+  const restartRunner = useRestartRunnerMutation();
+  const cleanupGhosts = useCleanupGhostsMutation();
   const runnersQuery = useRunnerPoolRunners(pool.id, {
     enabled: expanded,
     refetchInterval: expanded ? 5000 : undefined,
   });
+  const historyQuery = useRunnerPoolRunHistory(pool.id, 24, 24, {
+    staleTime: 60_000,
+  });
   const runners = runnersQuery.data ?? [];
+  const history = historyQuery.data ?? undefined;
 
   const summary = poolConfigSummary(pool);
   const reachable = health?.dispatcher_reachable ?? true;
@@ -1000,6 +1045,19 @@ function PoolCard({
           <div className="pool-meta">
             max {pool.max_concurrent_runs} concurrent
             {summary && <> · {summary}</>}
+            {pool.aws_secret_configured && (
+              <span className="runner-label-pill" title="AWS secret key stored (encrypted)">
+                AWS ●
+              </span>
+            )}
+            {pool.ghost_count > 0 && (
+              <span
+                className="runner-label-pill phc-warn"
+                title={`${pool.ghost_count} ghost runner(s): created but never connected`}
+              >
+                {pool.ghost_count} ghost{pool.ghost_count !== 1 ? "s" : ""}
+              </span>
+            )}
           </div>
           <div className="pool-meta">
             {boundEnvs.length > 0 ? (
@@ -1019,6 +1077,20 @@ function PoolCard({
               onClick={() => setExpanded((v) => !v)}
             >
               {expanded ? "Hide" : "Runners"}
+            </button>
+          )}
+          {canWrite && pool.ghost_count > 0 && (
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              title={`Delete ${pool.ghost_count} ghost runner(s)`}
+              onClick={async () => {
+                const res = await cleanupGhosts.mutateAsync(pool.id);
+                onChanged();
+                alert(`Deleted ${res.deleted} ghost runner(s).`);
+              }}
+            >
+              Clean ghosts
             </button>
           )}
           {canWrite && (
@@ -1064,7 +1136,7 @@ function PoolCard({
         </div>
       )}
 
-      <HealthStrip pool={pool} health={health} />
+      <HealthStrip pool={pool} health={health} history={history} />
 
       {expanded && pool.provider === "agent" && (
         <div className="pool-body">
@@ -1086,14 +1158,36 @@ function PoolCard({
                   r.max_concurrent_runs > 0
                     ? (r.current_runs / r.max_concurrent_runs) * 100
                     : 0;
+                const isDraining = r.status === "draining";
+                const tokenExpiresSoon =
+                  r.token_expires_at != null &&
+                  new Date(r.token_expires_at).getTime() - Date.now() < 30 * 24 * 3600 * 1000;
                 return (
                   <div key={r.id} className="runner-trow">
                     <span className="rt-name">
                       <span className={`status-dot ${r.status}`} />
                       {r.name}
+                      {isDraining && (
+                        <span className="runner-label-pill phc-warn" title="Runner is draining — no new runs assigned">
+                          draining
+                        </span>
+                      )}
+                      {tokenExpiresSoon && (
+                        <span
+                          className="runner-label-pill phc-warn"
+                          title={`Token expires ${r.token_expires_at ? new Date(r.token_expires_at).toLocaleDateString() : "soon"}`}
+                        >
+                          token expiring
+                        </span>
+                      )}
                       <span className="muted rt-seen">
                         · {relAgo(r.last_seen_at)}
                       </span>
+                      {r.ssh_host && (
+                        <span className="muted rt-seen" title="SSH-onboarded host">
+                          {r.ssh_host}
+                        </span>
+                      )}
                     </span>
                     <span className="rt-labels">
                       {labels.length === 0 ? (
@@ -1119,6 +1213,42 @@ function PoolCard({
                       {r.cached_env_ids.length === 1 ? "" : "s"}
                     </span>
                     <span className="rt-act">
+                      {canWrite && r.status !== "offline" && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-ghost"
+                          title={isDraining ? "Un-drain: bring back online" : "Drain: stop new run assignments"}
+                          onClick={async () => {
+                            await drainRunner.mutateAsync({
+                              poolId: pool.id,
+                              runnerId: r.id,
+                              draining: !isDraining,
+                            });
+                          }}
+                        >
+                          {isDraining ? "Un-drain" : "Drain"}
+                        </button>
+                      )}
+                      {canWrite && r.ssh_host && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-ghost"
+                          title="SSH restart: reconnect the runner agent"
+                          onClick={async () => {
+                            try {
+                              const res = await restartRunner.mutateAsync({
+                                poolId: pool.id,
+                                runnerId: r.id,
+                              });
+                              setRestartLog({ runnerId: r.id, log: res.log });
+                            } catch (e) {
+                              alert(e instanceof Error ? e.message : "Restart failed");
+                            }
+                          }}
+                        >
+                          Restart
+                        </button>
+                      )}
                       {canWrite && (
                         <button
                           type="button"
@@ -1135,7 +1265,7 @@ function PoolCard({
                           onClick={async () => {
                             const ok = await confirm({
                               title: "Remove runner?",
-                              body: `“${r.name}” will be removed from this pool.`,
+                              body: `"${r.name}" will be removed from this pool.`,
                               confirmLabel: "Remove",
                             });
                             if (!ok) return;
@@ -1229,6 +1359,38 @@ function PoolCard({
             void runnersQuery.refetch();
           }}
         />
+      )}
+
+      {restartLog && (
+        <div className="modal-overlay" onClick={() => setRestartLog(null)}>
+          <div
+            className="modal modal-wide"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="restart-log-title"
+            tabIndex={-1}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="modal-head">
+              <h2 id="restart-log-title">Restart log</h2>
+              <button
+                className="btn btn-sm btn-ghost"
+                onClick={() => setRestartLog(null)}
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </header>
+            <div className="modal-body">
+              <pre className="runner-install">{restartLog.log || "(no output)"}</pre>
+            </div>
+            <footer className="modal-foot">
+              <button className="btn btn-sm btn-ghost" onClick={() => setRestartLog(null)}>
+                Close
+              </button>
+            </footer>
+          </div>
+        </div>
       )}
     </div>
   );

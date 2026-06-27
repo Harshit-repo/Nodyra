@@ -40,11 +40,13 @@ from app.models import (
     WorkflowVersion,
 )
 from app.schemas import (
+    DrainRequest,
     FleetSummary,
     RegistrationTokenRequest,
     RegistrationTokenResponse,
     RunBatchCreate,
     RunBatchInfo,
+    RunHistoryBucket,
     RunnerFleetHealth,
     RunnerInfo,
     RunnerPoolCreate,
@@ -147,6 +149,37 @@ async def runner_fleet_health(
     ).all()
     queued_by_pool = {pid: (n, oldest) for pid, n, oldest in queued_rows}
 
+    # Label-mismatch: queued runs whose required_labels no online runner satisfies.
+    # Fetch queued entries with their run's required_labels in one join.
+    label_queued_rows = (
+        await session.execute(
+            select(RunQueueEntry.runner_pool_id, Run.required_labels)
+            .join(Run, Run.id == RunQueueEntry.run_id)
+            .where(
+                RunQueueEntry.status == "queued",
+                Run.required_labels.isnot(None),
+            )
+        )
+    ).all()
+    # Build online runner capabilities per pool for O(1) lookup.
+    online_caps_by_pool: dict[str, list[dict]] = {}
+    for r in runners:
+        if r.status in ("online", "busy"):
+            online_caps_by_pool.setdefault(r.pool_id, []).append(
+                r.capabilities or {}
+            )
+    label_mismatch_by_pool: dict[str, int] = {}
+    for pid, req_labels in label_queued_rows:
+        if not req_labels or pid is None:
+            continue
+        caps_list = online_caps_by_pool.get(pid, [])
+        satisfiable = any(
+            all(caps.get(k) == v for k, v in req_labels.items())
+            for caps in caps_list
+        )
+        if not satisfiable:
+            label_mismatch_by_pool[pid] = label_mismatch_by_pool.get(pid, 0) + 1
+
     # 24h success rate per pool.
     cutoff = now - timedelta(hours=24)
     run_rows = (
@@ -199,6 +232,7 @@ async def runner_fleet_health(
                 runner_count=len(prunners),
                 success_24h=(succeeded / finished) if finished else None,
                 dispatcher_reachable=pool.provider in live,
+                label_mismatch_queued=label_mismatch_by_pool.get(pool.id, 0),
             )
         )
 
@@ -232,8 +266,27 @@ async def runner_fleet_health(
 # ---------------------------------------------------------------------------
 
 
+def _extract_aws_secret(pool: RunnerPool, provider_config: dict) -> dict:
+    """Pop aws_secret_access_key from provider_config and store it encrypted.
+
+    Also re-encrypts the migration sentinel (plaintext prefixed with
+    ``__migrated__``) written by migration 0068 when Fernet key wasn't
+    available at migration time.
+    """
+    secret = provider_config.pop("aws_secret_access_key", None)
+    if secret is not None:
+        pool.aws_secret_key_enc = encrypt_data({"key": secret})
+    elif (pool.aws_secret_key_enc or "").startswith("__migrated__"):
+        plaintext = pool.aws_secret_key_enc[len("__migrated__"):]
+        pool.aws_secret_key_enc = encrypt_data({"key": plaintext})
+    return provider_config
+
+
 def _pool_info(pool: RunnerPool, runners: list[Runner]) -> RunnerPoolInfo:
     online = sum(1 for r in runners if r.status in ("online", "busy"))
+    ghost_count = sum(
+        1 for r in runners if r.last_seen_at is None and r.status == "offline"
+    )
     return RunnerPoolInfo(
         id=pool.id,
         name=pool.name,
@@ -242,6 +295,8 @@ def _pool_info(pool: RunnerPool, runners: list[Runner]) -> RunnerPoolInfo:
         max_concurrent_runs=pool.max_concurrent_runs,
         runner_count=len(runners),
         online_count=online,
+        ghost_count=ghost_count,
+        aws_secret_configured=pool.aws_secret_key_enc is not None,
         created_at=pool.created_at,
         updated_at=pool.updated_at,
     )
@@ -260,6 +315,8 @@ def _runner_info(runner: Runner) -> RunnerInfo:
         cached_env_ids=runner.cached_env_ids or [],
         created_at=runner.created_at,
         updated_at=runner.updated_at,
+        token_expires_at=runner.token_expires_at,
+        ssh_host=runner.ssh_host,
     )
 
 
@@ -296,12 +353,14 @@ async def create_runner_pool(
     from app.services.licensing import enforce_resource_cap
     await enforce_resource_cap(session, "runners")
 
+    cfg = dict(body.provider_config or {})
     pool = RunnerPool(
         name=body.name,
         provider=body.provider,
-        provider_config=body.provider_config,
+        provider_config=cfg,
         max_concurrent_runs=body.max_concurrent_runs,
     )
+    pool.provider_config = _extract_aws_secret(pool, cfg)
     session.add(pool)
     await session.commit()
     await session.refresh(pool)
@@ -337,7 +396,8 @@ async def update_runner_pool(
     if body.name is not None:
         pool.name = body.name
     if body.provider_config is not None:
-        pool.provider_config = body.provider_config
+        cfg = dict(body.provider_config)
+        pool.provider_config = _extract_aws_secret(pool, cfg)
     if body.max_concurrent_runs is not None:
         pool.max_concurrent_runs = body.max_concurrent_runs
     pool.updated_at = datetime.now(UTC)
@@ -476,7 +536,7 @@ async def create_registration_token(
     await session.commit()
     await session.refresh(runner)
 
-    ttl = 86_400  # 24 hours
+    ttl = settings.runner_token_ttl_days * 86_400
     token = create_payload_token(
         {
             "sub": runner.id,
@@ -489,6 +549,8 @@ async def create_registration_token(
     expires_at = datetime.fromtimestamp(
         datetime.now(UTC).timestamp() + ttl, tz=UTC
     )
+    runner.token_expires_at = expires_at
+    await session.commit()
     # Prefer the operator-configured public URL; fall back to the URL this
     # request came in on (correct in single-host setups). The web origin is
     # never used — a runner must reach the API directly, not the SPA.
@@ -546,6 +608,7 @@ async def ssh_onboard(
     await session.commit()
     await session.refresh(runner)
 
+    ssh_ttl = settings.runner_token_ttl_days * 86_400
     token = create_payload_token(
         {
             "sub": runner.id,
@@ -553,7 +616,7 @@ async def ssh_onboard(
             "org_id": runner.org_id,
             "kind": "runner_registration",
         },
-        ttl_seconds=86_400,
+        ttl_seconds=ssh_ttl,
     )
 
     try:
@@ -576,6 +639,9 @@ async def ssh_onboard(
             "passphrase": body.passphrase,
             "use_systemd": body.use_systemd,
         }
+    )
+    runner.token_expires_at = datetime.fromtimestamp(
+        datetime.now(UTC).timestamp() + ssh_ttl, tz=UTC
     )
     await session.commit()
 
@@ -948,3 +1014,223 @@ async def cancel_batch(
     batch.finished_at = datetime.now(UTC)
     await session.commit()
     return {"batch_id": batch_id, "cancelled_runs": cancelled}
+
+
+# ---------------------------------------------------------------------------
+# Drain mode
+# ---------------------------------------------------------------------------
+
+_restart_attempts: dict[str, list[float]] = {}
+_RESTART_WINDOW_SECS = 600  # 10 minutes
+_RESTART_MAX = 3
+
+
+def _check_restart_rate(runner_id: str) -> None:
+    import time
+
+    now = time.monotonic()
+    attempts = [
+        t for t in _restart_attempts.get(runner_id, []) if now - t < _RESTART_WINDOW_SECS
+    ]
+    if len(attempts) >= _RESTART_MAX:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"Too many restarts: max {_RESTART_MAX} per {_RESTART_WINDOW_SECS // 60} minutes",
+        )
+    attempts.append(now)
+    _restart_attempts[runner_id] = attempts
+
+
+@router.post(
+    "/{pool_id}/runners/{runner_id}/drain",
+    response_model=RunnerInfo,
+    dependencies=[Depends(require_permission("runner_pool:write"))],
+)
+async def drain_runner(
+    pool_id: str,
+    runner_id: str,
+    body: DrainRequest,
+    session: AsyncSession = Depends(get_session),
+) -> RunnerInfo:
+    """Toggle drain mode on a runner.
+
+    A draining runner is skipped by the dispatcher for new run assignments.
+    Once current_runs reaches 0, the runner transitions to ``offline``
+    automatically. Set ``draining: false`` to bring it back online immediately.
+    """
+    runner = await session.get(Runner, runner_id)
+    if runner is None or runner.pool_id != pool_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Runner not found")
+    if body.draining:
+        runner.status = "draining"
+    else:
+        # Bring back online only if the runner was previously reachable.
+        runner.status = "online" if runner.last_seen_at is not None else "offline"
+    runner.updated_at = datetime.now(UTC)
+    await session.commit()
+    await session.refresh(runner)
+    return _runner_info(runner)
+
+
+# ---------------------------------------------------------------------------
+# SSH restart
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{pool_id}/runners/{runner_id}/restart",
+    response_model=dict,
+    dependencies=[Depends(require_permission("runner_pool:write"))],
+)
+async def restart_runner(
+    pool_id: str,
+    runner_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """SSH into a previously onboarded runner and restart the noodle-runner service.
+
+    Requires that SSH credentials were persisted during onboarding.
+    Rate-limited to 3 attempts per 10 minutes per runner.
+    """
+    from app.services.crypto import decrypt_data
+    from app.services.ssh_onboard import onboard_restart
+
+    runner = await session.get(Runner, runner_id)
+    if runner is None or runner.pool_id != pool_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Runner not found")
+    if not runner.ssh_credentials:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "No SSH credentials stored for this runner"
+        )
+    _check_restart_rate(runner_id)
+    creds = decrypt_data(runner.ssh_credentials)
+    try:
+        log = await onboard_restart(creds)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return {"runner_id": runner_id, "log": log}
+
+
+# ---------------------------------------------------------------------------
+# Ghost cleanup
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{pool_id}/cleanup-ghosts",
+    response_model=dict,
+    dependencies=[Depends(require_permission("runner_pool:write"))],
+)
+async def cleanup_pool_ghosts(
+    pool_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Delete ghost runners: offline rows that were never registered.
+
+    A ghost runner was created by a token mint but the agent never connected
+    (``last_seen_at IS NULL``) and the row is older than ``runner_ghost_ttl_hours``.
+    """
+    from app.services.ghost_cleanup import cleanup_ghost_runners
+
+    deleted = await cleanup_ghost_runners(session, pool_id=pool_id)
+    return {"pool_id": pool_id, "deleted": deleted}
+
+
+# ---------------------------------------------------------------------------
+# Run history / recent runs
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{pool_id}/run-history", response_model=list[RunHistoryBucket])
+async def runner_pool_run_history(
+    pool_id: str,
+    hours: int = Query(default=24, ge=1, le=168),
+    buckets: int = Query(default=24, ge=1, le=168),
+    session: AsyncSession = Depends(get_session),
+) -> list[RunHistoryBucket]:
+    """Time-bucketed run counts for a pool over the past N hours.
+
+    Returns ``buckets`` equally-sized intervals. Uses Python-side bucketing
+    for SQLite compatibility (no ``date_trunc`` required).
+    """
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(hours=hours)
+    bucket_secs = (hours * 3600) / buckets
+
+    rows = (
+        await session.execute(
+            select(Run.status, Run.finished_at, Run.started_at)
+            .where(
+                Run.runner_pool_id == pool_id,
+                Run.finished_at >= cutoff,
+                Run.status.in_(("success", "error")),
+            )
+        )
+    ).all()
+
+    result: list[dict] = [
+        {
+            "bucket_start": cutoff + timedelta(seconds=i * bucket_secs),
+            "success": 0,
+            "error": 0,
+            "durations": [],
+        }
+        for i in range(buckets)
+    ]
+
+    for run_status, finished_at, started_at in rows:
+        if finished_at is None:
+            continue
+        finished_aware = _as_utc(finished_at)
+        if finished_aware is None:
+            continue
+        offset_secs = (finished_aware - cutoff).total_seconds()
+        idx = min(int(offset_secs // bucket_secs), buckets - 1)
+        result[idx][run_status] = result[idx].get(run_status, 0) + 1
+        if started_at is not None:
+            started_aware = _as_utc(started_at)
+            if started_aware is not None:
+                result[idx]["durations"].append(
+                    (finished_aware - started_aware).total_seconds()
+                )
+
+    return [
+        RunHistoryBucket(
+            bucket_start=b["bucket_start"],
+            success=b["success"],
+            error=b["error"],
+            total=b["success"] + b["error"],
+            avg_duration_seconds=(
+                sum(b["durations"]) / len(b["durations"]) if b["durations"] else None
+            ),
+        )
+        for b in result
+    ]
+
+
+@router.get("/{pool_id}/recent-runs", response_model=list[dict])
+async def runner_pool_recent_runs(
+    pool_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    """Most recent N runs for a pool, for the runs table on the pool detail page."""
+    runs = (
+        await session.scalars(
+            select(Run)
+            .where(Run.runner_pool_id == pool_id)
+            .order_by(Run.started_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    return [
+        {
+            "id": r.id,
+            "workflow_id": r.workflow_id,
+            "status": r.status,
+            "runner_id": r.runner_id,
+            "started_at": r.started_at,
+            "finished_at": r.finished_at,
+        }
+        for r in runs
+    ]
