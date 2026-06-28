@@ -465,6 +465,8 @@ class Workflow(Base):
         String(20), nullable=True
     )  # synced | pending | conflict | error | null
     github_sync_conflict_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Generated test cases (see POST /workflows/{id}/generate-tests)
+    tests: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

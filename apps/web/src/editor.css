@@ -1036,6 +1036,7 @@
   border-radius: 2px;
 }
 .palette-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -9421,4 +9422,104 @@ select.field-input:hover {
   word-break: break-word;
   max-height: 300px;
   overflow-y: auto;
+}
+
+/* ---- Execution Timeline ---- */
+.exec-timeline {
+  flex-shrink: 0;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  background: var(--surface, #14171c);
+  border-top: 1px solid var(--line, rgba(255,255,255,0.08));
+  animation: et-up .2s ease-out;
+}
+@keyframes et-up {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.exec-timeline-bar {
+  flex: 1;
+  height: 5px;
+  display: flex;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--surface-2, #1f2329);
+  min-width: 60px;
+}
+.exec-timeline-seg {
+  height: 100%;
+  transition: width .3s ease;
+}
+.exec-timeline-ok { background: #4ade80; }
+.exec-timeline-run { background: #4c9eff; animation: et-pulse 1.2s ease-in-out infinite; }
+.exec-timeline-err { background: #f0747a; }
+.exec-timeline-pend { background: #4b5563; }
+@keyframes et-pulse {
+  0%, 100% { opacity: .6; }
+  50% { opacity: 1; }
+}
+.exec-timeline-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--ink-2, #9aa0a6);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.exec-timeline-cur {
+  color: var(--accent, #4c9eff);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.exec-timeline-err-text { color: #f0747a; }
+.exec-timeline-time {
+  font-family: monospace;
+  color: var(--ink-3, #6b7280);
+  min-width: 32px;
+  text-align: right;
+}
+
+/* ---- Palette Node Tooltips ---- */
+.pal-tip {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: -4px;
+  z-index: 30;
+  min-width: 200px;
+  max-width: 280px;
+  background: #1a1d25;
+  border: 1px solid var(--line, rgba(255,255,255,0.1));
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  pointer-events: none;
+  font-size: 12px;
+}
+.pal-tip-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: #e8eaed;
+}
+.pal-tip-desc {
+  font-size: 11px;
+  color: #9aa0a6;
+  margin-top: 4px;
+  line-height: 1.4;
+}
+.pal-tip-cat {
+  font-size: 10px;
+  color: #4c9eff;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+.pal-tip-ports {
+  font-size: 10px;
+  color: #6b7280;
+  margin-top: 4px;
+  font-family: monospace;
 }

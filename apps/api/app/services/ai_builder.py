@@ -16,6 +16,7 @@ import re
 import urllib.error
 import urllib.request
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -643,6 +644,83 @@ async def _call_llm_json(
     return _extract_json_object(str(text))
 
 
+async def _call_llm_simple(
+    prompt: str,
+    system: str = "",
+) -> dict[str, Any] | None:
+    """Simplified LLM call for explain/refine/test features.
+
+    Resolves the provider from environment variables only (no session/workflow
+    context needed). Returns None when no provider is configured or the call
+    fails — callers always have a fallback path.
+    """
+    if not _llm_configured():
+        return None
+    provider = (os.getenv("NOODLE_AI_PROVIDER") or "").strip().lower()
+    model = os.getenv("NOODLE_AI_MODEL") or ""
+    api_key = ""
+
+    if provider == "anthropic" or (not provider and os.getenv("ANTHROPIC_API_KEY")):
+        provider = "anthropic"
+        api_key = os.getenv("ANTHROPIC_API_KEY") or ""
+        model = model or "claude-3-5-haiku-latest"
+    elif provider == "openai" or (not provider and os.getenv("OPENAI_API_KEY")):
+        provider = "openai"
+        api_key = os.getenv("OPENAI_API_KEY") or ""
+        model = model or "gpt-4.1-mini"
+    else:
+        return None
+
+    if not api_key:
+        return None
+
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": prompt},
+    ]
+
+    try:
+        if provider == "anthropic":
+            payload = {
+                "model": model,
+                "max_tokens": 3000,
+                "temperature": 0.1,
+                "system": system,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            raw = await asyncio.to_thread(
+                _post_json,
+                "https://api.anthropic.com/v1/messages",
+                {
+                    "content-type": "application/json",
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                },
+                payload,
+            )
+            chunks = raw.get("content") or []
+            text = "".join(str(chunk.get("text") or "") for chunk in chunks if isinstance(chunk, dict))
+            return _extract_json_object(text)
+
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"},
+        }
+        raw = await asyncio.to_thread(
+            _post_json,
+            "https://api.openai.com/v1/chat/completions",
+            {"content-type": "application/json", "authorization": f"Bearer {api_key}"},
+            payload,
+        )
+        choices = raw.get("choices") or []
+        text = choices[0].get("message", {}).get("content", "") if choices else ""
+        return _extract_json_object(str(text))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _current_or_workflow_graph(
     body: AiWorkflowDraftRequest, workflow: Workflow | None
 ) -> WorkflowGraph | None:
@@ -1081,6 +1159,15 @@ async def build_workflow_draft(
     environment_id = workflow.environment_id if workflow is not None else None
     current_graph = _current_or_workflow_graph(body, workflow)
 
+    # Multi-turn refinement — bypass the normal LLM/fallback pipeline
+    if body.mode == "refine":
+        return await _refine_workflow(
+            prompt=body.prompt,
+            current_graph=current_graph.model_dump() if current_graph is not None else None,
+            conversation_history=body.conversation_history or [],
+            target_node_ids=body.target_node_ids or [],
+        )
+
     llm_result, fallback_reason = await _try_llm_result(
         session,
         body=body,
@@ -1110,3 +1197,368 @@ async def build_workflow_draft(
         focus_node_id=result.focus_node_id,
         planner=result.planner,
     )
+
+
+# ---------------------------------------------------------------------------
+# Feature 1: Standalone Explain Workflow
+# ---------------------------------------------------------------------------
+
+
+async def explain_workflow(graph: dict) -> dict:
+    """Generate a natural-language explanation of a workflow graph.
+
+    Uses the LLM if available, falls back to a template-based explanation
+    built from the node registry metadata and graph structure.
+    """
+    nodes = graph.get("nodes", [])
+    edges = graph.get("edges", [])
+    if not nodes:
+        return {
+            "explanation": "This workflow is empty — it has no nodes yet.",
+            "nodes_summary": [],
+            "data_flow": "No data flow.",
+            "assumptions": [],
+        }
+
+    # Build adjacency for data-flow analysis
+    node_map = {n["id"]: n for n in nodes if isinstance(n, dict)}
+    sources: defaultdict = defaultdict(list)
+    for e in (e for e in edges if isinstance(e, dict)):
+        src = e.get("source", "")
+        tgt = e.get("target", "")
+        if src and tgt:
+            sources[tgt].append(src)
+
+    # Try LLM first
+    try:
+        llm_result = await _call_llm_simple(
+            _build_explain_prompt(nodes, edges, node_map),
+            system="You explain workflow graphs clearly and concisely.",
+        )
+        if llm_result and isinstance(llm_result, dict):
+            return {
+                "explanation": str(llm_result.get("explanation", "")),
+                "nodes_summary": llm_result.get("nodes_summary", []),
+                "data_flow": str(llm_result.get("data_flow", "")),
+                "assumptions": llm_result.get("assumptions", []),
+            }
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Deterministic fallback
+    return _fallback_explain(nodes, edges, node_map, sources)
+
+
+def _build_explain_prompt(nodes: list, edges: list, node_map: dict) -> str:
+    node_descriptions = []
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        nid = n.get("id", "")
+        ntype = n.get("type", "")
+        ninfo = _NODE_REGISTRY.get(ntype, {})
+        node_descriptions.append(
+            f"  - {nid} ({ntype}): {ninfo.get('description', 'No description')}"
+        )
+    edge_descriptions = []
+    for e in edges:
+        if not isinstance(e, dict):
+            continue
+        edge_descriptions.append(
+            f"  {e.get('source','')} → {e.get('target','')}"
+        )
+    return (
+        "Explain this workflow graph in clear English. "
+        "Describe what triggers it, what each node does, "
+        "how data flows between nodes, and any assumptions.\n\n"
+        "Nodes:\n" + "\n".join(node_descriptions) + "\n\n"
+        "Edges:\n" + "\n".join(edge_descriptions) + "\n\n"
+        "Respond as JSON: {explanation, nodes_summary: [{id, type, purpose}], "
+        "data_flow, assumptions: [string]}"
+    )
+
+
+def _fallback_explain(
+    nodes: list,
+    edges: list,
+    node_map: dict,
+    sources: dict[str, list[str]],
+) -> dict:
+    """Template-based explanation when no LLM is available."""
+    trigger_nodes = []
+    action_nodes = []
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        ntype = n.get("type", "")
+        ninfo = _NODE_REGISTRY.get(ntype, {})
+        name = n.get("name") or ninfo.get("name") or ntype
+        if "trigger" in ntype:
+            trigger_nodes.append(name)
+        else:
+            action_nodes.append(name)
+
+    explanations_parts = []
+    if trigger_nodes:
+        explanations_parts.append(
+            f"This workflow is triggered by: {', '.join(trigger_nodes)}."
+        )
+    if action_nodes:
+        explanations_parts.append(
+            f"It processes data through: {', '.join(action_nodes)}."
+        )
+
+    explanation = " ".join(explanations_parts) if explanations_parts else "This workflow has no recognizable trigger or action nodes."
+
+    data_flow_parts = []
+    for tgt_id, src_ids in sources.items():
+        for source_id in src_ids:
+            src_node = node_map.get(source_id, {})
+            tgt_node = node_map.get(tgt_id, {})
+            data_flow_parts.append(
+                f"Data flows from {src_node.get('name', source_id)} to {tgt_node.get('name', tgt_id)}"
+            )
+
+    return {
+        "explanation": explanation,
+        "nodes_summary": [
+            {
+                "id": n.get("id", ""),
+                "type": n.get("type", ""),
+                "purpose": _NODE_REGISTRY.get(n.get("type", ""), {}).get("description", "Unknown"),
+            }
+            for n in nodes if isinstance(n, dict)
+        ],
+        "data_flow": ". ".join(data_flow_parts) if data_flow_parts else "No edges defined.",
+        "assumptions": [],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Feature 2: Multi-Turn AI Refinement
+# ---------------------------------------------------------------------------
+
+
+async def _refine_workflow(
+    prompt: str,
+    current_graph: dict | None,
+    conversation_history: list[dict],
+    target_node_ids: list[str],
+) -> AiWorkflowDraftResponse:
+    """Refine specific parts of an existing workflow based on conversation."""
+    if not current_graph or not current_graph.get("nodes"):
+        # No existing graph — generate a fresh draft from the prompt
+        fallback = _fallback_draft(prompt)
+        return AiWorkflowDraftResponse(
+            workflow_id="",
+            graph=fallback.graph,
+            mode="refine",
+            planner="llm",
+            explanation="No existing graph to refine; generated a fresh draft.",
+            change_summary=fallback.change_summary,
+            confidence=fallback.confidence,
+            missing_credentials=fallback.missing_credentials,
+            required_packages=fallback.required_packages,
+        )
+
+    # Try LLM first
+    try:
+        context = {
+            "current_graph": current_graph,
+            "node_registry": {k: v for k, v in _NODE_REGISTRY.items()},
+            "target_node_ids": target_node_ids,
+        }
+        llm_result = await _call_llm_simple(
+            _build_refine_prompt(prompt, context, conversation_history),
+            system="You modify specific parts of workflow graphs. Only change what the user asks.",
+        )
+        if llm_result and isinstance(llm_result, dict) and "graph" in llm_result:
+            graph = _coerce_graph(llm_result["graph"])
+            return AiWorkflowDraftResponse(
+                workflow_id="",
+                graph=graph,
+                mode="refine",
+                planner="llm",
+                explanation=llm_result.get("explanation", "Workflow refined."),
+                change_summary=llm_result.get("change_summary", []) if isinstance(llm_result.get("change_summary"), list) else [str(llm_result.get("change_summary", ""))] if llm_result.get("change_summary") else [],
+                confidence=llm_result.get("confidence", "medium"),
+                missing_credentials=llm_result.get("missing_credentials", []),
+                required_packages=llm_result.get("required_packages", []),
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Fallback: apply basic keyword-based modifications
+    return _fallback_refine(prompt, current_graph, target_node_ids)
+
+
+def _build_refine_prompt(prompt: str, context: dict, history: list[dict]) -> str:
+    sanitized_graph = _strip_credential_refs(context["current_graph"])
+    return (
+        f"Modify this workflow graph based on the user's request.\n\n"
+        f"USER REQUEST: {prompt}\n\n"
+        f"CURRENT GRAPH: {json.dumps(sanitized_graph)}\n\n"
+        f"AVAILABLE NODE TYPES: {json.dumps(list(context['node_registry'].keys()))}\n\n"
+        f"TARGET NODE IDS (only modify these): {context['target_node_ids']}\n\n"
+        f"CONVERSATION HISTORY: {json.dumps(history[-5:])}\n\n"
+        f"Return JSON: {{graph: {{nodes, edges}}, explanation, change_summary, "
+        f"confidence, missing_credentials, required_packages}}"
+    )
+
+
+def _fallback_refine(
+    prompt: str,
+    current_graph: dict,
+    target_node_ids: list[str],
+) -> AiWorkflowDraftResponse:
+    """Basic keyword-based modifications when no LLM is available."""
+    nodes = list(current_graph.get("nodes", []))
+    changes = []
+    prompt_lower = prompt.lower()
+
+    for i, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            continue
+        if target_node_ids and node.get("id") not in target_node_ids:
+            continue
+        params = dict(node.get("params", {}))
+        # Simple keyword-based param changes
+        if "channel" in prompt_lower and "slack" in str(node.get("type", "")).lower():
+            match = re.search(r'#[\w-]+', prompt)
+            if match:
+                params["channel"] = match.group(0)
+                changes.append(f"Updated Slack channel to {match.group(0)}")
+        if "email" in prompt_lower and "to" in prompt_lower:
+            match = re.search(r'[\w.+-]+@[\w-]+\.[\w.-]+', prompt)
+            if match:
+                params["to"] = match.group(0)
+                changes.append(f"Updated email recipient to {match.group(0)}")
+        nodes[i] = {**node, "params": params}
+
+    # Rebuild edges, preserving the existing ones
+    raw_edges = current_graph.get("edges", [])
+    edges = [Edge(**e) if isinstance(e, dict) else e for e in raw_edges]
+    # Rebuild nodes
+    rebuilt_nodes = []
+    for n in nodes:
+        if isinstance(n, dict):
+            rebuilt_nodes.append(GraphNode(**n))
+        else:
+            rebuilt_nodes.append(n)
+
+    graph = WorkflowGraph(
+        nodes=rebuilt_nodes,
+        edges=edges,
+    )
+    return AiWorkflowDraftResponse(
+        workflow_id="",
+        graph=graph,
+        mode="refine",
+        planner="deterministic_fallback",
+        explanation="Applied keyword-based refinements.",
+        change_summary=changes if changes else ["No changes detected."],
+        confidence="low",
+        missing_credentials=[],
+        required_packages=[],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Feature 3: Workflow Test Generation
+# ---------------------------------------------------------------------------
+
+
+async def generate_tests(graph: dict) -> list[dict]:
+    """Generate test cases for a workflow graph.
+
+    Returns a list of test objects with input_data, expected_outputs, and assertions.
+    """
+    nodes = graph.get("nodes", [])
+    if not nodes:
+        return []
+
+    # Find the trigger node to base test data on
+    trigger = None
+    for n in nodes:
+        if isinstance(n, dict) and "trigger" in n.get("type", ""):
+            trigger = n
+            break
+
+    try:
+        llm_result = await _call_llm_simple(
+            _build_test_gen_prompt(graph, trigger),
+            system="You generate test cases for workflow graphs. Be creative but realistic.",
+        )
+        if llm_result and isinstance(llm_result, dict) and "tests" in llm_result:
+            return llm_result["tests"]
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Fallback: generate basic test for trigger nodes
+    return _fallback_generate_tests(graph, trigger)
+
+
+def _strip_credential_refs(obj: Any) -> Any:
+    """Recursively strip credential references from a value before sending to LLM."""
+    if isinstance(obj, dict):
+        if obj.get("__noodle_credential__") or obj.get("credential_id"):
+            return {"__credential_placeholder__": True}
+        return {k: _strip_credential_refs(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_strip_credential_refs(v) for v in obj]
+    return obj
+
+
+def _build_test_gen_prompt(graph: dict, trigger: dict | None) -> str:
+    node_info = []
+    for n in graph.get("nodes", []):
+        if isinstance(n, dict):
+            sanitized_params = _strip_credential_refs(n.get("params", {}))
+            ninfo = _NODE_REGISTRY.get(n.get("type", ""), {})
+            node_info.append(
+                f"  {n.get('id')} ({n.get('type')}): params={sanitized_params}"
+            )
+    trigger_params = _strip_credential_refs(trigger.get("params", {})) if trigger else {}
+    trigger_info = f"Trigger: {trigger.get('type')} with params {trigger_params}" if trigger else "No trigger node found"
+    return (
+        f"Generate 3 test cases for this workflow graph.\n\n"
+        f"{trigger_info}\n\n"
+        f"All nodes:\n" + "\n".join(node_info) + "\n\n"
+        f"Respond as JSON: {{tests: [{{name, input_data: {{}}, expected_outputs: {{}}, assertions: [string]}}]}}"
+    )
+
+
+def _fallback_generate_tests(graph: dict, trigger: dict | None) -> list[dict]:
+    """Basic test generation without LLM."""
+    tests = []
+    if trigger:
+        trigger_type = trigger.get("type", "")
+        if "webhook" in trigger_type:
+            tests.append({
+                "name": "Valid webhook payload",
+                "input_data": {"body": {"test": True}, "headers": {"Content-Type": "application/json"}},
+                "expected_outputs": {},
+                "assertions": ["run status should be success"],
+            })
+        elif "schedule" in trigger_type:
+            tests.append({
+                "name": "Scheduled trigger execution",
+                "input_data": {"timestamp": "2026-01-01T00:00:00Z"},
+                "expected_outputs": {},
+                "assertions": ["run status should be success"],
+            })
+        else:
+            tests.append({
+                "name": "Manual trigger with default input",
+                "input_data": {"data": "test"},
+                "expected_outputs": {},
+                "assertions": ["run.status == 'success'"],
+            })
+    else:
+        tests.append({
+            "name": "Default execution",
+            "input_data": {},
+            "expected_outputs": {},
+            "assertions": ["run.status == 'success'"],
+        })
+    return tests

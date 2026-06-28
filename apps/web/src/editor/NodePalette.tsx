@@ -158,6 +158,28 @@ const PaletteItem = memo(function PaletteItem({
   const color = categoryColor(node.category);
   const badges = nodeBadges(node);
   const hasBrandIcon = isBrandIconName(node.icon);
+  const [showTip, setShowTip] = useState(false);
+  const tipTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (tipTimerRef.current !== null) {
+        clearTimeout(tipTimerRef.current);
+      }
+    };
+  }, []);
+
+  function handleMouseEnter(): void {
+    tipTimerRef.current = window.setTimeout(() => setShowTip(true), 300);
+  }
+
+  function handleMouseLeave(): void {
+    if (tipTimerRef.current !== null) {
+      clearTimeout(tipTimerRef.current);
+      tipTimerRef.current = null;
+    }
+    setShowTip(false);
+  }
+
   return (
     <div
       key={node.id}
@@ -168,7 +190,8 @@ const PaletteItem = memo(function PaletteItem({
         e.dataTransfer.effectAllowed = "move";
         onUsed(node.id);
       }}
-      title={node.description}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
       <span
         className={`palette-item-glyph${hasBrandIcon ? " has-brand-icon" : ""}`}
@@ -205,6 +228,14 @@ const PaletteItem = memo(function PaletteItem({
       >
         <Star size={13} weight={favorite ? "fill" : "regular"} />
       </button>
+      {showTip && (
+        <div className="pal-tip" role="tooltip">
+          <div className="pal-tip-name">{node.name}</div>
+          {node.description && <div className="pal-tip-desc">{node.description}</div>}
+          <div className="pal-tip-cat">{node.category}</div>
+          <div className="pal-tip-ports">In: {node.inputs.map((p) => p.name).join(", ") || "none"} | Out: {node.outputs.map((p) => p.name).join(", ") || "none"}</div>
+        </div>
+      )}
     </div>
   );
 });

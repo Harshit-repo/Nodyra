@@ -863,3 +863,51 @@ async def delete_workflow(
                     actor_email=actor.email if actor else None)
     await session.delete(workflow)
     await session.commit()
+
+
+@router.post(
+    "/{workflow_id}/explain",
+    dependencies=[Depends(require_permission("workflow:read"))],
+)
+async def explain_workflow(
+    workflow_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Return a natural-language explanation of the workflow graph."""
+    from app.services.ai_builder import explain_workflow as _explain
+
+    wf = await session.scalar(
+        select(Workflow)
+        .where(Workflow.id == workflow_id)
+        .options(selectinload(Workflow.versions))
+    )
+    if wf is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
+    graph = wf.draft_graph or {}
+    return await _explain(graph)
+
+
+@router.post(
+    "/{workflow_id}/generate-tests",
+    dependencies=[Depends(require_permission("workflow:write"))],
+)
+async def generate_workflow_tests(
+    workflow_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Generate test cases for a workflow using AI."""
+    from app.services.ai_builder import generate_tests as _gen_tests
+
+    wf = await session.scalar(
+        select(Workflow)
+        .where(Workflow.id == workflow_id)
+        .options(selectinload(Workflow.versions))
+    )
+    if wf is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
+    graph = wf.draft_graph or {}
+    tests = await _gen_tests(graph)
+    # Persist tests to the workflow
+    wf.tests = tests
+    await session.commit()
+    return {"tests": tests}

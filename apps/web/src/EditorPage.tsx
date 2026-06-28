@@ -9,6 +9,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { RunnerPoolSelect } from "./RunnerPoolSelect";
 import { Canvas } from "./editor/Canvas";
 import { ChatPanel } from "./editor/ChatPanel";
+import { ExecutionTimeline } from "./editor/ExecutionTimeline";
 import { CommandPalette } from "./editor/CommandPalette";
 import { FunctionsPanel } from "./editor/FunctionsPanel";
 import { Inspector } from "./editor/Inspector";
@@ -1575,6 +1576,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
               ) : null}
             </div>
             <PortDataViewer />
+            <ExecutionTimeline />
           </div>
           {sidecarOpen && id && <RunSidecar workflowId={id} />}
           <Inspector />

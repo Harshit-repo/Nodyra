@@ -1051,7 +1051,7 @@ class PinnedItem(BaseModel):
 class AiWorkflowDraftRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=4000)
     apply: bool = False
-    mode: str = Field(default="draft", pattern="^(draft|fix)$")
+    mode: str = Field(default="draft", pattern="^(draft|fix|refine)$")
     current_graph: WorkflowGraph | None = None
     failed_run_id: str | None = None
     failed_node_id: str | None = None
@@ -1062,6 +1062,9 @@ class AiWorkflowDraftRequest(BaseModel):
     # server's existing env/credential auto-resolution.
     planner_provider: str | None = Field(default=None, max_length=40)
     planner_model: str | None = Field(default=None, max_length=120)
+    # Multi-turn refinement (mode="refine")
+    conversation_history: list[dict] | None = None
+    target_node_ids: list[str] | None = None
 
 
 class AiWorkflowDraftResponse(BaseModel):
