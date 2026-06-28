@@ -19,9 +19,11 @@ import { ConfirmDialog } from "../ConfirmDialog";
 
 import { categoryColor } from "../categories";
 import { isBrandIconName, NodeIcon } from "../NodeIcon";
+import { asArtifactRef, formatBytes } from "./artifactValues";
 import { missingFor } from "./missingPackages";
 import { SdkModal } from "./SdkModal";
 import { isTriggerManifest, type NoodleNode, useEditor } from "./store";
+import { webhookAuthLabel } from "./node-details/webhookRules";
 import { useShallow } from "zustand/react/shallow";
 import { META_BAR_INPUT_ID } from "./store/drillSlice";
 import { useServerPlatform } from "../hooks/useServerPlatform";
@@ -182,6 +184,44 @@ const STATUS_GLYPH: Record<string, string> = {
   waiting: "…",
 };
 
+/** Compact one-line summary of an output value for inline node badges.
+ *  Pairs with valueSummary() in PortDataViewer but returns shorter text. */
+function compactOutputSummary(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "object") {
+    if (!Array.isArray(value)) {
+      const ref = asArtifactRef(value);
+      if (ref) return formatBytes(ref.size_bytes);
+    }
+    if (Array.isArray(value)) {
+      if (value.length === 0) return "empty";
+      if (
+        value.every(
+          (v) => v !== null && typeof v === "object" && !Array.isArray(v),
+        )
+      ) {
+        return `${value.length} row${value.length === 1 ? "" : "s"}`;
+      }
+      return `${value.length} item${value.length === 1 ? "" : "s"}`;
+    }
+    const keys = Object.keys(value as Record<string, unknown>);
+    if (keys.length === 0) return "empty";
+    return `${keys.length} key${keys.length === 1 ? "" : "s"}`;
+  }
+  if (typeof value === "string") {
+    if (value.length === 0) return "";
+    return `${value.length} char${value.length === 1 ? "" : "s"}`;
+  }
+  return "";
+}
+
+/** Compact token count for inline badges (e.g. "1.2K tokens"). */
+function formatTokenCount(total: number): string {
+  if (total >= 1_000_000) return `${(total / 1_000_000).toFixed(1)}M`;
+  if (total >= 1_000) return `${(total / 1_000).toFixed(1)}K`;
+  return String(total);
+}
+
 function stop(event: MouseEvent): void {
   event.stopPropagation();
 }
@@ -278,7 +318,7 @@ function NodeCardComponent({ id, data, selected }: NodeProps<NoodleNode>) {
   // F-07: combine all run-state selectors into one useShallow call so that
   // streaming run events only trigger a single re-render per NodeCard instead
   // of 4+ separate subscription callbacks.
-  const { runStatus, runMeta, runIteration, runChunk } = useEditor(
+  const { runStatus, runMeta, runIteration, runChunk, runOutput, dirtyFlag } = useEditor(
     useShallow((s) => {
       const rk = s.runKeyFor(id);
       return {
@@ -286,6 +326,8 @@ function NodeCardComponent({ id, data, selected }: NodeProps<NoodleNode>) {
         runMeta: s.runMeta[rk],
         runIteration: s.runIterations[rk],
         runChunk: s.runChunks[rk],
+        runOutput: s.runOutputs[rk],
+        dirtyFlag: s.dirty,
       };
     }),
   );
@@ -313,6 +355,20 @@ function NodeCardComponent({ id, data, selected }: NodeProps<NoodleNode>) {
         {runChunk.length > 400 ? `…${runChunk.slice(-400)}` : runChunk}
       </div>
     ) : null;
+  // Output data badges: compact summaries shown after a run when the workflow
+  // hasn't been edited since. Cleared when dirty so stale run data isn't shown.
+  const outputBadges = useMemo((): { count: number; summary: string } | null => {
+    if (dirtyFlag) return null;
+    if (runStatus !== "success" && runStatus !== "error") return null;
+    if (!runOutput || typeof runOutput !== "object") return null;
+    const record = runOutput as Record<string, unknown>;
+    const nonEmptyKeys = Object.keys(record).filter(
+      (k) => record[k] !== undefined && record[k] !== null,
+    );
+    if (nonEmptyKeys.length === 0) return null;
+    const mainVal = record["main"] ?? record[nonEmptyKeys[0]];
+    return { count: nonEmptyKeys.length, summary: compactOutputSummary(mainVal) };
+  }, [runOutput, runStatus, dirtyFlag]);
   const running = useEditor((s) => s.running);
   const agentActive = useEditor((s) => s.agentActive[id]);
   const isPinned = useEditor((s) => Boolean(s.pinned[id]));
@@ -338,11 +394,18 @@ function NodeCardComponent({ id, data, selected }: NodeProps<NoodleNode>) {
     );
   });
   const credentialSpecs = manifest.params.filter((param) => param.credential);
-  const hasInlineSecret = credentialSpecs.some((param) => {
+  // For webhook_trigger with auth_type="none", exclude auth_credentials to
+  // avoid false-positive missing-credential badges on the card.
+  const activeCredentialSpecs =
+    isWebhook &&
+    String(data.params.auth_type || "none").toLowerCase() === "none"
+      ? credentialSpecs.filter((s) => s.name !== "auth_credentials")
+      : credentialSpecs;
+  const hasInlineSecret = activeCredentialSpecs.some((param) => {
     const value = data.params[param.name];
     return typeof value === "string" && value.trim().length > 0;
   });
-  const hasMissingCredential = credentialSpecs.some((param) => {
+  const hasMissingCredential = activeCredentialSpecs.some((param) => {
     const value = data.params[param.name];
     return value === null || value === undefined || value === "";
   });
@@ -553,9 +616,55 @@ function NodeCardComponent({ id, data, selected }: NodeProps<NoodleNode>) {
           <Warning size={11} weight="bold" aria-hidden />
         </span>
       )}
-      {credentialSpecs.some((param) => isCredentialRef(data.params[param.name])) && (
+      {activeCredentialSpecs.some((param) => isCredentialRef(data.params[param.name])) && (
         <span title="Uses stored credential">
           <Lock size={11} weight="bold" aria-hidden />
+        </span>
+      )}
+      {isWebhook &&
+        (() => {
+          const webhookAuthType = String(
+            data.params.auth_type || "none",
+          ).toLowerCase();
+          if (webhookAuthType !== "none") {
+            return (
+              <span title={webhookAuthLabel(webhookAuthType)}>
+                <Lock size={11} weight="bold" aria-hidden />
+              </span>
+            );
+          }
+          return null;
+        })()}
+      {outputBadges && (
+        <>
+          <span
+            className="node-badge-status"
+            title={runStatus === "success" ? "Run succeeded" : "Run failed"}
+          >
+            {runStatus === "success" ? "✓" : "!"}
+          </span>
+          {outputBadges.count > 1 && (
+            <span className="node-badge-data" title={`${outputBadges.count} outputs with data`}>
+              {outputBadges.count}
+            </span>
+          )}
+          {outputBadges.summary && (
+            <span className="node-badge-data" title={outputBadges.summary}>
+              {outputBadges.summary}
+            </span>
+          )}
+        </>
+      )}
+      {runMeta?.tokenUsage && runStatus !== "running" && (
+        <span
+          className="node-token-badge"
+          title={
+            runMeta.tokenUsage.model
+              ? `${runMeta.tokenUsage.total_tokens} tokens · ${runMeta.tokenUsage.model}`
+              : `${runMeta.tokenUsage.total_tokens} tokens`
+          }
+        >
+          {formatTokenCount(runMeta.tokenUsage.total_tokens)} tok
         </span>
       )}
     </div>
@@ -868,9 +977,55 @@ function NodeCardComponent({ id, data, selected }: NodeProps<NoodleNode>) {
               <Warning size={11} weight="bold" aria-hidden />
             </span>
           )}
-          {credentialSpecs.some((param) => isCredentialRef(data.params[param.name])) && (
+          {activeCredentialSpecs.some((param) => isCredentialRef(data.params[param.name])) && (
             <span title="Uses stored credential">
               <Lock size={11} weight="bold" aria-hidden />
+            </span>
+          )}
+          {isWebhook &&
+            (() => {
+              const webhookAuthType = String(
+                data.params.auth_type || "none",
+              ).toLowerCase();
+              if (webhookAuthType !== "none") {
+                return (
+                  <span title={webhookAuthLabel(webhookAuthType)}>
+                    <Lock size={11} weight="bold" aria-hidden />
+                  </span>
+                );
+              }
+              return null;
+            })()}
+          {outputBadges && (
+            <>
+              <span
+                className="node-badge-status"
+                title={runStatus === "success" ? "Run succeeded" : "Run failed"}
+              >
+                {runStatus === "success" ? "✓" : "!"}
+              </span>
+              {outputBadges.count > 1 && (
+                <span className="node-badge-data" title={`${outputBadges.count} outputs with data`}>
+                  {outputBadges.count}
+                </span>
+              )}
+              {outputBadges.summary && (
+                <span className="node-badge-data" title={outputBadges.summary}>
+                  {outputBadges.summary}
+                </span>
+              )}
+            </>
+          )}
+          {runMeta?.tokenUsage && runStatus !== "running" && (
+            <span
+              className="node-token-badge"
+              title={
+                runMeta.tokenUsage.model
+                  ? `${runMeta.tokenUsage.total_tokens} tokens · ${runMeta.tokenUsage.model}`
+                  : `${runMeta.tokenUsage.total_tokens} tokens`
+              }
+            >
+              {formatTokenCount(runMeta.tokenUsage.total_tokens)} tok
             </span>
           )}
         </div>

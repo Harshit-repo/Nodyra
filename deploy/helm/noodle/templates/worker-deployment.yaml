@@ -29,5 +29,29 @@ spec:
             {{- include "noodle.env" . | nindent 12 }}
             - name: DISPATCH_ROLE
               value: "worker"
+            {{- if gt (int (.Values.worker.healthPort | default 0)) 0 }}
+            - name: WORKER_HEALTH_PORT
+              value: {{ .Values.worker.healthPort | quote }}
+            {{- end }}
+          livenessProbe:
+            exec:
+              command:
+                - pgrep
+                - -f
+                - app.worker_main
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
+            timeoutSeconds: 5
+          {{- if gt (int (.Values.worker.healthPort | default 0)) 0 }}
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: {{ .Values.worker.healthPort }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
+          {{- end }}
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}

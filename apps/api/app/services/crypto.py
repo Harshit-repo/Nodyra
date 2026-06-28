@@ -20,7 +20,7 @@ from app.config import settings
 
 _logger = logging.getLogger(__name__)
 
-_PBKDF2_ROUNDS = 200_000
+_PBKDF2_ROUNDS = 600_000  # OWASP 2025 recommendation for PBKDF2-HMAC-SHA256
 
 
 class CredentialDecryptError(RuntimeError):
@@ -227,33 +227,113 @@ def decrypt_credential(
 
 
 def hash_password(password: str) -> str:
+    """Hash a password with PBKDF2-HMAC-SHA256.
+
+    Format: ``rounds:salt_b64:digest_b64`` — rounds are stored in-band so
+    ``_PBKDF2_ROUNDS`` can be increased without breaking existing hashes.
+    """
     salt = os.urandom(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, _PBKDF2_ROUNDS)
-    return f"{base64.b64encode(salt).decode()}:{base64.b64encode(digest).decode()}"
+    return (
+        f"{_PBKDF2_ROUNDS}:"
+        f"{base64.b64encode(salt).decode()}:"
+        f"{base64.b64encode(digest).decode()}"
+    )
 
 
 def verify_password(password: str, stored: str) -> bool:
+    """Verify a password against a stored PBKDF2 hash.
+
+    Handles both the legacy ``salt:digest`` format (200k rounds implied) and the
+    current ``rounds:salt:digest`` format so existing passwords survive a rounds
+    increase.
+    """
     try:
-        salt_b64, digest_b64 = stored.split(":")
+        parts = stored.split(":")
+        if len(parts) == 3:
+            rounds_str, salt_b64, digest_b64 = parts
+            rounds = int(rounds_str)
+        else:
+            # Legacy format: salt:digest (200k rounds)
+            salt_b64, digest_b64 = parts
+            rounds = 200_000
         salt = base64.b64decode(salt_b64)
         expected = base64.b64decode(digest_b64)
     except (ValueError, TypeError):
         return False
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, _PBKDF2_ROUNDS)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, rounds)
     return hmac.compare_digest(digest, expected)
 
 
-def _sign(body: str) -> str:
+# ── JWT token functions (P1-2: standard JWT replaces self-rolled HMAC) ──────
+#
+# New tokens are standard HS256 JWTs with these claims:
+#   iss  = "noodle"
+#   aud  = "noodle-api"
+#   sub  = user_id (session) or purpose-specific (payload)
+#   iat  = issued-at (epoch seconds, float for sub-second revocation)
+#   exp  = expiry (epoch seconds)
+#   typ  = "session" | "oauth_state" | "runner_registration" | "k8s_run" | ...
+#
+# Legacy tokens use the format ``base64url(json).hex(HMAC)`` and are still
+# accepted during the transition period.  Remove the legacy path in a future
+# release once all tokens have cycled through their TTL.
+
+import jwt as _jwt  # PyJWT
+
+
+def _jwt_encode(payload: dict, ttl_seconds: float) -> str:
+    """Encode a payload as a standard HS256 JWT."""
+    now = time.time()
+    claims = {
+        **payload,
+        "iss": "noodle",
+        "aud": "noodle-api",
+        "iat": now,
+        "exp": now + ttl_seconds,
+    }
+    return _jwt.encode(
+        claims, settings.secret_key, algorithm="HS256", headers={"typ": "JWT"}
+    )
+
+
+def _jwt_decode(token: str, *, require_sub: bool = False) -> dict | None:
+    """Decode and verify a standard HS256 JWT.  Returns None on any failure.
+
+    When ``require_sub`` is True, the ``sub`` claim must be present.
+    Session tokens require it; payload tokens (OAuth state, runner
+    registration, etc.) do not.
+    """
+    required = ["exp", "iss"]
+    if require_sub:
+        required.append("sub")
+    try:
+        return _jwt.decode(
+            token,
+            settings.secret_key,
+            algorithms=["HS256"],
+            issuer="noodle",
+            audience="noodle-api",
+            options={"require": required},
+        )
+    except _jwt.PyJWTError:
+        return None
+
+
+# ── Legacy token support (transition period) ────────────────────────────────
+
+
+def _legacy_sign(body: str) -> str:
     return hmac.new(
         settings.secret_key.encode(), body.encode(), hashlib.sha256
     ).hexdigest()
 
 
-def _encode_body(payload: dict) -> str:
+def _legacy_encode_body(payload: dict) -> str:
     return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
 
 
-def _decode_body(body: str) -> dict | None:
+def _legacy_decode_body(body: str) -> dict | None:
     try:
         padded = body + "=" * (-len(body) % 4)
         return json.loads(base64.urlsafe_b64decode(padded))
@@ -261,79 +341,105 @@ def _decode_body(body: str) -> dict | None:
         return None
 
 
-def create_token(user_id: str, ttl_seconds: int | None = None) -> str:
-    ttl = ttl_seconds if ttl_seconds is not None else settings.auth_token_ttl_seconds
-    # ``typ`` discriminates a user *session* token from the other signed tokens
-    # minted with the same key (runner registration, OAuth state, k8s run).
-    # ``verify_token`` requires typ=="session" so a purpose token can never be
-    # replayed as a session credential through the auth gate (see TOK-1).
-    now = time.time()
-    # ``iat`` (issued-at, float epoch seconds) lets revocation invalidate every
-    # token minted before a per-user cutoff (User.sessions_valid_after) — see
-    # decode_session_token / current_user (C1). Sub-second resolution means a
-    # re-login moments after a "log out everywhere" reliably outlives the
-    # cutoff while the revoked token does not.
-    payload = {"sub": user_id, "iat": now, "exp": now + ttl, "typ": "session"}
-    body = _encode_body(payload)
-    return f"{body}.{_sign(body)}"
+def _legacy_verify_and_decode(body: str, signature: str) -> dict | None:
+    if not hmac.compare_digest(signature, _legacy_sign(body)):
+        return None
+    payload = _legacy_decode_body(body)
+    if payload is None or payload.get("exp", 0) < time.time():
+        return None
+    return payload
 
 
-def create_payload_token(payload: dict, ttl_seconds: int) -> str:
-    """Create a signed token carrying an arbitrary JSON payload."""
-    full = {**payload, "exp": int(time.time()) + ttl_seconds}
-    body = _encode_body(full)
-    return f"{body}.{_sign(body)}"
+def _is_legacy_token(token: str) -> bool:
+    """Heuristic: a legacy token has exactly one '.' with a 64-char hex suffix.
+    A JWT has two '.' separators."""
+    return token.count(".") == 1 and len(token.rsplit(".", 1)[1]) == 64
 
 
-def verify_token(token: str) -> str | None:
+def _try_legacy_decode_session(token: str) -> dict | None:
     try:
         body, signature = token.split(".", maxsplit=1)
     except ValueError:
         return None
-    if not hmac.compare_digest(signature, _sign(body)):
+    payload = _legacy_verify_and_decode(body, signature)
+    if payload is None or payload.get("typ") != "session":
         return None
-    payload = _decode_body(body)
-    if payload is None or payload.get("exp", 0) < time.time():
+    return payload
+
+
+# ── Public API (unchanged signatures) ───────────────────────────────────────
+
+
+def create_token(
+    user_id: str, ttl_seconds: int | None = None, *, client_ip: str = ""
+) -> str:
+    """Create a standard HS256 JWT session token (P1-2).
+
+    When ``client_ip`` is provided and ``auth_bind_token_to_ip`` is enabled,
+    the token carries an ``ip`` claim so it is only valid from that address
+    (P1-6).
+    """
+    ttl = float(
+        ttl_seconds if ttl_seconds is not None else settings.auth_token_ttl_seconds
+    )
+    claims: dict = {"sub": user_id, "typ": "session"}
+    if client_ip and settings.auth_bind_token_to_ip:
+        claims["ip"] = client_ip
+    return _jwt_encode(claims, ttl)
+
+
+def create_payload_token(payload: dict, ttl_seconds: int) -> str:
+    """Create a standard HS256 JWT carrying arbitrary claims (P1-2)."""
+    return _jwt_encode({**payload}, float(ttl_seconds))
+
+
+def verify_token(token: str, *, client_ip: str = "") -> str | None:
+    """Verify a session token and return ``sub`` (user_id), or None.
+
+    When ``client_ip`` is provided and the token carries an ``ip`` claim
+    (P1-6), the addresses must match.
+
+    Accepts both standard JWT and legacy-format tokens (P1-2).
+    """
+    if _is_legacy_token(token):
+        payload = _try_legacy_decode_session(token)
+        return payload.get("sub") if payload else None
+    payload = _jwt_decode(token, require_sub=True)
+    if payload is None:
         return None
-    # Only genuine session tokens authenticate a user. Tokens minted for other
-    # purposes (runner registration, OAuth state, k8s run) carry a different/no
-    # ``typ`` and must be decoded via ``decode_payload_token`` by their own
-    # handlers — never accepted here (TOK-1).
     if payload.get("typ") != "session":
+        return None
+    if client_ip and payload.get("ip") and payload["ip"] != client_ip:
         return None
     return payload.get("sub")
 
 
-def decode_session_token(token: str) -> dict | None:
-    """Verify a session token and return its full payload (``sub``, ``iat``).
+def decode_session_token(
+    token: str, *, client_ip: str = ""
+) -> dict | None:
+    """Verify a session token and return its full payload, or None.
 
-    Like :func:`verify_token` but returns the whole payload so callers can
-    enforce ``iat``-based revocation (C1). Returns ``None`` for tampered,
-    expired, or non-session tokens.
+    Accepts both standard JWT and legacy-format tokens (P1-2).
     """
-    try:
-        body, signature = token.split(".", maxsplit=1)
-    except ValueError:
+    if _is_legacy_token(token):
+        return _try_legacy_decode_session(token)
+    payload = _jwt_decode(token, require_sub=True)
+    if payload is None or payload.get("typ") != "session":
         return None
-    if not hmac.compare_digest(signature, _sign(body)):
-        return None
-    payload = _decode_body(body)
-    if payload is None or payload.get("exp", 0) < time.time():
-        return None
-    if payload.get("typ") != "session":
+    if client_ip and payload.get("ip") and payload["ip"] != client_ip:
         return None
     return payload
 
 
 def decode_payload_token(token: str) -> dict | None:
-    """Verify and decode a payload token, returning the full payload dict or None."""
-    try:
-        body, signature = token.split(".", maxsplit=1)
-    except ValueError:
-        return None
-    if not hmac.compare_digest(signature, _sign(body)):
-        return None
-    payload = _decode_body(body)
-    if payload is None or payload.get("exp", 0) < time.time():
-        return None
-    return payload
+    """Verify a purpose-specific token and return its payload, or None.
+
+    Accepts both standard JWT and legacy-format tokens (P1-2).
+    """
+    if _is_legacy_token(token):
+        try:
+            body, signature = token.split(".", maxsplit=1)
+        except ValueError:
+            return None
+        return _legacy_verify_and_decode(body, signature)
+    return _jwt_decode(token, require_sub=False)

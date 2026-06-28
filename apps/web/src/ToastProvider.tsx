@@ -1,3 +1,4 @@
+import { CheckCircle, XCircle, Info } from "@phosphor-icons/react";
 import {
   createContext,
   type ReactNode,
@@ -61,7 +62,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     (message: string, tone: ToastTone = "info", action?: ToastAction) => {
       const id = Date.now() + Math.floor(Math.random() * 1000);
       setToasts((current) => [...current, { id, tone, message, action }].slice(-4));
-      scheduleDismiss(id, tone);
+      if (tone !== "error") scheduleDismiss(id, tone);
     },
     [scheduleDismiss],
   );
@@ -96,9 +97,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               }
             }}
             onMouseLeave={() => {
-              if (!timers.current.has(toast.id)) scheduleDismiss(toast.id, toast.tone);
+              if (!timers.current.has(toast.id) && toast.tone !== "error")
+                scheduleDismiss(toast.id, toast.tone);
             }}
           >
+            <span className="toast-icon" aria-hidden="true">
+              {{
+                success: <CheckCircle size={16} weight="fill" />,
+                error: <XCircle size={16} weight="fill" />,
+                info: <Info size={16} weight="fill" />,
+              }[toast.tone] ?? null}
+            </span>
             <span>{toast.message}</span>
             {toast.action && (
               <button

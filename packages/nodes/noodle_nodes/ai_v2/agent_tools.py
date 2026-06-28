@@ -236,6 +236,64 @@ def _ast_security_check(code: str, allowed_modules: set[str]) -> None:
                 raise PermissionError(f"blocked attribute access: {nodeobj.attr}")
 
 
+_AGENT_CODE_WORKER_TEMPLATE = r'''
+import ast, json, sys, traceback
+from io import StringIO
+
+_code = {code!r}
+_max_output = {max_output!r}
+_allowed = {allowed!r}
+
+# Apply the same sandbox as the regular Code node.
+if _allowed is None:
+    from noodle.expr import _CodeValidator
+    from noodle_nodes.builtin import _SAFE_BUILTINS
+    try:
+        _tree = ast.parse(_code, mode="exec")
+        _CodeValidator().visit(_tree)
+    except (SyntaxError, ValueError) as _exc:
+        print(json.dumps({{"error": f"Code validation failed: {{_exc}}"}}))
+        sys.exit(1)
+    _namespace = {{"__builtins__": _SAFE_BUILTINS}}
+else:
+    import builtins as _builtins
+    try:
+        _tree = ast.parse(_code, mode="exec")
+    except SyntaxError as _exc:
+        print(json.dumps({{"error": f"SyntaxError: {{_exc}}"}}))
+        sys.exit(1)
+    _namespace = {{"__builtins__": vars(_builtins)}}
+
+_stdout = StringIO()
+_stderr = StringIO()
+_exit_code = 0
+try:
+    import contextlib
+    with contextlib.redirect_stdout(_stdout), contextlib.redirect_stderr(_stderr):
+        exec(compile(_tree, "<agent_code>", "exec"), _namespace)
+except SystemExit as _exc:
+    _exit_code = _exc.code if isinstance(_exc.code, int) else 1
+except Exception as _exc:
+    _exc.add_note(traceback.format_exc())
+    _stderr.write(str(_exc))
+    _exit_code = 1
+
+_stdout_s = _stdout.getvalue()
+_stderr_s = _stderr.getvalue()
+_truncated = False
+if len(_stdout_s) > _max_output:
+    _stdout_s, _truncated = _stdout_s[:_max_output], True
+if len(_stderr_s) > _max_output:
+    _stderr_s = _stderr_s[:_max_output]
+print(json.dumps({{
+    "stdout": _stdout_s,
+    "stderr": _stderr_s,
+    "exit_code": _exit_code,
+    "truncated": _truncated,
+}}))
+'''
+
+
 class CodeExecToolAdapter(ToolAdapter):
     """Runs Python/JS in an isolated subprocess with an AST pre-check."""
 
@@ -299,15 +357,44 @@ class CodeExecToolAdapter(ToolAdapter):
                     return json.dumps({"error": str(exc)})
             else:
                 # Blocklist mode: reject the dangerous module set from _CodeValidator.
+                # Validated here (defence-in-depth) AND inside the worker process.
                 import ast as _ast
-
                 from noodle.expr import _CodeValidator
                 try:
                     tree = _ast.parse(code)
                     _CodeValidator().visit(tree)
                 except (SyntaxError, ValueError) as exc:
                     return json.dumps({"error": f"Code validation failed: {exc}"})
-            argv = [sys.executable, "-c", code]
+
+            # E-02: The wrapper template injects _SAFE_BUILTINS (same sandboxed
+            # __import__ as the regular Code node) inside the subprocess.  For
+            # allowlist mode normal builtins are used — the AST allowlist gate
+            # is the security boundary.
+            _allowed_repr: str | None = None
+            if self._allowed is not None:
+                _allowed_repr = repr(frozenset(self._allowed))
+            worker_script = _AGENT_CODE_WORKER_TEMPLATE.format(
+                code=code,
+                max_output=self._max_output,
+                allowed=_allowed_repr,
+            )
+            try:
+                proc = subprocess.run(
+                    [sys.executable, "-c", worker_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired:
+                return json.dumps({"error": f"Code timed out after {timeout}s"})
+            if proc.stdout:
+                return proc.stdout.strip()
+            return json.dumps({
+                "stdout": "",
+                "stderr": proc.stderr or "",
+                "exit_code": proc.returncode,
+                "truncated": False,
+            })
         elif self._language == "javascript":
             node_bin = shutil.which("node")
             if not node_bin:

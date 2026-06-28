@@ -140,6 +140,7 @@ _PERMISSION_MIN_ROLE = {
     "artifact:write": "editor",
     "artifact:delete": "editor",
     "credential:read": "editor",
+    "credential:read_values": "admin",  # P1-24: decrypt credential values
     "credential:test": "editor",
     "credential:write": "admin",
     "environment:write": "admin",
@@ -194,21 +195,30 @@ def _token_is_revoked(user: User, payload: dict) -> bool:
 
 
 async def _user_from_session_token(
-    token: str, session: AsyncSession
+    token: str, session: AsyncSession, *, client_ip: str = ""
 ) -> User | None:
     """Resolve + validate a session token to a live, non-revoked user, or None.
 
     Returns ``None`` for any failure (bad/expired token, missing user, or a
     token revoked by ``sessions_valid_after``). Callers decide whether ``None``
     means 401 or anonymous.
+
+    P1-6: when ``client_ip`` is provided and the token carries an ``ip`` claim,
+    they must match.
     """
-    payload = decode_session_token(token)
+    payload = decode_session_token(token, client_ip=client_ip)
     if payload is None:
         return None
     user = await session.get(User, payload.get("sub"))
     if user is None:
         return None
     if _token_is_revoked(user, payload):
+        return None
+    # P1-3: gate unverified users when the setting is on
+    if (
+        settings.auth_require_verified_email
+        and not getattr(user, "email_verified", False)
+    ):
         return None
     return user
 

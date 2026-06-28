@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
-import { ApiError, errorMessage } from "./api";
+import { ApiError, errorMessage, userFriendlyError } from "./api";
 import { useConfirm } from "./ConfirmProvider";
 import { useEntitlements } from "./entitlements";
 import {
@@ -159,7 +159,7 @@ export function DeploymentsPage() {
       notify("Deployment run started.", "success");
       navigate(`/executions?run=${run_id}`);
     } catch (err) {
-      notify(`Could not start deployment. ${errorMessage(err)}`, "error");
+      notify(`Could not start deployment. ${userFriendlyError(err)}`, "error");
     } finally {
       setBusy(d.id, false);
     }
@@ -205,7 +205,7 @@ export function DeploymentsPage() {
         });
         return;
       }
-      notify(`Could not update deployment. ${errorMessage(err)}`, "error");
+      notify(`Could not update deployment. ${userFriendlyError(err)}`, "error");
     } finally {
       setBusy(d.id, false);
     }
@@ -221,7 +221,7 @@ export function DeploymentsPage() {
       await deleteDeploymentMutation.mutateAsync(d.id);
       notify("Deployment deleted.", "success");
     } catch (err) {
-      notify(`Could not delete deployment. ${errorMessage(err)}`, "error");
+      notify(`Could not delete deployment. ${userFriendlyError(err)}`, "error");
     }
   }
 

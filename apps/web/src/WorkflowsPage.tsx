@@ -3,10 +3,12 @@ import { useNavigate } from "react-router-dom";
 import {
   CaretLeft,
   CaretRight,
+  Check,
   DotsThreeVertical,
   FileText,
   Key,
   Lightning,
+  MagnifyingGlass,
   Palette,
   PencilSimple,
   PlayCircle,
@@ -19,7 +21,7 @@ import {
 } from "@phosphor-icons/react";
 import { keepPreviousData } from "@tanstack/react-query";
 
-import { api, errorMessage } from "./api";
+import { api, userFriendlyError } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Logo } from "./Logo";
 import {
@@ -176,7 +178,7 @@ function CreateModal({
       );
       onCreated(created.id);
     } catch (err) {
-      setError(String(err));
+      setError(userFriendlyError(err));
       setBusy(false);
     }
   }
@@ -248,6 +250,11 @@ export function WorkflowsPage() {
   const [modal, setModal] = useState(false);
   const [modalTemplateId, setModalTemplateId] = useState("blank");
   const [query, setQuery] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(searchInput), 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
   const [statusFilter, setStatusFilter] = useState("all");
   const [sort, setSort] = useState("updated");
   const [page, setPage] = useState(1);
@@ -268,7 +275,14 @@ export function WorkflowsPage() {
   const [viewMode, setViewMode] = useState<"grid" | "list">(() => {
     return safeGetItem("noodle-wf-view") === "list" ? "list" : "grid";
   });
+  const [onboardingDismissed, setOnboardingDismissed] = useState(
+    () => safeGetItem("noodle-onboarding-dismissed") === "1",
+  );
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
+  const [bulkDeleteBusy, setBulkDeleteBusy] = useState(false);
+  const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const [providerModalWorkflow, setProviderModalWorkflow] =
     useState<WorkflowSummary | null>(null);
   const navigate = useNavigate();
@@ -304,12 +318,12 @@ export function WorkflowsPage() {
   const credentials = credentialsQuery.data ?? null;
   const error =
     workflowsQuery.isError && !workflowsQuery.data
-      ? errorMessage(workflowsQuery.error)
+      ? userFriendlyError(workflowsQuery.error)
       : "";
   const providerRows = providerTriggersQuery.data ?? null;
   const providerError =
     providerTriggersQuery.isError && !providerTriggersQuery.data
-      ? errorMessage(providerTriggersQuery.error)
+      ? userFriendlyError(providerTriggersQuery.error)
       : "";
 
   function openCreate(templateId = "blank"): void {
@@ -318,6 +332,7 @@ export function WorkflowsPage() {
   }
 
   function resetFilters(): void {
+    setSearchInput("");
     setQuery("");
     setStatusFilter("all");
     setSort("updated");
@@ -330,7 +345,7 @@ export function WorkflowsPage() {
       notify("Workflow deleted.", "success");
       setPendingDelete(null);
     } catch (err) {
-      notify(`Could not delete workflow. ${errorMessage(err)}`, "error");
+      notify(`Could not delete workflow. ${userFriendlyError(err)}`, "error");
     } finally {
       setDeleteBusy(false);
     }
@@ -422,6 +437,59 @@ export function WorkflowsPage() {
     setProviderModalWorkflow(null);
   }
 
+  function toggleSelect(id: string, e: React.MouseEvent): void {
+    e.stopPropagation();
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function executeBulkDelete(): Promise<void> {
+    setBulkDeleteBusy(true);
+    try {
+      for (const id of selectedIds) {
+        await deleteWorkflow.mutateAsync(id);
+      }
+      notify(`Deleted ${selectedIds.size} workflow${selectedIds.size === 1 ? "" : "s"}.`, "success");
+      setPendingBulkDelete(false);
+      setSelectedIds(new Set());
+    } catch (err) {
+      notify(`Could not delete workflows. ${userFriendlyError(err)}`, "error");
+    } finally {
+      setBulkDeleteBusy(false);
+    }
+  }
+
+  async function bulkMoveToFolder(folderId: string | null): Promise<void> {
+    try {
+      for (const id of selectedIds) {
+        await updateWorkflow.mutateAsync({ id, patch: { folder_id: folderId } });
+      }
+      notify(`Moved ${selectedIds.size} workflow${selectedIds.size === 1 ? "" : "s"}.`, "success");
+      setBulkMoveOpen(false);
+      setSelectedIds(new Set());
+    } catch {
+      notify("Could not move workflows.", "error");
+    }
+  }
+
+  function bulkExport(): void {
+    const selected = visible.filter((wf) => selectedIds.has(wf.id));
+    const json = JSON.stringify(selected, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `noodle-workflows-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   // Inline dialogs in this always-mounted page: activate modal a11y only while
   // each is open (Esc, focus trap + return, dialog ARIA).
   const renameDialogRef = useRef<HTMLDivElement>(null);
@@ -457,6 +525,9 @@ export function WorkflowsPage() {
             new Date(a.last_run_started_at ?? 0).getTime()
           );
         }
+        if (sort === "created") {
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        }
         return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
       });
   }, [query, selectedFolderId, sort, statusFilter, workflows]);
@@ -487,6 +558,11 @@ export function WorkflowsPage() {
 
   useEffect(() => {
     setPage(1);
+  }, [query, selectedFolderId, sort, statusFilter]);
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setBulkMoveOpen(false);
   }, [query, selectedFolderId, sort, statusFilter]);
 
   useEffect(() => {
@@ -729,13 +805,16 @@ export function WorkflowsPage() {
 
         <div className="home-filters">
           <div className="home-search-row">
-            <input
-              className="field-input"
-              aria-label="Search workflows"
-              placeholder="Search workflows..."
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
+            <div className="search-input-wrap">
+              <MagnifyingGlass size={16} className="search-icon" aria-hidden="true" />
+              <input
+                className="field-input"
+                aria-label="Search workflows"
+                placeholder="Search workflows..."
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+              />
+            </div>
             <div className="wf-view-toggle" role="group" aria-label="View mode">
               <button
                 type="button"
@@ -755,30 +834,36 @@ export function WorkflowsPage() {
               </button>
             </div>
           </div>
-          <select
-            className="field-input"
-            aria-label="Filter workflows by status"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
-            <option value="all">All statuses</option>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
-            <option value="draft">Draft changes</option>
-            <option value="failed">Latest run failed</option>
-            <option value="running">Running</option>
-            <option value="provider_error">Trigger errors</option>
-          </select>
-          <select
-            className="field-input"
-            aria-label="Sort workflows"
-            value={sort}
-            onChange={(e) => setSort(e.target.value)}
-          >
-            <option value="updated">Updated</option>
-            <option value="last_run">Last run</option>
-            <option value="name">Name</option>
-          </select>
+          <div className="home-filter-chips">
+            {[
+              { label: "All", value: "all", cls: "chip-all" },
+              { label: "Active", value: "active", cls: "chip-active" },
+              { label: "Paused", value: "inactive", cls: "chip-paused" },
+              { label: "Draft", value: "draft", cls: "chip-draft" },
+              { label: "Error", value: "failed", cls: "chip-error" },
+            ].map((chip) => (
+              <button
+                key={chip.value}
+                type="button"
+                className={`home-status-chip ${chip.cls}${statusFilter === chip.value ? " is-selected" : ""}`}
+                aria-pressed={statusFilter === chip.value}
+                onClick={() => toggleStatusFilter(chip.value)}
+              >
+                {chip.label}
+              </button>
+            ))}
+            <select
+              className="field-input home-filter-sort"
+              aria-label="Sort workflows"
+              value={sort}
+              onChange={(e) => setSort(e.target.value)}
+            >
+              <option value="updated">Last updated</option>
+              <option value="name">Name A-Z</option>
+              <option value="created">Created (newest)</option>
+              <option value="last_run">Last run</option>
+            </select>
+          </div>
         </div>
 
         {error && (
@@ -804,7 +889,44 @@ export function WorkflowsPage() {
 
         {workflows && workflows.length === 0 && (
           <div className="empty-state">
-            <Logo size={44} />
+            {!onboardingDismissed && canWrite && (
+              <div className="onboarding-welcome">
+                <Logo size={48} />
+                <h1>Welcome to Noodle</h1>
+                <p className="muted">
+                  Build Python-native workflow automations with a visual editor.
+                  Connect nodes, run Python code, and deploy to production — all
+                  from your own infrastructure.
+                </p>
+                <div className="onboarding-steps">
+                  <div className="onboarding-step">
+                    <span className="onboarding-step-num">1</span>
+                    <strong>Create a workflow</strong>
+                    <span>Start from scratch or pick a template below.</span>
+                  </div>
+                  <div className="onboarding-step">
+                    <span className="onboarding-step-num">2</span>
+                    <strong>Add and connect nodes</strong>
+                    <span>Drag Python functions, webhooks, and AI agents from the palette.</span>
+                  </div>
+                  <div className="onboarding-step">
+                    <span className="onboarding-step-num">3</span>
+                    <strong>Run and deploy</strong>
+                    <span>Test on the canvas, then publish a version for production.</span>
+                  </div>
+                </div>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => {
+                    safeSetItem("noodle-onboarding-dismissed", "1");
+                    setOnboardingDismissed(true);
+                  }}
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+            <Logo size={onboardingDismissed || !canWrite ? 44 : 0} />
             <h2>No workflows yet</h2>
             <p className="muted">
               {canWrite ? "Create your first automation and start wiring Python nodes together." : "There are no workflows in this workspace yet."}
@@ -858,6 +980,14 @@ export function WorkflowsPage() {
                     aria-label={`Open workflow: ${wf.name}`}
                     onClick={() => navigate(`/workflows/${wf.id}`)}
                   />
+                  <button
+                    type="button"
+                    className={`wf-card-checkbox${selectedIds.has(wf.id) ? " is-checked" : ""}`}
+                    aria-label={`Select ${wf.name}`}
+                    onClick={(e) => toggleSelect(wf.id, e)}
+                  >
+                    {selectedIds.has(wf.id) && <Check size={14} weight="bold" />}
+                  </button>
                   <div className="wf-card-top">
                     <span className={`wf-status ${primaryStatus.className}`}>
                       {primaryStatus.label}
@@ -1024,6 +1154,26 @@ export function WorkflowsPage() {
               Reset filters
             </button>
           </div>
+        )}
+        {selectedIds.size > 0 && (
+          <div className="wf-bulk-bar">
+            <span className="wf-bulk-count">{selectedIds.size} selected</span>
+            <button type="button" className="btn btn-danger btn-sm" onClick={() => setPendingBulkDelete(true)}>
+              Delete
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setBulkMoveOpen(true)}>
+              Move to folder
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={bulkExport}>
+              Export
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setSelectedIds(new Set()); setBulkMoveOpen(false); }}>
+              Cancel
+            </button>
+          </div>
+        )}
+        {bulkMoveOpen && (
+          <div className="wf-bulk-backdrop" onClick={() => setBulkMoveOpen(false)} />
         )}
       </main>
 
@@ -1239,6 +1389,45 @@ export function WorkflowsPage() {
             </div>
           </div>
         </div>
+      )}
+      {bulkMoveOpen && (
+        <div className="wf-bulk-popover">
+          <strong>Move {selectedIds.size} to folder</strong>
+          <div className="wf-folder-picker">
+            <button
+              type="button"
+              className="wf-folder-pick-btn"
+              onClick={() => void bulkMoveToFolder(null)}
+            >
+              No folder
+            </button>
+            {folders.map((folder) => (
+              <button
+                key={folder.id}
+                type="button"
+                className="wf-folder-pick-btn"
+                onClick={() => void bulkMoveToFolder(folder.id)}
+              >
+                {folder.name}
+              </button>
+            ))}
+          </div>
+          {folders.length === 0 && <p className="muted">No folders yet.</p>}
+          <div className="modal-actions">
+            <button className="btn btn-ghost" onClick={() => setBulkMoveOpen(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      {pendingBulkDelete && (
+        <ConfirmDialog
+          title="Delete workflows"
+          body={`Delete ${selectedIds.size} workflow${selectedIds.size === 1 ? "" : "s"}? This cannot be undone.`}
+          busy={bulkDeleteBusy}
+          onCancel={() => setPendingBulkDelete(false)}
+          onConfirm={() => void executeBulkDelete()}
+        />
       )}
     </div>
   );

@@ -44,13 +44,19 @@ class EnvMasterKekProvider:
 # Swapped at startup for KMS/Vault deployments (Enterprise external_secrets).
 kek_provider: KekProvider = EnvMasterKekProvider()
 
-# Unwrapped KEKs cached per org for the process lifetime. Rotation calls
-# invalidate_kek_cache(); regular use never changes a KEK in place.
-_kek_cache: dict[str, bytes] = {}
+# Unwrapped KEKs cached per org.  Each entry carries a TTL so a KEK rotation
+# on another replica is picked up within _KEK_CACHE_TTL_SECONDS without needing
+# an explicit cross-process invalidation signal.
+_KEK_CACHE_TTL_SECONDS = 300.0  # 5 minutes
+_kek_cache: dict[str, tuple[bytes, float]] = {}
 
 
-def invalidate_kek_cache() -> None:
-    _kek_cache.clear()
+def invalidate_kek_cache(org_id: str | None = None) -> None:
+    """Clear cached KEKs.  When ``org_id`` is None the entire cache is cleared."""
+    if org_id is None:
+        _kek_cache.clear()
+    else:
+        _kek_cache.pop(org_id, None)
 
 
 async def get_org_kek(
@@ -63,8 +69,8 @@ async def get_org_kek(
     """
     if not org_id:
         return None
-    cached = _kek_cache.get(org_id)
-    if cached is not None:
+    cached, cached_at = _kek_cache.get(org_id, (None, 0.0))
+    if cached is not None and time.monotonic() - cached_at < _KEK_CACHE_TTL_SECONDS:
         return cached
     org = await session.get(Organization, org_id)
     if org is None:

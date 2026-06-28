@@ -5,13 +5,17 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from fastapi import HTTPException, status
 from sqlalchemy import func, select
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -523,7 +527,21 @@ async def dispatch_provider_webhook(
                 params=node_params,
             )
             handler_start = time.perf_counter()
-            event = await asyncio.to_thread(spec.handle_event, request, params)
+            try:
+                event = await asyncio.wait_for(
+                    asyncio.to_thread(spec.handle_event, request, params),
+                    timeout=30.0,  # P1-17: bounded handler to prevent hanging
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    "provider trigger handler timed out after 30s "
+                    "subscription_id=%s provider=%s",
+                    subscription_id, spec.provider_id,
+                )
+                raise HTTPException(
+                    status.HTTP_504_GATEWAY_TIMEOUT,
+                    "Provider event handler timed out",
+                )
             latency_ms = max(0, int((time.perf_counter() - handler_start) * 1000))
             row.last_event_at = datetime.now(UTC)
             await session.flush()

@@ -177,6 +177,63 @@ export function formatErrorDetail(detail: unknown): string {
   return JSON.stringify(detail);
 }
 
+const HTTP_FRIENDLY_STATUS: Record<number, string> = {
+  400: "The request was invalid. Check your input and try again.",
+  401: "Your session expired. Please sign in again.",
+  403: "You don't have permission for this action.",
+  404: "The requested resource was not found.",
+  409: "A conflict occurred. The resource may have been recently modified.",
+  422: "The submitted data was invalid. Please check your fields.",
+  429: "Too many requests. Please wait a moment and try again.",
+  500: "A server error occurred. Please try again or contact support.",
+  502: "The service is temporarily unavailable. Please try again shortly.",
+  503: "The service is temporarily unavailable. Please try again shortly.",
+};
+
+const TRACEBACK_PATTERNS = [
+  /Traceback\s*\(most recent call last\)/i,
+  /File\s+"[^"]*",\s*line\s+\d+/i,
+  /\n\s{2,}raise\s+/i,
+  /\n\w+Error:/i,
+];
+
+function looksLikeTraceback(text: string): boolean {
+  return TRACEBACK_PATTERNS.some((re) => re.test(text));
+}
+
+/**
+ * Translate any error into user-friendly text suitable for display in toasts and
+ * inline banners. Python tracebacks, raw HTTP status codes, and generic network
+ * failures are replaced with plain-language messages so non-developer operators
+ * can understand what went wrong and what to do next.
+ */
+export function userFriendlyError(err: unknown): string {
+  if (err instanceof ApiError) {
+    const statusMsg = HTTP_FRIENDLY_STATUS[err.status];
+    const detail = typeof err.detail === "string" ? err.detail : null;
+    if (statusMsg) {
+      if (detail && !looksLikeTraceback(detail)) {
+        return `${statusMsg} ${detail}`;
+      }
+      return statusMsg;
+    }
+    if (detail && !looksLikeTraceback(detail)) {
+      return detail;
+    }
+    if (looksLikeTraceback(String(err.detail ?? ""))) {
+      return "An unexpected error occurred. Please try again or contact support.";
+    }
+  }
+  if (err instanceof TypeError && err.message === "Failed to fetch") {
+    return "Could not reach the server. Check your connection and try again.";
+  }
+  const message = errorMessage(err);
+  if (looksLikeTraceback(message)) {
+    return "An unexpected error occurred. Please try again or contact support.";
+  }
+  return message;
+}
+
 /**
  * `fetch`, but a network-level failure (offline, DNS, CORS, server down)
  * — which rejects with a bare `TypeError: Failed to fetch` — is converted into
@@ -498,8 +555,8 @@ export const api = {
         body: JSON.stringify({ message, session_id: sessionId }),
     }),
   getRun: (runId: string) => request<RunInfo>(`/runs/${runId}`),
-  listRunArtifacts: (runId: string) =>
-    request<ArtifactInfo[]>(`/runs/${runId}/artifacts`),
+  listRunArtifacts: (runId: string, nodeId?: string) =>
+    request<ArtifactInfo[]>(`/runs/${runId}/artifacts${nodeId ? `?node_id=${encodeURIComponent(nodeId)}` : ""}`),
   getArtifact: (artifactId: string) =>
     request<ArtifactInfo>(`/artifacts/${artifactId}`),
   deleteArtifact: (artifactId: string) =>

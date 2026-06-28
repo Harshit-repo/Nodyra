@@ -51,6 +51,7 @@ from noodle.engine.validation import (
     _validate_connection_kinds,
     _validate_graph,
     _validate_input_kinds,
+    _validate_input_schemas,
     _validate_output_kinds,
 )
 
@@ -89,6 +90,7 @@ __all__ = [
     "_validate_connection_kinds",
     "_validate_graph",
     "_validate_input_kinds",
+    "_validate_input_schemas",
     "_validate_loop_regions",
     "_validate_output_kinds",
     "_worse_status",

@@ -197,6 +197,19 @@ async def import_workflow(
     except ImportError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
 
+    # Validate the imported graph structure before persisting.
+    from noodle.engine.validation import _validate_graph
+    from noodle.engine.types import GraphError
+    from noodle.sdk import registry as node_registry
+
+    try:
+        _validate_graph(graph, node_registry)
+    except GraphError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Invalid workflow graph: {exc}",
+        ) from exc
+
     graph_dict = graph.model_dump()
     env = await session.scalar(select(Environment).where(Environment.is_global.is_(True)).limit(1))
     env_id: str | None = env.id if env is not None else None

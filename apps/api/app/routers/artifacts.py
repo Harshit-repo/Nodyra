@@ -76,18 +76,26 @@ async def _get_artifact(session: AsyncSession, artifact_id: str) -> Artifact:
 
 @router.get("/runs/{run_id}/artifacts", response_model=list[ArtifactInfo])
 async def list_run_artifacts(
-    run_id: str, session: AsyncSession = Depends(get_session)
+    run_id: str,
+    node_id: str | None = None,
+    session: AsyncSession = Depends(get_session),
 ) -> list[ArtifactInfo]:
     if await session.get(Run, run_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
-    rows = (
-        await session.scalars(
-            select(Artifact)
-            .where(Artifact.run_id == run_id)
-            .order_by(Artifact.created_at, Artifact.name)
-        )
-    ).all()
-    return [_info(row) for row in rows]
+    q = select(Artifact).where(Artifact.run_id == run_id)
+    if node_id is not None:
+        q = q.where(Artifact.node_id == node_id)
+    # Fetch newest-first so the dedup dict keeps the latest version of each name.
+    rows = (await session.scalars(q.order_by(Artifact.created_at.desc()))).all()
+    seen: set[tuple[str | None, str]] = set()
+    unique: list[Artifact] = []
+    for row in rows:
+        key = (row.node_id, row.name)
+        if key not in seen:
+            seen.add(key)
+            unique.append(row)
+    unique.sort(key=lambda r: r.name)
+    return [_info(row) for row in unique]
 
 
 @router.get("/artifacts/{artifact_id}", response_model=ArtifactInfo)

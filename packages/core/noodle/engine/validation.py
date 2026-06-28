@@ -184,6 +184,35 @@ def _validate_input_kinds(
             )
 
 
+def _validate_input_schemas(
+    node_def: Any,
+    kwargs: dict[str, Any],
+    node_id: str,
+) -> None:
+    """Validate wired input values against their port's ``data_schema``.
+
+    When a port declares a JSON Schema, every value arriving on it is
+    validated before the node runs — catching type mismatches early with
+    a clear message instead of a cryptic downstream crash.
+    """
+    from jsonschema import ValidationError, validate
+
+    for port in node_def.manifest.inputs:
+        schema = getattr(port, "data_schema", None) or None
+        if schema is None or port.name not in kwargs:
+            continue
+        value = kwargs[port.name]
+        if value is None:
+            continue  # None = optional input; schema validation is skipped
+        try:
+            validate(instance=value, schema=schema)
+        except ValidationError as exc:
+            raise ValueError(
+                f"node '{node_id}' input '{port.name}' "
+                f"failed schema validation: {exc.message}"
+            ) from exc
+
+
 def _validate_output_kinds(
     node_def: Any,
     outputs: dict[str, Any],

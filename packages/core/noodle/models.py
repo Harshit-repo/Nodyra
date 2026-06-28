@@ -115,11 +115,18 @@ class NodeRole(StrEnum):
 
 
 class PortSpec(BaseModel):
-    """A named input or output port of a node."""
+    """A named input or output port of a node.
+
+    ``data_schema`` is an optional JSON Schema dict that the engine validates
+    wired input values against at execution time.  When set, every value
+    arriving on this port must satisfy the schema — mismatches produce a
+    clear error instead of a mysterious downstream crash.
+    """
 
     name: str
     description: str = ""
     data_kind: PortDataKind = PortDataKind.any
+    data_schema: dict | None = None
 
 
 class IntegrationOperationManifest(BaseModel):

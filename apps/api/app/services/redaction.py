@@ -15,27 +15,41 @@ from app.services.org_keys import decrypt_credential_for
 
 REDACTED = "***REDACTED***"
 
-# Process-local cache of decrypted credential values for substring redaction.
-# Decrypting every credential on every run start is otherwise O(N) Fernet ops
-# per run; this trades a small memory cost for skipping the rebuild on the hot
-# path. Mutation endpoints (credentials create/update/delete) call
-# ``invalidate_secret_cache()`` to drop the cache locally.
+# Per-org cache of decrypted credential values for substring redaction.
+# In multi-tenant mode the cache is keyed by org_id so a worker processing
+# a run for org-A never holds org-B's plaintext secrets in memory.
+#
+# Each entry is a (values, loaded_at) tuple.  The all-orgs fallback
+# ``load_secret_values`` is kept for callers that lack org context
+# (e.g. artifact downloads keyed solely by run_id), but new code should
+# prefer ``load_secret_values_for_org``.
+#
+# Mutation endpoints (credentials create/update/delete) call
+# ``invalidate_secret_cache()`` to drop the affected entry locally.
 #
 # Multi-replica safety net: ``SECRET_CACHE_TTL_SECONDS`` bounds how long a
 # rotated credential stays in another replica's cache before it's
 # re-decrypted from the DB. 60s caps the worst-case window where a freshly
 # rotated value could still slip through redaction on a sibling replica.
 SECRET_CACHE_TTL_SECONDS = 60.0
-_secret_cache: list[str] | None = None
-_secret_cache_loaded_at: float = 0.0
+_secret_cache: dict[str, tuple[list[str], float]] = {}
+_SECRET_CACHE_GLOBAL_KEY = "__all__"
 _secret_cache_lock = asyncio.Lock()
 
 
-def invalidate_secret_cache() -> None:
-    """Drop the cached secret values so the next call re-decrypts."""
-    global _secret_cache, _secret_cache_loaded_at
-    _secret_cache = None
-    _secret_cache_loaded_at = 0.0
+def invalidate_secret_cache(org_id: str | None = None) -> None:
+    """Drop cached secret values so the next call re-decrypts.
+
+    When ``org_id`` is None the entire cache (all orgs) is cleared.
+    Mutation endpoints pass the affected org so only one tenant's cache
+    is invalidated while other tenants stay warm.
+    """
+    global _secret_cache
+    if org_id is None:
+        _secret_cache.clear()
+    else:
+        _secret_cache.pop(org_id, None)
+        _secret_cache.pop(_SECRET_CACHE_GLOBAL_KEY, None)
 
 SENSITIVE_KEY_PARTS = (
     "api_key",
@@ -66,39 +80,74 @@ def _usable_secret(value: Any) -> str | None:
     return stripped
 
 
+async def _decrypt_credential_values(
+    session: AsyncSession, org_id: str | None = None
+) -> list[str]:
+    """Decrypt credential values, optionally scoped to one org.
+
+    When ``org_id`` is None all credentials across all orgs are loaded
+    (backward-compatible fallback).  Prefer ``load_secret_values_for_org``.
+    """
+    stmt = select(Credential)
+    if org_id is not None:
+        stmt = stmt.where(Credential.org_id == org_id)
+    result = await session.scalars(stmt)
+    values: list[str] = []
+    for credential in result.all():
+        data = await decrypt_credential_for(credential, session)
+        for value in data.values():
+            secret = _usable_secret(value)
+            if secret is not None:
+                values.append(secret)
+    return sorted(set(values), key=len, reverse=True)
+
+
 async def load_secret_values(session: AsyncSession) -> list[str]:
-    """Load known credential values for exact-match redaction.
+    """Load ALL known credential values (every org) for exact-match redaction.
+
+    **Prefer ``load_secret_values_for_org`` in multi-tenant deployments.**
+    This function is kept for callers that lack org context (e.g. artifact
+    downloads keyed solely by run_id).
 
     Returns a process-cached list. Mutation endpoints invalidate the cache so
-    new/changed/deleted credentials are picked up on the next call. The
-    cache also expires after ``SECRET_CACHE_TTL_SECONDS`` so a credential
-    rotated on another replica isn't redacted with the stale value forever.
+    new/changed/deleted credentials are picked up on the next call.
     """
-    global _secret_cache, _secret_cache_loaded_at
+    global _secret_cache
     now = time.monotonic()
-    if (
-        _secret_cache is not None
-        and now - _secret_cache_loaded_at < SECRET_CACHE_TTL_SECONDS
-    ):
-        return _secret_cache
+    key = _SECRET_CACHE_GLOBAL_KEY
+    entry = _secret_cache.get(key)
+    if entry is not None and now - entry[1] < SECRET_CACHE_TTL_SECONDS:
+        return entry[0]
     async with _secret_cache_lock:
-        if (
-            _secret_cache is not None
-            and now - _secret_cache_loaded_at < SECRET_CACHE_TTL_SECONDS
-        ):
-            return _secret_cache
-        result = await session.scalars(select(Credential))
-        values: list[str] = []
-        for credential in result.all():
-            data = await decrypt_credential_for(credential, session)
-            for value in data.values():
-                secret = _usable_secret(value)
-                if secret is not None:
-                    values.append(secret)
-        # Longest first avoids partially redacting a prefix before the full value.
-        _secret_cache = sorted(set(values), key=len, reverse=True)
-        _secret_cache_loaded_at = time.monotonic()
-        return _secret_cache
+        entry = _secret_cache.get(key)
+        if entry is not None and now - entry[1] < SECRET_CACHE_TTL_SECONDS:
+            return entry[0]
+        values = await _decrypt_credential_values(session)
+        _secret_cache[key] = (values, time.monotonic())
+        return values
+
+
+async def load_secret_values_for_org(
+    org_id: str, session: AsyncSession
+) -> list[str]:
+    """Load credential values for a single org for exact-match redaction.
+
+    In multi-tenant deployments this bounds the in-memory plaintext to the
+    org being served by the current request/run.  Cache is per-org with the
+    same TTL semantics as ``load_secret_values``.
+    """
+    global _secret_cache
+    now = time.monotonic()
+    entry = _secret_cache.get(org_id)
+    if entry is not None and now - entry[1] < SECRET_CACHE_TTL_SECONDS:
+        return entry[0]
+    async with _secret_cache_lock:
+        entry = _secret_cache.get(org_id)
+        if entry is not None and now - entry[1] < SECRET_CACHE_TTL_SECONDS:
+            return entry[0]
+        values = await _decrypt_credential_values(session, org_id=org_id)
+        _secret_cache[org_id] = (values, time.monotonic())
+        return values
 
 
 def redact_text(text: str, secret_values: Iterable[str] = ()) -> str:

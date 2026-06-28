@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
 import type { NodeVariableInfo } from "../types";
+import type { TokenUsage } from "./store";
+import { estimateCost, formatCost, shortModelLabel } from "./tokenCost";
 import {
   artifactDownloadUrl,
   artifactInlineUrl,
@@ -98,6 +100,47 @@ function formatCell(value: unknown): string {
 // pathological object would still freeze the main thread in `JSON.stringify`
 // and balloon the DOM — clamp the rendered text so the panel stays responsive.
 const MAX_JSON_CHARS = 100_000;
+
+// Virtualization thresholds for the interactive tree view:
+// - Strings longer than this get a "Show more" toggle.
+// - Per-level item count above this gets a "Show all N" expander.
+const TRUNCATE_STRING_LENGTH = 200;
+const MAX_ITEMS_PER_LEVEL = 50;
+
+/* ── Truncated long string with Show more toggle ── */
+
+function TruncatedJsonString({ text }: { text: string }): JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  if (expanded) {
+    return (
+      <>
+        <span className="json-tree-string">{JSON.stringify(text)}</span>
+        <button
+          type="button"
+          className="json-tree-toggle"
+          onClick={() => setExpanded(false)}
+        >
+          Show less
+        </button>
+      </>
+    );
+  }
+  const truncated = text.slice(0, TRUNCATE_STRING_LENGTH);
+  // Render as a JSON string with ellipsis and closing quote
+  const display = JSON.stringify(truncated).replace(/"$/, '…"');
+  return (
+    <>
+      <span className="json-tree-string">{display}</span>
+      <button
+        type="button"
+        className="json-tree-toggle"
+        onClick={() => setExpanded(true)}
+      >
+        Show more ({text.length.toLocaleString()} chars)
+      </button>
+    </>
+  );
+}
 
 export type CoerceTarget = "string" | "number" | "boolean" | "json";
 
@@ -222,10 +265,12 @@ function JsonTreeValue({
   value,
   path,
   dragPrefix,
+  depth,
 }: {
   value: unknown;
   path: (string | number)[];
   dragPrefix?: string;
+  depth: number;
 }): JSX.Element {
   const envelope = asTypedEnvelope(value);
   const artifact = asArtifactRef(value);
@@ -252,17 +297,12 @@ function JsonTreeValue({
       return <span className="json-tree-empty">[]</span>;
     }
     return (
-      <div className="json-tree-block">
-        {value.map((item, i) => (
-          <JsonTreeRow
-            key={i}
-            label={String(i)}
-            value={item}
-            path={[...path, i]}
-            dragPrefix={dragPrefix}
-          />
-        ))}
-      </div>
+      <JsonTreeValueArray
+        items={value}
+        path={path}
+        dragPrefix={dragPrefix}
+        depth={depth}
+      />
     );
   }
   if (isPlainObject(value)) {
@@ -271,23 +311,106 @@ function JsonTreeValue({
       return <span className="json-tree-empty">{"{}"}</span>;
     }
     return (
-      <div className="json-tree-block">
-        {entries.map(([k, v]) => (
-          <JsonTreeRow
-            key={k}
-            label={k}
-            value={v}
-            path={[...path, k]}
-            dragPrefix={dragPrefix}
-          />
-        ))}
-      </div>
+      <JsonTreeValueObject
+        entries={entries}
+        path={path}
+        dragPrefix={dragPrefix}
+        depth={depth}
+      />
     );
+  }
+  // Primitive value — truncate long strings
+  if (typeof value === "string" && value.length > TRUNCATE_STRING_LENGTH) {
+    return <TruncatedJsonString text={value} />;
   }
   return (
     <span className={`json-tree-prim ${primitiveClass(value)}`}>
       {value === null ? "null" : JSON.stringify(value)}
     </span>
+  );
+}
+
+/* ── Array block with per-level item limit ── */
+
+function JsonTreeValueArray({
+  items,
+  path,
+  dragPrefix,
+  depth,
+}: {
+  items: unknown[];
+  path: (string | number)[];
+  dragPrefix?: string;
+  depth: number;
+}): JSX.Element {
+  const [showAll, setShowAll] = useState(false);
+  const limited = !showAll && items.length > MAX_ITEMS_PER_LEVEL;
+  const displayed = limited ? items.slice(0, MAX_ITEMS_PER_LEVEL) : items;
+
+  return (
+    <div className="json-tree-block">
+      {displayed.map((item, i) => (
+        <JsonTreeRow
+          key={i}
+          label={String(i)}
+          value={item}
+          path={[...path, i]}
+          dragPrefix={dragPrefix}
+          depth={depth + 1}
+        />
+      ))}
+      {limited && (
+        <button
+          type="button"
+          className="json-tree-expand-all"
+          onClick={() => setShowAll(true)}
+        >
+          Show all {items.length} items
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ── Object block with per-level key limit ── */
+
+function JsonTreeValueObject({
+  entries,
+  path,
+  dragPrefix,
+  depth,
+}: {
+  entries: [string, unknown][];
+  path: (string | number)[];
+  dragPrefix?: string;
+  depth: number;
+}): JSX.Element {
+  const [showAll, setShowAll] = useState(false);
+  const limited = !showAll && entries.length > MAX_ITEMS_PER_LEVEL;
+  const displayed = limited ? entries.slice(0, MAX_ITEMS_PER_LEVEL) : entries;
+
+  return (
+    <div className="json-tree-block">
+      {displayed.map(([k, v]) => (
+        <JsonTreeRow
+          key={k}
+          label={k}
+          value={v}
+          path={[...path, k]}
+          dragPrefix={dragPrefix}
+          depth={depth + 1}
+        />
+      ))}
+      {limited && (
+        <button
+          type="button"
+          className="json-tree-expand-all"
+          onClick={() => setShowAll(true)}
+        >
+          Show all {entries.length} items
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -420,16 +543,47 @@ function JsonTreeRow({
   value,
   path,
   dragPrefix,
+  depth,
 }: {
   label: string;
   value: unknown;
   path: (string | number)[];
   dragPrefix?: string;
+  depth: number;
 }) {
+  const expandable =
+    (Array.isArray(value) && value.length > 0) ||
+    (isPlainObject(value) &&
+      Object.keys(value as Record<string, unknown>).length > 0);
+  const [collapsed, setCollapsed] = useState(depth >= 2);
   const draggable = Boolean(dragPrefix);
   const expr = dragPrefix ? buildExpression(dragPrefix, path) : undefined;
+
+  let summary: string | null = null;
+  if (collapsed && expandable) {
+    if (Array.isArray(value)) {
+      summary = `[${value.length} item${value.length !== 1 ? "s" : ""}]`;
+    } else {
+      const keys = Object.keys(value as Record<string, unknown>);
+      summary = `{${keys.length} key${keys.length !== 1 ? "s" : ""}}`;
+    }
+  }
+
   return (
     <div className="json-tree-row">
+      {expandable ? (
+        <button
+          type="button"
+          className="json-tree-twist"
+          onClick={() => setCollapsed((c) => !c)}
+          aria-label={collapsed ? "Expand" : "Collapse"}
+          aria-expanded={!collapsed}
+        >
+          {collapsed ? "▸" : "▾"}
+        </button>
+      ) : (
+        <span className="json-tree-twist-empty" aria-hidden />
+      )}
       <span
         className={`json-tree-key${draggable ? " draggable" : ""}`}
         draggable={draggable}
@@ -456,7 +610,11 @@ function JsonTreeRow({
         </button>
       )}
       <span className="json-tree-colon">:</span>
-      <JsonTreeValue value={value} path={path} dragPrefix={dragPrefix} />
+      {collapsed && expandable ? (
+        <span className="json-tree-summary">{summary}</span>
+      ) : (
+        <JsonTreeValue value={value} path={path} dragPrefix={dragPrefix} depth={depth + 1} />
+      )}
     </div>
   );
 }
@@ -470,7 +628,7 @@ function JsonTree({
 }) {
   return (
     <div className="json-tree">
-      <JsonTreeValue value={data} path={[]} dragPrefix={dragPrefix} />
+      <JsonTreeValue value={data} path={[]} dragPrefix={dragPrefix} depth={0} />
     </div>
   );
 }
@@ -1314,6 +1472,7 @@ export function DataPanel({
   durationMs,
   startedAt,
   finishedAt,
+  tokenUsage,
 }: {
   title: string;
   data: unknown;
@@ -1327,6 +1486,7 @@ export function DataPanel({
   durationMs?: number | null;
   startedAt?: number | null;
   finishedAt?: number | null;
+  tokenUsage?: TokenUsage | null;
 }) {
   const [coerce, setCoerce] = useState<CoerceTarget | "">("");
   useEffect(() => { setCoerce(""); }, [data]);
@@ -1357,7 +1517,7 @@ export function DataPanel({
     !empty &&
     (isPlainObject(display) || (Array.isArray(display) && display.length > 0));
   const [view, setView] = useState<
-    "json" | "table" | "html" | "logs" | "variables" | "visual" | "schema"
+    "json" | "raw" | "table" | "html" | "logs" | "variables" | "visual" | "schema"
   >(
     canVisual
       ? "visual"
@@ -1371,6 +1531,7 @@ export function DataPanel({
   );
   let effectiveView:
     | "json"
+    | "raw"
     | "table"
     | "html"
     | "logs"
@@ -1450,6 +1611,17 @@ export function DataPanel({
               {durationMs} ms
             </span>
           )}
+          {tokenUsage && (
+            <span
+              className="ndv-token-usage"
+              title={`${tokenUsage.prompt_tokens} prompt + ${tokenUsage.completion_tokens} completion tokens`}
+            >
+              {tokenUsage.total_tokens.toLocaleString()} tok
+              {tokenUsage.model && ` · ${shortModelLabel(tokenUsage.model) ?? tokenUsage.model}`}
+              {" · "}
+              {formatCost(estimateCost(tokenUsage))}
+            </span>
+          )}
         </h3>
         {!dragPrefix && !empty && (
           <select
@@ -1493,6 +1665,14 @@ export function DataPanel({
             onClick={() => setView("json")}
           >
             JSON
+          </button>
+          <button
+            type="button"
+            className={effectiveView === "raw" ? "active" : ""}
+            onClick={() => setView("raw")}
+            title="Raw stringified JSON"
+          >
+            Raw
           </button>
           <button
             type="button"
@@ -1578,6 +1758,8 @@ export function DataPanel({
           <SchemaTree data={display} dragPrefix={dragPrefix} />
         ) : effectiveView === "table" ? (
           <DataTable data={display} dragPrefix={dragPrefix} />
+        ) : effectiveView === "raw" ? (
+          <pre className="data-json">{pretty(display)}</pre>
         ) : (
           <JsonTree data={display} dragPrefix={dragPrefix} />
         )}

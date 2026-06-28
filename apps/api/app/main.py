@@ -39,7 +39,6 @@ from app.routers import (
     health,
     internal,
     mcp,
-    metrics,
     nodes,
     ops,
     orgs,
@@ -65,6 +64,7 @@ from app.services.remote_dispatch import (
     runner_heartbeat_loop,
 )
 from app.services.retention import retention_loop
+from app.services.stuck_run_detector import stuck_run_detector_loop
 from app.services.runner import (
     drain_active_runs,
     process_isolator,
@@ -365,6 +365,11 @@ async def lifespan(app: FastAPI):
     heartbeat = asyncio.create_task(_as_system(runner_heartbeat_loop)())
     github_sync = asyncio.create_task(_as_system(github_sync_dispatch_loop)())
     ghost_cleanup = asyncio.create_task(_as_system(ghost_cleanup_loop)())
+    stuck_detector = (
+        asyncio.create_task(_as_system(stuck_run_detector_loop)())
+        if dispatch_inline
+        else None
+    )
     yield
     # Graceful drain on shutdown: stop the dispatch loop from leasing new
     # entries, give in-flight runs a bounded window to finish, then
@@ -374,7 +379,7 @@ async def lifespan(app: FastAPI):
     # (matters for tests that reuse the process).
     _prior_drain = settings.queue_drain
     settings.queue_drain = True
-    for task in (scheduler, retention, reaper, broker_reaper, queue_loop, cloud_idle, heartbeat, github_sync, ghost_cleanup):
+    for task in (scheduler, retention, reaper, broker_reaper, queue_loop, cloud_idle, heartbeat, github_sync, ghost_cleanup, stuck_detector):
         if task is None:
             continue
         task.cancel()
@@ -817,7 +822,6 @@ app.include_router(runner_pools.router)
 app.include_router(orgs.router)
 app.include_router(expressions.router)
 app.include_router(github_sync_router.router, prefix="/api")
-app.include_router(metrics.router)
 
 
 @app.get("/")

@@ -122,6 +122,7 @@ class WorkflowSummary(BaseModel):
     )
     folder_id: str | None = None
     updated_at: datetime
+    created_at: datetime
     github_sync_status: str | None = None
 
 
@@ -646,11 +647,32 @@ class OrgSettingsInfo(BaseModel):
     overridden: list[str] = []
 
 
+def _validate_password_strength(v: str) -> str:
+    """Reject passwords that don't meet minimum complexity requirements.
+
+    Requires at least 8 chars, one uppercase, one lowercase, one digit, and
+    one special character.  Returns the password unchanged on success.
+    """
+    if len(v) < 8:
+        raise ValueError("Password must be at least 8 characters")
+    if not any(c.isupper() for c in v):
+        raise ValueError("Password must contain at least one uppercase letter")
+    if not any(c.islower() for c in v):
+        raise ValueError("Password must contain at least one lowercase letter")
+    if not any(c.isdigit() for c in v):
+        raise ValueError("Password must contain at least one digit")
+    if not any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?/~`" for c in v):
+        raise ValueError("Password must contain at least one special character")
+    return v
+
+
 class RegisterRequest(BaseModel):
     name: str = Field(default="", max_length=160)
     company: str = Field(default="", max_length=160)
     email: str = Field(min_length=3, max_length=200)
     password: str = Field(min_length=8, max_length=200)
+
+    _validate_password = field_validator("password")(_validate_password_strength)
 
 
 class UserCreate(BaseModel):
@@ -659,6 +681,8 @@ class UserCreate(BaseModel):
     email: str = Field(min_length=3, max_length=200)
     password: str = Field(min_length=8, max_length=200)
     role: str = "viewer"
+
+    _validate_password = field_validator("password")(_validate_password_strength)
 
 
 class UserUpdate(BaseModel):

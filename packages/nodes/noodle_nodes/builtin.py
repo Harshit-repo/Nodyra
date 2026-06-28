@@ -487,6 +487,52 @@ def webhook_trigger(
             ),
             "description": "Stored credential used to authenticate inbound API calls.",
         },
+        # --- Security (optional group; parity with webhook_trigger) ---
+        "hmac_verification": {"group": "Security", "choices": ["off", "on"]},
+        "hmac_header": {
+            "group": "Security",
+            "placeholder": "X-Signature",
+            "description": "Header carrying the HMAC signature.",
+        },
+        "hmac_algorithm": {"group": "Security", "choices": ["sha256", "sha1"]},
+        "hmac_prefix": {
+            "group": "Security",
+            "placeholder": "sha256=",
+            "description": "Optional prefix stripped from the signature header.",
+        },
+        "hmac_secret": {
+            "group": "Security",
+            **cred_single("hmac", "secret", "HMAC shared secret"),
+            "description": "Shared secret used to verify the HMAC signature.",
+        },
+        "ip_allowlist": {
+            "group": "Security",
+            "placeholder": "203.0.113.0/24, 198.51.100.7",
+            "description": (
+                "Comma/newline-separated CIDRs or IPs allowed to call this "
+                "API endpoint. Blank = allow all."
+            ),
+        },
+        "trust_proxy": {
+            "group": "Security",
+            "choices": ["off", "on"],
+            "description": (
+                "When 'on', honour the left-most X-Forwarded-For entry for the "
+                "IP allowlist (set only behind a trusted proxy). Default 'off'."
+            ),
+        },
+        # --- Idempotency (optional group; parity with webhook_trigger) ---
+        "dedup": {"group": "Idempotency", "choices": ["off", "on"]},
+        "dedup_key": {
+            "group": "Idempotency",
+            "placeholder": "{{ $json.headers['x-delivery-id'] }}",
+            "description": (
+                "Expression evaluated against the request to identify a unique "
+                "delivery. A repeat value is acknowledged without re-running."
+            ),
+        },
+        # --- Body (optional group; parity with webhook_trigger) ---
+        "raw_body": {"group": "Body", "choices": ["off", "on"]},
     },
 )
 def api_endpoint(
@@ -497,6 +543,16 @@ def api_endpoint(
     auth_type: str = "none",
     auth_jwt_header: str = "Authorization",
     auth_credentials: dict | None = None,
+    hmac_verification: str = "off",
+    hmac_header: str = "X-Signature",
+    hmac_algorithm: str = "sha256",
+    hmac_prefix: str = "",
+    hmac_secret: str | dict | None = None,
+    ip_allowlist: str = "",
+    trust_proxy: str = "off",
+    dedup: str = "off",
+    dedup_key: str = "",
+    raw_body: str = "off",
 ) -> dict:
     """Serve a REST-style API from a single workflow.
 

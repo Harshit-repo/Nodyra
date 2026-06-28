@@ -206,9 +206,11 @@ async def build_durable_execution_state(
             )
         ).all()
 
+        from app.services.output_store import maybe_load_output
+
         cache: dict[str, dict] = {}
         for nr in node_runs:
-            output = nr.output
+            output = maybe_load_output(nr.output)
             if not isinstance(output, dict) or not output:
                 continue
             # Don't seed outputs containing unrestorable objects (artifact

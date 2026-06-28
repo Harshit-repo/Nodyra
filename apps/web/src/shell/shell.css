@@ -147,7 +147,29 @@
 .noodle-shell-top-actions {
   min-width: 0;
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 6px;
+}
+
+.noodle-shell-theme-toggle {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line, #242c3a);
+  border-radius: 10px;
+  background: var(--surface, #10141c);
+  color: var(--ink-2, #98a4ba);
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.noodle-shell-theme-toggle:hover {
+  border-color: var(--accent-deep, #1f4f8f);
+  background: var(--surface-2, #161b25);
+  color: var(--ink, #e9eef6);
 }
 
 .noodle-shell-account,
@@ -860,6 +882,57 @@
 
   .noodle-shell-drawer-nav {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Tablet: collapsed sidebar rail (761px–1023px) — overrides the mobile hide
+   so the sidebar becomes a narrow icon rail instead of disappearing entirely. */
+@media (min-width: 761px) and (max-width: 1023px) {
+  .noodle-shell-sidebar {
+    display: flex;
+    width: 62px;
+    padding-inline: 8px;
+  }
+  .noodle-shell-sidebar .noodle-shell-sidebar-head {
+    gap: 12px;
+    padding-inline: 0;
+  }
+  .noodle-shell-sidebar .noodle-shell-brand {
+    justify-content: center;
+  }
+  .noodle-shell-sidebar .noodle-shell-brand > span,
+  .noodle-shell-sidebar .noodle-shell-nav-heading,
+  .noodle-shell-sidebar .noodle-shell-nav-link > span,
+  .noodle-shell-sidebar .noodle-shell-org-copy,
+  .noodle-shell-sidebar .noodle-shell-org-trigger > svg,
+  .noodle-shell-sidebar .noodle-shell-workspace-static .noodle-shell-org-copy,
+  .noodle-shell-sidebar .noodle-shell-collapse-button > span {
+    display: none;
+  }
+  .noodle-shell-sidebar .noodle-shell-organization-slot,
+  .noodle-shell-sidebar .noodle-shell-org-trigger,
+  .noodle-shell-sidebar .noodle-shell-workspace-static {
+    display: flex;
+    justify-content: center;
+    padding-inline: 0;
+    border-color: transparent;
+    background: transparent;
+  }
+  .noodle-shell-sidebar .noodle-shell-nav-link,
+  .noodle-shell-sidebar .noodle-shell-collapse-button {
+    justify-content: center;
+    padding-inline: 0;
+  }
+  .noodle-shell-sidebar .noodle-shell-local-mode {
+    justify-content: center;
+    padding-inline: 0;
+    font-size: 0;
+  }
+  .noodle-shell-content {
+    padding-left: 62px;
+  }
+  .noodle-shell-mobile-nav {
+    display: none;
   }
 }
 

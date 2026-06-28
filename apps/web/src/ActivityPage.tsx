@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "./api";
+import { SkeletonRows } from "./Skeleton";
 import type { AuditEvent } from "./types";
 
 function when(iso: string): string {
@@ -147,14 +148,7 @@ export function ActivityPage() {
         {error && <p className="error-text">{error}</p>}
         {!events && !error && (
           <div className="activity-list" aria-label="Loading activity">
-            {Array.from({ length: 7 }).map((_, index) => (
-              <div className="activity-row skeleton-row" key={index}>
-                <span className="skeleton-line short" />
-                <span className="skeleton-line short" />
-                <span className="skeleton-line" />
-                <span className="skeleton-line tiny" />
-              </div>
-            ))}
+            <SkeletonRows count={7} />
           </div>
         )}
 

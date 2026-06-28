@@ -294,7 +294,9 @@ class RunBatch(Base):
     workflow_id: Mapped[str] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    deployment_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    deployment_id: Mapped[str | None] = mapped_column(
+        ForeignKey("deployments.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     runner_pool_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
     total_runs: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -496,6 +498,12 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(160), nullable=False, default="")
     company: Mapped[str] = mapped_column(String(160), nullable=False, default="")
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # P1-3: email verification — False until the user clicks the verify-email
+    # link.  The auth gate in ``current_user`` can optionally refuse unverified
+    # users when ``settings.auth_require_verified_email`` is on.
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="admin")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -674,7 +682,9 @@ class Run(Base):
     runner_id: Mapped[str | None] = mapped_column(
         ForeignKey("runners.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    batch_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    batch_id: Mapped[str | None] = mapped_column(
+        ForeignKey("run_batches.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     required_labels: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     deduplication_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     # Synchronous webhook response recorded by a respond_to_webhook node
@@ -708,9 +718,12 @@ class Run(Base):
 
     # Composite indices backing hot list queries — per-workflow runs feed,
     # status-based sweeps (retention prune, interrupted-runs cleanup).
+    # ix_runs_org_status_started covers the dominant query pattern under
+    # multi-tenancy: WHERE org_id = $1 AND status = $2 ORDER BY started_at DESC.
     __table_args__ = (
         Index("ix_runs_workflow_id_started_at", "workflow_id", "started_at"),
         Index("ix_runs_status_started_at", "status", "started_at"),
+        Index("ix_runs_org_status_started", "org_id", "status", "started_at"),
     )
 
 
@@ -1123,9 +1136,15 @@ class RunQueueEntry(Base):
     run_id: Mapped[str] = mapped_column(
         ForeignKey("runs.id", ondelete="CASCADE"), unique=True, nullable=False
     )
-    workflow_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
-    environment_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    runner_pool_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    workflow_id: Mapped[str] = mapped_column(
+        ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    environment_id: Mapped[str | None] = mapped_column(
+        ForeignKey("environments.id", ondelete="SET NULL"), nullable=True
+    )
+    runner_pool_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runner_pools.id", ondelete="SET NULL"), nullable=True
+    )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # Why this run is waiting, for the backpressure UI: e.g.

@@ -17,6 +17,7 @@ TRIGGER_TYPES: tuple[str, ...] = (
     "api_endpoint",
     "schedule_trigger",
     "chat_trigger",
+    "error_trigger",
 )
 
 

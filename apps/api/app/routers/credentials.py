@@ -375,7 +375,7 @@ async def oauth_callback(
     finally:
         if org_token is not None:
             current_org_id.reset(org_token)
-    invalidate_secret_cache()
+    invalidate_secret_cache(cred.org_id)
     return _oauth_popup_html(
         success=True,
         message=f"Connected \u2014 {cred.name}",
@@ -485,7 +485,7 @@ async def refresh_credential(
     )
     await session.commit()
     await session.refresh(cred)
-    invalidate_secret_cache()
+    invalidate_secret_cache(cred.org_id)
     return _info(cred, await org_keys.get_org_kek(cred.org_id, session))
 
 
@@ -532,7 +532,7 @@ async def list_credentials(
 @router.get(
     "/resolve",
     response_model=CredentialInfo,
-    dependencies=[Depends(require_permission("credential:read"))],
+    dependencies=[Depends(require_permission("credential:read_values"))],
 )
 async def resolve_credential(
     name: str = Query(min_length=1),
@@ -595,7 +595,7 @@ async def create_credential(
                     actor_email=actor.email if actor else None)
     await session.commit()
     await session.refresh(cred)
-    invalidate_secret_cache()
+    invalidate_secret_cache(cred.org_id)
     return _info(cred, await org_keys.get_org_kek(cred.org_id, session))
 
 
@@ -648,7 +648,7 @@ async def update_credential(
     await session.commit()
     await session.refresh(cred)
     if body.data is not None:
-        invalidate_secret_cache()
+        invalidate_secret_cache(cred.org_id)
     return _info(cred, await org_keys.get_org_kek(cred.org_id, session))
 
 
@@ -721,4 +721,4 @@ async def delete_credential(
                     actor_email=actor.email if actor else None)
     await session.delete(cred)
     await session.commit()
-    invalidate_secret_cache()
+    invalidate_secret_cache(cred.org_id)

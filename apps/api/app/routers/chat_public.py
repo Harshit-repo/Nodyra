@@ -103,7 +103,16 @@ async def public_chat_turn(
 
     if not require_login:
         if chat_token:
-            if token != chat_token:
+            # Accept the token from either the query parameter (legacy) or
+            # the X-Chat-Token header.  Prefer the header so the token does
+            # not appear in server access logs.
+            presented = (
+                request.headers.get("X-Chat-Token")
+                or token
+                or ""
+            )
+            import hmac as _hmac
+            if not _hmac.compare_digest(presented, chat_token):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Invalid access token.",

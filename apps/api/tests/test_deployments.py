@@ -99,8 +99,8 @@ async def test_deployment_crud(client: AsyncClient) -> None:
     assert deployment["default_parameters"] == {"region": "ap-southeast-2"}
 
     listed = (await client.get(f"/deployments?workflow_id={workflow_id}")).json()
-    assert len(listed) == 1
-    assert listed[0]["id"] == deployment["id"]
+    assert len(listed["items"]) == 1
+    assert listed["items"][0]["id"] == deployment["id"]
 
     updated = await client.put(
         f"/deployments/{deployment['id']}", json={"active": False}

@@ -253,6 +253,7 @@ export interface WorkflowSummary {
   last_run_finished_at?: string | null;
   provider_trigger_counts?: ProviderTriggerStatusCounts;
   updated_at: string;
+  created_at: string;
   github_sync_status?: GithubSyncStatus;
 }
 

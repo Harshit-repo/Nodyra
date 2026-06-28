@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
+import { MagnifyingGlass } from "@phosphor-icons/react";
+
+import { SkeletonRows } from "./Skeleton";
 
 import {
   errorMessage,
@@ -329,13 +332,32 @@ export function ExecutionsPage() {
   const statusFilter = params.get("status") || "";
   const triggerType = params.get("trigger_type") || "";
 
+  const [searchInput, setSearchInput] = useState("");
+  const [query, setQuery] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(searchInput), 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+  const [dateRange, setDateRange] = useState("all");
+
+  const since = useMemo(() => {
+    if (dateRange === "all") return undefined;
+    const now = Date.now();
+    const ms =
+      dateRange === "24h" ? 86_400_000
+      : dateRange === "7d" ? 604_800_000
+      : 2_592_000_000; // 30d
+    return new Date(now - ms).toISOString();
+  }, [dateRange]);
+
   const runFilters = useMemo(
     () => ({
       workflow_id: workflowId || undefined,
       status: statusFilter || undefined,
       trigger_type: triggerType || undefined,
+      since,
     }),
-    [workflowId, statusFilter, triggerType],
+    [workflowId, statusFilter, triggerType, since],
   );
   const workflowsQuery = useWorkflows();
   const runsQuery = useAllRuns(runFilters, {
@@ -346,6 +368,17 @@ export function ExecutionsPage() {
   const runs = runsQuery.data ?? null;
   const error =
     runsQuery.isError && !runsQuery.data ? errorMessage(runsQuery.error) : "";
+
+  const visible = useMemo(() => {
+    const rows = runs ?? [];
+    if (!query.trim()) return rows;
+    const q = query.trim().toLowerCase();
+    return rows.filter(
+      (r) =>
+        (r.workflow_name ?? "").toLowerCase().includes(q) ||
+        r.id.toLowerCase().includes(q),
+    );
+  }, [runs, query]);
 
   function setFilter(key: string, value: string): void {
     const next = new URLSearchParams(params);
@@ -361,7 +394,14 @@ export function ExecutionsPage() {
     setParams(next);
   }
 
-  const filtered = workflowId || statusFilter || triggerType;
+  const filtered = workflowId || statusFilter || triggerType || dateRange !== "all";
+
+  function clearFilters(): void {
+    setParams({});
+    setDateRange("all");
+    setSearchInput("");
+    setQuery("");
+  }
 
   return (
     <div className="home">
@@ -375,84 +415,108 @@ export function ExecutionsPage() {
 
         <OpsDashboard />
 
-        <div className="exec-filters">
-          <select
-            className="exec-filter"
-            value={workflowId}
-            onChange={(e) => setFilter("workflow_id", e.target.value)}
-          >
-            <option value="">All workflows</option>
-            {workflows.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.name}
-              </option>
-            ))}
-          </select>
-          <select
-            className="exec-filter"
-            value={statusFilter}
-            onChange={(e) => setFilter("status", e.target.value)}
-          >
-            <option value="">Any status</option>
-            <option value="success">success</option>
-            <option value="error">error</option>
-            <option value="running">running</option>
-            <option value="cancelled">cancelled</option>
-          </select>
-          <select
-            className="exec-filter"
-            value={triggerType}
-            onChange={(e) => setFilter("trigger_type", e.target.value)}
-          >
-            <option value="">Any trigger</option>
-            <option value="manual">manual</option>
-            <option value="webhook">webhook</option>
-            <option value="schedule">schedule</option>
-          </select>
-          {filtered && (
-            <button
-              type="button"
-              className="btn btn-sm btn-ghost"
-              onClick={() => setParams({})}
+        <div className="home-filters">
+          <div className="home-search-row">
+            <div className="search-input-wrap">
+              <MagnifyingGlass size={16} className="search-icon" aria-hidden="true" />
+              <input
+                className="field-input"
+                aria-label="Search executions"
+                placeholder="Search by workflow name or run ID..."
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+              />
+            </div>
+            <select
+              className="field-input"
+              aria-label="Time range"
+              value={dateRange}
+              onChange={(e) => setDateRange(e.target.value)}
+              style={{ width: 150, minWidth: 150 }}
             >
-              Clear filters
-            </button>
-          )}
+              <option value="all">All time</option>
+              <option value="24h">Last 24 hours</option>
+              <option value="7d">Last 7 days</option>
+              <option value="30d">Last 30 days</option>
+            </select>
+          </div>
+          <div className="home-filter-chips">
+            {[
+              { label: "All", value: "", cls: "chip-all" },
+              { label: "Running", value: "running", cls: "chip-running" },
+              { label: "Success", value: "success", cls: "chip-success" },
+              { label: "Failed", value: "error", cls: "chip-failed" },
+              { label: "Waiting", value: "waiting", cls: "chip-waiting" },
+              { label: "Cancelled", value: "cancelled", cls: "chip-cancelled" },
+            ].map((chip) => (
+              <button
+                key={chip.value}
+                type="button"
+                className={`home-status-chip ${chip.cls}${statusFilter === chip.value ? " is-selected" : ""}`}
+                aria-pressed={statusFilter === chip.value}
+                onClick={() => setFilter("status", statusFilter === chip.value ? "" : chip.value)}
+              >
+                {chip.label}
+              </button>
+            ))}
+            <select
+              className="exec-filter"
+              aria-label="Filter by workflow"
+              value={workflowId}
+              onChange={(e) => setFilter("workflow_id", e.target.value)}
+              style={{ marginLeft: "auto" }}
+            >
+              <option value="">All workflows</option>
+              {workflows.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name}
+                </option>
+              ))}
+            </select>
+            <select
+              className="exec-filter"
+              aria-label="Filter by trigger type"
+              value={triggerType}
+              onChange={(e) => setFilter("trigger_type", e.target.value)}
+            >
+              <option value="">Any trigger</option>
+              <option value="manual">manual</option>
+              <option value="webhook">webhook</option>
+              <option value="schedule">schedule</option>
+            </select>
+            {filtered && (
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={clearFilters}
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
         </div>
 
         {error && <p className="error-text">{error}</p>}
         {!runs && !error && (
           <div className="exec-table-wrap" aria-label="Loading runs">
-            <table className="exec-table">
-              <tbody>
-                {Array.from({ length: 8 }).map((_, index) => (
-                  <tr className="skeleton-row" key={index}>
-                    <td>
-                      <span className="skeleton-line" />
-                    </td>
-                    <td>
-                      <span className="skeleton-line tiny" />
-                    </td>
-                    <td>
-                      <span className="skeleton-line short" />
-                    </td>
-                    <td>
-                      <span className="skeleton-line short" />
-                    </td>
-                    <td>
-                      <span className="skeleton-line tiny" />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <SkeletonRows count={8} />
           </div>
         )}
         {runs && runs.length === 0 && (
           <p className="muted">No runs match these filters yet.</p>
         )}
 
-        {runs && runs.length > 0 && (
+        {visible && visible.length === 0 && runs && runs.length > 0 && (
+          <div className="empty-state">
+            <h2>No matches</h2>
+            <p className="muted">Adjust search or filters.</p>
+            <button className="btn" type="button" onClick={clearFilters}>
+              Reset filters
+            </button>
+          </div>
+        )}
+
+        {visible && visible.length > 0 && (
           <div className="exec-layout">
             <div className="exec-table-wrap">
               <table className="exec-table">
@@ -466,7 +530,7 @@ export function ExecutionsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {runs.map((r) => (
+                  {visible.map((r) => (
                     <tr
                       key={r.id}
                       className={selectedRunId === r.id ? "selected" : ""}

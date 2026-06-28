@@ -396,6 +396,22 @@ async def _start_run_impl(
     from app.services.metrics import run_starts_total
     run_starts_total.inc(mode=mode, trigger_type=trigger_type)
 
+    # Per-workflow rate limiting (best-effort, in-process).
+    # Production deployments with multiple replicas should use Redis
+    # for shared counters; single-process self-hosted is correct as-is.
+    from app.services.rate_limit import allow as _rate_allow
+    _wf_rate_limit = getattr(settings, "workflow_run_rate_per_minute", 0) or 0
+    if _wf_rate_limit > 0 and not _rate_allow(
+        "workflow_run", workflow_id,
+        limit=_wf_rate_limit,
+        window_seconds=60,
+    ):
+        raise ServiceError(
+            http_status=429,
+            detail="Rate limit exceeded for this workflow. "
+            f"Maximum {_wf_rate_limit} runs per minute.",
+        )
+
     logger.info(
         "dispatch workflow_id=%s mode=%s trigger_type=%s trigger_node_id=%s "
         "targets=%d cache_keys=%s deployment_id=%s",

@@ -129,12 +129,11 @@ jobs:
           apps/api/tests/test_run_queue.py
           packages/runtime/tests
 
-      # ADVISORY — the full API suite on Postgres. Surfaces remaining
-      # cross-backend gaps being hardened (orphan-row FK violations in a few
-      # ops/AI tests, async-dispatch ordering sensitivity). Non-blocking so it
-      # reports without gating merges; remove continue-on-error once green.
-      - name: Full API suite on Postgres (advisory)
-        continue-on-error: true
+      # Full API suite on Postgres. Surfaces remaining cross-backend gaps
+      # (orphan-row FK violations, async-dispatch ordering sensitivity).
+      # Blocking — must pass before merge.
+      - name: Full API suite on Postgres
+        continue-on-error: false
         run: >-
           uv run pytest --timeout=300 --timeout-method=thread apps/api/tests
 

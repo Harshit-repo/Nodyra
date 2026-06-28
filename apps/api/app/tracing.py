@@ -60,15 +60,24 @@ def setup_tracing(service_name: str, *, exporter: Any | None = None) -> None:
     )
     if exporter is not None:
         provider.add_span_processor(SimpleSpanProcessor(exporter))
-    else:
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-            OTLPSpanExporter,
+    elif settings.otel_exporter_protocol == "grpc":
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+            OTLPSpanExporter as GrpcExporter,
         )
 
         kwargs: dict[str, Any] = {}
         if settings.otel_exporter_otlp_endpoint:
             kwargs["endpoint"] = settings.otel_exporter_otlp_endpoint
-        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(**kwargs)))
+        provider.add_span_processor(BatchSpanProcessor(GrpcExporter(**kwargs)))
+    else:
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            OTLPSpanExporter as HttpExporter,
+        )
+
+        kwargs: dict[str, Any] = {}
+        if settings.otel_exporter_otlp_endpoint:
+            kwargs["endpoint"] = settings.otel_exporter_otlp_endpoint
+        provider.add_span_processor(BatchSpanProcessor(HttpExporter(**kwargs)))
     _provider = provider
     _tracer = provider.get_tracer("noodle")
     _enabled = True

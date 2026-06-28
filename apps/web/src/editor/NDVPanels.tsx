@@ -1,9 +1,10 @@
 import { Gear, Hexagon, Info, PushPin } from "@phosphor-icons/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../api";
 import { useToast } from "../ToastProvider";
 import type { ArtifactInfo, ParamSpec } from "../types";
+import { AgentTrace, extractAgentTrace } from "./AgentTrace";
 import { missingFor } from "./missingPackages";
 import { useServerPlatform } from "../hooks/useServerPlatform";
 import { useTimeout } from "../hooks/useTimeout";
@@ -54,7 +55,7 @@ function formatPinnedAt(value: string | null): string {
   }
 }
 
-type NdvTab = "parameters" | "settings" | "docs" | "credentials" | "logs";
+type NdvTab = "parameters" | "settings" | "docs" | "credentials" | "logs" | "trace";
 
 function AgentWiringBanner({ nodeId }: { nodeId: string }) {
   const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
@@ -759,20 +760,51 @@ function LogsTab({ nodeId }: { nodeId: string }) {
   );
 }
 
-function ArtifactBrowser({ runId, runOutput }: { runId: string; runOutput: unknown }) {
+function TraceTab({
+  runMeta,
+}: {
+  runMeta: Record<string, unknown> | undefined;
+}) {
+  const trace = useMemo(() => extractAgentTrace(runMeta), [runMeta]);
+
+  if (!trace) {
+    return (
+      <p className="field-desc">
+        No agent trace available. Run the agent node to see its reasoning steps,
+        tool calls, and outputs.
+      </p>
+    );
+  }
+
+  return <AgentTrace trace={trace} />;
+}
+
+function ArtifactBrowser({
+  runId,
+  nodeId,
+  runOutput,
+}: {
+  runId: string;
+  nodeId: string;
+  runOutput: unknown;
+}) {
   const [artifacts, setArtifacts] = useState<ArtifactInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    api.listRunArtifacts(runId).then(
+    setArtifacts(null);
+    setError(null);
+    api.listRunArtifacts(runId, nodeId).then(
       (list: ArtifactInfo[]) => { if (!cancelled) setArtifacts(list); },
       (err: unknown) => { if (!cancelled) setError(String(err)); },
     );
     return () => { cancelled = true; };
-  }, [runId]);
+  }, [runId, nodeId]);
 
-  // Also scan runOutput for embedded ArtifactRef objects
+  // Scan runOutput for embedded refs — used as a fallback while the DB fetch
+  // is in-flight (there is a brief window between the node finishing and the
+  // artifact rows being committed).
   const embeddedRefs: Array<ReturnType<typeof asArtifactRef> & object> = [];
   if (runOutput && typeof runOutput === "object") {
     for (const val of Object.values(runOutput as Record<string, unknown>)) {
@@ -781,8 +813,12 @@ function ArtifactBrowser({ runId, runOutput }: { runId: string; runOutput: unkno
     }
   }
 
+  // Once the DB list arrives, it is the source of truth. Only fall back to
+  // embeddedRefs while still loading so we never show the same artifact twice.
   const apiArtifacts = artifacts ?? [];
-  const hasContent = apiArtifacts.length > 0 || embeddedRefs.length > 0;
+  const apiIds = new Set(apiArtifacts.map((a) => a.id));
+  const fallbackRefs = artifacts === null ? embeddedRefs : embeddedRefs.filter((r) => !apiIds.has(r.artifact_id));
+  const hasContent = apiArtifacts.length > 0 || fallbackRefs.length > 0;
 
   if (error) {
     return (
@@ -834,7 +870,7 @@ function ArtifactBrowser({ runId, runOutput }: { runId: string; runOutput: unkno
           </div>
         );
       })}
-      {embeddedRefs.map((ref) => {
+      {fallbackRefs.map((ref) => {
         const url = artifactDownloadUrl(ref);
         return (
           <div key={ref.artifact_id} style={{ marginBottom: 12 }}>
@@ -880,8 +916,11 @@ export function NDVPanels({
     docs: 0,
     credentials: 0,
     logs: 0,
+    trace: 0,
   });
   const node = useEditor((s) => s.nodes.find((n) => n.id === nodeId));
+  const manifest = node?.data.manifest;
+  const isAgent = manifest?.id === "ai_agent_v2";
   const edges = useEditor((s) => s.edges);
   const runOutputs = useEditor((s) => s.runOutputs);
   const runOutput = useEditor((s) => s.runOutputs[nodeId]);
@@ -913,6 +952,7 @@ export function NDVPanels({
       docs: 0,
       credentials: 0,
       logs: 0,
+      trace: 0,
     };
     setTab("parameters");
     setPkgBusy(false);
@@ -1188,6 +1228,17 @@ export function NDVPanels({
           >
             Logs
           </button>
+          {isAgent && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "trace"}
+              className={tab === "trace" ? "active" : ""}
+              onClick={() => selectTab("trace")}
+            >
+              Trace
+            </button>
+          )}
         </div>
         <div
           ref={middleBodyRef}
@@ -1204,6 +1255,8 @@ export function NDVPanels({
             <DocsTab nodeId={nodeId} />
           ) : tab === "credentials" ? (
             <CredentialsTab nodeId={nodeId} />
+          ) : tab === "trace" ? (
+            <TraceTab runMeta={runMeta as Record<string, unknown> | undefined} />
           ) : (
             <LogsTab nodeId={nodeId} />
           )}
@@ -1222,9 +1275,10 @@ export function NDVPanels({
         durationMs={runMeta?.durationMs}
         startedAt={runMeta?.startedAt}
         finishedAt={runMeta?.finishedAt}
+        tokenUsage={runMeta?.tokenUsage}
       />
       {runId && runOutput !== undefined && (
-        <ArtifactBrowser runId={runId} runOutput={runOutput} />
+        <ArtifactBrowser runId={runId} nodeId={nodeId} runOutput={runOutput} />
       )}
     </div>
   );

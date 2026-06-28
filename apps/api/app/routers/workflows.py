@@ -1,6 +1,9 @@
+import logging
 import re
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
+
+logger = logging.getLogger("noodle")
 from jsonschema.exceptions import SchemaError
 from jsonschema.validators import validator_for
 from pydantic import BaseModel
@@ -11,6 +14,7 @@ from sqlalchemy.orm import aliased, selectinload
 from sqlalchemy.orm.attributes import set_committed_value
 
 import noodle_nodes  # noqa: F401 - registers built-in nodes
+from app.config import settings
 from app.db import get_session
 from app.models import (
     Environment,
@@ -229,6 +233,7 @@ def _summary_from(
         ),
         folder_id=workflow.folder_id,
         updated_at=workflow.updated_at,
+        created_at=workflow.created_at,
         github_sync_status=workflow.github_sync_status,
     )
 
@@ -365,7 +370,11 @@ async def create_workflow(
 
 
 @router.get("/{workflow_id}", response_model=WorkflowDetail)
-async def get_workflow(workflow_id: str, session: AsyncSession = Depends(get_session)):
+async def get_workflow(
+    workflow_id: str,
+    session: AsyncSession = Depends(get_session),
+    _user: User | None = Depends(optional_current_user),
+):
     return await _detail(session, await _load(session, workflow_id))
 
 
@@ -377,6 +386,7 @@ async def list_provider_triggers(
     workflow_id: str,
     include_deleted: bool = Query(False),
     session: AsyncSession = Depends(get_session),
+    _user: User | None = Depends(optional_current_user),
 ):
     await _load(session, workflow_id)
     query = select(ProviderTriggerSubscription).where(
@@ -676,6 +686,103 @@ async def publish_workflow(
     # freshly published workflow stays active=false with no way to go live.
     workflow.active = True
     await session.flush()
+
+    # ── Webhook path collision detection ──────────────────────────────
+    # Warn when two active workflows register the same webhook or API
+    # endpoint path.  Collisions are *not* an error — both fire on
+    # matching requests — but the operator should know so they can
+    # disambiguate if needed.
+    _colliding_paths: list[str] = []
+    _seen_in_graph: set[str] = set()
+    for node in graph.get("nodes", []):
+        node_type = node.get("type")
+        node_params = node.get("params") or {}
+        if node_type == "webhook_trigger":
+            p = str(node_params.get("path") or "").strip("/")
+        elif node_type == "api_endpoint":
+            p = str(node_params.get("base_path") or "").strip("/")
+        else:
+            continue
+        if not p or p in _seen_in_graph:
+            continue
+        _seen_in_graph.add(p)
+        # Look for any other *active* workflow whose latest version has
+        # a matching trigger path.
+        clash = await session.scalar(
+            select(Workflow.id)
+            .join(WorkflowVersion, WorkflowVersion.workflow_id == Workflow.id)
+            .where(
+                Workflow.id != workflow.id,
+                Workflow.active.is_(True),
+                # Latest version only — see _latest_versions_by_id pattern.
+                WorkflowVersion.version == Workflow.published_version,
+                WorkflowVersion.graph != None,  # noqa: E711
+                WorkflowVersion.graph != {},
+            )
+            .limit(1)
+        )
+        if clash is not None:
+            # Verify the other workflow actually has a matching path.
+            clash_wf = await session.get(Workflow, clash)
+            if clash_wf is not None:
+                clash_graph = clash_wf.draft_graph or (
+                    (await session.scalar(
+                        select(WorkflowVersion.graph)
+                        .where(
+                            WorkflowVersion.workflow_id == clash_wf.id,
+                            WorkflowVersion.version == clash_wf.published_version,
+                        )
+                    )) or {}
+                )
+                for cn in clash_graph.get("nodes", []):
+                    cnp = cn.get("params") or {}
+                    if cn.get("type") == "webhook_trigger":
+                        cp = str(cnp.get("path") or "").strip("/")
+                    elif cn.get("type") == "api_endpoint":
+                        cp = str(cnp.get("base_path") or "").strip("/")
+                    else:
+                        continue
+                    if cp == p:
+                        _colliding_paths.append(p)
+                        break
+    if _colliding_paths:
+        logger.warning(
+            "webhook path collision detected — workflow %s (%s) shares paths %s "
+            "with other active workflows. Both will fire on matching requests.",
+            workflow.id, workflow.name, _colliding_paths,
+        )
+
+    # ── Webhook auth enforcement ────────────────────────────────────────
+    # When ``webhook_require_auth`` is on, every webhook_trigger and
+    # api_endpoint node MUST configure at least one auth method.  This
+    # prevents accidentally exposing an unauthenticated public endpoint.
+    if settings.webhook_require_auth:
+        _unauthenticated: list[str] = []
+        for node in graph.get("nodes", []):
+            node_type = node.get("type")
+            if node_type not in ("webhook_trigger", "api_endpoint"):
+                continue
+            node_params = node.get("params") or {}
+            auth_type = str(node_params.get("auth_type") or "none")
+            if auth_type == "none":
+                path = str(node_params.get("path") or node_params.get("base_path") or "").strip("/")
+                _unauthenticated.append(
+                    f"{node_type} '{node.get('name', node.get('id', 'unnamed'))}' "
+                    f"at path '{path or '/'}'"
+                )
+        if _unauthenticated:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "message": (
+                        "Webhook auth is required (settings.webhook_require_auth=True). "
+                        "Configure basic, header, bearer, jwt, or hmac authentication "
+                        "on the listed nodes, or set webhook_require_auth=False to "
+                        "allow open endpoints."
+                    ),
+                    "unauthenticated_nodes": _unauthenticated,
+                },
+            )
 
     updated_deployments = 0
     if body.update_deployments:

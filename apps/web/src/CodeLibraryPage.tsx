@@ -1,5 +1,7 @@
+import { Code } from "@phosphor-icons/react";
 import { useMemo, useRef, useState } from "react";
 
+import { EmptyState } from "./EmptyState";
 import { errorMessage } from "./api";
 import { useConfirm } from "./ConfirmProvider";
 import {
@@ -210,21 +212,23 @@ export function CodeLibraryPage() {
         )}
 
         {filtered && filtered.length === 0 && (
-          <div className="empty-state">
-            <h2>No code files found</h2>
-            <p className="muted">
-              {query.trim()
-                ? "Try a different search or scope."
-                : "Create a Python file to expose reusable functions as nodes."}
-            </p>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => setCreating(true)}
-            >
-              New file
-            </button>
-          </div>
+          <EmptyState
+            icon={<Code size={48} />}
+            title="No code files found"
+            description={query.trim()
+              ? "Try a different search or scope."
+              : "Create a Python file to expose reusable functions as nodes."
+            }
+            action={
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setCreating(true)}
+              >
+                New file
+              </button>
+            }
+          />
         )}
 
         {filtered && filtered.length > 0 && (

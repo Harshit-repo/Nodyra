@@ -223,6 +223,17 @@ def _license_enterprise_by_default():
 
 
 @pytest.fixture(autouse=True)
+def _reset_webhook_auth_flag():
+    """Disable webhook_require_auth by default so tests can publish workflows
+    with open webhooks (auth_type=none). Individual tests that exercise the
+    enforcement path re-enable it explicitly."""
+    prev = settings.webhook_require_auth
+    settings.webhook_require_auth = False
+    yield
+    settings.webhook_require_auth = prev
+
+
+@pytest.fixture(autouse=True)
 def _reset_webhook_listen_state():
     """Clear in-memory webhook listen sessions and capture buffer between tests.
 
@@ -267,9 +278,21 @@ async def client() -> AsyncIterator[AsyncClient]:
         handle = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
         handle.close()
         db_path = handle.name
+        # WAL mode must be set before any SQLAlchemy connection touches the
+        # file (journal_mode is a persistent DB setting but must be set
+        # outside a transaction).  Open a standalone sync sqlite3 connection,
+        # set WAL, close it — then let the async engine take over.
+        import sqlite3 as _sqlite3
+        _raw = _sqlite3.connect(db_path, timeout=5)
+        _raw.execute("PRAGMA journal_mode=WAL")
+        _raw.close()
+
         engine = create_async_engine(
-            f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool
+            f"sqlite+aiosqlite:///{db_path}",
+            poolclass=NullPool,
+            connect_args={"timeout": 5.0},
         )
+
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 

@@ -150,7 +150,16 @@ async def test_secret_cache_expires_after_ttl(client: AsyncClient) -> None:
         await session.commit()
 
     # Without TTL the cache would still return the old value. Force it stale.
-    redaction._secret_cache_loaded_at = time.monotonic() - (redaction.SECRET_CACHE_TTL_SECONDS + 1)
+    # Cache is now partitioned: org-scoped load uses a per-org key, global
+    # load uses ``_SECRET_CACHE_GLOBAL_KEY``.  Either way each entry is a
+    # (values, loaded_at) tuple.
+    global_key = redaction._SECRET_CACHE_GLOBAL_KEY
+    if global_key in redaction._secret_cache:
+        values_stale, _ = redaction._secret_cache[global_key]
+        redaction._secret_cache[global_key] = (
+            values_stale,
+            time.monotonic() - (redaction.SECRET_CACHE_TTL_SECONDS + 1),
+        )
 
     async with SessionLocal() as session:
         values = await redaction.load_secret_values(session)

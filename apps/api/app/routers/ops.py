@@ -27,6 +27,12 @@ router = APIRouter(tags=["ops"])
 _started_at = time.time()
 _VERSION = "0.0.1"
 
+# P1-11: Module-level cache so Prometheus scrapes don't hammer the DB with
+# COUNT queries every poll interval.  30 s TTL — the cache is discarded when
+# stale and rebuilt on the next hit.
+_METRICS_CACHE_TTL = 30.0
+_metrics_cache: dict = {"text": "", "last_fetched": 0.0}
+
 
 async def _counts(session: AsyncSession) -> dict[str, int]:
     async def count(query) -> int:  # noqa: ANN001 - inner helper
@@ -47,6 +53,100 @@ async def _counts(session: AsyncSession) -> dict[str, int]:
             select(func.count()).select_from(Run).where(Run.status == "error")
         ),
     }
+
+
+@router.get("/ops/health")
+async def ops_health(
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Comprehensive component-level health check.
+
+    Returns status for every subsystem: DB, Redis, queue, active runs,
+    stuck runs, pool capacity.  Designed for load-balancer probes and
+    operator dashboards — a 200 means the API can serve traffic; non-200
+    means the load balancer should drain this replica.
+    """
+    from app.redis_client import redis_client as _redis
+
+    health: dict[str, Any] = {
+        "status": "ok",
+        "version": _VERSION,
+        "uptime_seconds": int(time.time() - _started_at),
+        "server_time": datetime.now().astimezone().isoformat(),
+    }
+
+    # --- DB ---------------------------------------------------------------
+    try:
+        await session.execute(select(1))
+        health["database"] = "ok"
+    except Exception:
+        health["database"] = {"status": "error", "error": "database probe failed"}
+        health["status"] = "degraded"
+
+    # --- Redis ------------------------------------------------------------
+    try:
+        await _redis.ping()
+        health["redis"] = "ok"
+    except Exception:
+        health["redis"] = "unreachable"
+        if settings.queue_backend == "redis":
+            health["status"] = "degraded"
+
+    # --- Queue ------------------------------------------------------------
+    try:
+        qs = await run_queue.stats(session)
+        health["queue"] = {
+            "queued": qs.get("queued", 0),
+            "leased": qs.get("leased", 0),
+            "running": qs.get("running", 0),
+            "dead_lettered": qs.get("dead_lettered", 0),
+            "oldest_queued_age_seconds": qs.get("oldest_queued_age_seconds"),
+        }
+    except Exception:
+        health["queue"] = {"status": "error", "error": "queue stats query failed"}
+
+    # --- Active / stuck runs ----------------------------------------------
+    try:
+        active_count = int(
+            await session.scalar(
+                select(func.count())
+                .select_from(Run)
+                .where(Run.status.in_(("running", "queued", "waiting")))
+            )
+            or 0
+        )
+        health["active_runs"] = active_count
+
+        # Stuck: running runs that started >30 min ago with no recent node
+        from datetime import timedelta, UTC
+
+        stuck_cutoff = datetime.now(UTC) - timedelta(seconds=1800)
+        stuck_count = int(
+            await session.scalar(
+                select(func.count())
+                .select_from(Run)
+                .where(
+                    Run.status == "running",
+                    Run.runner_pool_id.is_(None),
+                    Run.started_at < stuck_cutoff,
+                )
+            )
+            or 0
+        )
+        health["stuck_runs"] = stuck_count
+    except Exception:
+        health["active_runs"] = {"error": "active run count query failed"}
+
+    # --- Pools ------------------------------------------------------------
+    try:
+        from app.services.runtime_pool import pool as _rt_pool
+        health["runtime_pool"] = {
+            "capacity": _rt_pool.available_global_slots() if _rt_pool else 0,
+        }
+    except Exception:
+        health["runtime_pool"] = "unavailable"
+
+    return health
 
 
 @router.get("/system/status")
@@ -205,9 +305,26 @@ async def replay_dead_letter(
 
 @router.get("/metrics")
 async def metrics(session: AsyncSession = Depends(get_session)) -> Response:
+    now = time.time()
+    if now - _metrics_cache["last_fetched"] < _METRICS_CACHE_TTL:
+        return Response(
+            content=_metrics_cache["text"],
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
     counts = await _counts(session)
     queue = await run_queue.stats(session)
     queue_oldest = queue.get("oldest_queued_age_seconds")
+
+    # Merge our lightweight Prometheus metrics (HTTP, run durations, node
+    # executions) into the existing endpoint.  The module is always loaded
+    # but its gauges may be zero if no runs have executed yet.
+    extra_metrics = ""
+    try:
+        from app.services.metrics import get_metrics_text
+        extra_metrics = get_metrics_text()
+    except Exception:  # noqa: BLE001
+        pass
+
     lines = [
         "# HELP noodle_workflows Total workflows.",
         "# TYPE noodle_workflows gauge",
@@ -256,7 +373,12 @@ async def metrics(session: AsyncSession = Depends(get_session)) -> Response:
         "# TYPE noodle_queue_draining gauge",
         f"noodle_queue_draining {1 if settings.queue_drain else 0}",
     ]
+    text = "\n".join(lines) + "\n"
+    if extra_metrics:
+        text += extra_metrics
+    _metrics_cache["text"] = text
+    _metrics_cache["last_fetched"] = now
     return Response(
-        content="\n".join(lines) + "\n",
+        content=text,
         media_type="text/plain; version=0.0.4; charset=utf-8",
     )

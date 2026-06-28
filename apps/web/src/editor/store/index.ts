@@ -87,6 +87,13 @@ export interface NodeSettingsPatch {
   label?: string;
 }
 
+export interface TokenUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  model?: string;
+}
+
 export interface NodeRunMeta {
   logs?: string[];
   error?: string | null;
@@ -94,6 +101,7 @@ export interface NodeRunMeta {
   durationMs?: number | null;
   startedAt?: number | null;
   finishedAt?: number | null;
+  tokenUsage?: TokenUsage | null;
 }
 
 export interface RunOptions {
@@ -2810,6 +2818,18 @@ export const useEditor = create<EditorStore>((set, get) => ({
           nextChunks = { ...nextChunks };
           delete nextChunks[nid];
         }
+        // Extract token usage from debug or from a direct event field.
+        const rawTu = (event as unknown as Record<string, unknown>).token_usage ??
+          (event.debug as unknown as Record<string, unknown> | undefined)?.token_usage;
+        const eventTokenUsage: TokenUsage | null =
+          rawTu && typeof rawTu === "object" && !Array.isArray(rawTu)
+            ? {
+                prompt_tokens: Number((rawTu as Record<string, unknown>).prompt_tokens ?? 0),
+                completion_tokens: Number((rawTu as Record<string, unknown>).completion_tokens ?? 0),
+                total_tokens: Number((rawTu as Record<string, unknown>).total_tokens ?? 0),
+                model: String((rawTu as Record<string, unknown>).model ?? "") || undefined,
+              }
+            : null;
         return {
           runStatus: { ...state.runStatus, [nid]: event.status ?? "success" },
           runOutputs: { ...state.runOutputs, [nid]: event.outputs },
@@ -2822,6 +2842,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
               durationMs: event.duration_ms ?? null,
               startedAt: event.started_at ?? null,
               finishedAt: event.finished_at ?? null,
+              tokenUsage: eventTokenUsage,
             },
           },
           runChunks: nextChunks,
@@ -2919,6 +2940,19 @@ export const useEditor = create<EditorStore>((set, get) => ({
     for (const nr of run.node_runs) {
       status[nr.node_id] = nr.status;
       outputs[nr.node_id] = nr.output;
+      // Extract token usage from debug (the generic JSON blob that AI
+      // providers write trace info into) or from a direct top-level field.
+      const tu = (nr as unknown as Record<string, unknown>).token_usage ??
+        (nr.debug as unknown as Record<string, unknown> | undefined)?.token_usage;
+      const tokenUsage: TokenUsage | null =
+        tu && typeof tu === "object" && !Array.isArray(tu)
+          ? {
+              prompt_tokens: Number((tu as Record<string, unknown>).prompt_tokens ?? 0),
+              completion_tokens: Number((tu as Record<string, unknown>).completion_tokens ?? 0),
+              total_tokens: Number((tu as Record<string, unknown>).total_tokens ?? 0),
+              model: String((tu as Record<string, unknown>).model ?? "") || undefined,
+            }
+          : null;
       meta[nr.node_id] = {
         logs: nr.logs ?? [],
         error: nr.error ?? null,
@@ -2926,6 +2960,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
         durationMs: nr.duration_ms ?? null,
         startedAt: nr.started_at ?? null,
         finishedAt: nr.finished_at ?? null,
+        tokenUsage,
       };
     }
     set({

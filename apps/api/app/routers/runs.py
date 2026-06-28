@@ -19,6 +19,7 @@ from app.models import (
     RunApproval,
     RunEvent,
     RunQueueEntry,
+    User,
     Workflow,
     WorkflowVersion,
 )
@@ -37,7 +38,7 @@ from app.schemas import (
     RunTimeline,
     RunTimelineEvent,
 )
-from app.security import _user_from_session_token, require_permission
+from app.security import _user_from_session_token, optional_current_user, require_permission
 from app.services import queue as run_queue
 from app.services.events import broker
 from app.services.graph_utils import (
@@ -133,6 +134,7 @@ async def list_runs(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
+    _user: User | None = Depends(optional_current_user),
 ):
     total = await session.scalar(
         select(func.count()).select_from(Run).where(Run.workflow_id == workflow_id)
@@ -229,7 +231,11 @@ async def list_all_runs(
 
 
 @router.get("/runs/{run_id}", response_model=RunInfo)
-async def get_run(run_id: str, session: AsyncSession = Depends(get_session)):
+async def get_run(
+    run_id: str,
+    session: AsyncSession = Depends(get_session),
+    _user: User | None = Depends(optional_current_user),
+):
     # T-09: single joined query replaces two sequential session.get() calls.
     row = (
         await session.execute(
@@ -268,7 +274,12 @@ async def get_run(run_id: str, session: AsyncSession = Depends(get_session)):
 
 
 async def _load_run_and_workflow(session: AsyncSession, run_id: str) -> tuple[Run, Workflow]:
-    run = await session.get(Run, run_id, options=[selectinload(Run.node_runs)])
+    # P1-19: Don't eager-load node_runs — a loop-amplified run can have
+    # millions of rows. Each caller issues its own limited queries instead.
+    # B-01: Use select() (which triggers do_orm_execute org filter) instead of
+    # session.get() (which bypasses it).  The route-level permission guard is
+    # defence-in-depth; this is the data-layer enforcement.
+    run = await session.scalar(select(Run).where(Run.id == run_id))
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
     workflow = await session.scalar(
@@ -296,9 +307,11 @@ async def rerun_run(run_id: str, session: AsyncSession = Depends(get_session)) -
     parameters: dict | None = None
     if trigger_node is not None:
         trigger_id = trigger_node["id"] if isinstance(trigger_node, dict) else trigger_node.id
-        trigger_run = next(
-            (nr for nr in run.node_runs if nr.node_id == trigger_id),
-            None,
+        trigger_run = await session.scalar(
+            select(NodeRun).where(
+                NodeRun.run_id == run_id,
+                NodeRun.node_id == trigger_id,
+            )
         )
         if trigger_run and isinstance(trigger_run.output, dict):
             value = trigger_run.output.get("main")
@@ -330,7 +343,13 @@ async def retry_from_failure(
     run, workflow = await _load_run_and_workflow(session, run_id)
     graph, version, version_id = await _graph_for_run(session, run, workflow)
 
-    failed_ids = {nr.node_id for nr in run.node_runs if nr.status == "error"}
+    node_runs = (
+        await session.scalars(
+            select(NodeRun).where(NodeRun.run_id == run_id).limit(5000)
+        )
+    ).all()
+
+    failed_ids = {nr.node_id for nr in node_runs if nr.status == "error"}
     if not failed_ids:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -339,7 +358,7 @@ async def retry_from_failure(
 
     # Reuse every successful upstream node's output via the engine's cache.
     cache: dict[str, dict] = {}
-    for nr in run.node_runs:
+    for nr in node_runs:
         if nr.status == "success" and isinstance(nr.output, dict):
             cache[nr.node_id] = nr.output
 
@@ -489,7 +508,11 @@ def _timeline_sort_ts(value: datetime | None) -> datetime:
 
 
 @router.get("/runs/{run_id}/timeline", response_model=RunTimeline)
-async def run_timeline(run_id: str, session: AsyncSession = Depends(get_session)) -> RunTimeline:
+async def run_timeline(
+    run_id: str,
+    session: AsyncSession = Depends(get_session),
+    _user: User | None = Depends(optional_current_user),
+) -> RunTimeline:
     """Ordered lifecycle events for a single run.
 
     Composes ``Run`` start/finish, ``RunQueueEntry`` enqueue/lease/retry, and
@@ -497,9 +520,19 @@ async def run_timeline(run_id: str, session: AsyncSession = Depends(get_session)
     backpressure UI and replay/debug views; clients can render it directly
     without re-deriving timings from disparate records.
     """
-    run = await session.get(Run, run_id, options=[selectinload(Run.node_runs)])
+    run = await session.get(Run, run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
+    # Load node_runs separately with a cap — a loop-amplified run can have
+    # millions of rows, and selectinload() loads them all.
+    node_runs = (
+        await session.scalars(
+            select(NodeRun)
+            .where(NodeRun.run_id == run_id)
+            .order_by(NodeRun.started_at.asc())
+            .limit(5000)
+        )
+    ).all()
 
     entry = await session.scalar(select(RunQueueEntry).where(RunQueueEntry.run_id == run_id))
     persisted_events = (
@@ -562,7 +595,7 @@ async def run_timeline(run_id: str, session: AsyncSession = Depends(get_session)
     )
 
     execution_events: list[RunTimelineEvent] = []
-    for nr in run.node_runs:
+    for nr in node_runs:
         execution_events.append(
             RunTimelineEvent(
                 type="node_started",
@@ -638,7 +671,9 @@ async def run_timeline(run_id: str, session: AsyncSession = Depends(get_session)
 
 @router.get("/runs/{run_id}/approvals", response_model=list[RunApprovalInfo])
 async def run_approvals(
-    run_id: str, session: AsyncSession = Depends(get_session)
+    run_id: str,
+    session: AsyncSession = Depends(get_session),
+    _user: User | None = Depends(optional_current_user),
 ) -> list[RunApprovalInfo]:
     """Approval records for side-effecting AI tools in a run."""
     exists = await session.scalar(select(Run.id).where(Run.id == run_id))
@@ -757,12 +792,18 @@ async def run_debug_snapshot(
     run, workflow = await _load_run_and_workflow(session, run_id)
     graph, version, version_id = await _graph_for_run(session, run, workflow)
 
-    failed_nodes = [nr for nr in run.node_runs if nr.status == "error"]
+    node_runs = (
+        await session.scalars(
+            select(NodeRun).where(NodeRun.run_id == run_id).limit(5000)
+        )
+    ).all()
+
+    failed_nodes = [nr for nr in node_runs if nr.status == "error"]
     failed_node_id = failed_nodes[0].node_id if failed_nodes else None
 
     upstream_cache: dict[str, Any] = {}
     node_errors: dict[str, str] = {}
-    for nr in run.node_runs:
+    for nr in node_runs:
         if nr.status == "success" and nr.output is not None:
             upstream_cache[nr.node_id] = nr.output
         if nr.status == "error" and nr.error:

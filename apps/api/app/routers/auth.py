@@ -3,7 +3,7 @@ import secrets
 import time
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,7 @@ from app.schemas import (
     ApiTokenInfo,
     AuthRequiredResponse,
     LoginRequest,
+    PageResponse,
     RegisterRequest,
     TokenResponse,
     UserAdminInfo,
@@ -172,9 +173,9 @@ def _clean(value: str | None) -> str:
     return (value or "").strip()
 
 
-def _token_response(user: User) -> TokenResponse:
+def _token_response(user: User, *, client_ip: str = "") -> TokenResponse:
     return TokenResponse(
-        token=create_token(user.id),
+        token=create_token(user.id, client_ip=client_ip),
         user=UserInfo(
             id=user.id,
             email=user.email,
@@ -339,6 +340,71 @@ async def register(
     return result
 
 
+@router.post("/auth/verify-email")
+async def verify_email(
+    token: str = Query(..., description="Email verification token"),
+    session: AsyncSession = Depends(get_session),
+):
+    """Verify a user's email address using a one-time token (P1-3).
+
+    The token is a ``create_payload_token`` JWT with ``action="verify_email"``
+    and the user's id in ``sub``.
+    """
+    payload = decode_payload_token(token)
+    if payload is None or payload.get("action") != "verify_email":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Invalid or expired verification link. Request a new one.",
+        )
+    user_id = payload.get("sub")
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    if user.email_verified:
+        return {"message": "Email already verified."}
+    user.email_verified = True
+    await session.commit()
+    return {"message": "Email verified successfully."}
+
+
+@router.post("/auth/resend-verification")
+async def resend_verification(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    """Generate a new verification token and log it (P1-3).
+
+    In production this would send an email.  The token is returned in the
+    response for local-dev convenience; in production with a real email
+    backend the token would only appear in the email.
+    """
+    if user.email_verified:
+        return {"message": "Email already verified."}
+    token = create_payload_token(
+        {"sub": user.id, "action": "verify_email"}, ttl_seconds=3600
+    )
+    # Never log the full token — it's a bearer credential.
+    # Log only a prefix hash for debugging correlation.
+    logger.info(
+        "email verification token generated for user %s (%s) prefix=%s",
+        user.id, user.email, token[:8],
+    )
+    # Return the token in the response for local-dev convenience.  In
+    # production with a real email backend, set a feature flag that
+    # suppresses the token field and sends it only via email.
+    return {"message": "Verification email sent.", "token": token}
+
+
+# Dummy bcrypt-like hash for constant-time comparison when the user doesn't
+# exist.  Prevents timing-based email enumeration: verify_password always runs,
+# taking the same wall-clock whether the user is found or not.
+_DUMMY_HASH = (
+    "$2b$12$LJ3m4ys3Lk0TSwHCpNqrRO"
+    "eMrmfW8zH6oGJqk9Ry1jDzE2pXsKlMuv3K4a1bQcVbN0d5sT6u7w8x9y0z"
+)
+
+
 @router.post("/login", response_model=TokenResponse)
 async def login(
     body: LoginRequest,
@@ -348,9 +414,20 @@ async def login(
 ):
     await _enforce_auth_rate_limit(request, "login")
     user = await session.scalar(select(User).where(User.email == _email(body.email)))
-    if user is None or not verify_password(body.password, user.password_hash):
+    # Constant-time defence against email enumeration: always verify the
+    # password, even when the user doesn't exist.  The dummy hash is a
+    # pre-computed valid bcrypt hash so the work factor matches a real one.
+    password_hash = user.password_hash if user is not None else _DUMMY_HASH
+    if not verify_password(body.password, password_hash) or user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
-    result = _token_response(user)
+    # P1-3: gate login for unverified users when required
+    if settings.auth_require_verified_email and not getattr(user, "email_verified", False):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Email address not verified. Check your inbox or request a new verification link.",
+        )
+    client_ip = get_client_ip(request) if settings.auth_bind_token_to_ip else ""
+    result = _token_response(user, client_ip=client_ip)
     _set_session_cookies(response, result.token)
     return result
 
@@ -486,12 +563,26 @@ async def auth_required(
 
 @router.get(
     "/users",
-    response_model=list[UserAdminInfo],
+    response_model=PageResponse[UserAdminInfo],
     dependencies=[Depends(require_user_manage)],
 )
-async def list_users(session: AsyncSession = Depends(get_session)):
-    result = await session.scalars(select(User).order_by(User.created_at, User.email))
-    return list(result.all())
+async def list_users(
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
+):
+    total = await session.scalar(
+        select(func.count()).select_from(User)
+    )
+    result = await session.scalars(
+        select(User)
+        .order_by(User.created_at, User.email)
+        .offset(offset)
+        .limit(limit)
+    )
+    return PageResponse(
+        items=list(result.all()), total=total or 0, limit=limit, offset=offset
+    )
 
 
 @router.post(

@@ -1,6 +1,9 @@
-import { WarningCircle } from "@phosphor-icons/react";
+import { HardDrives, WarningCircle } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { SkeletonCardGrid } from "./Skeleton";
+
+import { EmptyState } from "./EmptyState";
 import { errorMessage } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { PackageDrawer } from "./PackageDrawer";
@@ -918,19 +921,34 @@ export function EnvironmentsPage() {
 
         {error && <p className="error-text">{error}</p>}
         {!environments && !error && (
-          <div className="env-grid" aria-label="Loading environments">
-            {Array.from({ length: 3 }).map((_, index) => (
-              <div className="env-card skeleton-card" key={index}>
-                <span className="skeleton-line title" />
-                <span className="skeleton-line" />
-                <span className="skeleton-line" />
-                <span className="skeleton-line tiny" />
-              </div>
-            ))}
+          <div aria-label="Loading environments">
+            <SkeletonCardGrid count={3} />
           </div>
         )}
 
-        {environments && (
+        {environments && environments.length === 0 && (
+          <EmptyState
+            icon={<HardDrives size={48} />}
+            title="No environments yet"
+            description="Create a Python environment with the packages your code needs. Environments are isolated and reproducible."
+            action={
+              <button
+                className="btn btn-primary"
+                onClick={() => setModal(true)}
+                disabled={ent.atLimit("environments", 0)}
+                title={
+                  ent.atLimit("environments", 0)
+                    ? `Environment limit reached on the ${ent.edition} edition — upgrade to add more.`
+                    : undefined
+                }
+              >
+                New environment
+              </button>
+            }
+          />
+        )}
+
+        {environments && environments.length > 0 && (
           <>
             <div className="env-health-summary">
               <div>

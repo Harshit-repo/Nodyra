@@ -1,5 +1,5 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -16,6 +16,7 @@ from app.schemas import (
     PackageUsageEntry,
     PackageUsageInfo,
     PackageUsagePackage,
+    PageResponse,
 )
 from app.security import optional_current_user, require_permission
 from app.services.audit import log_audit
@@ -99,10 +100,21 @@ def _validate_pool(size: int, pool_max: int | None) -> None:
         )
 
 
-@router.get("", response_model=list[EnvironmentInfo])
-async def list_environments(session: AsyncSession = Depends(get_session)):
+@router.get("", response_model=PageResponse[EnvironmentInfo])
+async def list_environments(
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    _user: User | None = Depends(optional_current_user),
+):
+    total = await session.scalar(
+        select(func.count()).select_from(Environment)
+    )
     result = await session.scalars(
-        select(Environment).order_by(Environment.is_global.desc(), Environment.name)
+        select(Environment)
+        .order_by(Environment.is_global.desc(), Environment.name)
+        .offset(offset)
+        .limit(limit)
     )
     envs = result.all()
     pool_ids = {e.runner_pool_id for e in envs if e.runner_pool_id}
@@ -112,7 +124,8 @@ async def list_environments(session: AsyncSession = Depends(get_session)):
             select(RunnerPool).where(RunnerPool.id.in_(pool_ids))
         )
         names = {p.id: p.name for p in pools.all()}
-    return [_to_info(env, names.get(env.runner_pool_id or "")) for env in envs]
+    items = [_to_info(env, names.get(env.runner_pool_id or "")) for env in envs]
+    return PageResponse(items=items, total=total or 0, limit=limit, offset=offset)
 
 
 @router.post(
@@ -129,7 +142,7 @@ async def create_environment(
 ):
     if body.backend not in {"venv", "conda", "pixi"}:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "backend must be one of: venv, conda, pixi",
         )
     _validate_pool(body.runner_pool_size, body.runner_pool_max)
@@ -215,7 +228,9 @@ async def update_environment(
 
 
 @router.get("/backends")
-async def list_backends() -> dict:
+async def list_backends(
+    _user: User | None = Depends(optional_current_user),
+) -> dict:
     """Return server platform and available backends.
 
     conda and pixi are always available — their binaries auto-download on first use.
@@ -273,7 +288,11 @@ async def list_backends() -> dict:
 
 
 @router.get("/{env_id}", response_model=EnvironmentInfo)
-async def get_environment(env_id: str, session: AsyncSession = Depends(get_session)):
+async def get_environment(
+    env_id: str,
+    session: AsyncSession = Depends(get_session),
+    _user: User | None = Depends(optional_current_user),
+):
     env = await _load(session, env_id)
     return _to_info(env, await _pool_name(session, env.runner_pool_id))
 
@@ -307,7 +326,9 @@ def _node_requirements_by_type() -> dict[str, list[str]]:
 
 @router.get("/{env_id}/package-usage", response_model=PackageUsageInfo)
 async def package_usage(
-    env_id: str, session: AsyncSession = Depends(get_session)
+    env_id: str,
+    session: AsyncSession = Depends(get_session),
+    _user: User | None = Depends(optional_current_user),
 ):
     """Map each required package (canonical name) to the workflow nodes needing it.
 

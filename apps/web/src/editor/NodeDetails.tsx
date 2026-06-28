@@ -15,6 +15,7 @@ import {
   type CredentialPreset,
   type CredentialScope,
 } from "../credentialPresets";
+import { MonacoEditor } from "./MonacoEditor";
 import { isBrandIconName, NodeIcon } from "../NodeIcon";
 import { useCredentialTypes } from "../queries";
 import { useModalA11y } from "../useModalA11y";
@@ -23,6 +24,7 @@ import { safeGetItem, safeSetItem } from "../safeStorage";
 import { useTimeout } from "../hooks/useTimeout";
 import type {
   Credential,
+  CredentialTestResponse,
   LintDiagnostic,
   NodeManifest,
   NodeSource,
@@ -218,6 +220,15 @@ const CRED_TYPE_COLORS: Record<string, string> = {
 
 function credTypeDotColor(type: string): string {
   return CRED_TYPE_COLORS[type] ?? "var(--accent)";
+}
+
+function credTestStatusColor(
+  testResults: Record<string, CredentialTestResponse>,
+  credId: string,
+): string {
+  const result = testResults[credId];
+  if (!result) return "var(--color-warning)";
+  return result.ok ? "var(--color-success)" : "var(--color-error)";
 }
 
 function formatRelativeTime(iso: string | null | undefined): string {
@@ -1373,6 +1384,7 @@ function CredentialParamField({
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState("");
+  const [testResults, setTestResults] = useState<Record<string, CredentialTestResponse>>({});
   const pickerRef = useRef<HTMLDivElement>(null);
   const { notify } = useToast();
 
@@ -1478,6 +1490,7 @@ function CredentialParamField({
         workflow_id: workflowId,
         context: credentialContext ?? {},
       });
+      setTestResults((current) => ({ ...current, [selected.id]: result }));
       notify(
         result.ok ? "Credential connected." : result.message,
         result.ok ? "success" : "error",
@@ -1651,7 +1664,13 @@ function CredentialParamField({
                           style={{ background: credTypeDotColor(cred.type) }}
                         />
                         <span className="credential-picker-option-body">
-                          <span className="credential-picker-option-name">{cred.name}</span>
+                          <span className="credential-picker-option-name">
+                            <span
+                              className="credential-status-dot"
+                              style={{ background: credTestStatusColor(testResults, cred.id) }}
+                            />
+                            {cred.name}
+                          </span>
                           <span className="credential-picker-option-meta">
                             {credentialTypeLabel(cred.type)} · {formatRelativeTime(cred.last_used_at)}
                           </span>
@@ -3665,14 +3684,18 @@ export function ChatTriggerPanel({
 export function WebhookPanel({
   path,
   nodeId,
+  params,
   onListeningChange,
 }: {
   path: string;
   nodeId?: string;
+  params?: Record<string, unknown>;
   onListeningChange?: (listening: boolean) => void;
 }) {
   const slug = path.trim() || "noodle";
   const origin = window.location.origin;
+  const authType = String(params?.auth_type ?? "none").toLowerCase();
+  const noAuth = authType === "none";
   const [received, setReceived] = useState(false);
   const [listening, setListening] = useState(false);
   const [error, setError] = useState("");
@@ -3763,14 +3786,19 @@ export function WebhookPanel({
         <div className="inspector-section-head">Webhook URLs</div>
         <p className="field-desc">Test URL — captures requests while you build.</p>
         <div className="ndv-webhook-url-row">
-          <span className="ndv-url-badge ndv-url-badge--test">Test</span>
+          <span className="ndv-url-badge ndv-url-badge--test">Editor only</span>
           <UrlRow url={`${origin}/api/webhook-test/${slug}`} />
         </div>
         <p className="field-desc">Production URL — runs this workflow when it is active.</p>
         <div className="ndv-webhook-url-row">
-          <span className="ndv-url-badge ndv-url-badge--prod">Prod</span>
+          <span className="ndv-url-badge ndv-url-badge--prod">Production</span>
           <UrlRow url={`${origin}/api/webhook/${slug}`} />
         </div>
+        {noAuth && (
+          <p className="production-warning" style={{ marginTop: 10, borderRadius: 4 }}>
+            This endpoint is publicly accessible — anyone who knows the URL can trigger it.
+          </p>
+        )}
       </div>
 
       {/* z-index 1: center stage — orb + label + button */}
@@ -3863,7 +3891,6 @@ function CodeEditorModal({
   const dialogRef = useRef<HTMLDivElement>(null);
   // trapFocus:false — the code editor owns Tab for indentation.
   useModalA11y(dialogRef, onClose, { trapFocus: false });
-  const drop = exprDropHandlers(draft, onChange);
   const hasInput = inputData !== undefined && Object.keys(inputData).length > 0;
 
   // The first upstream input becomes ``$json``; the whole map is ``$input``.
@@ -3979,16 +4006,12 @@ function CodeEditorModal({
                 the <code>@node(...)</code> decorator is stripped on save
               </span>
             </div>
-            <HighlightedTextarea
-              className="code-modal-editor"
-              language="python"
-              lineNumbers
-              lint
-              spellCheck={false}
+            <MonacoEditor
               value={draft}
               onChange={onChange}
-              onDrop={drop.onDrop}
-              onDragOver={drop.onDragOver}
+              minLines={15}
+              maxLines={40}
+              label="Python code editor"
             />
             <div className="code-modal-actions">
               <input
@@ -4930,6 +4953,7 @@ export function NodeDetails({
         <WebhookPanel
           path={String(params.path ?? "noodle")}
           nodeId={node.id}
+          params={params}
         />
       )}
 

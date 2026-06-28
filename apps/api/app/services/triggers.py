@@ -186,6 +186,7 @@ def _matches_basic_auth(auth_header: str | None, expected_user: str, expected_pa
     if not auth_header or not auth_header.lower().startswith("basic "):
         return False
     import base64
+    import hmac
 
     try:
         decoded = base64.b64decode(auth_header.split(" ", 1)[1]).decode("utf-8")
@@ -194,7 +195,11 @@ def _matches_basic_auth(auth_header: str | None, expected_user: str, expected_pa
     if ":" not in decoded:
         return False
     user, _, password = decoded.partition(":")
-    return user == expected_user and password == expected_pass
+    # Constant-time comparison to prevent timing attacks that leak valid
+    # credentials by measuring how many bytes matched before rejection.
+    return hmac.compare_digest(user, expected_user) and hmac.compare_digest(
+        password, expected_pass
+    )
 
 
 def _webhook_auth_passes(node_params: dict, resolved: dict, headers: dict, query: dict) -> bool:
@@ -218,6 +223,8 @@ def _webhook_auth_passes(node_params: dict, resolved: dict, headers: dict, query
         return _matches_basic_auth(lower_headers.get("authorization"), username, password)
 
     if auth_type == "header":
+        import hmac as _hmac
+
         if creds:
             name = str(creds.get("name") or "X-API-Key").lower()
             expected = str(creds.get("value") or "")
@@ -225,16 +232,24 @@ def _webhook_auth_passes(node_params: dict, resolved: dict, headers: dict, query
             # Legacy fallback for workflows that pinned name on the node.
             name = str(node_params.get("auth_header_name") or "X-API-Key").lower()
             expected = str(resolved.get("auth_header_value") or "")
-        return bool(expected) and lower_headers.get(name) == expected
+        if not expected:
+            return False
+        got = lower_headers.get(name) or ""
+        return _hmac.compare_digest(got, expected)
 
     if auth_type == "query":
+        import hmac as _hmac
+
         if creds:
             name = str(creds.get("name") or "token")
             expected = str(creds.get("value") or "")
         else:
             name = str(node_params.get("auth_query_name") or "token")
             expected = str(resolved.get("auth_query_value") or "")
-        return bool(expected) and str((query or {}).get(name) or "") == expected
+        if not expected:
+            return False
+        got = str((query or {}).get(name) or "")
+        return _hmac.compare_digest(got, expected)
 
     if auth_type == "bearer":
         import hmac

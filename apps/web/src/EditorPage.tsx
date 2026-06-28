@@ -3,7 +3,7 @@ import { Keyboard } from "@phosphor-icons/react";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useBlocker, useParams } from "react-router-dom";
 
-import { api, errorMessage, getOrgId, getToken, type RunStreamHandle, subscribeToRunEvents } from "./api";
+import { api, getOrgId, getToken, type RunStreamHandle, subscribeToRunEvents, userFriendlyError } from "./api";
 import { AiDraftModal } from "./AiDraftModal";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { RunnerPoolSelect } from "./RunnerPoolSelect";
@@ -445,7 +445,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
       environmentsQuery.error ??
       pinnedQuery.error;
     if (loadError) {
-      setMessage(errorMessage(loadError));
+      setMessage(userFriendlyError(loadError));
       setStatus("error");
       return;
     }
@@ -491,7 +491,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
             const child = await api.getWorkflow(childId);
             if (!cancelled) loadChildGraph(mg.id, childId, child.graph);
           } catch (err) {
-            if (!cancelled) setChildWorkflowLoading(mg.id, false, String(err));
+            if (!cancelled) setChildWorkflowLoading(mg.id, false, userFriendlyError(err));
           }
         }),
       );
@@ -585,8 +585,8 @@ const aiAbortRef = useRef<AbortController | null>(null);
           loadChildGraph(mg.id, childWf.id, initialGraph);
         } catch (err) {
           if (loadedWorkflowIdRef.current === id) {
-            setChildWorkflowLoading(mg.id, false, String(err));
-            notify(`Could not create map body workflow: ${String(err)}`, "error");
+            setChildWorkflowLoading(mg.id, false, userFriendlyError(err));
+            notify(`Could not create map body workflow: ${userFriendlyError(err)}`, "error");
           }
         } finally {
           creatingChildIdsRef.current.delete(mg.id);
@@ -637,7 +637,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
         );
       } catch (err) {
         if (cancelled) return;
-        setMessage(`Failed to load debug snapshot: ${String(err)}`);
+        setMessage(`Failed to load debug snapshot: ${userFriendlyError(err)}`);
       }
     })();
     return () => {
@@ -726,7 +726,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
       document.body.removeChild(a);
       URL.revokeObjectURL(blobUrl);
     } catch (err) {
-      notify(`Export failed: ${errorMessage(err)}`, "error");
+      notify(`Export failed: ${userFriendlyError(err)}`, "error");
     }
   }
 
@@ -765,7 +765,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
               await api.updateWorkflow(cw.workflowId, { graph: childToGraph(cw) });
               markChildClean(mgId);
             } catch (err) {
-              notify(`Could not save map body workflow: ${String(err)}`, "error");
+              notify(`Could not save map body workflow: ${userFriendlyError(err)}`, "error");
             }
           }),
         );
@@ -775,7 +775,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
       return updated;
     } catch (err) {
       setSaveError(true);
-      notify(`Could not save draft. ${errorMessage(err)}`, "error");
+      notify(`Could not save draft. ${userFriendlyError(err)}`, "error");
       return null;
     } finally {
       setSaving(false);
@@ -807,7 +807,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
       setMessage(`Published v${published.version}.${deployNote}`);
       notify(`Published v${published.version}.`, "success");
     } catch (err) {
-      notify(`Could not publish workflow. ${errorMessage(err)}`, "error");
+      notify(`Could not publish workflow. ${userFriendlyError(err)}`, "error");
     } finally {
       setPublishing(false);
     }
@@ -834,7 +834,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
       notify(next ? "Workflow is live." : "Workflow paused.", "success");
     } catch (err) {
       setActive(!next);
-      notify(`Could not update workflow state. ${errorMessage(err)}`, "error");
+      notify(`Could not update workflow state. ${userFriendlyError(err)}`, "error");
     } finally {
       setTogglingActive(false);
     }
@@ -873,7 +873,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
       if (controller.signal.aborted) {
         notify("AI draft request timed out. Please try again.", "error");
       } else {
-        notify(`Could not build AI draft. ${errorMessage(err)}`, "error");
+        notify(`Could not build AI draft. ${userFriendlyError(err)}`, "error");
       }
     } finally {
       window.clearTimeout(timeoutId);
@@ -900,7 +900,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
       setMessage(`${aiPreview.explanation}${missing}`);
       notify("AI draft applied.", "success");
     } catch (err) {
-      notify(`Could not apply AI draft. ${errorMessage(err)}`, "error");
+      notify(`Could not apply AI draft. ${userFriendlyError(err)}`, "error");
     } finally {
       setAiBusy(false);
     }
@@ -1090,7 +1090,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
       await api.clearWebhook(path);
       await api.startListen(path);
     } catch (err) {
-      setMessage(String(err));
+      setMessage(userFriendlyError(err));
       return;
     }
 
@@ -1122,7 +1122,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
         connectRunStream(run_id, runTargets);
       } catch (err) {
         stopWebhookListen();
-        setMessage(String(err));
+        setMessage(userFriendlyError(err));
       }
     }, 1000);
   }
@@ -1185,7 +1185,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
       }
       connectRunStream(run_id, targets, cache);
     } catch (err) {
-      notify(`Could not start workflow run. ${errorMessage(err)}`, "error");
+      notify(`Could not start workflow run. ${userFriendlyError(err)}`, "error");
     }
   }
 
@@ -1208,7 +1208,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
         });
       }
     } catch (err) {
-      notify(`Could not cancel run. ${errorMessage(err)}`, "error");
+      notify(`Could not cancel run. ${userFriendlyError(err)}`, "error");
     } finally {
       setCancellingRun(false);
     }
@@ -1307,7 +1307,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
       applyRunInfo(run);
       setSidecarOpen(true);
     } catch (err) {
-      setMessage(String(err));
+      setMessage(userFriendlyError(err));
     }
   }
 

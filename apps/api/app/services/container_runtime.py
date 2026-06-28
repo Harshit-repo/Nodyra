@@ -68,7 +68,7 @@ def _validate_python_version(version: str) -> str:
 # Spawn kwargs every Noodle-launched container gets. Resource ceilings are
 # overridable (per runner-pool provider_config, later per org_limits); the
 # security floor — cap_drop / no-new-privileges / read-only rootfs — is not.
-_OVERRIDABLE = ("mem_limit", "nano_cpus", "pids_limit", "tmpfs", "network")
+_OVERRIDABLE = ("mem_limit", "nano_cpus", "pids_limit", "tmpfs", "network", "ulimits")
 
 
 def hardening_kwargs(
@@ -84,6 +84,13 @@ def hardening_kwargs(
         "pids_limit": settings.sandbox_pids_limit,
         "network": network,
         "runtime": runtime,
+        # Tini init process reaps zombies inside the container (PID 1 problem).
+        "init": True,
+        # Ulimit caps — bound open files and child processes per container.
+        "ulimits": [
+            {"name": "nofile", "soft": 1024, "hard": 4096},
+            {"name": "nproc", "soft": 256, "hard": 512},
+        ],
         # rootfs is read-only; /tmp is the only writable surface.
         "environment": {"HOME": "/tmp"},
     }

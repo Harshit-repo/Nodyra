@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
+from app.config import settings
+from app.security import get_client_ip
 from app.services.provider_triggers import (
     dispatch_provider_webhook,
 )
@@ -15,11 +18,30 @@ from noodle_nodes.integrations_v2.specs import ProviderTriggerRequest
 
 router = APIRouter(tags=["provider-webhooks"])
 
-_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
+_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+
+
+_PROVIDER_WEBHOOK_MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MiB
 
 
 async def _provider_request(request: Request) -> ProviderTriggerRequest:
+    # Check Content-Length before consuming body (P1-16).
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > _PROVIDER_WEBHOOK_MAX_BODY_BYTES:
+                raise HTTPException(
+                    status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    "Request body too large",
+                )
+        except (ValueError, TypeError):
+            pass
     raw = await request.body()
+    if len(raw) > _PROVIDER_WEBHOOK_MAX_BODY_BYTES:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            "Request body too large",
+        )
     body: object
     try:
         body = json.loads(raw) if raw else None
@@ -33,10 +55,42 @@ async def _provider_request(request: Request) -> ProviderTriggerRequest:
     )
 
 
+async def _enforce_provider_webhook_rate_limit(
+    subscription_id: str, request: Request
+) -> None:
+    """Rate-limit provider webhook ingress per (subscription, caller IP).
+
+    Provider callbacks are unauthenticated at the Noodle layer (auth is the
+    provider's webhook signature).  Without a rate limit a flood of validly
+    signed deliveries could overwhelm the run queue.
+    """
+    if not settings.webhook_rate_limit_enabled:
+        return
+    from app.services import rate_limit
+
+    ip = get_client_ip(request)
+    allowed = await rate_limit.allow(
+        "provider_webhook",
+        f"{subscription_id}:{ip}",
+        limit=settings.webhook_rate_limit_per_minute,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many provider webhook requests; slow down.",
+        )
+
+
 @router.api_route("/provider-webhook/{subscription_id}", methods=_METHODS)
 async def provider_webhook(subscription_id: str, request: Request) -> Response:
     """Receive a delivery for a lifecycle-managed provider trigger."""
     from app.tenancy import run_as_system
+
+    # OPTIONS returns 204 for CORS preflight.
+    if request.method == "OPTIONS":
+        return Response(status_code=204)
+
+    await _enforce_provider_webhook_rate_limit(subscription_id, request)
 
     # Cross-org by design: the subscription decides which org's workflow
     # fires; the external provider has no Noodle identity. start_run pins

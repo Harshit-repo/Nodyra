@@ -49,10 +49,79 @@ production_router = APIRouter(tags=["webhooks"])
 # Stored as ``(monotonic_seen_at, payload)`` so we can age entries out
 # without paying for a separate timestamp dict.
 _captured: dict[str, tuple[float, dict]] = {}
-_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
+_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+# OPTIONS is always allowed so CORS preflight on webhook URLs works regardless
+# of which HTTP methods the node configures. The node's ``http_method``
+# parameter still gates actual dispatch — OPTIONS merely returns 204.
 
 WEBHOOK_CAPTURE_TTL_SECONDS = 5 * 60  # 5 min — typical Listen-then-test loop
 WEBHOOK_CAPTURE_MAX_ENTRIES = 256
+
+# Body size cap for webhook ingress. Individual endpoint handlers further
+# validate against this; it mirrors the global ``_MAX_BODY_BYTES`` in main.py.
+_WEBHOOK_MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MiB
+
+
+def _normalize_webhook_path(path: str) -> str:
+    """Normalize a webhook path to prevent trivial bypasses.
+
+    - Strips trailing slashes so ``/webhook/orders/`` and ``/webhook/orders`` match the same route.
+    - Collapses duplicate slashes (``//`` → ``/``).
+    - Rejects path traversal patterns (``..``, ``.`` segments).
+    - Strips leading slashes (the route prefix already provides one).
+
+    Returns the normalized path, or raises ``HTTPException(400)`` for invalid input.
+    """
+    import re
+
+    # Reject path traversal — ``..`` and ``.`` as whole segments are never legitimate
+    # in webhook paths.
+    segments = [s for s in path.split("/") if s]
+    for seg in segments:
+        if seg in ("..", "."):
+            raise HTTPException(
+                400,
+                f"Invalid webhook path segment: {seg!r}",
+            )
+    # Join cleaned segments with single slashes; FastAPI's {path:path} already
+    # strips the leading slash, so we receive e.g. ``orders/42`` not ``/orders/42``.
+    normalized = "/".join(segments)
+    if not normalized and path.strip("/"):
+        # Path was all slashes or dots — reject.
+        raise HTTPException(400, "Invalid webhook path")
+    return normalized
+
+
+async def _check_webhook_body_size(request: Request) -> None:
+    """Reject webhook requests whose body size exceeds ``_WEBHOOK_MAX_BODY_BYTES``.
+
+    Checks ``Content-Length`` first (fast path).  For chunked or missing
+    Content-Length, streams the body up to the limit so oversized payloads
+    are rejected before any handler runs.
+    """
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > _WEBHOOK_MAX_BODY_BYTES:
+                raise HTTPException(
+                    413,
+                    f"Request body too large (max {_WEBHOOK_MAX_BODY_BYTES // 1024 // 1024} MiB)",
+                )
+            return  # declared size is ok
+        except (ValueError, TypeError):
+            pass  # Malformed Content-Length — stream and check below
+    # Chunked or missing Content-Length: stream up to the cap.
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > _WEBHOOK_MAX_BODY_BYTES:
+            raise HTTPException(
+                413,
+                f"Request body too large (max {_WEBHOOK_MAX_BODY_BYTES // 1024 // 1024} MiB)",
+            )
+        chunks.append(chunk)
+    request._body = b"".join(chunks)  # noqa: SLF001 - cache for downstream
 
 # Listen sessions. Registered by the editor's "Listen for test event" button;
 # the test URL handler rejects requests when no session is active so Postman
@@ -134,10 +203,26 @@ async def _stop_listening(path: str, org_id: str) -> None:
 
 
 # Caller-facing detail per rejection status from ``dispatch_webhook``.
+# 401 includes the ``WWW-Authenticate`` header per RFC 7235 so clients know
+# which schemes the webhook accepts. Only Basic is listed here because the
+# node-level scheme is not known at the route layer; a generic challenge is
+# still correct — the client can retry with any scheme the server supports.
 _REJECT_DETAIL = {
     401: "Webhook authentication failed.",
     403: "Caller IP is not allowed.",
 }
+_REJECT_HEADERS: dict[int, dict[str, str]] = {
+    401: {"WWW-Authenticate": 'Basic realm="Noodle webhook"'},
+}
+
+
+def _reject_response(status: int) -> HTTPException:
+    """Raise a rejection with the right status, detail, and headers."""
+    return HTTPException(
+        status,
+        _REJECT_DETAIL[status],
+        _REJECT_HEADERS.get(status),
+    )
 
 
 def _shaped_response(shape: dict) -> Response:
@@ -250,7 +335,14 @@ async def capture_webhook(path: str, request: Request) -> dict:
     When listening, the request is always captured (so the editor shows it),
     then dispatched against the draft graph. Auth IS checked when a workflow
     draft has auth configured.
+
+    OPTIONS returns 204 immediately (CORS preflight) — no listen session or
+    dispatch is needed.
     """
+    if request.method == "OPTIONS":
+        return Response(status_code=204)
+    path = _normalize_webhook_path(path)
+    await _check_webhook_body_size(request)
     listen_org_id = await _listening_org(path)
     if listen_org_id is None:
         raise HTTPException(
@@ -260,6 +352,14 @@ async def capture_webhook(path: str, request: Request) -> dict:
                 "Click 'Listen for test event' in the editor first."
             ),
         )
+    # Apply rate limiting to the test URL as well — the listen gate already
+    # prevents abuse by unauthenticated callers, but a rate limit adds a second
+    # layer against flooding within an active listen window.  Uses a lower
+    # default than the production URL since test workloads are lighter.
+    await _enforce_webhook_rate_limit(
+        path, request, limit=settings.webhook_test_rate_limit_per_minute
+    )
+    client_ip = request.client.host if request.client else None
     req_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     payload, raw_body = await _payload(request)
     _record_capture(path, _redacted_payload(payload), org_id=listen_org_id)
@@ -269,16 +369,18 @@ async def capture_webhook(path: str, request: Request) -> dict:
             payload,
             prefer_draft=True,
             raw_body=raw_body,
-            client_ip=request.client.host if request.client else None,
+            client_ip=client_ip,
         )
     logger.info(
-        "webhook test path=%s matched=%s runs=%d req_id=%s",
-        path, result.any_match, len(result.run_ids), req_id,
+        "webhook test path=%s matched=%s runs=%d req_id=%s client_ip=%s",
+        path, result.any_match, len(result.run_ids), req_id, client_ip or "-",
     )
     if result.reject_status is not None:
-        raise HTTPException(
-            result.reject_status, _REJECT_DETAIL[result.reject_status]
+        logger.warning(
+            "webhook auth rejected test path=%s status=%d client_ip=%s req_id=%s",
+            path, result.reject_status, client_ip or "-", req_id,
         )
+        raise _reject_response(result.reject_status)
     return {
         "message": "Noodle test webhook received",
         "path": path,
@@ -345,12 +447,17 @@ async def stop_listen_session(path: str) -> None:
     await _stop_listening(path, active_org_id() or DEFAULT_ORG_ID)
 
 
-async def _enforce_webhook_rate_limit(path: str, request: Request) -> None:
+async def _enforce_webhook_rate_limit(
+    path: str, request: Request, *, limit: int | None = None
+) -> None:
     """H5: throttle public webhook ingress per (path, caller IP).
 
     Unauthenticated ``/webhook/{path}`` can otherwise be hammered into a
     run-queue flood. Keyed by path *and* IP so one noisy sender can't starve a
     different webhook or a different caller of the same one.
+
+    When ``limit`` is None the production default is used; pass an explicit
+    value (e.g. the lower test‑URL threshold) to override.
     """
     if not settings.webhook_rate_limit_enabled:
         return
@@ -358,7 +465,8 @@ async def _enforce_webhook_rate_limit(path: str, request: Request) -> None:
 
     ip = get_client_ip(request)
     allowed = await rate_limit.allow(
-        "webhook", f"{path}:{ip}", limit=settings.webhook_rate_limit_per_minute
+        "webhook", f"{path}:{ip}",
+        limit=limit if limit is not None else settings.webhook_rate_limit_per_minute,
     )
     if not allowed:
         raise HTTPException(
@@ -463,8 +571,15 @@ async def trigger_webhook(path: str, request: Request) -> dict:
     ``{path:path}`` captures the full sub-path (slashes included) so resource
     routes like ``/webhook/customers/42/orders`` reach a webhook node whose
     ``path`` template is ``customers/{id}/orders``.
+
+    OPTIONS returns 204 immediately (CORS preflight) — no dispatch is needed.
     """
+    if request.method == "OPTIONS":
+        return Response(status_code=204)
+    path = _normalize_webhook_path(path)
+    await _check_webhook_body_size(request)
     await _enforce_webhook_rate_limit(path, request)
+    client_ip = request.client.host if request.client else None
     req_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     payload, raw_body = await _payload(request)
     _record_capture(
@@ -481,19 +596,21 @@ async def trigger_webhook(path: str, request: Request) -> dict:
     with run_as_system():
         result = await dispatch_webhook(
             path, payload, raw_body=raw_body,
-            client_ip=request.client.host if request.client else None,
+            client_ip=client_ip,
         )
         logger.info(
-            "webhook prod path=%s matched=%s runs=%d req_id=%s",
-            path, result.any_match, len(result.run_ids), req_id,
+            "webhook prod path=%s matched=%s runs=%d req_id=%s client_ip=%s",
+            path, result.any_match, len(result.run_ids), req_id, client_ip or "-",
         )
         if result.reject_status is not None:
             # Path matched at least one workflow, but every candidate was
             # rejected: 403 when an IP allowlist blocked the caller, else 401
             # (auth/HMAC). Distinct from an unknown-path 404.
-            raise HTTPException(
-                result.reject_status, _REJECT_DETAIL[result.reject_status]
+            logger.warning(
+                "webhook auth rejected prod path=%s status=%d client_ip=%s req_id=%s",
+                path, result.reject_status, client_ip or "-", req_id,
             )
+            raise _reject_response(result.reject_status)
         if not result.any_match:
             # No active workflow registered for this path. Return 404 so
             # external senders (Stripe, GitHub, etc.) know the endpoint
@@ -504,6 +621,12 @@ async def trigger_webhook(path: str, request: Request) -> dict:
                 **result.sync,
                 timeout=settings.webhook_response_timeout_seconds,
             )
+            if shape.get("status") == 504:
+                logger.warning(
+                    "webhook sync timeout run_id=%s path=%s timeout=%d req_id=%s",
+                    result.sync["run_id"], path,
+                    settings.webhook_response_timeout_seconds, req_id,
+                )
             return _shaped_response(shape)
     if result.response is not None:
         return _shaped_response(result.response)

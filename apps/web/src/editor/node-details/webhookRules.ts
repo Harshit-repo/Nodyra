@@ -5,6 +5,8 @@ export const WEBHOOK_AUTH_TYPE_OPTIONS = [
   { value: "basic", label: "Basic Auth" },
   { value: "header", label: "Header Auth" },
   { value: "query", label: "Query Auth" },
+  { value: "bearer", label: "Bearer Token" },
+  { value: "jwt", label: "JWT" },
 ];
 
 const WEBHOOK_CRED_BY_AUTH: Record<
@@ -26,9 +28,19 @@ const WEBHOOK_CRED_BY_AUTH: Record<
     fields: ["name", "value"],
     label: "Query Auth",
   },
+  bearer: {
+    type: "http_bearer",
+    fields: ["token"],
+    label: "Bearer Token",
+  },
+  jwt: {
+    type: "http_jwt",
+    fields: ["secret"],
+    label: "JWT",
+  },
 };
 
-function webhookAuthLabel(authType: string): string {
+export function webhookAuthLabel(authType: string): string {
   return (
     WEBHOOK_AUTH_TYPE_OPTIONS.find((option) => option.value === authType)?.label ??
     "None"

@@ -2,13 +2,22 @@ import {
   Buildings,
   CaretDown,
   GearSix,
+  Monitor,
+  Moon,
   SignOut,
+  Sun,
   UserCircle,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 
 import { api, errorMessage, getOrgId, setOrgId } from "./api";
+import {
+  getThemePreference,
+  listenForSystemThemeChanges,
+  setThemePreference,
+  type ThemePreference,
+} from "./theme";
 import { useConfirm, usePrompt } from "./ConfirmProvider";
 import { Logo } from "./Logo";
 import {
@@ -284,6 +293,21 @@ export function HomeHeader() {
   const { containerRef, triggerRef } = useDismissiblePopover(open, close);
   const signOut = useSignOut();
 
+  const [themePref, setThemePref] = useState<ThemePreference>(getThemePreference);
+
+  useEffect(() => listenForSystemThemeChanges(), []);
+
+  function cycleTheme(): void {
+    const order: ThemePreference[] = ["dark", "light", "system"];
+    const idx = order.indexOf(themePref);
+    const next = order[(idx + 1) % order.length];
+    setThemePreference(next);
+    setThemePref(next);
+  }
+
+  const ThemeIcon = themePref === "dark" ? Sun : themePref === "light" ? Moon : Monitor;
+  const themeTitle = themePref === "dark" ? "Dark mode (click for light)" : themePref === "light" ? "Light mode (click for dark)" : "System theme (click for dark)";
+
   useEffect(() => {
     document.title = `${title} · Noodle`;
     close();
@@ -308,6 +332,15 @@ export function HomeHeader() {
         multiTenancyEnabled={workspace.multiTenancyEnabled}
       />
       <div className="noodle-shell-top-actions">
+        <button
+          type="button"
+          className="noodle-shell-theme-toggle"
+          aria-label="Switch theme"
+          title={themeTitle}
+          onClick={cycleTheme}
+        >
+          <ThemeIcon size={18} aria-hidden="true" />
+        </button>
         {user ? (
           <div className="noodle-shell-account" ref={containerRef}>
             <button

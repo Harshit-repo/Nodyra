@@ -126,6 +126,65 @@ async def _upsert_run_approval(
         approval.reason = reason
 
 
+async def _upsert_run_approval_in_memory(
+    session: AsyncSession,
+    *,
+    run_id: str,
+    event: dict[str, Any],
+    event_ts: datetime,
+    existing: dict[str, RunApproval],
+) -> None:
+    """Same as ``_upsert_run_approval`` but uses a pre-loaded ``existing`` dict
+    to avoid the per-event SELECT (P1-9)."""
+    event_type = str(event.get("type") or "")
+    if event_type not in {"agent_tool_approval_required", "agent_tool_auto_approved"}:
+        return
+
+    key = _approval_key(event)
+    approval = existing.get(key)  # already loaded in bulk
+    arguments = event.get("arguments")
+    if not isinstance(arguments, dict):
+        arguments = {}
+    status = "approved" if event_type == "agent_tool_auto_approved" else "pending"
+    max_steps_raw = event.get("max_steps")
+    max_steps = int(max_steps_raw) if max_steps_raw is not None else None
+    reason = (
+        "Auto-approved by AI Agent setting."
+        if event_type == "agent_tool_auto_approved"
+        else ""
+    )
+
+    if approval is None:
+        approval = RunApproval(
+            run_id=run_id,
+            approval_key=key,
+            status=status,
+            node_id=event.get("node_id"),
+            agent_node_id=event.get("agent_node_id"),
+            step=int(event.get("step") or 0),
+            max_steps=max_steps,
+            tool_call_id=str(event.get("tool_call_id") or ""),
+            tool_name=str(event.get("tool_name") or ""),
+            arguments=arguments,
+            message=str(event.get("message") or ""),
+            requested_at=event_ts,
+            resolved_at=event_ts if status == "approved" else None,
+            resolved_by="auto" if status == "approved" else None,
+            reason=reason,
+        )
+        session.add(approval)
+        existing[key] = approval  # cache for later resume_state writes
+        return
+
+    approval.arguments = arguments
+    approval.message = str(event.get("message") or approval.message or "")
+    if approval.status == "pending" and status == "approved":
+        approval.status = "approved"
+        approval.resolved_at = event_ts
+        approval.resolved_by = "auto"
+        approval.reason = reason
+
+
 def _maybe_truncate(value: Any, cap: int) -> Any:
     if value is None:
         return value
@@ -248,12 +307,19 @@ async def persist_run_outcome(
             # T-08: bulk insert all NodeRun records in one statement rather than
             # one session.add() per record. A 1000-iteration loop produced 1000+
             # individual INSERTs; this is now a single multi-row INSERT.
+            from app.services.output_store import maybe_offload_output
+
             node_run_rows = [
                 {
                     "run_id": run_id,
                     "node_id": node_id,
                     "status": event.get("status", "unknown"),
-                    "output": _cap_output(event.get("outputs"), output_cap),
+                    "output": _cap_output(
+                        maybe_offload_output(
+                            event.get("outputs"), run_id=run_id, node_id=node_id,
+                        ),
+                        output_cap,
+                    ),
                     "error": event.get("error"),
                     "logs": _cap_logs(event.get("logs"), output_cap),
                     "debug": event.get("debug"),
@@ -266,26 +332,53 @@ async def persist_run_outcome(
             ]
             if node_run_rows:
                 await session.execute(insert(NodeRun), node_run_rows)
+            # Bulk insert RunEvent rows (P1-8).  A run with 2000 events
+            # previously issued 2000 individual INSERTs; now it's one call.
+            run_event_rows = [
+                {
+                    "run_id": run_id,
+                    "event_type": str(item["event"].get("type") or ""),
+                    "sequence": int(item["sequence"]),
+                    "ts": item["ts"],
+                    "node_id": item["event"].get("node_id"),
+                    "agent_node_id": item["event"].get("agent_node_id"),
+                    "payload": _cap_output(item["event"], output_cap),
+                }
+                for item in run_events
+            ]
+            if run_event_rows:
+                await session.execute(insert(RunEvent), run_event_rows)
+            # Pre-load all existing approvals for this run in a single query
+            # (P1-9), then upsert in memory.  Previously each event did its
+            # own SELECT, yielding N+1 on top of the N writes.
+            existing_approvals: dict[str, RunApproval] = {}
+            event_keys: set[str] = set()
+            for item in run_events:
+                key = _approval_key(item["event"])
+                if key:
+                    event_keys.add(key)
+            if event_keys:
+                rows = (
+                    await session.scalars(
+                        select(RunApproval).where(
+                            RunApproval.run_id == run_id,
+                            RunApproval.approval_key.in_(event_keys),
+                        )
+                    )
+                ).all()
+                existing_approvals = {a.approval_key: a for a in rows}
             for item in run_events:
                 event = item["event"]
                 event_ts = item["ts"]
-                session.add(
-                    RunEvent(
-                        run_id=run_id,
-                        event_type=str(event.get("type") or ""),
-                        sequence=int(item["sequence"]),
-                        ts=event_ts,
-                        node_id=event.get("node_id"),
-                        agent_node_id=event.get("agent_node_id"),
-                        payload=_cap_output(event, output_cap),
-                    )
-                )
-                await _upsert_run_approval(
+                await _upsert_run_approval_in_memory(
                     session,
                     run_id=run_id,
                     event=event,
                     event_ts=event_ts,
+                    existing=existing_approvals,
                 )
+            # Apply resume_state updates from node_events (second pass).
+            # The approvals were already loaded above, so no extra queries.
             for event in node_events.values():
                 debug = event.get("debug")
                 if not isinstance(debug, dict):
@@ -296,12 +389,7 @@ async def persist_run_outcome(
                 approval_key = str(resume_state.get("approval_key") or "")
                 if not approval_key:
                     continue
-                approval = await session.scalar(
-                    select(RunApproval).where(
-                        RunApproval.run_id == run_id,
-                        RunApproval.approval_key == approval_key,
-                    )
-                )
+                approval = existing_approvals.get(approval_key)
                 if approval is not None:
                     approval.resume_state = resume_state
             # Mirror the run outcome onto the durable queue entry so the

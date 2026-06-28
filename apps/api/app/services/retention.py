@@ -110,12 +110,25 @@ async def prune_old_runs(now: datetime | None = None) -> tuple[int, int]:
     return aged_out, capped_out
 
 
+_prune_lock = asyncio.Lock()
+
+
 async def retention_loop() -> None:
-    """Background loop. Bounded by graceful shutdown via task cancellation."""
+    """Background loop. Bounded by graceful shutdown via task cancellation.
+
+    Uses an ``asyncio.Lock`` to prevent overlapping prunes when a tick takes
+    longer than ``run_retention_tick_seconds`` (e.g. a very large DB). If a
+    prune is still running when the next tick fires, the new tick is skipped
+    harmlessly rather than piling on and risking connection exhaustion.
+    """
     interval = max(60, settings.run_retention_tick_seconds)
     while True:
-        try:
-            await prune_old_runs()
-        except Exception:
-            logger.exception("retention tick failed")
+        if not _prune_lock.locked():
+            async with _prune_lock:
+                try:
+                    await prune_old_runs()
+                except Exception:
+                    logger.exception("retention tick failed")
+        else:
+            logger.debug("retention: skipping tick — previous prune still in progress")
         await asyncio.sleep(interval)

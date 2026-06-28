@@ -20,6 +20,7 @@ import {
   Play,
   Plus,
   Scissors,
+  SquaresFour,
   TreeStructure,
   X,
 } from "@phosphor-icons/react";
@@ -215,7 +216,13 @@ function DatasetConnectionHealth() {
   );
 }
 
-function CanvasControls() {
+function CanvasControls({
+  snapToGrid,
+  onToggleSnap,
+}: {
+  snapToGrid: boolean;
+  onToggleSnap: () => void;
+}) {
   const { fitView, zoomIn, zoomOut } = useReactFlow();
   const zoom = useStore((s) => s.transform[2]);
   const { notify } = useToast();
@@ -406,6 +413,16 @@ function CanvasControls() {
             <BoundingBox size={14} weight="bold" />
           </button>
         )}
+        <button
+          type="button"
+          className={snapToGrid ? "is-active" : undefined}
+          title={snapToGrid ? "Disable snap to grid" : "Enable snap to grid (20×20)"}
+          aria-label="Toggle snap to grid"
+          aria-pressed={snapToGrid}
+          onClick={onToggleSnap}
+        >
+          <SquaresFour size={14} weight="bold" />
+        </button>
       </div>
 
       {/* Run — always visible on the right */}
@@ -458,6 +475,12 @@ export function Canvas() {
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
   const enterMetanode = useEditor((s) => s.enterMetanode);
   const drillDepth = useEditor((s) => s.drillStack.length);
+  const [paletteCollapsed, setPaletteCollapsed] = useState(() => {
+    try { return localStorage.getItem("noodle_palette_collapsed") === "true"; } catch { return false; }
+  });
+  const [snapToGrid, setSnapToGrid] = useState(() => {
+    try { return localStorage.getItem("noodle_snap_to_grid") !== "false"; } catch { return true; }
+  });
   const [quickAdd, setQuickAdd] = useState<CanvasQuickAddState | null>(null);
   const [quickAddActiveIndex, setQuickAddActiveIndex] = useState(0);
   const [ctxActiveIndex, setCtxActiveIndex] = useState(0);
@@ -747,6 +770,14 @@ export function Canvas() {
     autoEnableAgentDependencies();
   }, [autoEnableAgentDependencies, nodes, edges]);
 
+  useEffect(() => {
+    function onToggle(): void {
+      try { setPaletteCollapsed(localStorage.getItem("noodle_palette_collapsed") === "true"); } catch {}
+    }
+    window.addEventListener("noodle:toggle-node-palette", onToggle);
+    return () => window.removeEventListener("noodle:toggle-node-palette", onToggle);
+  }, []);
+
   const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 2) return;
     // Only initiate right-drag selection on the bare pane, not on nodes/controls.
@@ -899,6 +930,14 @@ export function Canvas() {
       ),
     [onNodesChange],
   );
+
+  const toggleSnapToGrid = useCallback(() => {
+    setSnapToGrid((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("noodle_snap_to_grid", String(next)); } catch {}
+      return next;
+    });
+  }, []);
 
   const allEdges = useMemo(
     () => [
@@ -1136,6 +1175,8 @@ export function Canvas() {
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}
         isValidConnection={isValidConnection}
+        snapToGrid={snapToGrid}
+        snapGrid={[20, 20]}
         onNodeClick={(_, node) => {
           setSelected(node.id);
           setQuickAdd(null);
@@ -1174,7 +1215,7 @@ export function Canvas() {
           nodeStrokeWidth={0}
         />
         <PortLegend />
-        <CanvasControls />
+        <CanvasControls snapToGrid={snapToGrid} onToggleSnap={toggleSnapToGrid} />
         <DatasetConnectionHealth />
         {blockedConnection && (
           <DatasetConnectionBanner
@@ -1185,15 +1226,16 @@ export function Canvas() {
         )}
         {nodes.length === 0 && drillDepth === 0 && (
           <div className="canvas-empty-onboarding">
-            <div>
-              <h2>Start a workflow</h2>
-              <p>Choose a starter, then replace any placeholder values.</p>
+            <div className="canvas-empty-header">
+              <h1>Start a workflow</h1>
+              <p className="canvas-empty-subtitle">Drag nodes from the palette or pick a starter below to begin.</p>
             </div>
             <div className="canvas-starter-grid">
               {CANVAS_STARTERS.map((template) => (
                 <button
                   type="button"
                   key={template.id}
+                  className="canvas-starter-card"
                   onClick={() => applyStarter(template.id)}
                 >
                   <strong>{template.name}</strong>
@@ -1204,6 +1246,11 @@ export function Canvas() {
             <p className="canvas-empty-hints">
               Press <kbd>Tab</kbd> to quickly add a node · <kbd>Shift+P</kbd> toggle node palette · <kbd>Ctrl+K</kbd> command palette
             </p>
+            {paletteCollapsed && (
+              <p className="canvas-empty-palette-hint">
+                The node palette is collapsed — press <kbd>Shift+P</kbd> to open it and drag nodes onto the canvas.
+              </p>
+            )}
           </div>
         )}
       </ReactFlow>

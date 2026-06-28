@@ -7,6 +7,8 @@ callable from the runner module at call time so test monkeypatching of
 
 from __future__ import annotations
 
+import asyncio
+
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -43,12 +45,20 @@ async def _post_error_webhooks(alerts: dict | None, payload: dict) -> None:
         import httpx  # noqa: PLC0415
     except ImportError:
         return
+    # Retry with exponential backoff so a transient blip at the receiver
+    # doesn't silently lose the alert.  Three attempts at 1s / 2s / 4s.
+    _MAX_RETRIES = 3
+    _RETRY_BACKOFF = 1.0
     async with httpx.AsyncClient(timeout=10) as client:
         for url in urls:
-            try:
-                await client.post(url, json=payload)
-            except Exception:  # noqa: BLE001 - alerts must not fail the run
-                continue
+            for attempt in range(_MAX_RETRIES):
+                try:
+                    await client.post(url, json=payload)
+                    break
+                except Exception:  # noqa: BLE001 - alerts must not fail the run
+                    if attempt < _MAX_RETRIES - 1:
+                        await asyncio.sleep(_RETRY_BACKOFF * (2**attempt))
+                    continue
 
 
 async def dispatch_error_handlers(

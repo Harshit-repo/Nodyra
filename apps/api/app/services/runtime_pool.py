@@ -740,6 +740,8 @@ class RuntimePool:
         # sub-workflows (which call the engine directly, not the pool) consume
         # no slot and cannot deadlock a parent that is waiting on them.
         self._global_sem = asyncio.Semaphore(max(1, settings.max_concurrent_runs))
+        self._max_concurrent_runs = max(1, settings.max_concurrent_runs)
+        self._scale_lock = asyncio.Lock()
         # Soft fan-out throttle for sub-workflow subprocess spawns. Separate
         # from ``_global_sem``/pool sems on purpose (the parent already holds
         # those). See ``subworkflow_slot`` for why it's a soft cap.
@@ -765,6 +767,37 @@ class RuntimePool:
         the semaphore remains the actual enforcement.
         """
         return not self._global_sem.locked()
+
+    async def resize(self, new_max: int) -> int:
+        """Adjust the global concurrency ceiling at runtime.
+
+        Increasing capacity creates a new semaphore with the extra permits
+        already available.  Decreasing capacity lets existing permits drain
+        naturally — in-flight runs are never cancelled.
+
+        Returns the new effective max.
+        """
+        new_max = max(1, new_max)
+        async with self._scale_lock:
+            if new_max == self._max_concurrent_runs:
+                return new_max
+            old_value = self._max_concurrent_runs
+            self._max_concurrent_runs = new_max
+            if new_max > old_value:
+                # Growing: create a new semaphore with extra permits.
+                # Existing waiters remain on the old semaphore until they
+                # acquire; new callers use the new (larger) one.
+                delta = new_max - old_value
+                new_sem = asyncio.Semaphore(new_max)
+                # Transfer: release delta permits to match the new capacity.
+                for _ in range(delta):
+                    new_sem._value += 1  # noqa: SLF001 — internal field is documented in CPython
+                self._global_sem = new_sem
+            return new_max
+
+    def current_max_slots(self) -> int:
+        """Return the current max concurrency ceiling."""
+        return self._max_concurrent_runs
 
     def available_global_slots(self) -> int:
         """Best-effort count of free global concurrency slots.

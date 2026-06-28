@@ -32,6 +32,7 @@ from app.services.runtime_pool import pool as runtime_pool
 from app.services.sandbox_policy import enforce_sandbox_policy
 from app.services.sandbox_pool import init_sandbox
 from app.services.sandbox_pool import pool as sandbox_pool
+from app.services.stuck_run_detector import stuck_run_detector_loop
 from app.tenancy import assert_safe_postgres_role, run_as_system
 
 logger = logging.getLogger("noodle.worker")
@@ -95,6 +96,7 @@ async def _amain() -> None:
     tasks = [
         asyncio.create_task(_as_system(run_queue_dispatch_loop)()),
         asyncio.create_task(broker_reaper_loop()),
+        asyncio.create_task(_as_system(stuck_run_detector_loop)()),
     ]
     if settings.use_subprocess_runner and settings.runner_idle_seconds > 0:
         tasks.append(asyncio.create_task(_as_system(idle_reaper_loop)()))

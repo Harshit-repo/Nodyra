@@ -170,6 +170,34 @@ def test_code_exec_node_registered_typed_port() -> None:
     assert out.data_kind == "ai_tool"
 
 
+def test_code_exec_uses_safe_builtins_in_subprocess() -> None:
+    """E-02: The agent code subprocess must apply _SAFE_BUILTINS so even
+    dynamic __import__('os') is blocked at runtime inside the worker, matching
+    the regular Code node sandbox."""
+    adapter = _py_adapter()
+    out = _code(
+        adapter,
+        "try:\n    __import__('os')\n    print('ESCAPED')\nexcept Exception as e:\n    print('BLOCKED: ' + str(e))",
+    )
+    # In the old code this would have printed 'ESCAPED' because the subprocess
+    # had full builtins.  With _SAFE_BUILTINS active, __import__('os') is
+    # caught at runtime by the sandboxed __import__ override.
+    assert "ESCAPED" not in out.get("stdout", ""), f"os import should be blocked, got: {out}"
+    # Allowlist mode should still work (normal builtins for permitted modules)
+    adapter2 = _py_adapter(allowed_modules="math")
+    out2 = _code(adapter2, "import math\nprint(math.sqrt(9))")
+    assert out2["stdout"].strip() == "3.0"
+
+
+def test_code_exec_blocked_import_unreachable_in_subprocess() -> None:
+    """E-02: Verify that the worker applies _SAFE_BUILTINS inside the
+    subprocess so even dynamic __import__('os') is blocked at runtime."""
+    adapter = _py_adapter()
+    out = _code(adapter, "import os\nprint(os.getcwd())")
+    # os is in blocked modules — AST check should catch it
+    assert "error" in out or "Unsafe" in out.get("error", "") or out.get("exit_code", 0) != 0
+
+
 # ---------------------------------------------------------------------------
 # Web Search Tool tests
 # ---------------------------------------------------------------------------

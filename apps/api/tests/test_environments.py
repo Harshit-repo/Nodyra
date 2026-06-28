@@ -15,7 +15,7 @@ async def test_create_and_list_environment(client: AsyncClient) -> None:
     assert created["is_global"] is False
 
     listed = (await client.get("/environments")).json()
-    assert any(e["id"] == created["id"] for e in listed)
+    assert any(e["id"] == created["id"] for e in listed["items"])
 
 
 async def test_add_and_remove_package(client: AsyncClient) -> None:

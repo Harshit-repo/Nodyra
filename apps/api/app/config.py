@@ -236,6 +236,9 @@ class Settings(BaseSettings):
     # 0 → unlimited.  A positive value prevents gradual global-state
     # accumulation from different workflows sharing the same subprocess.
     runner_max_runs_per_subprocess: int = 100
+    # Grace period (seconds) before a running run with no node progress is
+    # declared stuck and marked error by the stuck-run detector loop.
+    stuck_run_grace_seconds: float = 1800.0
     # Seconds to wait for a fresh container's {"type":"ready"} handshake.
     sandbox_ready_timeout_seconds: float = 60.0
     # When True (default), multi_tenancy_enabled requires
@@ -288,6 +291,9 @@ class Settings(BaseSettings):
     # WAF/CDN already throttles ingress.
     webhook_rate_limit_enabled: bool = True
     webhook_rate_limit_per_minute: int = 120
+    # Per-workflow run rate limit (runs/minute).  0 = unlimited.  Applied at
+    # start_run admission — bursts above this ceiling are 429-rejected.
+    workflow_run_rate_per_minute: int = 0
     # Lower limit for the editor test URL (/webhook-test/*).  The listen gate
     # already prevents unauthorized callers, but within an active listen window
     # a tighter cap guards against accidental or deliberate flooding.

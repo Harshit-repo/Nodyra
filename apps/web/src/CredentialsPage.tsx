@@ -1,8 +1,11 @@
+import { Key } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useQueryClient } from "@tanstack/react-query";
 
-import { api, errorMessage } from "./api";
+import { EmptyState } from "./EmptyState";
+
+import { api, userFriendlyError } from "./api";
 import { useConfirm } from "./ConfirmProvider";
 import {
   CredentialFieldInput,
@@ -43,6 +46,15 @@ function credentialTypeLabel(
   presetsByType: Map<string, CredentialPreset> = PRESET_BY_TYPE,
 ): string {
   return presetsByType.get(type)?.label ?? type;
+}
+
+function credTestStatusColor(
+  credId: string,
+  testResults: Record<string, CredentialTestResponse>,
+): string {
+  const result = testResults[credId];
+  if (!result) return "var(--color-warning)";
+  return result.ok ? "var(--color-success)" : "var(--color-error)";
 }
 
 function credentialScopeLabel(cred: Credential): string {
@@ -218,7 +230,7 @@ function CreateCredentialModal({
       notify("OAuth authorization opened.", "success");
     } catch (err) {
       // OAuth start happens inside the create form → inline error near the form.
-      setError(String(err));
+      setError(userFriendlyError(err));
     } finally {
       setBusy(false);
     }
@@ -319,7 +331,7 @@ function CreateCredentialModal({
       );
       if (!res.ok) setError(res.message);
     } catch (err) {
-      notify(String(err), "error");
+      notify(userFriendlyError(err), "error");
     } finally {
       setTesting(false);
     }
@@ -351,7 +363,7 @@ function CreateCredentialModal({
       });
       onCreated();
     } catch (err) {
-      setError(String(err));
+      setError(userFriendlyError(err));
       setBusy(false);
     }
   }
@@ -633,7 +645,7 @@ export function CredentialsPage() {
     credentialTypesQuery.data ?? null;
   const error =
     credentialsQuery.isError && !credentialsQuery.data
-      ? errorMessage(credentialsQuery.error)
+      ? userFriendlyError(credentialsQuery.error)
       : "";
   const credentialPresets = useMemo(
     () => mergedCredentialPresets(credentialTypes),
@@ -678,7 +690,7 @@ export function CredentialsPage() {
       await deleteCredentialMutation.mutateAsync(id);
       notify("Credential deleted.", "success");
     } catch (err) {
-      notify(`Could not delete credential. ${errorMessage(err)}`, "error");
+      notify(`Could not delete credential. ${userFriendlyError(err)}`, "error");
     }
   }
 
@@ -700,7 +712,7 @@ export function CredentialsPage() {
         result.ok ? "success" : "error",
       );
     } catch (err) {
-      notify(String(err), "error");
+      notify(userFriendlyError(err), "error");
     } finally {
       setTesting((current) => ({ ...current, [cred.id]: false }));
     }
@@ -712,7 +724,7 @@ export function CredentialsPage() {
       await refreshCredentialMutation.mutateAsync(cred.id);
       notify("Credential refreshed.", "success");
     } catch (err) {
-      notify(String(err), "error");
+      notify(userFriendlyError(err), "error");
     } finally {
       setRefreshing((current) => ({ ...current, [cred.id]: false }));
     }
@@ -747,16 +759,16 @@ export function CredentialsPage() {
         )}
 
         {credentials && credentials.length === 0 && (
-          <div className="empty-state">
-            <h2>No credentials yet</h2>
-            <p className="muted">
-              Store API keys and secrets here — they are encrypted at rest and
-              never shown again.
-            </p>
-            <button className="btn btn-primary" onClick={() => setModal(true)}>
-              New credential
-            </button>
-          </div>
+          <EmptyState
+            icon={<Key size={48} />}
+            title="No credentials yet"
+            description="Store API keys and secrets here — they are encrypted at rest and never shown again."
+            action={
+              <button className="btn btn-primary" onClick={() => setModal(true)}>
+                New credential
+              </button>
+            }
+          />
         )}
 
         {credentials && credentials.length > 0 && (
@@ -805,6 +817,10 @@ export function CredentialsPage() {
                 <>
                 <div className="env-card-head">
                   <div className="env-title">
+                    <span
+                      className="credential-status-dot"
+                      style={{ background: credTestStatusColor(cred.id, testResults) }}
+                    />
                     <h3>{cred.name}</h3>
                   </div>
                   <span className="cred-type">

@@ -23,6 +23,9 @@ api:
 
 worker:
   replicas: 1
+  # P1-12 / P1-23: when > 0, the worker starts an HTTP health server on this
+  # port and the Deployment gets a corresponding readinessProbe.
+  healthPort: 0
   resources:
     requests:
       cpu: 500m
@@ -55,7 +58,10 @@ ingress:
   enabled: false
   className: ""
   host: noodle.example.com
-  tls: false
+  # TLS should be enabled for any production deployment.  Session cookies
+  # have Secure: true so cookie-based auth silently breaks on plain HTTP.
+  # Set to false ONLY for local/development environments.
+  tls: true
 
 # Number of trusted reverse proxies in front of the API (V-12).
 # When Noodle runs behind an ingress controller, set this to 1 so the

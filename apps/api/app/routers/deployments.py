@@ -6,8 +6,8 @@ When a workflow has any active deployments, the scheduler iterates those
 instead of the in-graph ``schedule_trigger`` so it can't be fired twice.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -18,6 +18,7 @@ from app.schemas import (
     DeploymentCreate,
     DeploymentInfo,
     DeploymentUpdate,
+    PageResponse,
     RunCreated,
     RunListItem,
 )
@@ -141,14 +142,29 @@ async def _info(
     )
 
 
-@router.get("", response_model=list[DeploymentInfo])
+@router.get("", response_model=PageResponse[DeploymentInfo])
 async def list_deployments(
     workflow_id: str | None = None,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
+    _user: User | None = Depends(optional_current_user),
 ):
-    stmt = select(Deployment).order_by(Deployment.created_at.desc())
+    filters = []
     if workflow_id is not None:
-        stmt = stmt.where(Deployment.workflow_id == workflow_id)
+        filters.append(Deployment.workflow_id == workflow_id)
+
+    total = await session.scalar(
+        select(func.count()).select_from(Deployment).where(*filters)
+    )
+
+    stmt = (
+        select(Deployment)
+        .where(*filters)
+        .order_by(Deployment.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
     result = await session.scalars(stmt)
     deployments = result.all()
     version_ids = {
@@ -164,10 +180,11 @@ async def list_deployments(
                 )
             ).all()
         }
-    return [
+    items = [
         await _info(session, deployment, versions=versions)
         for deployment in deployments
     ]
+    return PageResponse(items=items, total=total or 0, limit=limit, offset=offset)
 
 
 @router.post(
@@ -230,7 +247,9 @@ async def create_deployment(
 
 @router.get("/{deployment_id}", response_model=DeploymentInfo)
 async def get_deployment(
-    deployment_id: str, session: AsyncSession = Depends(get_session)
+    deployment_id: str,
+    session: AsyncSession = Depends(get_session),
+    _user: User | None = Depends(optional_current_user),
 ):
     return await _info(session, await _load(session, deployment_id))
 
@@ -394,6 +413,7 @@ async def list_deployment_runs(
     deployment_id: str,
     limit: int = 50,
     session: AsyncSession = Depends(get_session),
+    _user: User | None = Depends(optional_current_user),
 ):
     """Recent runs for this deployment's workflow.
 
