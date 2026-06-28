@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -64,14 +65,16 @@ def main() -> None:
 @click.option("--token", prompt=True, hide_input=True, help="Bearer token")
 def login(base_url: str, token: str) -> None:
     """Save credentials to ~/.nodyra/token."""
-    _TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _TOKEN_FILE.write_text(json.dumps({"base_url": base_url.rstrip("/"), "token": token}))
-    # Restrict permissions so only the owner can read the token.
-    # chmod is a no-op on Windows; the directory permissions provide privacy there.
+    # Create directory with restricted permissions (owner-only).
+    _TOKEN_FILE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # Atomically create the file with mode 0o600 so the token is never
+    # visible to other users — no TOCTOU window between creation and chmod.
+    payload = json.dumps({"base_url": base_url.rstrip("/"), "token": token}).encode()
+    fd = os.open(str(_TOKEN_FILE), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
     try:
-        _TOKEN_FILE.chmod(0o600)
-    except (OSError, NotImplementedError):
-        pass
+        os.write(fd, payload)
+    finally:
+        os.close(fd)
     client = NodyraClient(base_url=base_url, token=token)
     try:
         user = client.whoami()
