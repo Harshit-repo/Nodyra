@@ -236,6 +236,7 @@ async def _run_loop(
     loop_regions: dict[str, "LoopRegion"],
     owned: set[str],
     node_sem: asyncio.Semaphore | None = None,
+    type_sems: dict[str, asyncio.Semaphore] | None = None,
     process_isolator: "ProcessIsolator | None" = None,
 ) -> RunStatus:
     """Drive a loop region: resolve its input into items and run the body
@@ -345,7 +346,7 @@ async def _run_loop(
                     pause_on_approval=pause_on_approval,
                     agent_action_resume=agent_action_resume,
                     loop_regions=loop_regions, owned=child_owned,
-                    node_sem=node_sem,
+                    node_sem=node_sem, type_sems=type_sems,
                     process_isolator=process_isolator,
                 )
             finally:
@@ -392,7 +393,7 @@ async def _run_loop(
                     pause_on_approval=pause_on_approval,
                     agent_action_resume=agent_action_resume,
                     loop_regions=loop_regions, owned=child_owned,
-                    node_sem=node_sem,
+                    node_sem=node_sem, type_sems=type_sems,
                     process_isolator=process_isolator,
                 )
                 if st is RunStatus.error:
@@ -490,6 +491,7 @@ async def _run_conditional_loop(
     loop_regions: dict[str, "LoopRegion"],
     owned: set[str],
     node_sem: asyncio.Semaphore | None = None,
+    type_sems: dict[str, asyncio.Semaphore] | None = None,
     process_isolator: "ProcessIsolator | None" = None,
 ) -> RunStatus:
     """Drive a while/until loop: thread an accumulator (state) across iterations,
@@ -578,7 +580,7 @@ async def _run_conditional_loop(
                 pause_on_approval=pause_on_approval,
                 agent_action_resume=agent_action_resume,
                 loop_regions=loop_regions, owned=child_owned,
-                node_sem=node_sem,
+                node_sem=node_sem, type_sems=type_sems,
                 process_isolator=process_isolator,
             )
         finally:

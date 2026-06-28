@@ -39,6 +39,7 @@ from app.routers import (
     health,
     internal,
     mcp,
+    metrics,
     nodes,
     ops,
     orgs,
@@ -408,7 +409,7 @@ async def lifespan(app: FastAPI):
 from app.security import _user_from_session_token, resolve_org  # noqa: E402
 
 
-async def _gate_token_valid(token: str) -> bool:
+async def _gate_token_valid(token: str, *, client_ip: str = "") -> bool:
     """C1: a token passes the gate only when it is well-formed, unexpired, AND
     not revoked by the user's ``sessions_valid_after`` cutoff.
 
@@ -420,7 +421,10 @@ async def _gate_token_valid(token: str) -> bool:
     if not token:
         return False
     async with SessionLocal() as session:
-        return await _user_from_session_token(token, session) is not None
+        return (
+            await _user_from_session_token(token, session, client_ip=client_ip)
+            is not None
+        )
 
 
 app = FastAPI(
@@ -542,6 +546,36 @@ async def _body_size_limit(request: Request, call_next):
         finally:
             _chunked_body_readers -= 1
     return await call_next(request)
+
+
+@app.middleware("http")
+async def _metrics_middleware(request: Request, call_next):
+    """Record HTTP request count and duration for Prometheus metrics."""
+    import time as _time
+    from app.services.metrics import (
+        _normalize_path,
+        http_request_duration_seconds,
+        http_requests_total,
+    )
+
+    start = _time.monotonic()
+    response = None
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        elapsed = _time.monotonic() - start
+        norm_path = _normalize_path(request.url.path)
+        http_requests_total.inc(
+            method=request.method,
+            path=norm_path,
+            status=str(getattr(response, "status_code", 500)),
+        )
+        http_request_duration_seconds.observe(
+            elapsed,
+            method=request.method,
+            path=norm_path,
+        )
 
 
 @app.middleware("http")
@@ -703,20 +737,21 @@ async def auth_gate(request: Request, call_next):
         return await call_next(request)
 
     header = request.headers.get("authorization", "")
+    client_ip = get_client_ip(request) if settings.auth_bind_token_to_ip else ""
     # Accept cookie-based auth (httpOnly session cookie) as an alternative to
     # Bearer — verify the token value is valid before passing the request on.
     if not header.startswith("Bearer "):
         cookie_token = request.cookies.get(settings.session_cookie_name, "")
-        if cookie_token and await _gate_token_valid(cookie_token):
+        if cookie_token and await _gate_token_valid(cookie_token, client_ip=client_ip):
             return await call_next(request)
         # Allow ``?token=`` on routes that are typically opened via plain
         # browser navigation (artifact downloads, ws upgrade is handled
         # elsewhere). The query token is the same bearer token.
         query_token = request.query_params.get("token")
-        if query_token and await _gate_token_valid(query_token):
+        if query_token and await _gate_token_valid(query_token, client_ip=client_ip):
             return await call_next(request)
         return JSONResponse({"detail": "Authentication required"}, status_code=401)
-    if not await _gate_token_valid(header.removeprefix("Bearer ")):
+    if not await _gate_token_valid(header.removeprefix("Bearer "), client_ip=client_ip):
         return JSONResponse({"detail": "Invalid or expired token"}, status_code=401)
     return await call_next(request)
 
@@ -782,6 +817,7 @@ app.include_router(runner_pools.router)
 app.include_router(orgs.router)
 app.include_router(expressions.router)
 app.include_router(github_sync_router.router, prefix="/api")
+app.include_router(metrics.router)
 
 
 @app.get("/")

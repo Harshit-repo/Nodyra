@@ -293,6 +293,11 @@ class _RuntimeProcess:
         self.env_id = env_id
         self.dead = False
         self.idle_since = time.time()
+        # Number of runs this process has serviced.  Used by the pool's
+        # ``max_runs_per_subprocess`` cap to recycle processes before
+        # accumulated global state from different workflows causes cross-
+        # contamination (e.g. leaked module-level variables).
+        self.run_count = 0
         self._run_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
         # Background task that drains stderr so the OS pipe buffer never fills
@@ -561,7 +566,7 @@ class _EnvPool:
 
     def __init__(
         self, env_id: str | None, min_size: int, max_size: int,
-        rss_estimate: int = 0,
+        rss_estimate: int = 0, max_runs_per_subprocess: int = 0,
     ) -> None:
         self.env_id = env_id
         self.min_size = max(0, min_size)
@@ -569,6 +574,10 @@ class _EnvPool:
         # Measured per-worker RSS for this env (bytes), used by the pool's
         # soft RSS budget. 0 → un-costed (never blocks the budget gate).
         self.rss_estimate = max(0, rss_estimate)
+        # Maximum runs a single subprocess services before being recycled.
+        # 0 (default) → unlimited.  A positive value prevents gradual state
+        # accumulation from different workflows sharing the same warm process.
+        self.max_runs_per_subprocess = max(0, max_runs_per_subprocess)
         self._sem = asyncio.Semaphore(self.max_size)
         self._idle: list[_RuntimeProcess] = []
         self._all: set[_RuntimeProcess] = set()
@@ -577,12 +586,23 @@ class _EnvPool:
     def _alive(proc: _RuntimeProcess) -> bool:
         return not proc.dead and proc.process.returncode is None
 
+    def _should_recycle(self, proc: _RuntimeProcess) -> bool:
+        if self.max_runs_per_subprocess <= 0:
+            return False
+        return proc.run_count >= self.max_runs_per_subprocess
+
     async def acquire(self) -> _RuntimeProcess:
         await self._sem.acquire()
         async with self._lock:
             while self._idle:
                 cand = self._idle.pop()
                 if self._alive(cand):
+                    if self._should_recycle(cand):
+                        # Process has hit its run cap — close it
+                        # asynchronously and spawn a fresh one.
+                        self._all.discard(cand)
+                        asyncio.create_task(cand.close())
+                        break
                     return cand
                 self._all.discard(cand)
         try:
@@ -815,7 +835,10 @@ class RuntimePool:
             if envpool is None:
                 min_size, max_size = await _resolve_pool_sizes(env_id)
                 rss_estimate = await _resolve_env_rss_estimate(env_id)
-                envpool = _EnvPool(env_id, min_size, max_size, rss_estimate)
+                envpool = _EnvPool(
+                    env_id, min_size, max_size, rss_estimate,
+                    max_runs_per_subprocess=settings.runner_max_runs_per_subprocess,
+                )
                 self._envs[key] = envpool
             return envpool
 
@@ -866,8 +889,11 @@ class RuntimePool:
                         org_limits=await _org_run_limits_for(run_org),
                     )
                     if timeout and timeout > 0:
-                        return await asyncio.wait_for(run, timeout=timeout)
-                    return await run
+                        result = await asyncio.wait_for(run, timeout=timeout)
+                    else:
+                        result = await run
+                    proc.run_count += 1
+                    return result
                 except TimeoutError as exc:
                     await proc.close()
                     raise RuntimeError(

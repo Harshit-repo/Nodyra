@@ -114,6 +114,10 @@ class NodeDef:
     # True when the function declares **kwargs — the engine then passes
     # whatever kwargs it has without filtering.
     accepts_var_keyword: bool = False
+    # True for nodes registered from user-uploaded code modules.  The engine
+    # forces these into process-isolated execution regardless of node type
+    # (security boundary: user code must never run in the API process).
+    is_user_code: bool = False
     # Downstream-declared wiring: maps this node's input-port name to the
     # source it should be fed from, ``"<source_id>"`` or
     # ``"<source_id>.<output_port>"``. Used at graph-build time, not by the
@@ -736,6 +740,7 @@ def register_module_functions(
                 is_async=decorator_def.is_async,
                 param_names=decorator_def.param_names,
                 accepts_var_keyword=decorator_def.accepts_var_keyword,
+                is_user_code=True,
                 wires=decorator_def.wires,
                 declared_id=decorator_def.declared_id,
             )
@@ -799,6 +804,7 @@ def register_module_functions(
             param_names=sig_param_names,
             accepts_var_keyword=accepts_var_kw,
             declared_id=key,
+            is_user_code=True,
         )
         # Re-register on top: drop any prior entry under the same id so an
         # edited file replaces its previous registration cleanly.

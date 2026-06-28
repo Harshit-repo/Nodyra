@@ -1,9 +1,11 @@
 """Single-node execution: input wiring, expression eval, retries, timeouts,
-process isolation for code nodes, log capture, and output normalization."""
+process isolation for code nodes, log capture, node hooks, and output
+normalization."""
 
 import asyncio
 import contextvars
 import json
+import logging
 import random
 import sys
 import threading
@@ -240,6 +242,149 @@ def _node_timeout(
     return default_timeouts.get(node_type)
 
 
+_HOOK_LOGGER = logging.getLogger("noodle.hooks")
+
+# Hostname blocks that are NEVER safe webhook targets — loopback, RFC 1918
+# private ranges, link-local, and cloud metadata endpoints.
+_SSRF_BLOCKED_HOSTS: frozenset[str] = frozenset({
+    "127.0.0.1",
+    "::1",
+    "0.0.0.0",
+    "169.254.169.254",  # AWS / GCP / Azure metadata endpoint
+    "metadata.google.internal",
+    "metadata",
+    "localhost",
+})
+
+_SSRF_BLOCKED_PREFIXES: tuple[str, ...] = (
+    "10.", "172.16.", "172.17.", "172.18.", "172.19.",
+    "172.20.", "172.21.", "172.22.", "172.23.", "172.24.",
+    "172.25.", "172.26.", "172.27.", "172.28.", "172.29.",
+    "172.30.", "172.31.", "192.168.", "169.254.", "fc00:",
+    "fd00:",
+)
+
+
+def _is_safe_webhook_url(url_str: str) -> tuple[bool, str]:
+    """Validate a webhook URL for SSRF safety.
+
+    Returns ``(True, "")`` when the URL is safe, or ``(False, reason)``
+    when it should be blocked.
+    """
+    import urllib.parse
+
+    try:
+        parsed = urllib.parse.urlparse(url_str)
+    except Exception:
+        return False, "invalid URL"
+
+    # Only HTTPS.  Plain HTTP is a straight MITM risk for webhook payloads
+    # that may contain node output data.
+    if parsed.scheme not in ("https",):
+        return False, f"unsupported scheme: {parsed.scheme!r}"
+
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        return False, "missing hostname"
+
+    # Block exact matches (loopback, metadata endpoints).
+    if hostname in _SSRF_BLOCKED_HOSTS:
+        return False, f"blocked hostname: {hostname!r}"
+
+    # Block RFC 1918 / link-local / ULA prefixes.
+    for prefix in _SSRF_BLOCKED_PREFIXES:
+        if hostname.startswith(prefix):
+            return False, f"private-range hostname: {hostname!r}"
+
+    return True, ""
+
+
+async def _run_node_hooks(
+    hooks: list[dict[str, Any]],
+    trigger: str,
+    *,
+    node_id: str,
+    node_type: str,
+    status: str = "",
+    error: str | None = None,
+    outputs: dict[str, Any] | None = None,
+    attempt: int = 0,
+) -> None:
+    """Execute all hooks matching ``trigger`` best-effort.
+
+    A hook failure is logged and swallowed — it must never affect the node
+    result. Supported hook types:
+
+    * ``webhook`` — POST a JSON payload to ``config.url``.
+    * ``log`` — emit a structured log line at the configured level.
+    """
+    payload: dict[str, Any] | None = None
+
+    for hook in hooks:
+        if hook.get("trigger") != trigger:
+            continue
+        hook_type = str(hook.get("type") or "")
+        config = hook.get("config") or {}
+
+        try:
+            if hook_type == "log":
+                level = str(config.get("level") or "info").lower()
+                message = str(config.get("message") or "")
+                if not message:
+                    message = (
+                        f"node {node_id} ({node_type}) {trigger}"
+                        + (f": {error}" if error else "")
+                    )
+                log_kwargs: dict[str, Any] = {"extra": {
+                    "hook": hook_type, "trigger": trigger,
+                    "node_id": node_id, "node_type": node_type,
+                    "status": status, "attempt": attempt,
+                }}
+                if error:
+                    log_kwargs["extra"]["error"] = error
+                getattr(_HOOK_LOGGER, level, _HOOK_LOGGER.info)(message, **log_kwargs)  # type: ignore[arg-type]
+
+            elif hook_type == "webhook":
+                url = str(config.get("url") or "")
+                if not url:
+                    continue
+                # SSRF guard: reject URLs targeting internal / loopback hosts.
+                safe, reason = _is_safe_webhook_url(url)
+                if not safe:
+                    _HOOK_LOGGER.warning(
+                        "webhook hook blocked node_id=%s trigger=%s url=%s reason=%s",
+                        node_id, trigger, url, reason,
+                    )
+                    continue
+                if payload is None:
+                    payload = {
+                        "trigger": trigger,
+                        "node_id": node_id,
+                        "node_type": node_type,
+                        "status": status,
+                        "error": error,
+                        "attempt": attempt,
+                        "timestamp": time.time(),
+                    }
+                    if outputs is not None:
+                        payload["output_keys"] = list(outputs.keys())
+                # Best-effort: short timeout, no retry, no redirects (SSRF).
+                try:
+                    import httpx
+                    async with httpx.AsyncClient(
+                        timeout=5.0, follow_redirects=False,
+                    ) as client:
+                        await client.post(url, json=payload)
+                except Exception:  # noqa: BLE001
+                    pass
+
+        except Exception:  # noqa: BLE001
+            _HOOK_LOGGER.debug(
+                "hook failed node_id=%s trigger=%s type=%s",
+                node_id, trigger, hook_type, exc_info=True,
+            )
+
+
 async def _run_one_node(
     *,
     nid: str,
@@ -291,7 +436,14 @@ async def _run_one_node(
         )
         return run_status
 
+    node_hooks: list[dict[str, Any]] = getattr(graph_node, "hooks", None) or []
     await emit({"type": "node_started", "node_id": nid})
+    if node_hooks:
+        await _run_node_hooks(
+            node_hooks, "on_start",
+            node_id=nid, node_type=graph_node.type,
+            status="running",
+        )
     started = time.time()
 
     try:
@@ -460,7 +612,10 @@ async def _run_one_node(
                     node_def.func(**current_kwargs), timeout
                 )
             return await node_def.func(**current_kwargs)
-        if graph_node.type in PROCESS_ISOLATED_NODE_TYPES:
+        if (
+            graph_node.type in PROCESS_ISOLATED_NODE_TYPES
+            or getattr(node_def, "is_user_code", False)
+        ):
             # Timeout-evict and broken-pool translation live inside the
             # isolator; TimeoutError/ValueError surface here unchanged.
             isolator = (
@@ -520,6 +675,13 @@ async def _run_one_node(
         for attempt in range(attempts):
             log_buf.clear()
             if attempt > 0:
+                if node_hooks:
+                    await _run_node_hooks(
+                        node_hooks, "on_retry",
+                        node_id=nid, node_type=graph_node.type,
+                        status="retrying", error=str(caught) if caught else None,
+                        attempt=attempt,
+                    )
                 # A previous attempt may have streamed ``node_chunk`` deltas to
                 # the client. Tell it to discard them so a retry doesn't render
                 # the failed attempt's partial output concatenated with the new
@@ -580,8 +742,22 @@ async def _run_one_node(
         _log_capture.reset(log_token)
     logs = "".join(log_buf).splitlines()
 
+    # Increment the global node-execution counter (metrics).
+    # Lazy import so the engine has no hard dependency on the API's metrics module.
+    try:
+        from app.services.metrics import node_executions_total
+        node_executions_total.inc(node_type=graph_node.type)
+    except Exception:  # noqa: BLE001 — metrics are best-effort
+        pass
+
     if caught is None and outputs is not None:
         node_outputs[nid] = _freeze_outputs(outputs)
+        if node_hooks:
+            await _run_node_hooks(
+                node_hooks, "on_success",
+                node_id=nid, node_type=graph_node.type,
+                status="success", outputs=outputs,
+            )
         await finish(
             NodeRunResult(
                 node_id=nid, status=NodeStatus.success, outputs=outputs,
@@ -591,6 +767,21 @@ async def _run_one_node(
             )
         )
         return run_status
+
+    if isinstance(caught, AgentApprovalRequired):
+        # Agent approval is a pause, not a failure — on_failure hooks do NOT fire.
+        pass
+    elif caught is not None and node_hooks:
+        await _run_node_hooks(
+            node_hooks, "on_failure",
+            node_id=nid, node_type=graph_node.type,
+            status="error", error=(
+                f"timed out after {timeout}s"
+                if isinstance(caught, (TimeoutError, asyncio.TimeoutError))
+                else f"{type(caught).__name__}: {caught}"
+            ),
+            outputs=outputs,
+        )
 
     if isinstance(caught, AgentApprovalRequired):
         run_status = RunStatus.waiting

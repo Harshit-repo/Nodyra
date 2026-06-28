@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     # Node) waits for its run to finish before returning 504. The run keeps
     # executing in the background past the timeout.
     webhook_response_timeout_seconds: float = 30.0
+    # When True, every webhook trigger node MUST configure at least one auth
+    # method (basic, header, bearer, jwt, hmac) — auth_type="none" is rejected
+    # at publish time.  Default True in production mode so a misconfigured
+    # workflow can't expose an unauthenticated public endpoint by accident.
+    # Set False to allow open webhooks (e.g. for internal trusted-tenant use).
+    webhook_require_auth: bool = True
     # Gate that decides what happens when a deployment is activated against a
     # workflow that contains risky nodes (Code, HTTP→private IP, SQL with
     # expressions, SSH, exec command). See ``app.services.unsafe_nodes``.
@@ -226,6 +232,10 @@ class Settings(BaseSettings):
     sandbox_warm_total: int = 8
     sandbox_warm_ttl_seconds: float = 300.0
     sandbox_max_runs_per_container: int = 50
+    # Maximum runs a single warm subprocess services before being recycled.
+    # 0 → unlimited.  A positive value prevents gradual global-state
+    # accumulation from different workflows sharing the same subprocess.
+    runner_max_runs_per_subprocess: int = 100
     # Seconds to wait for a fresh container's {"type":"ready"} handshake.
     sandbox_ready_timeout_seconds: float = 60.0
     # When True (default), multi_tenancy_enabled requires
@@ -240,6 +250,9 @@ class Settings(BaseSettings):
     # honoured by the SDK for anything not surfaced here.
     otel_enabled: bool = False
     otel_exporter_otlp_endpoint: str = ""
+    # "http" (default) uses OTLP/HTTP POST to /v1/traces.  "grpc" switches to
+    # OTLP/gRPC (port 4317) for collectors that speak the gRPC protocol.
+    otel_exporter_protocol: str = "http"
     # MCP server: exposes POST /mcp (workflow run + builder tools) when on.
     mcp_server_enabled: bool = True
     # Licensing (see app/services/licensing.py). A signed Ed25519 license key
@@ -253,6 +266,12 @@ class Settings(BaseSettings):
     auth_allow_registration: bool = False
     auth_registration_role: str = "viewer"
     auth_token_ttl_seconds: int = 86_400
+    # P1-3: When True, only email-verified users can authenticate.
+    auth_require_verified_email: bool = False
+    # P1-6: When True, session tokens are bound to the client IP present at
+    # login.  Rotating IPs (mobile, VPN) will cause re-auth; set False where
+    # that friction is unacceptable.
+    auth_bind_token_to_ip: bool = False
     # Per-IP sliding-window cap on /auth/login + /auth/register attempts.
     # Tunes brute-force friction; set ``auth_rate_limit_enabled=False`` to
     # disable entirely (e.g. when fronted by a WAF that already throttles).
@@ -269,6 +288,10 @@ class Settings(BaseSettings):
     # WAF/CDN already throttles ingress.
     webhook_rate_limit_enabled: bool = True
     webhook_rate_limit_per_minute: int = 120
+    # Lower limit for the editor test URL (/webhook-test/*).  The listen gate
+    # already prevents unauthorized callers, but within an active listen window
+    # a tighter cap guards against accidental or deliberate flooding.
+    webhook_test_rate_limit_per_minute: int = 30
     # Number of trusted reverse-proxy hops in front of the API.  When > 0 the
     # rate limiter reads the real client IP from X-Forwarded-For (skipping the
     # last N entries which belong to the proxies).  Leave at 0 for direct

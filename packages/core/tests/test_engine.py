@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 import pytest
 
@@ -266,9 +267,10 @@ async def test_node_error_marks_run_failed_and_skips_downstream() -> None:
 async def test_unknown_node_type_errors() -> None:
     reg = make_registry()
     graph = WorkflowGraph(nodes=[GraphNode(id="x", type="does_not_exist")])
-    result = await execute(graph, reg)
-    assert result.status == RunStatus.error
-    assert result.nodes["x"].status == NodeStatus.error
+    # Unknown node types are now caught at validation time (GraphError),
+    # before execution starts — fail-fast is the correct behaviour.
+    with pytest.raises(GraphError, match="Unknown node type"):
+        await execute(graph, reg)
 
 
 async def test_outputs_override_uses_dynamic_names() -> None:
@@ -645,3 +647,185 @@ async def test_independent_branches_are_not_level_barriered() -> None:
         if e["type"] == "node_started" and e["node_id"] == "c"
     )
     assert d_finished < c_started, "d should complete before the slow branch unblocks c"
+
+
+# ── Graph validation tests ──────────────────────────────────────────────
+
+
+async def test_empty_graph_raises_graph_error() -> None:
+    """A workflow with zero nodes must raise GraphError, not succeed silently."""
+    reg = make_registry()
+    graph = WorkflowGraph(nodes=[], edges=[])
+    with pytest.raises(GraphError, match="no nodes"):
+        await execute(graph, reg)
+
+
+async def test_duplicate_node_ids_raise_graph_error() -> None:
+    reg = make_registry()
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="a", type="const", params={"value": 1}),
+            GraphNode(id="a", type="const", params={"value": 2}),
+        ],
+    )
+    with pytest.raises(GraphError, match="Duplicate node id"):
+        await execute(graph, reg)
+
+
+async def test_self_loop_edge_raises_graph_error() -> None:
+    """Edges from a node to itself must raise GraphError, not silently skip."""
+    reg = make_registry()
+    graph = WorkflowGraph(
+        nodes=[GraphNode(id="a", type="const", params={"value": 1})],
+        edges=[Edge(source="a", target="a")],
+    )
+    with pytest.raises(GraphError, match="Self-loop"):
+        await execute(graph, reg)
+
+
+async def test_edge_with_missing_source_raises_graph_error() -> None:
+    reg = make_registry()
+    graph = WorkflowGraph(
+        nodes=[GraphNode(id="a", type="const")],
+        edges=[Edge(source="does_not_exist", target="a")],
+    )
+    with pytest.raises(GraphError, match="unknown source node"):
+        await execute(graph, reg)
+
+
+async def test_edge_with_missing_target_raises_graph_error() -> None:
+    reg = make_registry()
+    graph = WorkflowGraph(
+        nodes=[GraphNode(id="a", type="const")],
+        edges=[Edge(source="a", target="does_not_exist")],
+    )
+    with pytest.raises(GraphError, match="unknown target node"):
+        await execute(graph, reg)
+
+
+async def test_duplicate_edges_raise_graph_error() -> None:
+    reg = make_registry()
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="a", type="const", params={"value": 1}),
+            GraphNode(id="b", type="double"),
+        ],
+        edges=[
+            Edge(source="a", target="b"),
+            Edge(source="a", target="b"),
+        ],
+    )
+    with pytest.raises(GraphError, match="Duplicate edge"):
+        await execute(graph, reg)
+
+
+async def test_disconnected_node_with_no_inputs_does_not_crash() -> None:
+    """A node with no incoming edges is NOT a structural error — it may be
+    a trigger or a const-like node that executes without wired data.
+    The engine handles missing upstream input at runtime (skip)."""
+    reg = NodeRegistry()
+
+    @node(name="Const", id="const", inputs=[], registry=reg)
+    def const(value: int = 42) -> int:
+        return value
+
+    @node(name="Sink", id="sink", registry=reg)
+    def sink(input: int = 0) -> int:
+        return input
+
+    graph = WorkflowGraph(
+        nodes=[
+            GraphNode(id="c", type="const", params={"value": 7}),
+            GraphNode(id="d", type="sink"),  # no incoming edge — uses default
+        ],
+        edges=[],  # no edges at all
+    )
+    result = await execute(graph, reg)
+    # Both nodes execute independently; "d" gets its default input (0)
+    assert result.nodes["c"].status == NodeStatus.success
+    assert result.nodes["d"].status == NodeStatus.success
+    assert result.nodes["d"].outputs["main"] == 0
+
+
+# ── Node hooks tests ───────────────────────────────────────────────────
+
+
+async def test_hooks_fire_on_lifecycle_triggers() -> None:
+    """on_start, on_success, and on_failure hooks must fire at the right times."""
+    reg = NodeRegistry()
+
+    @node(name="Pass", id="pass", inputs=[], registry=reg)
+    def pass_node() -> int:
+        return 42
+
+    @node(name="Fail", id="fail", inputs=[], registry=reg)
+    def fail_node() -> int:
+        raise RuntimeError("boom")
+
+    hook_log: list[tuple[str, str]] = []
+
+    class _CaptureHookLogs(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            trigger = getattr(record, "trigger", "")
+            node_id = getattr(record, "node_id", "")
+            if trigger:
+                hook_log.append((str(trigger), str(node_id)))
+
+    _HOOK_LOGGER = logging.getLogger("noodle.hooks")
+    _HOOK_LOGGER.addHandler(_CaptureHookLogs())
+    _HOOK_LOGGER.setLevel(logging.DEBUG)
+    _HOOK_LOGGER.propagate = False
+    try:
+        # Success path
+        g = WorkflowGraph(
+            nodes=[GraphNode(
+                id="p", type="pass",
+                hooks=[
+                    {"trigger": "on_start", "type": "log", "config": {"level": "info"}},
+                    {"trigger": "on_success", "type": "log", "config": {"level": "info"}},
+                    {"trigger": "on_failure", "type": "log", "config": {"level": "error"}},
+                ],
+            )],
+        )
+        await execute(g, reg)
+        assert ("on_start", "p") in hook_log
+        assert ("on_success", "p") in hook_log
+        assert ("on_failure", "p") not in hook_log
+
+        # Failure path
+        hook_log.clear()
+        g = WorkflowGraph(
+            nodes=[GraphNode(
+                id="f", type="fail",
+                hooks=[
+                    {"trigger": "on_failure", "type": "log", "config": {"level": "error"}},
+                ],
+            )],
+        )
+        await execute(g, reg)
+        assert ("on_failure", "f") in hook_log
+    finally:
+        _HOOK_LOGGER.removeHandler(_CaptureHookLogs())
+
+
+async def test_hooks_never_break_the_node() -> None:
+    """A failing hook must never affect the node result."""
+    reg = NodeRegistry()
+
+    @node(name="Ok", id="ok", inputs=[], registry=reg)
+    def ok() -> int:
+        return 1
+
+    g = WorkflowGraph(
+        nodes=[GraphNode(
+            id="o", type="ok",
+            hooks=[
+                {"trigger": "on_success", "type": "webhook",
+                 "config": {"url": "http://127.0.0.1:1/nonexistent"}},
+                {"trigger": "on_success", "type": "unknown_type"},
+            ],
+        )],
+    )
+    result = await execute(g, reg)
+    assert result.nodes["o"].status == NodeStatus.success
+    assert result.nodes["o"].outputs["main"] == 1

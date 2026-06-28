@@ -1,9 +1,9 @@
-"""Port-kind validation: connection compatibility and input/output kinds."""
+"""Graph validation: structure checks, port-kind compatibility, and input/output kinds."""
 
 from typing import Any
 
 from noodle.engine.types import GraphError
-from noodle.models import PortSpec, WorkflowGraph
+from noodle.models import Edge, GraphNode, PortSpec, WorkflowGraph
 from noodle.node_tool import TOOL_MODE_OUTPUT
 from noodle.sdk import NodeRegistry
 
@@ -209,3 +209,83 @@ def _validate_output_kinds(
                 f"node '{node_id}' output '{port.name}' was declared as an "
                 f"artifact port but produced {type(value).__name__}."
             )
+
+
+def _validate_graph(
+    graph: WorkflowGraph,
+    registry: NodeRegistry | None = None,
+) -> None:
+    """Validate the graph structure before execution.
+
+    Checks that are cheap and catchable early (before topological sort and
+    node execution) live here.  Port-kind validation is separate because it
+    depends on the ``needed`` set (targeted runs may skip some edges).
+
+    Raises ``GraphError`` on structural problems.
+    """
+    nodes_by_id: dict[str, GraphNode] = {n.id: n for n in graph.nodes}
+    edge_ids: set[str] = set()
+
+    # --- empty graph -------------------------------------------------------
+    if not graph.nodes:
+        raise GraphError("Workflow graph has no nodes")
+
+    # --- duplicate node ids ------------------------------------------------
+    seen_ids: set[str] = set()
+    for n in graph.nodes:
+        if n.id in seen_ids:
+            raise GraphError(f"Duplicate node id '{n.id}'")
+        seen_ids.add(n.id)
+
+    # --- edge validation ---------------------------------------------------
+    for edge in graph.edges:
+        # Self-loops are never valid.
+        if edge.source == edge.target:
+            raise GraphError(
+                f"Self-loop edge from '{edge.source}' to '{edge.target}' "
+                "is not allowed"
+            )
+
+        # Missing source node.
+        if edge.source not in nodes_by_id:
+            raise GraphError(
+                f"Edge references unknown source node '{edge.source}'"
+            )
+
+        # Missing target node.
+        if edge.target not in nodes_by_id:
+            raise GraphError(
+                f"Edge references unknown target node '{edge.target}'"
+            )
+
+        # Duplicate edge detection — same (source, source_output, target,
+        # target_input) pair.
+        edge_key = (
+            f"{edge.source}:{edge.source_output}"
+            f"->{edge.target}:{edge.target_input}"
+        )
+        if edge_key in edge_ids:
+            raise GraphError(
+                f"Duplicate edge from '{edge.source}.{edge.source_output}' "
+                f"to '{edge.target}.{edge.target_input}'"
+            )
+        edge_ids.add(edge_key)
+
+    # --- unknown node types (when registry is supplied) --------------------
+    # Engine-internal types (meta_node for transparent/isolated grouping,
+    # loop_start/loop_end for iteration, __metanode_input__ for metanode
+    # boundary ports) are never registered in the user-visible registry —
+    # they are handled by the engine itself. Skip them here.
+    _ENGINE_INTERNAL_TYPES: frozenset[str] = frozenset(
+        {"meta_node", "loop_start", "loop_end", "__metanode_input__"}
+    )
+    if registry is not None:
+        for n in graph.nodes:
+            if n.type in _ENGINE_INTERNAL_TYPES:
+                continue
+            try:
+                registry.get(n.type)
+            except KeyError:
+                raise GraphError(
+                    f"Unknown node type '{n.type}' for node '{n.id}'"
+                )

@@ -12,6 +12,7 @@ The same engine runs inside env runners and inside exported scripts.
 """
 
 import asyncio
+import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
@@ -43,6 +44,11 @@ _STATUS_RANK: dict[RunStatus, int] = {
     RunStatus.waiting: 1,
     RunStatus.error: 2,
 }
+
+# Default per-node output cap (10 MiB).  A node that produces more than this
+# raises a ValueError unless the caller explicitly sets a higher limit via
+# ``max_node_output_bytes``.  Pass 0 or a negative value to disable the cap.
+DEFAULT_MAX_NODE_OUTPUT_BYTES: int = 10 * 1024 * 1024
 
 
 def _worse_status(a: RunStatus, b: RunStatus) -> RunStatus:
@@ -237,6 +243,8 @@ async def _execute_nodes(
     loop_regions: dict[str, "LoopRegion"],
     owned: set[str],
     node_sem: asyncio.Semaphore | None = None,
+    type_sems: dict[str, asyncio.Semaphore] | None = None,
+    run_deadline: float | None = None,
     process_isolator: "ProcessIsolator | None" = None,
 ) -> RunStatus:
     """Run the plan's units with dependency counting: each unit starts the
@@ -244,7 +252,10 @@ async def _execute_nodes(
     started in graph insertion order. ``node_sem`` (when set) bounds how many
     plain nodes execute concurrently; loop/metanode *drivers* never hold a
     slot (their body nodes acquire their own), so a capped run cannot
-    deadlock on nested regions. Returns the worst RunStatus seen."""
+    deadlock on nested regions. ``type_sems`` bounds concurrency per node
+    type (e.g. max 3 http_request nodes at once). ``run_deadline`` is a
+    monotonic timestamp; nodes that haven't started by the deadline are
+    marked as timed-out. Returns the worst RunStatus seen."""
     # Lazy: loops.py and metanodes.py import this module at module level,
     # so importing them here (not at the top) breaks the cycle.
     from noodle.engine.loops import _run_conditional_loop, _run_loop
@@ -254,37 +265,68 @@ async def _execute_nodes(
 
     async def _one(nid: str) -> tuple[str, RunStatus]:
         gn = nodes_by_id[nid]
-        if gn.type == "meta_node":
-            st = await _run_metanode(
-                node=gn, incoming=incoming, node_outputs=node_outputs,
-                registry=registry, emit=emit, finish=finish,
-                default_timeouts=default_timeouts,
-                max_node_output_bytes=max_node_output_bytes,
-                process_isolator=process_isolator,
+
+        # Run-level deadline: skip nodes that haven't started before the clock
+        # runs out.  Already-running nodes are allowed to finish (we don't
+        # cancel mid-flight), but no new work begins past the deadline.
+        if run_deadline is not None and time.monotonic() > run_deadline:
+            await finish(
+                NodeRunResult(
+                    node_id=nid, status=NodeStatus.error,
+                    error="workflow run timed out before this node could start",
+                    started_at=time.time(), finished_at=time.time(),
+                )
             )
-            return nid, st
-        if gn.type == "loop_start" and nid in loop_regions:
-            mode = str(gn.params.get("mode", "each") or "each")
-            driver = (
-                _run_conditional_loop
-                if mode in ("while", "until")
-                else _run_loop
-            )
-            st = await driver(
-                region=loop_regions[nid],
-                graph=graph, registry=registry, nodes_by_id=nodes_by_id,
-                incoming=incoming, node_outputs=node_outputs, cache=cache,
-                emit=emit, finish=finish, default_timeouts=default_timeouts,
-                max_node_output_bytes=max_node_output_bytes,
-                pause_on_approval=pause_on_approval,
-                agent_action_resume=agent_action_resume,
-                loop_regions=loop_regions, owned=owned,
-                node_sem=node_sem,
-                process_isolator=process_isolator,
-            )
-            return nid, st
-        if node_sem is not None:
-            async with node_sem:
+            return nid, RunStatus.error
+
+        # Per-type semaphore, acquired outside the global semaphore so a type-
+        # saturated node type doesn't consume a global slot while waiting.
+        type_sem = (type_sems or {}).get(gn.type)
+        if type_sem is not None:
+            await type_sem.acquire()
+
+        try:
+            if gn.type == "meta_node":
+                st = await _run_metanode(
+                    node=gn, incoming=incoming, node_outputs=node_outputs,
+                    registry=registry, emit=emit, finish=finish,
+                    default_timeouts=default_timeouts,
+                    max_node_output_bytes=max_node_output_bytes,
+                    process_isolator=process_isolator,
+                )
+                return nid, st
+            if gn.type == "loop_start" and nid in loop_regions:
+                mode = str(gn.params.get("mode", "each") or "each")
+                driver = (
+                    _run_conditional_loop
+                    if mode in ("while", "until")
+                    else _run_loop
+                )
+                st = await driver(
+                    region=loop_regions[nid],
+                    graph=graph, registry=registry, nodes_by_id=nodes_by_id,
+                    incoming=incoming, node_outputs=node_outputs, cache=cache,
+                    emit=emit, finish=finish, default_timeouts=default_timeouts,
+                    max_node_output_bytes=max_node_output_bytes,
+                    pause_on_approval=pause_on_approval,
+                    agent_action_resume=agent_action_resume,
+                    loop_regions=loop_regions, owned=owned,
+                    node_sem=node_sem, type_sems=type_sems,
+                    process_isolator=process_isolator,
+                )
+                return nid, st
+            if node_sem is not None:
+                async with node_sem:
+                    st = await _run_one_node(
+                        nid=nid, nodes_by_id=nodes_by_id, incoming=incoming,
+                        node_outputs=node_outputs, cache=cache, registry=registry,
+                        emit=emit, finish=finish, default_timeouts=default_timeouts,
+                        max_node_output_bytes=max_node_output_bytes,
+                        pause_on_approval=pause_on_approval,
+                        agent_action_resume=agent_action_resume,
+                        process_isolator=process_isolator,
+                    )
+            else:
                 st = await _run_one_node(
                     nid=nid, nodes_by_id=nodes_by_id, incoming=incoming,
                     node_outputs=node_outputs, cache=cache, registry=registry,
@@ -294,17 +336,10 @@ async def _execute_nodes(
                     agent_action_resume=agent_action_resume,
                     process_isolator=process_isolator,
                 )
-        else:
-            st = await _run_one_node(
-                nid=nid, nodes_by_id=nodes_by_id, incoming=incoming,
-                node_outputs=node_outputs, cache=cache, registry=registry,
-                emit=emit, finish=finish, default_timeouts=default_timeouts,
-                max_node_output_bytes=max_node_output_bytes,
-                pause_on_approval=pause_on_approval,
-                agent_action_resume=agent_action_resume,
-                process_isolator=process_isolator,
-            )
-        return nid, st
+            return nid, st
+        finally:
+            if type_sem is not None:
+                type_sem.release()
 
     indegree = {u: len(plan.deps[u]) for u in plan.units}
     ready = [u for u in plan.units if indegree[u] == 0]  # insertion order
@@ -386,6 +421,8 @@ async def execute(
     pause_on_approval: bool = False,
     agent_action_resume: dict[str, AgentActionRequest] | None = None,
     max_node_concurrency: int | None = None,
+    max_concurrency_per_type: dict[str, int] | None = None,
+    run_timeout_seconds: float | None = None,
     process_isolator: "ProcessIsolator | None" = None,
     subworkflow_runner: "SubworkflowRunner | None" = None,
     subworkflow_meta: "SubworkflowMeta | None" = None,
@@ -405,6 +442,8 @@ async def execute(
             pause_on_approval=pause_on_approval,
             agent_action_resume=agent_action_resume,
             max_node_concurrency=max_node_concurrency,
+            max_concurrency_per_type=max_concurrency_per_type,
+            run_timeout_seconds=run_timeout_seconds,
             process_isolator=process_isolator,
         )
 
@@ -431,6 +470,8 @@ async def execute(
             pause_on_approval=pause_on_approval,
             agent_action_resume=agent_action_resume,
             max_node_concurrency=max_node_concurrency,
+            max_concurrency_per_type=max_concurrency_per_type,
+            run_timeout_seconds=run_timeout_seconds,
             process_isolator=process_isolator,
         )
     finally:
@@ -450,20 +491,35 @@ async def _execute_impl(
     pause_on_approval: bool = False,
     agent_action_resume: dict[str, AgentActionRequest] | None = None,
     max_node_concurrency: int | None = None,
+    max_concurrency_per_type: dict[str, int] | None = None,
+    run_timeout_seconds: float | None = None,
     process_isolator: "ProcessIsolator | None" = None,
 ) -> RunResult:
     # Lazy: loops.py and metanodes.py import this module at module level,
     # so importing them here (not at the top) breaks the cycle.
     from noodle.engine.loops import _loop_regions, _validate_loop_regions
     from noodle.engine.metanodes import _expand_metanodes
+    from noodle.engine.validation import _validate_graph
 
     _install_capture()
     default_timeouts = DEFAULT_NODE_TIMEOUTS if default_timeouts is None else default_timeouts
+    # Apply the default output cap (10 MiB) when the caller doesn't set one.
+    # 0 or negative means "unlimited" — pass those through as None to disable
+    # the check inside _run_one_node.
+    if max_node_output_bytes is None:
+        max_node_output_bytes = DEFAULT_MAX_NODE_OUTPUT_BYTES
+    elif max_node_output_bytes <= 0:
+        max_node_output_bytes = None
     cache = cache or {}
     agent_action_resume = agent_action_resume or {}
     # Transparent metanodes are purely organizational: inline them before any
     # planning so the rest of the engine sees an ordinary flat graph.
     graph = _expand_metanodes(graph)
+    # Structural validation — empty graph, duplicate ids, self-loops, unknown
+    # node types, missing edge references. Must run BEFORE _topo_order so the
+    # error message is specific ("Duplicate node id 'x'") rather than a generic
+    # cycle error.
+    _validate_graph(graph, registry)
     target_set = set(targets) if targets is not None else None
     needed = _needed_nodes(graph, target_set, cache)
     _validate_connection_kinds(graph, registry, needed)
@@ -474,6 +530,17 @@ async def _execute_impl(
         if max_node_concurrency is not None and max_node_concurrency > 0
         else None
     )
+    # Per-type concurrency limits: each entry becomes an asyncio.Semaphore.
+    # A type not listed is unlimited. 0 or negative → skip (unlimited).
+    type_sems: dict[str, asyncio.Semaphore] | None = None
+    if max_concurrency_per_type:
+        type_sems = {
+            typ: asyncio.Semaphore(limit)
+            for typ, limit in max_concurrency_per_type.items()
+            if limit > 0
+        }
+        if not type_sems:
+            type_sems = None
 
     incoming: dict[
         str,
@@ -531,6 +598,14 @@ async def _execute_impl(
 
     plan = _build_plan(graph, needed, owned, loop_regions)
 
+    # Compute the run-level deadline once, from ``run_timeout_seconds`` when set.
+    # Individual nodes may have their own (shorter) timeouts, but the run itself
+    # cannot exceed this wall clock.  Computed here — not inside the worker loop —
+    # so the deadline is fixed at the start and isn't affected by queue-wait time.
+    run_deadline: float | None = None
+    if run_timeout_seconds is not None and run_timeout_seconds > 0:
+        run_deadline = time.monotonic() + run_timeout_seconds
+
     # Dependency-counting execution: each node starts as soon as its in-set
     # predecessors complete. Loop Start nodes are intercepted by
     # _execute_nodes and driven over their body sub-DAG.
@@ -551,6 +626,8 @@ async def _execute_impl(
         loop_regions=loop_regions,
         owned=owned,
         node_sem=node_sem,
+        type_sems=type_sems,
+        run_deadline=run_deadline,
         process_isolator=process_isolator,
     )
 

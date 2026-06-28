@@ -1,14 +1,18 @@
-"""Approval-driven resume of a waiting run (split from runner.py, A2).
+"""Approval-driven resume of a waiting run and durable-execution checkpoint
+reconstruction (split from runner.py, A2).
 
 ``resume_waiting_run_from_approval`` receives its session factory from the
 runner module at call time so test monkeypatching of ``runner.SessionLocal``
-keeps applying. It prepares the replay seed and queue transition, returning
-the resume event for the caller to publish (and optionally execute
-synchronously) — runner.py keeps the public wrapper.
+keeps applying.
+
+``build_durable_execution_state`` reconstructs the in-memory ``node_outputs``
+dict from persisted ``NodeRun`` rows so a run interrupted by a server restart
+can resume from where it left off — Temporal-style durability without Temporal.
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -23,6 +27,8 @@ from app.services.run_persistence import (
     _graph_node_types,
 )
 from noodle.ai_runtime import AgentActionRequest
+
+logger = logging.getLogger(__name__)
 
 
 async def resume_waiting_run_from_approval(
@@ -102,7 +108,7 @@ async def resume_waiting_run_from_approval(
                 select(NodeRun).where(
                     NodeRun.run_id == run_id,
                     NodeRun.status == "success",
-                )
+                ).order_by(NodeRun.finished_at.desc())
             )
         ).all()
         for node_run in node_runs:
@@ -170,3 +176,56 @@ async def resume_waiting_run_from_approval(
         await session.commit()
 
     return resume_event
+
+
+async def build_durable_execution_state(
+    session_factory, *, run_id: str
+) -> dict[str, dict] | None:
+    """Reconstruct the in-memory ``node_outputs`` dict from persisted NodeRun rows.
+
+    When a server restart interrupts a run, the next dispatch loop lease can
+    call this to rebuild the execution cache from the DB. Successfully
+    completed nodes become cache entries; their downstream nodes re-execute
+    with the cached inputs already available, effectively resuming from where
+    the run left off.
+
+    Returns ``None`` when the run cannot be resumed (no completed nodes, or
+    the run is in a terminal state).
+    """
+    async with session_factory() as session:
+        run = await session.get(Run, run_id)
+        if run is None or run.status not in ("queued", "running"):
+            return None
+
+        node_runs = (
+            await session.scalars(
+                select(NodeRun).where(
+                    NodeRun.run_id == run_id,
+                    NodeRun.status == "success",
+                )
+            )
+        ).all()
+
+        cache: dict[str, dict] = {}
+        for nr in node_runs:
+            output = nr.output
+            if not isinstance(output, dict) or not output:
+                continue
+            # Don't seed outputs containing unrestorable objects (artifact
+            # refs keyed to a dead process, etc.).
+            if _contains_unrestorable_object(output):
+                logger.debug(
+                    "run_id=%s node_id=%s: skipping unrestorable output",
+                    run_id, nr.node_id,
+                )
+                continue
+            cache[nr.node_id] = dict(output)
+
+        if not cache:
+            return None
+
+        logger.info(
+            "run_id=%s: rebuilt durable state from %d completed node(s)",
+            run_id, len(cache),
+        )
+        return cache

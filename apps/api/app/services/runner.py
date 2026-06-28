@@ -10,8 +10,10 @@ Sub-workflow semantics (cycle/depth/inline) live in the engine
 
 import asyncio
 import logging
+import time
 from collections import deque
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -60,7 +62,11 @@ from app.services.graph_utils import (
 )
 from app.services.live_settings import get_live_settings
 from app.services.package_preflight import find_missing_packages, format_missing
-from app.services.redaction import load_secret_values, redact_value
+from app.services.redaction import (
+    load_secret_values,
+    load_secret_values_for_org,
+    redact_value,
+)
 from app.services.remote_dispatch import (
     _QueuedError,
     build_env_payload,
@@ -120,6 +126,11 @@ logger = logging.getLogger(__name__)
 process_isolator = PooledProcessIsolator()
 
 _active_runs: dict[str, asyncio.Task[None]] = {}
+
+# Per-workflow asyncio.Lock for the single-flight gate on SQLite (B-7 fix).
+# Postgres uses row-level ``with_for_update``; this dict provides equivalent
+# in-process serialisation for SQLite's single-writer model.
+_workflow_single_flight_locks: dict[str, asyncio.Lock] = {}
 
 # Back-compat aliases — these moved to run_persistence (A2 split) but are part
 # of this module's established surface (on_event closure, resume path, lazy
@@ -382,6 +393,9 @@ async def _start_run_impl(
 
     cache = _seed_parameters(graph, cache, parameters, trigger_id=trigger_node_id)
 
+    from app.services.metrics import run_starts_total
+    run_starts_total.inc(mode=mode, trigger_type=trigger_type)
+
     logger.info(
         "dispatch workflow_id=%s mode=%s trigger_type=%s trigger_node_id=%s "
         "targets=%d cache_keys=%s deployment_id=%s",
@@ -485,20 +499,41 @@ async def _start_run_impl(
                 raise PackageNotInstalled(format_missing(missing))
 
         if wf_obj is not None and wf_obj.allow_concurrent is False:
-            # Single-flight gate — lock the workflow row to serialize concurrent
-            # start_run calls; prevents two requests both seeing no active run
-            # and both proceeding (TOCTOU). with_for_update is a no-op on SQLite.
-            await session.get(Workflow, workflow_id, with_for_update=True)
-            existing = await session.scalar(
-                select(Run.id)
-                .where(Run.workflow_id == workflow_id)
-                .where(Run.status.in_(("running", "queued", "waiting")))
-                .limit(1)
-            )
-            if existing is not None:
-                raise SingleFlightConflict(
-                    "Workflow is configured single-flight and another run is in progress."
+            # Single-flight gate — serialize concurrent start_run calls so two
+            # requests can't both see no active run and both proceed (TOCTOU).
+            #
+            # Postgres: ``with_for_update`` row-locks the workflow; the SELECT
+            # for active runs below sees any concurrent INSERT that committed
+            # after our lock was acquired.
+            #
+            # SQLite: ``with_for_update`` is a no-op.  Instead we use a
+            # per-workflow asyncio.Lock scoped to this process.  SQLite is
+            # single-writer anyway, so in-process serialisation + WAL-mode
+            # write barrier is correct for single-replica deployments.
+            _lock: asyncio.Lock | None = None
+            if not settings.database_url.startswith("postgresql"):
+                _lock = _workflow_single_flight_locks.setdefault(
+                    workflow_id, asyncio.Lock()
                 )
+                await _lock.acquire()
+            try:
+                if settings.database_url.startswith("postgresql"):
+                    await session.get(
+                        Workflow, workflow_id, with_for_update=True
+                    )
+                existing = await session.scalar(
+                    select(Run.id)
+                    .where(Run.workflow_id == workflow_id)
+                    .where(Run.status.in_(("running", "queued", "waiting")))
+                    .limit(1)
+                )
+                if existing is not None:
+                    raise SingleFlightConflict(
+                        "Workflow is configured single-flight and another run is in progress."
+                    )
+            finally:
+                if _lock is not None:
+                    _lock.release()
 
         run = Run(
             workflow_id=workflow_id,
@@ -801,6 +836,108 @@ async def _execute_run(
             current_org_id.reset(org_token)
 
 
+@dataclass
+class _PreparedRunContext:
+    """Output of ``_prepare_run_context`` — all pre-flight state for a run."""
+    graph_dict: dict
+    cache: dict[str, dict] | None
+    env_id: str | None
+    run_timeout: float | None
+    workflow_modules: list[dict]
+    secret_values: list[str]
+    output_cap: int
+
+
+async def _prepare_run_context(
+    run_id: str,
+    workflow_id: str,
+    graph_dict: dict,
+    cache: dict[str, dict] | None,
+    run_org_id: str | None,
+) -> _PreparedRunContext:
+    """Load secrets, resolve credentials, and gather modules for a run.
+
+    Extracted from ``_execute_run_impl`` to keep the hot path readable.
+    """
+    # Live settings for output cap (best-effort).
+    output_cap = settings.max_output_bytes
+    try:
+        live = await get_live_settings()
+        output_cap = live.max_output_bytes
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Single DB session for secrets, credentials, modules.
+    env_id: str | None = None
+    run_timeout: float | None = None
+    secret_values: list[str] = []
+    workflow_modules: list[dict] = []
+
+    async with SessionLocal() as session:
+        # Secret redaction word-list: best-effort.
+        try:
+            if run_org_id:
+                secret_values = await load_secret_values_for_org(
+                    run_org_id, session
+                )
+            else:
+                secret_values = await load_secret_values(session)
+        except Exception:  # noqa: BLE001
+            secret_values = []
+
+        # Credential resolution MUST fail loudly (H1).
+        graph_dict = await resolve_credential_refs(
+            session, graph_dict, workflow_id=workflow_id
+        )
+        if cache is not None:
+            cache = await resolve_credential_refs(
+                session, cache, workflow_id=workflow_id
+            )
+        await session.commit()
+
+        # Code modules: tolerate legacy DB.
+        try:
+            workflow = await session.get(Workflow, workflow_id)
+            env_id = workflow.environment_id if workflow else None
+            run_timeout = workflow.run_timeout_seconds if workflow else None
+            stmt = select(CodeModule).where(
+                or_(
+                    CodeModule.scope == "global",
+                    CodeModule.workflow_id == workflow_id,
+                    (
+                        (CodeModule.scope == "environment")
+                        & (CodeModule.environment_id == env_id)
+                    )
+                    if env_id
+                    else CodeModule.id.is_(None),
+                )
+            )
+            rows = (await session.scalars(stmt)).all()
+            workflow_modules = [
+                {
+                    "id": m.id,
+                    "name": m.name,
+                    "contents": m.contents,
+                    "include_undecorated": m.include_undecorated,
+                }
+                for m in rows
+            ]
+        except Exception:  # noqa: BLE001
+            workflow_modules = []
+            env_id = None
+            run_timeout = None
+
+    return _PreparedRunContext(
+        graph_dict=graph_dict,
+        cache=cache,
+        env_id=env_id,
+        run_timeout=run_timeout,
+        workflow_modules=workflow_modules,
+        secret_values=secret_values,
+        output_cap=output_cap,
+    )
+
+
 async def _execute_run_impl(
     run_id: str,
     workflow_id: str,
@@ -900,6 +1037,10 @@ async def _execute_run_impl(
                     }
                 )
 
+    from app.services.metrics import active_runs, run_duration_seconds
+    active_runs.inc()
+    run_start = time.monotonic()
+
     broker.publish(run_id, {"type": "run_started", "run_id": run_id})
     status = "success"
     # ``live`` is read inside the cancellation try-block below so a cancel
@@ -922,69 +1063,18 @@ async def _execute_run_impl(
         except Exception:  # noqa: BLE001 - queue ledger must never block execution
             logger.exception("queue mark_running failed run_id=%s", run_id)
 
-        try:
-            live = await get_live_settings()
-            output_cap = live.max_output_bytes
-        except Exception:  # noqa: BLE001 - never let settings load block a run
-            pass
-
-        # Combine three sequential DB reads (secret values, credential refs,
-        # workflow + code modules) into a single session to reduce connection
-        # acquire/release overhead on the hot execution path. Each read has its
-        # own error policy — see the nested try blocks below.
-        env_id: str | None = None
-        run_timeout: float | None = None
-        async with SessionLocal() as session:
-            # Secret redaction is best-effort: a failure to load the redaction
-            # word-list must never block a run.
-            try:
-                secret_values = await load_secret_values(session)
-            except Exception:  # noqa: BLE001 - redaction must never block execution
-                secret_values = []
-
-            # H1: credential resolution MUST fail loudly. resolve_credential_refs
-            # -> decrypt_credential_for(strict=True) raises CredentialDecryptError
-            # for a referenced credential that cannot be decrypted. Letting it
-            # propagate to the outer handler aborts the run (status=error) instead
-            # of silently executing with unresolved refs and no auth. Do NOT wrap
-            # this in a tolerant except.
-            graph_dict = await resolve_credential_refs(session, graph_dict, workflow_id=workflow_id)
-            if cache is not None:
-                cache = await resolve_credential_refs(session, cache, workflow_id=workflow_id)
-            await session.commit()
-
-            # User code modules: tolerate a legacy DB that predates the
-            # code_modules table — an empty module set is a valid outcome.
-            try:
-                workflow = await session.get(Workflow, workflow_id)
-                env_id = workflow.environment_id if workflow else None
-                run_timeout = workflow.run_timeout_seconds if workflow else None
-                stmt = select(CodeModule).where(
-                    or_(
-                        CodeModule.scope == "global",
-                        CodeModule.workflow_id == workflow_id,
-                        (
-                            (CodeModule.scope == "environment")
-                            & (CodeModule.environment_id == env_id)
-                        )
-                        if env_id
-                        else CodeModule.id.is_(None),
-                    )
-                )
-                rows = (await session.scalars(stmt)).all()
-                workflow_modules = [
-                    {
-                        "id": m.id,
-                        "name": m.name,
-                        "contents": m.contents,
-                        "include_undecorated": m.include_undecorated,
-                    }
-                    for m in rows
-                ]
-            except Exception:  # noqa: BLE001 - missing table on legacy DB is fine
-                workflow_modules = []
-                env_id = None
-                run_timeout = None
+        # Load secrets, resolve credentials, and gather code modules in one
+        # DB session via the extracted helper (keeps _execute_run_impl readable).
+        prep = await _prepare_run_context(
+            run_id, workflow_id, graph_dict, cache, run_org_id,
+        )
+        graph_dict = prep.graph_dict
+        cache = prep.cache
+        env_id = prep.env_id
+        run_timeout = prep.run_timeout
+        workflow_modules = prep.workflow_modules
+        secret_values = prep.secret_values
+        output_cap = prep.output_cap
 
         if settings.use_subprocess_runner:
             if runner_pool_id:
@@ -1220,6 +1310,10 @@ async def _execute_run_impl(
             secret_values=secret_values,
         )
 
+    from app.services.metrics import active_runs, run_duration_seconds
+    active_runs.dec()
+    run_duration_seconds.observe(time.monotonic() - run_start, status=status)
+
     _log_run_id.reset(run_id_token)
     return status
 
@@ -1312,6 +1406,23 @@ async def _execute_queued_entry(run_id: str) -> None:
     trigger_id = (trigger.id if hasattr(trigger, "id") else trigger["id"]) if trigger else None
     targets = resolve_trigger_targets(graph_dict, trigger_id, None) if trigger_id else None
     cache: dict | None = pinned_cache or None
+
+    # Durable execution: reconstruct node_outputs from previously completed
+    # NodeRun rows so the run resumes from where it left off after a restart.
+    if run.status == "queued" and run.finished_at is None:
+        try:
+            from app.services.run_resume import build_durable_execution_state
+            durable_cache = await build_durable_execution_state(
+                SessionLocal, run_id=run_id
+            )
+            if durable_cache:
+                merged: dict = dict(cache or {})
+                for node_id, outputs in durable_cache.items():
+                    if node_id not in merged:
+                        merged[node_id] = outputs
+                cache = merged
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
 
     if replay_seed:
         seed_cache = replay_seed.get("cache")

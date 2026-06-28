@@ -49,6 +49,7 @@ from noodle.engine.types import EventCallback, GraphError
 from noodle.engine.validation import (
     AI_PORT_KINDS,
     _validate_connection_kinds,
+    _validate_graph,
     _validate_input_kinds,
     _validate_output_kinds,
 )
@@ -86,6 +87,7 @@ __all__ = [
     "_needed_nodes",
     "_topo_order",
     "_validate_connection_kinds",
+    "_validate_graph",
     "_validate_input_kinds",
     "_validate_loop_regions",
     "_validate_output_kinds",

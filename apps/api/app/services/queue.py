@@ -795,6 +795,16 @@ async def run_queue_dispatch_loop() -> None:
                             len(cancelled),
                         )
 
+                # Update Prometheus gauges from queue stats each tick.
+                try:
+                    from app.services.metrics import queue_depth, queue_leased
+                    async with SessionLocal() as session:
+                        s = await stats(session)
+                    queue_depth.set(float(s.get("queued", 0)))
+                    queue_leased.set(float(s.get("leased", 0)))
+                except Exception:  # noqa: BLE001 — metrics are best-effort
+                    pass
+
                 # Drain mode: keep requeueing expired leases and let in-flight
                 # tasks finish, but stop pulling new work so the process can
                 # exit cleanly without producing avoidable cancelled runs.
