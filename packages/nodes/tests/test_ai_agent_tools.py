@@ -198,6 +198,16 @@ def test_code_exec_blocked_import_unreachable_in_subprocess() -> None:
     assert "error" in out or "Unsafe" in out.get("error", "") or out.get("exit_code", 0) != 0
 
 
+def test_code_exec_handles_curly_braces_in_code() -> None:
+    """E-02: Code containing { and } (f-strings, dicts, JSON) must work
+    without the worker template's .format() misinterpreting them."""
+    adapter = _py_adapter()
+    out = _code(adapter, "x = {'key': 'value'}\nprint(x['key'])")
+    assert out["stdout"].strip() == "value"
+    out2 = _code(adapter, "name = 'world'\nprint(f'hello {name}')")
+    assert "hello world" in out2["stdout"]
+
+
 # ---------------------------------------------------------------------------
 # Web Search Tool tests
 # ---------------------------------------------------------------------------

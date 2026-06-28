@@ -370,13 +370,15 @@ class CodeExecToolAdapter(ToolAdapter):
             # __import__ as the regular Code node) inside the subprocess.  For
             # allowlist mode normal builtins are used — the AST allowlist gate
             # is the security boundary.
-            _allowed_repr: str | None = None
+            # Pass the raw value through to the template; !r in the template
+            # handles repr() for us (avoiding double-repr).
+            _allowed_val: object = None
             if self._allowed is not None:
-                _allowed_repr = repr(frozenset(self._allowed))
+                _allowed_val = frozenset(self._allowed)
             worker_script = _AGENT_CODE_WORKER_TEMPLATE.format(
                 code=code,
                 max_output=self._max_output,
-                allowed=_allowed_repr,
+                allowed=_allowed_val,
             )
             try:
                 proc = subprocess.run(
