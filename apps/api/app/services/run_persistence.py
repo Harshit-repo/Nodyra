@@ -301,6 +301,9 @@ async def persist_run_outcome(
             if run is not None:
                 run.status = status
                 run.finished_at = None if status == "waiting" else datetime.now(UTC)
+                # Clear checkpoint on terminal states (keep for "waiting").
+                if status != "waiting":
+                    run.checkpoint = None
                 webhook_response = _extract_webhook_response(graph_dict, node_events)
                 if webhook_response is not None:
                     run.webhook_response = webhook_response
@@ -432,6 +435,7 @@ async def persist_run_outcome(
                 if _r is not None and _r.status not in ("success", "error", "cancelled", "waiting"):
                     _r.status = status
                     _r.finished_at = datetime.now(UTC)
+                    _r.checkpoint = None
                     await _s.commit()
         except Exception:  # noqa: BLE001
             logger.exception("run_id=%s minimal status fallback also failed", run_id)

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import selectinload
 
 import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
@@ -93,8 +93,10 @@ from noodle.sdk import (
     registry as node_registry,
 )
 from noodle.serialization import (
+    _approx_json_length,
     deserialize_value,
     serialize_value,
+    truncate_serialized_value,
 )
 
 # ContextVar that carries the current run_id into every log record emitted
@@ -146,6 +148,78 @@ _cap_logs = run_persistence._cap_logs
 _contains_unrestorable_object = run_persistence._contains_unrestorable_object
 _graph_node_types = run_persistence._graph_node_types
 _extract_webhook_response = run_persistence._extract_webhook_response
+
+# -- durable execution checkpoint helpers --------------------------------------
+
+_MAX_CHECKPOINT_BYTES: int = 1_048_576  # 1 MiB per-run cap
+
+
+def _serialize_checkpoint_outputs(
+    node_outputs: dict[str, dict],
+) -> dict[str, dict]:
+    """Serialize node outputs for checkpoint storage.
+
+    Uses ``serialize_value`` with ``dataframe_max_rows=100``.  Values that
+    cannot be serialised are skipped with a warning so a single bad output
+    never blocks the checkpoint.
+    """
+    result: dict[str, dict] = {}
+    for node_id, outputs in node_outputs.items():
+        if not isinstance(outputs, dict):
+            continue
+        try:
+            serialized = serialize_value(outputs, dataframe_max_rows=100)
+            if isinstance(serialized, dict):
+                result[node_id] = serialized
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "checkpoint skip node_id=%s: serialization failed", node_id
+            )
+    return result
+
+
+async def _save_checkpoint(
+    run_id: str,
+    node_outputs: dict[str, dict],
+    completed: set[str],
+    last_node_id: str,
+) -> None:
+    """Persist execution state to ``Run.checkpoint`` after a node completes.
+
+    Bounded to ``_MAX_CHECKPOINT_BYTES``.  Failures are logged but never
+    propagated — a checkpoint save must not interrupt the run.
+    """
+    serialized = _serialize_checkpoint_outputs(node_outputs)
+    payload: dict = {
+        "node_outputs": serialized,
+        "completed_nodes": sorted(completed),
+        "last_node_id": last_node_id,
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+    try:
+        approx = _approx_json_length(payload)
+    except (TypeError, ValueError):
+        logger.warning("run_id=%s checkpoint size estimate failed, skipping", run_id)
+        return
+    if approx > _MAX_CHECKPOINT_BYTES:
+        truncated = truncate_serialized_value(payload, _MAX_CHECKPOINT_BYTES)
+        logger.warning(
+            "run_id=%s checkpoint %d bytes exceeds %d byte limit, truncating",
+            run_id, approx, _MAX_CHECKPOINT_BYTES,
+        )
+        if not isinstance(truncated, dict):
+            logger.warning("run_id=%s checkpoint truncated to non-dict, skipping", run_id)
+            return
+        payload = truncated
+
+    try:
+        async with SessionLocal() as session:
+            await session.execute(
+                update(Run).where(Run.id == run_id).values(checkpoint=payload)
+            )
+            await session.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("run_id=%s failed to save checkpoint", run_id)
 
 
 def _build_ctx(
@@ -975,6 +1049,8 @@ async def _execute_run_impl(
     node_run_records: dict[tuple[str, tuple], dict] = {}
     run_events: deque[dict[str, Any]] = deque()
     run_event_sequence = 0
+    # Track node IDs that completed successfully — used by checkpoint saves.
+    completed_node_ids: set[str] = set()
     artifact_refs: list[dict] = []
     secret_values: list[str] = []
     # A3: sub-workflow context (draft preference, depth/chain seed) travels
@@ -1042,6 +1118,19 @@ async def _execute_run_impl(
                             }
                         )
                     broker.publish(run_id, payload)
+        # Track successful node completions for durable execution checkpoints.
+        if clean.get("type") == "node_finished" and clean.get("status") == "success":
+            completed_node_ids.add(clean["node_id"])
+            # Save checkpoint after every completed node.
+            try:
+                await _save_checkpoint(
+                    run_id,
+                    {nid: ev.get("outputs", {}) for nid, ev in node_events.items()},
+                    completed_node_ids,
+                    last_node_id=clean["node_id"],
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("run_id=%s checkpoint save failed", run_id)
         if clean.get("type") in AGENT_EVENT_TYPES:
             run_event_sequence += 1
             if len(run_events) < _MAX_RUN_EVENTS:
@@ -1423,22 +1512,42 @@ async def _execute_queued_entry(run_id: str) -> None:
     targets = resolve_trigger_targets(graph_dict, trigger_id, None) if trigger_id else None
     cache: dict | None = pinned_cache or None
 
-    # Durable execution: reconstruct node_outputs from previously completed
-    # NodeRun rows so the run resumes from where it left off after a restart.
-    if run.status == "queued" and run.finished_at is None:
-        try:
-            from app.services.run_resume import build_durable_execution_state
-            durable_cache = await build_durable_execution_state(
-                SessionLocal, run_id=run_id
+    # Durable execution: load checkpoint (fast path) or reconstruct from
+    # NodeRun rows (fallback) so the run resumes from where it left off.
+    if queue_entry is not None and queue_entry.status == "queued":
+        cp = run.checkpoint if isinstance(run.checkpoint, dict) else None
+        if cp and isinstance(cp.get("node_outputs"), dict) and cp["node_outputs"]:
+            node_outputs = cp["node_outputs"]
+            merged_new: dict = dict(cache or {})
+            for nid, outputs in node_outputs.items():
+                if nid not in merged_new and isinstance(outputs, dict):
+                    merged_new[nid] = outputs
+            cache = merged_new
+            logger.info(
+                "run_id=%s resumed from checkpoint with %d completed node(s)",
+                run_id, len(node_outputs),
             )
-            if durable_cache:
-                merged: dict = dict(cache or {})
-                for node_id, outputs in durable_cache.items():
-                    if node_id not in merged:
-                        merged[node_id] = outputs
-                cache = merged
-        except Exception:  # noqa: BLE001 — best-effort
-            pass
+        else:
+            try:
+                from app.services.run_resume import build_durable_execution_state
+                durable_cache = await build_durable_execution_state(
+                    SessionLocal, run_id=run_id
+                )
+                if durable_cache:
+                    merged_new = dict(cache or {})
+                    for nid, outputs in durable_cache.items():
+                        if nid not in merged_new:
+                            merged_new[nid] = outputs
+                    cache = merged_new
+                    logger.info(
+                        "run_id=%s rebuilt durable state from %d NodeRun rows",
+                        run_id, len(durable_cache),
+                    )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "run_id=%s durable state reconstruction failed, starting fresh",
+                    run_id,
+                )
 
     if replay_seed:
         seed_cache = replay_seed.get("cache")
