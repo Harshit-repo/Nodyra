@@ -183,15 +183,35 @@ async def _save_checkpoint(
     node_outputs: dict[str, dict],
     completed: set[str],
     last_node_id: str,
+    *,
+    _accumulated: dict[str, dict] | None = None,
 ) -> None:
     """Persist execution state to ``Run.checkpoint`` after a node completes.
+
+    When *_accumulated* is provided, only newly-seen nodes are serialised
+    and added to it; the FULL dict is then persisted.  This avoids O(n²)
+    re-serialisation of already-checkpointed outputs.
 
     Bounded to ``_MAX_CHECKPOINT_BYTES``.  Failures are logged but never
     propagated — a checkpoint save must not interrupt the run.
     """
-    serialized = _serialize_checkpoint_outputs(node_outputs)
+    # Serialise only new node outputs; re-use previously serialised entries.
+    if _accumulated is not None:
+        for nid, outputs in node_outputs.items():
+            if nid in _accumulated or not isinstance(outputs, dict):
+                continue
+            try:
+                s = serialize_value(outputs, dataframe_max_rows=100)
+                if isinstance(s, dict):
+                    _accumulated[nid] = s
+            except Exception:  # noqa: BLE001
+                logger.warning("checkpoint skip node_id=%s: serialization failed", nid)
+        checkpoint_data = dict(_accumulated)
+    else:
+        checkpoint_data = _serialize_checkpoint_outputs(node_outputs)
+
     payload: dict = {
-        "node_outputs": serialized,
+        "node_outputs": checkpoint_data,
         "completed_nodes": sorted(completed),
         "last_node_id": last_node_id,
         "timestamp": datetime.now(UTC).isoformat(),
@@ -1051,6 +1071,10 @@ async def _execute_run_impl(
     run_event_sequence = 0
     # Track node IDs that completed successfully — used by checkpoint saves.
     completed_node_ids: set[str] = set()
+    # Accumulated serialised checkpoint — we only serialise NEW outputs on
+    # each save (O(1) per node instead of O(n²)) but always persist the
+    # FULL dict so crash recovery works from a single column read.
+    _accumulated_checkpoint: dict[str, dict] = {}
     artifact_refs: list[dict] = []
     secret_values: list[str] = []
     # A3: sub-workflow context (draft preference, depth/chain seed) travels
@@ -1128,6 +1152,7 @@ async def _execute_run_impl(
                     {nid: ev.get("outputs", {}) for nid, ev in node_events.items()},
                     completed_node_ids,
                     last_node_id=clean["node_id"],
+                    _accumulated=_accumulated_checkpoint,
                 )
             except Exception:  # noqa: BLE001
                 logger.exception("run_id=%s checkpoint save failed", run_id)
@@ -1514,7 +1539,10 @@ async def _execute_queued_entry(run_id: str) -> None:
 
     # Durable execution: load checkpoint (fast path) or reconstruct from
     # NodeRun rows (fallback) so the run resumes from where it left off.
-    if queue_entry is not None and queue_entry.status == "queued":
+    # The dispatch loop leases the queue entry (status → "leased") BEFORE
+    # calling us, and approval-resume keeps it "queued".  Accept both so
+    # crash recovery AND approval-resume both benefit from the checkpoint.
+    if queue_entry is not None and queue_entry.status in ("queued", "leased"):
         cp = run.checkpoint if isinstance(run.checkpoint, dict) else None
         if cp and isinstance(cp.get("node_outputs"), dict) and cp["node_outputs"]:
             node_outputs = cp["node_outputs"]

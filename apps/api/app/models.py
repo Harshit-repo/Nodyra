@@ -690,6 +690,10 @@ class Run(Base):
     # Synchronous webhook response recorded by a respond_to_webhook node
     # (Respond Node mode). Shape: {status, headers, body, content_type}.
     webhook_response: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Durable execution checkpoint: serialised execution state saved after
+    # every completed node so the run can resume from where it left off
+    # after a server restart.  Cleared on terminal status.
+    checkpoint: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
     queue_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mode: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
