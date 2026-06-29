@@ -79,6 +79,7 @@ from app.services.subworkflows import meta_for_root_run, resolve_subworkflow
 from noodle.ai_runtime import AgentActionRequest
 from noodle.context import artifact_store, org_run_limits
 from noodle.engine import DEFAULT_NODE_TIMEOUTS, execute
+from noodle.engine.types import set_call_mcp_tool_impl
 from noodle.models import WorkflowGraph
 from noodle.process_isolation import (
     PooledProcessIsolator,
@@ -1350,6 +1351,31 @@ async def _execute_run_impl(
                     if (run_timeout and run_timeout > 0)
                     else (settings.workflow_run_timeout_seconds or None)
                 )
+                # Install MCP tool callback so mcp_tool nodes can resolve
+                # connections and execute calls through the platform hook.
+                async def _mcp_call_impl(
+                    connection_id: str,
+                    tool_name: str,
+                    arguments: dict,
+                ) -> Any:
+                    from app.db import SessionLocal as _SessionLocal
+                    from app.services.mcp_client import (
+                        _load_conn_with_secret as _load_conn,
+                        call_tool as _call_tool,
+                    )
+
+                    async with _SessionLocal() as _session:
+                        conn, secret = await _load_conn(
+                            connection_id, _run_org, _session
+                        )
+                        return await _call_tool(
+                            conn,
+                            tool_name,
+                            arguments,
+                            decrypted_secret=secret,
+                        )
+
+                set_call_mcp_tool_impl(_mcp_call_impl)
                 async with runtime_pool.global_slot():
                     coro = execute(
                         graph,
@@ -1369,6 +1395,10 @@ async def _execute_run_impl(
                     )
                 status = str(result.status)
             finally:
+                # Reset the MCP callback so it doesn't leak across runs.
+                from noodle.engine.types import _call_mcp_tool_impl as _mcp_ctxvar
+
+                _mcp_ctxvar.set(None)
                 artifact_store.reset(artifact_token)
                 org_run_limits.reset(limits_token)
                 engine_pool_key.reset(pool_key_token)

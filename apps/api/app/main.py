@@ -39,6 +39,7 @@ from app.routers import (
     health,
     internal,
     mcp,
+    mcp_connections,
     nodes,
     ops,
     orgs,
@@ -832,6 +833,7 @@ app.include_router(system_settings.router)
 app.include_router(runner_pools.router)
 app.include_router(orgs.router)
 app.include_router(expressions.router)
+app.include_router(mcp_connections.router)
 app.include_router(github_sync_router.router, prefix="/api")
 
 

@@ -25,7 +25,7 @@ from noodle.engine.datasets import (
     _auto_expand_dataset_inputs,
     _auto_promote_outputs,
 )
-from noodle.engine.types import EventCallback
+from noodle.engine.types import EventCallback, NodeValidationError, RuntimeContext
 from noodle.engine.validation import (
     _validate_input_kinds,
     _validate_input_schemas,
@@ -221,6 +221,78 @@ _FATAL_ERRORS: tuple[type[BaseException], ...] = (
     RecursionError,
     SystemError,
 )
+
+
+def _sanitize_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Remove keys that could trigger external resource fetching during
+    jsonschema validation.
+
+    Strips ``$ref``, ``$schema``, and ``$id`` recursively so that a
+    user-controlled schema (stored in node params) can never cause
+    ``jsonschema.validate()`` to fetch external resources.
+
+    Args:
+        schema: A JSON Schema dict (possibly user-supplied).
+
+    Returns:
+        A new dict with dangerous keys removed at all nesting levels.
+    """
+    blocked = {"$ref", "$schema", "$id"}
+
+    def _clean(val: Any) -> Any:
+        if isinstance(val, dict):
+            return {k: _clean(v) for k, v in val.items() if k not in blocked}
+        if isinstance(val, list):
+            return [_clean(item) for item in val]
+        return val
+
+    return _clean(schema)
+
+
+def _validate_node_input_schema(params: dict[str, Any], node_input: dict[str, Any], node_id: str) -> None:
+    """Validate wired inputs against the code node's optional ``input_schema``.
+
+    ``input_schema`` is a JSON Schema dict stored in the node's params.
+    Only code nodes set this; non-code nodes have no ``input_schema``
+    and are skipped.
+
+    Raises:
+        NodeValidationError: when validation fails.
+    """
+    import jsonschema
+
+    input_schema = params.get("input_schema")
+    if input_schema and isinstance(node_input, dict):
+        try:
+            jsonschema.validate(node_input, _sanitize_schema(input_schema))
+        except jsonschema.ValidationError as exc:
+            raise NodeValidationError(
+                f"Input validation failed for node '{node_id}': {exc.message}",
+                node_id=node_id,
+            ) from exc
+
+
+def _validate_node_output_schema(params: dict[str, Any], outputs: dict[str, Any], node_id: str) -> None:
+    """Validate node outputs against the code node's optional ``output_schema``.
+
+    ``output_schema`` is a JSON Schema dict stored in the node's params.
+    Only code nodes set this; non-code nodes have no ``output_schema``
+    and are skipped.
+
+    Raises:
+        NodeValidationError: when validation fails.
+    """
+    import jsonschema
+
+    output_schema = params.get("output_schema")
+    if output_schema and isinstance(outputs, dict):
+        try:
+            jsonschema.validate(outputs, _sanitize_schema(output_schema))
+        except jsonschema.ValidationError as exc:
+            raise NodeValidationError(
+                f"Output validation failed for node '{node_id}': {exc.message}",
+                node_id=node_id,
+            ) from exc
 
 
 def _freeze_outputs(outputs: dict[str, Any]) -> types.MappingProxyType:
@@ -567,7 +639,9 @@ async def _run_one_node(
         _auto_expand_dataset_inputs(node_def, kwargs, graph_node.type)
         _validate_input_kinds(node_def, kwargs, nid)
         _validate_input_schemas(node_def, kwargs, nid)
-    except (ValueError, RuntimeError) as exc:
+        # Validate input against code node's optional input_schema (typed I/O).
+        _validate_node_input_schema(graph_node.params, kwargs, nid)
+    except (ValueError, RuntimeError, NodeValidationError) as exc:
         run_status = RunStatus.error
         await finish(
             NodeRunResult(
@@ -647,6 +721,20 @@ async def _run_one_node(
         base_call_kwargs = {
             k: v for k, v in kwargs.items() if k in node_def.param_names
         }
+
+    # Inject RuntimeContext when the node function accepts a ``ctx`` parameter
+    # (e.g., mcp_tool nodes that dispatch MCP calls through the platform hook).
+    if "ctx" in node_def.param_names or node_def.accepts_var_keyword:
+        node_ctx = RuntimeContext(
+            run_id="",
+            workflow_id="",
+        )
+        node_ctx.node_params = dict(kwargs)
+        node_ctx.node_inputs = {
+            p.name: (kwargs.get(p.name) if p.name in kwargs else None)
+            for p in node_def.manifest.inputs
+        }
+        base_call_kwargs["ctx"] = node_ctx
 
     async def invoke_node(current_kwargs: dict[str, Any]) -> Any:
         if node_def.is_async:
@@ -748,6 +836,8 @@ async def _run_one_node(
                 if graph_node.type in AUTO_PROMOTE_NODE_TYPES:
                     outputs = _auto_promote_outputs(outputs)
                 _validate_output_kinds(node_def, outputs, nid)
+                # Validate output against code node's optional output_schema.
+                _validate_node_output_schema(graph_node.params, outputs, nid)
                 if max_node_output_bytes is not None and max_node_output_bytes > 0:
                     bound = _encoded_upper_bound(outputs)
                     if bound is None or bound > max_node_output_bytes:

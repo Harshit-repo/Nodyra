@@ -146,6 +146,7 @@ _PERMISSION_MIN_ROLE = {
     "environment:write": "admin",
     "runner_pool:write": "admin",
     "audit:read": "admin",
+    "mcp_connection:manage": "admin",
     "user:manage": "admin",
     "ops:drain": "admin",
     "ops:dead-letter:read": "editor",

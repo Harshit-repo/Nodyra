@@ -1210,3 +1210,43 @@ class RunQueueEntry(Base):
         # grouped eligibility/in-flight scans.
         Index("ix_run_queue_org_lease", "org_id", "status", "available_at"),
     )
+
+
+class MCPConnection(Base):
+    """An external MCP server connection with cached tool listing.
+
+    auth_secret uses single-field Fernet encryption with the org KEK
+    (NOT the two-field DEK pattern used by Credential.value).
+    """
+
+    __tablename__ = "mcp_connections"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    transport: Mapped[str] = mapped_column(
+        Text, nullable=False, default="streamable-http"
+    )
+    auth_type: Mapped[str] = mapped_column(
+        Text, nullable=False, default="none"
+    )
+    auth_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    headers: Mapped[dict] = mapped_column(
+        JSON, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    tool_cache: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    last_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
