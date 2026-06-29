@@ -65,6 +65,7 @@ def docker_list_containers(input: Any = None, all: bool = False, limit: int = 50
     id="docker_run_container",
     category="DevOps",
     icon="brand:docker",
+    description="Run a Docker container. WARNING: Only use in single-tenant or isolated deployments — this node executes arbitrary images with access to the Docker daemon.",
     params={
         "image": {
             "placeholder": "python:3.12-slim",

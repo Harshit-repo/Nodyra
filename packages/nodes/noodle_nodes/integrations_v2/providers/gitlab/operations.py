@@ -403,6 +403,48 @@ def get_file(
     )
 
 
+GITLAB_TRIGGER_PIPELINE_SPEC = OperationSpec(
+    node_id="gitlab_trigger_pipeline_v2",
+    name="GitLab Trigger Pipeline",
+    provider="gitlab",
+    resource="pipeline",
+    operation="trigger",
+    description="Trigger a CI/CD pipeline on a GitLab project.",
+    icon="brand:gitlab",
+    params=(
+        _credentials_param(),
+        OperationParamSpec(name="project_id", required=True, placeholder="12345 or namespace/project"),
+        OperationParamSpec(name="ref", required=True, default="main", description="Branch, tag, or commit SHA to run the pipeline on."),
+        OperationParamSpec(name="variables", type="object", group="Options", description="Key-value pairs passed as pipeline variables."),
+    ),
+)
+
+
+def trigger_pipeline(
+    *,
+    input: Any = None,
+    credentials: dict[str, str] | None = None,
+    project_id: str = "",
+    ref: str = "main",
+    variables: dict[str, str] | None = None,
+) -> Any:
+    if not project_id:
+        raise ValueError("gitlab_trigger_pipeline_v2: project_id is required")
+    if not ref:
+        raise ValueError("gitlab_trigger_pipeline_v2: ref is required")
+    payload: dict[str, Any] = {"ref": ref}
+    if variables:
+        payload["variables"] = [
+            {"key": k, "value": str(v)} for k, v in variables.items()
+        ]
+    return _transport(credentials).request(
+        "POST",
+        f"/api/v4/projects/{quote(str(project_id), safe='')}/pipeline",
+        operation="trigger_pipeline",
+        json_body=payload,
+    )
+
+
 register_operation(GITLAB_LIST_PROJECTS_SPEC, list_projects, node_registry=None)
 register_operation(GITLAB_GET_PROJECT_SPEC, get_project, node_registry=None)
 register_operation(GITLAB_LIST_ISSUES_SPEC, list_issues, node_registry=None)
@@ -410,12 +452,13 @@ register_operation(GITLAB_CREATE_ISSUE_SPEC, create_issue, node_registry=None)
 register_operation(GITLAB_LIST_MERGE_REQUESTS_SPEC, list_merge_requests, node_registry=None)
 register_operation(GITLAB_CREATE_MERGE_REQUEST_SPEC, create_merge_request, node_registry=None)
 register_operation(GITLAB_GET_FILE_SPEC, get_file, node_registry=None)
+register_operation(GITLAB_TRIGGER_PIPELINE_SPEC, trigger_pipeline, node_registry=None)
 
 
 GITLAB_INTEGRATION = IntegrationSpec(
     id="gitlab",
     name="GitLab",
-    description="Manage GitLab projects, issues, merge requests, and repository files.",
+    description="Manage GitLab projects, issues, merge requests, repository files, and CI/CD pipelines.",
     icon="brand:gitlab",
     credential_types=("gitlab_pat",),
     resources=(
@@ -447,6 +490,11 @@ GITLAB_INTEGRATION = IntegrationSpec(
             id="file",
             name="File",
             operations=(GITLAB_GET_FILE_SPEC,),
+        ),
+        ResourceSpec(
+            id="pipeline",
+            name="Pipeline",
+            operations=(GITLAB_TRIGGER_PIPELINE_SPEC,),
         ),
     ),
 )
