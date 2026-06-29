@@ -358,6 +358,7 @@ async def client() -> AsyncIterator[AsyncClient]:
         mcp_tools_module: mcp_tools_module.SessionLocal,
         main_module: main_module.SessionLocal,
     }
+    agentic_builder_module.SessionLocal = test_session
     backends_module.SessionLocal = test_session
     artifacts_module.SessionLocal = test_session
     chat_service_module.SessionLocal = test_session

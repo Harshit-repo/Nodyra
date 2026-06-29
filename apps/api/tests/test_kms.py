@@ -445,8 +445,10 @@ class TestKMSFailureIsolation:
             key_id="alias/test",
             client=mock_client,
         )
+        # Use a valid base64-encoded ciphertext so we reach the boto3 call
+        valid_ciphertext = base64.b64encode(b"some-binary-blob")
         with pytest.raises(Exception, match="AWS KMS unreachable"):
-            await provider.decrypt(b"ciphertext")
+            await provider.decrypt(valid_ciphertext)
 
     @pytest.mark.asyncio
     async def test_gcp_failure_blocks_decrypt(self):
@@ -459,5 +461,7 @@ class TestKMSFailureIsolation:
             key_name="projects/test/locations/global/keyRings/test/cryptoKeys/test",
             client=mock_client,
         )
+        # Use a valid base64-encoded ciphertext so we reach the gcp-kms call
+        valid_ciphertext = base64.b64encode(b"some-binary-blob")
         with pytest.raises(Exception, match="GCP KMS unreachable"):
-            await provider.decrypt(b"ciphertext")
+            await provider.decrypt(valid_ciphertext)
