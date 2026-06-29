@@ -148,15 +148,13 @@ async def test_registry_index_unreachable_returns_502(
 
 
 async def test_registry_install_requires_env_and_package_id(
-    client: AsyncClient, httpx_mock
+    client: AsyncClient,
 ) -> None:
-    """POST /node-registry/install returns 422 when fields are missing."""
-    # Need to mock the registry index fetch that happens for validation
-    httpx_mock.add_response(
-        url="https://raw.githubusercontent.com/noodle-registry/packages/main/index.json",
-        json=_SAMPLE_INDEX,
-    )
+    """POST /node-registry/install returns 422 when fields are missing.
 
+    Field validation happens *before* the registry index is fetched, so no
+    httpx mock for the index URL is needed in this test.
+    """
     # Create an environment first
     env = (
         await client.post("/environments", json={"name": "InstallTest"})
@@ -171,11 +169,6 @@ async def test_registry_install_requires_env_and_package_id(
     assert resp.status_code == 422
 
     # Missing package_id
-    # Need new mock for second request since the first consumed it (the index fetch)
-    httpx_mock.add_response(
-        url="https://raw.githubusercontent.com/noodle-registry/packages/main/index.json",
-        json=_SAMPLE_INDEX,
-    )
     resp = await client.post(
         "/node-registry/install",
         json={"environment_id": env_id},

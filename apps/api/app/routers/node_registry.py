@@ -161,7 +161,7 @@ async def install_package(
 
     if not package_id or not environment_id:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "Both 'package_id' and 'environment_id' are required.",
         )
 
