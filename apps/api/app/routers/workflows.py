@@ -723,7 +723,7 @@ async def publish_workflow(
         )
         if clash is not None:
             # Verify the other workflow actually has a matching path.
-            clash_wf = await session.get(Workflow, clash)
+            clash_wf = await session.scalar(select(Workflow).where(Workflow.id == clash))
             if clash_wf is not None:
                 clash_graph = clash_wf.draft_graph or (
                     (await session.scalar(

@@ -1075,14 +1075,12 @@ async def pool_autoscaler_loop() -> None:
                     "autoscaler: scaled up to %d slots (queued=%d)",
                     target, queued,
                 )
-                import time as _time
-                last_scale_up = _time.monotonic()
+                last_scale_up = time.monotonic()
             elif queued < scale_threshold and current > base:
                 # Scale down: return to base once the queue has cleared below
                 # threshold.  Checking queued == 0 would keep the pool inflated
                 # as long as any single job remains queued.
-                import time as _time
-                if _time.monotonic() - last_scale_up > scale_cooldown:
+                if time.monotonic() - last_scale_up > scale_cooldown:
                     await pool.resize(base)
                     _log.info(
                         "autoscaler: scaled down to %d slots (queued=%d, below threshold)",
