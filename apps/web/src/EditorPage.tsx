@@ -1328,7 +1328,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
 
   return (
     <div className="editor">
-      <header className="toolbar">
+      <header className="toolbar" data-tour-id="toolbar">
         <div className="toolbar-left">
           <Link to="/" className="toolbar-home" title="All workflows">
             <Logo size={22} />
@@ -1378,6 +1378,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
 
           <button
             className="btn"
+            data-tour-id="ai-draft-button"
             onClick={() => {
               setAiMode("draft");
               setAiFixStrategy("minimal");

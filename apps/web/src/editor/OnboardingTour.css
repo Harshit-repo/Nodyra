@@ -1,0 +1,50 @@
+.onboarding-tooltip {
+  background: var(--color-surface, #1e1e2e);
+  border: 1px solid var(--color-border, #45475a);
+  border-radius: 12px;
+  padding: 20px 24px;
+  max-width: 360px;
+  color: var(--color-text, #cdd6f4);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.onboarding-tooltip-step {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted, #a6adc8);
+  margin-bottom: 8px;
+}
+
+.onboarding-tooltip-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 6px 0;
+  color: var(--color-text, #cdd6f4);
+}
+
+.onboarding-tooltip-body {
+  margin: 0 0 16px 0;
+  color: var(--color-text-muted, #a6adc8);
+}
+
+.onboarding-tooltip-note {
+  font-size: 12px;
+  color: var(--color-warning, #f9e2af);
+  margin: 0 0 12px 0;
+  font-style: italic;
+}
+
+.onboarding-tooltip-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.onboarding-tooltip-nav {
+  display: flex;
+  gap: 8px;
+}

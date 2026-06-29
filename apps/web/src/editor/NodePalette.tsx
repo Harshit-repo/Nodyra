@@ -493,7 +493,7 @@ export function NodePalette() {
   }
 
   return (
-    <aside className="palette" aria-label="Node picker">
+    <aside className="palette" aria-label="Node picker" data-tour-id="palette">
       <div className="panel-head">
         <h2>Nodes</h2>
         <div className="panel-head-right">

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { OnboardingTour } from "../OnboardingTour";
@@ -8,7 +8,6 @@ beforeEach(() => {
   document.body.innerHTML = "";
   // jsdom may not implement requestAnimationFrame — polyfill for polling logic
   if (!window.requestAnimationFrame) {
-    let rafId = 0;
     Object.defineProperty(window, "requestAnimationFrame", {
       value: (cb: FrameRequestCallback) => setTimeout(() => cb(Date.now()), 0) as unknown as number,
       writable: true,

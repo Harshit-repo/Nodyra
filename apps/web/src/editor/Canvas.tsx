@@ -44,6 +44,7 @@ import {
 import { nodeTypes, edgeTypes } from "./nodeTypes";
 import { PortLegend } from "./PortLegend";
 import { datasetConnectionIssues, validateConnection, type ConnectionCheck } from "./connectionValidation";
+import { OnboardingTour } from "./OnboardingTour";
 import { pickEditorRunTrigger, useEditor, type NoodleNode } from "./store";
 
 const defaultEdgeOptions = { type: "default" };
@@ -429,6 +430,7 @@ function CanvasControls({
       <button
         type="button"
         className="is-primary"
+        data-tour-id="run-button"
         title={hasTrigger ? "Run workflow" : "Add a trigger node to run"}
         aria-label="Run workflow"
         onClick={() => void runHandler?.()}
@@ -1161,6 +1163,7 @@ export function Canvas() {
   return (
     <div
       className={`canvas${spaceDown ? " canvas--pan" : ""}`}
+      data-tour-id="canvas"
       onDrop={onDrop}
       onDragOver={onDragOver}
       onClick={() => setCtxMenu(null)}
@@ -1359,6 +1362,7 @@ export function Canvas() {
         </div>
       )}
 
+      <OnboardingTour />
     </div>
   );
 }
