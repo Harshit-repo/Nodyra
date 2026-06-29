@@ -31,7 +31,7 @@ export function KMSSettingsPage() {
   const [awsKeyId, setAwsKeyId] = useState("");
   const [awsRegion, setAwsRegion] = useState("us-east-1");
   const [gcpKeyName, setGcpKeyName] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy] = useState(false);
   const [healthStatus, setHealthStatus] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
 

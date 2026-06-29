@@ -130,11 +130,6 @@ export function AuditLogPage() {
     setPage(0);
   }
 
-  function applyFilters() {
-    setPage(0);
-    void loadLogs();
-  }
-
   async function loadLogs() {
     setLoading(true);
     setError("");

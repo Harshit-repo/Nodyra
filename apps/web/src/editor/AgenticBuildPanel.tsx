@@ -2,7 +2,6 @@ import { useState, useRef, useCallback } from "react";
 
 import type {
   AgenticBuildEvent,
-  AgenticBuildError,
   WorkflowGraph,
 } from "../types";
 import { api } from "../api";
@@ -14,7 +13,6 @@ import { A11yModal } from "./A11yModal";
 
 export interface AgenticBuildPanelProps {
   workflowId: string;
-  currentGraph: WorkflowGraph | null;
   onAccept: (graph: WorkflowGraph) => void;
   onClose: () => void;
 }
@@ -42,7 +40,6 @@ interface BuildLogEntry {
 
 export function AgenticBuildPanel({
   workflowId,
-  currentGraph,
   onAccept,
   onClose,
 }: AgenticBuildPanelProps) {

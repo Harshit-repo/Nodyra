@@ -1,6 +1,5 @@
 import {
   CheckCircle,
-  CircleNotch,
   MagnifyingGlass,
   Package,
   Spinner,
@@ -12,7 +11,6 @@ import { useEffect, useRef, useState } from "react";
 import { EmptyState } from "../EmptyState";
 import { api } from "../api";
 import { useToast } from "../ToastProvider";
-import { useModalA11y } from "../useModalA11y";
 import type { Environment, RegistryPackage } from "../types";
 
 // ── Types ───────────────────────────────────────────────────────────────
@@ -49,7 +47,7 @@ export function NodeRegistryPage() {
     api
       .listEnvironments()
       .then((data) => {
-        if (!cancelled) setEnvironments(data.items ?? []);
+        if (!cancelled) setEnvironments(data ?? []);
       })
       .catch(() => {
         /* ignore */
@@ -102,7 +100,7 @@ export function NodeRegistryPage() {
     api
       .listEnvironments()
       .then((data) => {
-        const envs = data.items ?? [];
+        const envs = data ?? [];
         setEnvironments(envs);
         const installed = new Set<string>();
         for (const env of envs) {
@@ -143,7 +141,7 @@ export function NodeRegistryPage() {
       setInstallModal(null);
       // Refresh environments to show installed package
       const data = await api.listEnvironments();
-      const envs = data.items ?? [];
+      const envs = data ?? [];
       setEnvironments(envs);
     } catch (err) {
       setInstallErrors({
