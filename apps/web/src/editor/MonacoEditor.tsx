@@ -71,6 +71,13 @@ export function MonacoEditor({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const monacoRef = useRef<any>(null);
   const [ready, setReady] = useState(false);
+  // Holds the disposable returned by registerCompletionItemProvider so we can
+  // clean it up on unmount — Monaco is a global singleton and accumulates
+  // duplicate providers across remounts if the disposable is not released.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const completionDisposableRef = useRef<{ dispose: () => void } | null>(null);
+
+  useEffect(() => () => { completionDisposableRef.current?.dispose(); }, []);
 
   // ── theme sync ────────────────────────────────────────────────────────
   // Monaco ships its own themes; we pick the closest match to Noodle's
@@ -88,8 +95,9 @@ export function MonacoEditor({
     monacoRef.current = monaco;
     setReady(true);
 
-    // Register Noodle SDK completions
-    monaco.languages.registerCompletionItemProvider("python", {
+    // Register Noodle SDK completions; store the disposable so the provider
+    // is removed when this editor instance unmounts (prevents accumulation).
+    completionDisposableRef.current = monaco.languages.registerCompletionItemProvider("python", {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       provideCompletionItems: (model: any, position: any) => {
         const word = model.getWordUntilPosition(position);

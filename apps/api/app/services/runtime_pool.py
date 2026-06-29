@@ -1037,3 +1037,59 @@ async def idle_reaper_loop() -> None:
         except Exception:  # noqa: BLE001 - a bad sweep must not kill the loop
             pass
         await asyncio.sleep(max(15, settings.runner_idle_tick_seconds))
+
+
+async def pool_autoscaler_loop() -> None:
+    """Background loop that scales the global pool capacity based on queue depth.
+
+    When the durable queue is backing up (queued > threshold), the pool grows
+    up to ``pool_autoscale_max``.  When the queue drains, it shrinks back to
+    the base ``max_concurrent_runs``.  This prevents the backlog we saw in
+    burst tests — 2,847 queued with only 8 slots — from persisting.
+    """
+    import logging
+    _log = logging.getLogger(__name__)
+
+    base = max(1, settings.max_concurrent_runs)
+    scale_max = max(base, getattr(settings, "pool_autoscale_max", base * 4))
+    scale_threshold = max(1, getattr(settings, "pool_autoscale_threshold", base))
+    scale_cooldown = max(30, getattr(settings, "pool_autoscale_cooldown_seconds", 60))
+    last_scale_up: float = 0.0
+
+    while True:
+        try:
+            from app.services.queue import stats as _queue_stats
+            from app.db import SessionLocal
+
+            async with SessionLocal() as session:
+                qs = await _queue_stats(session)
+            queued = qs.get("queued", 0)
+
+            current = pool.current_max_slots()
+            if queued > scale_threshold and current < scale_max:
+                # Scale up: add capacity proportional to backlog
+                target = min(scale_max, base + (queued // (scale_threshold // 2 + 1)))
+                target = max(current + 1, target)  # at least +1
+                await pool.resize(target)
+                _log.info(
+                    "autoscaler: scaled up to %d slots (queued=%d)",
+                    target, queued,
+                )
+                import time as _time
+                last_scale_up = _time.monotonic()
+            elif queued < scale_threshold and current > base:
+                # Scale down: return to base once the queue has cleared below
+                # threshold.  Checking queued == 0 would keep the pool inflated
+                # as long as any single job remains queued.
+                import time as _time
+                if _time.monotonic() - last_scale_up > scale_cooldown:
+                    await pool.resize(base)
+                    _log.info(
+                        "autoscaler: scaled down to %d slots (queued=%d, below threshold)",
+                        base, queued,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            _log.debug("autoscaler: tick failed", exc_info=True)
+        await asyncio.sleep(15)

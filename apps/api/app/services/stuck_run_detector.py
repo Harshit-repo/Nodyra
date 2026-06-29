@@ -66,7 +66,10 @@ async def detect_stuck_runs() -> int:
                 # No nodes have run at all — the run started but never
                 # executed anything. Use started_at as the anchor.
                 run = await session.get(Run, run_id)
-                if run is not None and run.started_at < cutoff:
+                # Use replace(tzinfo=UTC) for SQLite compat — SQLAlchemy
+                # returns naive datetimes from SQLite, causing TypeError on
+                # comparison with the UTC-aware cutoff.
+                if run is not None and run.started_at.replace(tzinfo=UTC) < cutoff:
                     stuck_ids.append(run_id)
             elif latest_node.replace(tzinfo=UTC) < cutoff:
                 stuck_ids.append(run_id)
@@ -78,7 +81,7 @@ async def detect_stuck_runs() -> int:
         for run_id in stuck_ids:
             await session.execute(
                 update(Run)
-                .where(Run.id == run_id)
+                .where(Run.id == run_id, Run.status == "running")
                 .values(status="error", finished_at=now)
             )
 

@@ -110,6 +110,12 @@ class Settings(BaseSettings):
     # cost stays low even with a low idle threshold.
     runner_idle_seconds: int = 600
     runner_idle_tick_seconds: int = 60
+    # Pool autoscaler: when queued runs exceed this threshold, the global
+    # pool concurrency ceiling grows up to pool_autoscale_max.  0 disables.
+    pool_autoscale_enabled: bool = True
+    pool_autoscale_threshold: int = 8
+    pool_autoscale_max: int = 32
+    pool_autoscale_cooldown_seconds: int = 60
     # Server → agent heartbeat. Ping every ``runner_heartbeat_interval_seconds``;
     # if no ``pong`` (i.e. no ``last_seen_at`` update) within
     # ``runner_offline_after_seconds``, the runner is marked offline and any

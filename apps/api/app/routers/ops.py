@@ -1,6 +1,8 @@
 """Operational endpoints: Prometheus metrics and system status."""
 
+import socket
 import time
+import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Response
@@ -26,6 +28,7 @@ router = APIRouter(tags=["ops"])
 
 _started_at = time.time()
 _VERSION = "0.0.1"
+_REPLICA_ID = f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
 
 # P1-11: Module-level cache so Prometheus scrapes don't hammer the DB with
 # COUNT queries every poll interval.  30 s TTL — the cache is discarded when
@@ -71,6 +74,7 @@ async def ops_health(
     health: dict[str, Any] = {
         "status": "ok",
         "version": _VERSION,
+        "replica_id": _REPLICA_ID,
         "uptime_seconds": int(time.time() - _started_at),
         "server_time": datetime.now().astimezone().isoformat(),
     }
@@ -140,9 +144,15 @@ async def ops_health(
     # --- Pools ------------------------------------------------------------
     try:
         from app.services.runtime_pool import pool as _rt_pool
-        health["runtime_pool"] = {
-            "capacity": _rt_pool.available_global_slots() if _rt_pool else 0,
-        }
+        if _rt_pool:
+            health["runtime_pool"] = {
+                "available": _rt_pool.available_global_slots(),
+                "max_slots": _rt_pool.current_max_slots(),
+                "configured_max": settings.max_concurrent_runs,
+                "autoscale_enabled": settings.pool_autoscale_enabled,
+            }
+        else:
+            health["runtime_pool"] = "unavailable"
     except Exception:
         health["runtime_pool"] = "unavailable"
 
@@ -219,6 +229,55 @@ async def set_drain(payload: DrainRequest) -> dict:
     """
     settings.queue_drain = bool(payload.draining)
     return {"draining": settings.queue_drain}
+
+
+@router.get(
+    "/ops/pool",
+    dependencies=[Depends(require_permission("ops:pool:read"))],
+)
+async def pool_status() -> dict:
+    """Current pool capacity and autoscaling state."""
+    from app.services.runtime_pool import pool as _rt_pool
+    return {
+        "max_slots": _rt_pool.current_max_slots(),
+        "available": _rt_pool.available_global_slots(),
+        "configured_max": settings.max_concurrent_runs,
+        "autoscale_enabled": settings.pool_autoscale_enabled,
+        "autoscale_max": settings.pool_autoscale_max,
+        "autoscale_threshold": settings.pool_autoscale_threshold,
+    }
+
+
+@router.post(
+    "/ops/pool/resize",
+    dependencies=[Depends(require_permission("ops:pool:resize"))],
+)
+async def pool_resize(payload: dict) -> dict:
+    """Manually resize the global pool concurrency ceiling.
+
+    Body: ``{"max_slots": 16}``.  The autoscaler still runs and may
+    override this on its next tick if ``pool_autoscale_enabled`` is on.
+    """
+    target = int(payload.get("max_slots", settings.max_concurrent_runs))
+    target = max(1, min(target, 128))  # hard cap at 128
+    from app.services.runtime_pool import pool as _rt_pool
+    new_max = await _rt_pool.resize(target)
+    return {"max_slots": new_max}
+
+
+@router.get(
+    "/ops/replicas",
+    dependencies=[Depends(require_permission("ops:replicas:read"))],
+)
+async def list_replicas() -> list[dict]:
+    """List all replicas currently registered via Redis heartbeats.
+
+    Each replica refreshes its heartbeat every 15 s.  Stale entries
+    (older than 45 s) are shown with ``status: stale`` — those replicas
+    have likely crashed or been scaled down.
+    """
+    from app.services.replica_health import list_replicas as _list
+    return await _list()
 
 
 @router.get(

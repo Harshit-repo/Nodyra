@@ -80,7 +80,8 @@ async def list_run_artifacts(
     node_id: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[ArtifactInfo]:
-    if await session.get(Run, run_id) is None:
+    # B-01: Use select() to trigger do_orm_execute org filter.
+    if await session.scalar(select(Run).where(Run.id == run_id)) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
     q = select(Artifact).where(Artifact.run_id == run_id)
     if node_id is not None:

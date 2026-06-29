@@ -64,13 +64,14 @@ from app.services.remote_dispatch import (
     runner_heartbeat_loop,
 )
 from app.services.retention import retention_loop
+from app.services.replica_health import replica_heartbeat_loop
 from app.services.stuck_run_detector import stuck_run_detector_loop
 from app.services.runner import (
     drain_active_runs,
     process_isolator,
     shutdown_active_runs,
 )
-from app.services.runtime_pool import idle_reaper_loop
+from app.services.runtime_pool import idle_reaper_loop, pool_autoscaler_loop
 from app.services.runtime_pool import pool as runtime_pool
 from app.services.triggers import scheduler_loop
 
@@ -343,6 +344,11 @@ async def lifespan(app: FastAPI):
         if dispatch_inline and settings.use_subprocess_runner and settings.runner_idle_seconds > 0
         else None
     )
+    autoscaler = (
+        asyncio.create_task(_as_system(pool_autoscaler_loop)())
+        if dispatch_inline and settings.use_subprocess_runner and settings.pool_autoscale_enabled
+        else None
+    )
     # Pin the run-event broker transport once: Redis (fans out across
     # replicas) when reachable, else the in-process buffer. Doing this at
     # startup — rather than probing Redis on every publish/subscribe — is what
@@ -365,6 +371,7 @@ async def lifespan(app: FastAPI):
     heartbeat = asyncio.create_task(_as_system(runner_heartbeat_loop)())
     github_sync = asyncio.create_task(_as_system(github_sync_dispatch_loop)())
     ghost_cleanup = asyncio.create_task(_as_system(ghost_cleanup_loop)())
+    replica_heartbeat = asyncio.create_task(replica_heartbeat_loop(role="api"))
     stuck_detector = (
         asyncio.create_task(_as_system(stuck_run_detector_loop)())
         if dispatch_inline
@@ -379,7 +386,7 @@ async def lifespan(app: FastAPI):
     # (matters for tests that reuse the process).
     _prior_drain = settings.queue_drain
     settings.queue_drain = True
-    for task in (scheduler, retention, reaper, broker_reaper, queue_loop, cloud_idle, heartbeat, github_sync, ghost_cleanup, stuck_detector):
+    for task in (scheduler, retention, reaper, autoscaler, broker_reaper, queue_loop, cloud_idle, heartbeat, github_sync, ghost_cleanup, replica_heartbeat, stuck_detector):
         if task is None:
             continue
         task.cancel()

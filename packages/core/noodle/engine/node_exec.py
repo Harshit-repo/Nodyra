@@ -35,6 +35,12 @@ from noodle.sdk import NodeRegistry
 
 PROCESS_ISOLATED_NODE_TYPES: frozenset[str] = frozenset({"code"})
 
+# Virtual output port that every node implicitly has.  When ``on_error`` is set
+# to ``"output"``, a failing node emits an error object on this port instead of
+# halting the run, and downstream nodes wired to ``source_output="$error"`` can
+# react — n8n-style visual error handling.
+ERROR_OUTPUT_PORT: str = "$error"
+
 # A node streaming chunks from a worker thread hops each one onto the engine's
 # event loop and waits briefly so the chunk is delivered in order (before the
 # node's own ``node_finished``). Bounded so a congested/stalled loop can never
@@ -315,8 +321,9 @@ async def _run_node_hooks(
     A hook failure is logged and swallowed — it must never affect the node
     result. Supported hook types:
 
-    * ``webhook`` — POST a JSON payload to ``config.url``.
     * ``log`` — emit a structured log line at the configured level.
+    * ``webhook`` — POST a JSON payload to ``config.url``.
+    * ``call_workflow`` — trigger another workflow by ID (fire-and-forget).
     """
     payload: dict[str, Any] | None = None
 
@@ -375,6 +382,37 @@ async def _run_node_hooks(
                         timeout=5.0, follow_redirects=False,
                     ) as client:
                         await client.post(url, json=payload)
+                except Exception:  # noqa: BLE001
+                    pass
+
+            elif hook_type == "call_workflow":
+                target_wf_id = str(config.get("workflow_id") or "")
+                if not target_wf_id:
+                    continue
+                if payload is None:
+                    payload = {
+                        "trigger": trigger,
+                        "node_id": node_id,
+                        "node_type": node_type,
+                        "status": status,
+                        "error": error,
+                        "attempt": attempt,
+                        "timestamp": time.time(),
+                    }
+                    if outputs is not None:
+                        payload["outputs"] = {
+                            k: str(v)[:200] for k, v in outputs.items()
+                        }
+                # Fire-and-forget: dispatch the target workflow with
+                # the error context as its trigger parameters.
+                try:
+                    from noodle.context import workflow_caller as _wf_caller_ctx
+                    _caller = _wf_caller_ctx.get()
+                    if _caller is not None:
+                        await _caller(
+                            target_wf_id,
+                            {"main": payload},
+                        )
                 except Exception:  # noqa: BLE001
                     pass
 

@@ -139,7 +139,15 @@ async def requeue_expired_leases() -> list[str]:
                 rid = key.decode().removeprefix("noodle:queue:lease:")
                 ttl = await redis_client.ttl(key)
                 if ttl <= 0:
-                    expired.append(rid)
+                    # Atomically delete the key — only requeue if the delete
+                    # succeeds (returns 1).  A heartbeat that extended the key
+                    # between our SCAN and TTL calls would have changed TTL to
+                    # a positive value, so we would not reach this branch.  But
+                    # if the key expired naturally (TTL → -2) between our TTL
+                    # call and DELETE, delete returns 0 and we skip it safely.
+                    deleted = await redis_client.delete(key)
+                    if deleted:
+                        expired.append(rid)
             if cursor == 0:
                 break
     except Exception:  # noqa: BLE001

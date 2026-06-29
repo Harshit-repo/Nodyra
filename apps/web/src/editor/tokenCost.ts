@@ -82,6 +82,10 @@ export function shortModelLabel(model?: string): string | undefined {
   if (!model) return undefined;
   // Use known key as-is if it exists as a pricing key (cheapest exact match).
   const lower = model.toLowerCase().trim();
-  const known = Object.keys(MODEL_PRICING).find((k) => lower.startsWith(k));
+  // Sort by descending key length so more-specific keys (e.g. "gpt-4o-mini")
+  // match before shorter prefixes ("gpt-4o") that would otherwise shadow them.
+  const known = Object.keys(MODEL_PRICING)
+    .sort((a, b) => b.length - a.length)
+    .find((k) => lower.startsWith(k));
   return known ?? lower.split("-").slice(0, 2).join("-");
 }

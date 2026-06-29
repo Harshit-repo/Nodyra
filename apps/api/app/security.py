@@ -150,6 +150,9 @@ _PERMISSION_MIN_ROLE = {
     "ops:drain": "admin",
     "ops:dead-letter:read": "editor",
     "ops:dead-letter:replay": "admin",
+    "ops:pool:read": "editor",
+    "ops:pool:resize": "admin",
+    "ops:replicas:read": "editor",
 }
 
 

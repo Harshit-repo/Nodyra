@@ -28,6 +28,7 @@ from app.exceptions import (
     DedicatedPoolRequired,
     PackageNotInstalled,
     QuotaExceeded,
+    ServiceError,
     SingleFlightConflict,
     StepNeedsUpstreamTrigger,
     WorkflowNeedsTrigger,

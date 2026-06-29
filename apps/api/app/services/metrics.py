@@ -164,12 +164,13 @@ class _Histogram:
             )
             label_suffix = f"{{{labels_str}}}" if labels_str else ""
             vals = self._values[key]
-            cum = 0
             for bucket in self._buckets:
-                cum += vals.get(bucket, 0)
+                # observe() already stores cumulative counts (every bucket >=
+                # the observed value is incremented), so emit directly —
+                # re-summing here would double-count every observation.
                 lines.append(
                     f"{self._name}_bucket{label_suffix}"
-                    f"{{le=\"{bucket}\"}} {cum}"
+                    f"{{le=\"{bucket}\"}} {vals.get(bucket, 0)}"
                 )
             # +Inf bucket
             lines.append(

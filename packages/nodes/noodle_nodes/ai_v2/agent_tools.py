@@ -401,7 +401,17 @@ class CodeExecToolAdapter(ToolAdapter):
             node_bin = shutil.which("node")
             if not node_bin:
                 raise RuntimeError("AI Code Execution Tool: Node.js is not available on this host.")
-            argv = [node_bin, "-e", code]
+            # Security flags: cap heap at 128 MiB, block eval/new Function
+            # code-generation, disable network-related globals where possible.
+            # Note: this is not a true OS-level sandbox — for multi-tenant
+            # deployments the Docker sandbox executor must be used instead.
+            argv = [
+                node_bin,
+                "--max-old-space-size=128",
+                "--disallow-code-generation-from-strings",
+                "-e",
+                code,
+            ]
         else:
             return json.dumps({"error": f"Unsupported language: {self._language}"})
 

@@ -579,6 +579,8 @@ def _post_json(url: str, headers: dict[str, str], payload: dict[str, Any]) -> di
     except urllib.error.HTTPError as exc:  # pragma: no cover - network failure shape
         detail = exc.read().decode("utf-8", errors="replace")[:500]
         raise RuntimeError(f"AI planner HTTP {exc.code}: {detail}") from exc
+    except urllib.error.URLError as exc:  # network error / DNS / timeout
+        raise RuntimeError(f"AI planner network error: {exc.reason}") from exc
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
@@ -1368,10 +1370,8 @@ async def _refine_workflow(
             "node_registry": {k: v for k, v in _NODE_REGISTRY.items()},
             "target_node_ids": target_node_ids,
         }
-        llm_result = await _call_llm_simple(
-            _build_refine_prompt(prompt, context, conversation_history),
-            system="You modify specific parts of workflow graphs. Only change what the user asks.",
-        )
+        system_msg, user_msg = _build_refine_prompt(prompt, context, conversation_history)
+        llm_result = await _call_llm_simple(user_msg, system=system_msg)
         if llm_result and isinstance(llm_result, dict) and "graph" in llm_result:
             graph = _coerce_graph(llm_result["graph"])
             return AiWorkflowDraftResponse(
@@ -1392,18 +1392,33 @@ async def _refine_workflow(
     return _fallback_refine(prompt, current_graph, target_node_ids)
 
 
-def _build_refine_prompt(prompt: str, context: dict, history: list[dict]) -> str:
+def _build_refine_prompt(
+    prompt: str, context: dict, history: list[dict]
+) -> tuple[str, str]:
+    """Return (system_message, user_message) for the refine LLM call.
+
+    Trusted context (graph structure, node types, target IDs) goes in the
+    system message.  User-supplied text stays isolated in the user message so
+    it cannot inject instructions that override the system context.
+    """
     sanitized_graph = _strip_credential_refs(context["current_graph"])
-    return (
-        f"Modify this workflow graph based on the user's request.\n\n"
-        f"USER REQUEST: {prompt}\n\n"
+    # Bound history by count AND strip any credential refs that may have been
+    # echoed back from a previous assistant turn.
+    safe_history = [
+        {k: (_strip_credential_refs(v) if isinstance(v, dict) else str(v)[:2000])
+         for k, v in turn.items()}
+        for turn in history[-5:]
+    ]
+    system_msg = (
+        "You modify specific parts of workflow graphs. Only change what the user asks.\n\n"
         f"CURRENT GRAPH: {json.dumps(sanitized_graph)}\n\n"
         f"AVAILABLE NODE TYPES: {json.dumps(list(context['node_registry'].keys()))}\n\n"
-        f"TARGET NODE IDS (only modify these): {context['target_node_ids']}\n\n"
-        f"CONVERSATION HISTORY: {json.dumps(history[-5:])}\n\n"
-        f"Return JSON: {{graph: {{nodes, edges}}, explanation, change_summary, "
-        f"confidence, missing_credentials, required_packages}}"
+        f"TARGET NODE IDS (only modify these if provided): {json.dumps(context['target_node_ids'])}\n\n"
+        f"CONVERSATION HISTORY: {json.dumps(safe_history)}\n\n"
+        "Return JSON: {graph: {nodes, edges}, explanation, change_summary, "
+        "confidence, missing_credentials, required_packages}"
     )
+    return system_msg, prompt
 
 
 def _fallback_refine(

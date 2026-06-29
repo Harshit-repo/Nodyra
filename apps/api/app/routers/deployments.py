@@ -81,7 +81,8 @@ def _validate_deployable(version: WorkflowVersion) -> None:
 
 
 async def _load(session: AsyncSession, deployment_id: str) -> Deployment:
-    deployment = await session.get(Deployment, deployment_id)
+    # B-01: Use select() to trigger do_orm_execute org filter.
+    deployment = await session.scalar(select(Deployment).where(Deployment.id == deployment_id))
     if deployment is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Deployment not found")
     return deployment

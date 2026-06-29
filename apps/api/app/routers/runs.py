@@ -88,7 +88,10 @@ async def run_workflow(
     use_draft: bool = Query(default=True),
     session: AsyncSession = Depends(get_session),
 ):
-    workflow = await session.get(Workflow, workflow_id, options=[selectinload(Workflow.versions)])
+    # B-01: Use select() to trigger do_orm_execute org filter.
+    workflow = await session.scalar(
+        select(Workflow).where(Workflow.id == workflow_id).options(selectinload(Workflow.versions))
+    )
     if workflow is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
 
@@ -416,7 +419,9 @@ async def replay_workflow_run(
     seeded with the prior run's successful upstream NodeRun outputs and
     execution is restricted to ``from_node_id`` plus its forward descendants.
     """
-    run = await session.get(Run, run_id)
+    # B-01: Use select() to trigger do_orm_execute org filter instead of
+    # session.get() which bypasses it.
+    run = await session.scalar(select(Run).where(Run.id == run_id))
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
 
@@ -520,7 +525,9 @@ async def run_timeline(
     backpressure UI and replay/debug views; clients can render it directly
     without re-deriving timings from disparate records.
     """
-    run = await session.get(Run, run_id)
+    # B-01: Use select() to trigger do_orm_execute org filter instead of
+    # session.get() which bypasses it.
+    run = await session.scalar(select(Run).where(Run.id == run_id))
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
     # Load node_runs separately with a cap — a loop-amplified run can have
@@ -705,10 +712,10 @@ async def decide_run_approval(
     session: AsyncSession = Depends(get_session),
 ) -> RunApprovalInfo:
     """Record an operator decision for a pending AI tool approval."""
-    if await session.get(Run, run_id) is None:
-        # RunApproval inherits tenancy through Run and has no direct org_id;
-        # loading the scoped parent first protects the SQLite ORM layer as
-        # well as Postgres RLS.
+    # B-01: Use select() to trigger do_orm_execute org filter.  session.get()
+    # bypasses do_orm_execute regardless of table, so a cross-tenant run_id
+    # would appear valid — giving an attacker access to another org's approvals.
+    if await session.scalar(select(Run).where(Run.id == run_id)) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
     approval = await session.scalar(
         select(RunApproval).where(

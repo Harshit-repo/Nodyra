@@ -41,10 +41,15 @@ from app.security import (
 from app.services import rate_limit
 from app.services.audit import log_audit
 from app.services.crypto import (
+    create_payload_token,
     create_token,
+    decode_payload_token,
     hash_password,
     verify_password,
 )
+
+import logging
+logger = logging.getLogger(__name__)
 from app.tenancy import DEFAULT_ORG_ID
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -340,7 +345,7 @@ async def register(
     return result
 
 
-@router.post("/auth/verify-email")
+@router.post("/verify-email")
 async def verify_email(
     token: str = Query(..., description="Email verification token"),
     session: AsyncSession = Depends(get_session),
@@ -367,7 +372,7 @@ async def verify_email(
     return {"message": "Email verified successfully."}
 
 
-@router.post("/auth/resend-verification")
+@router.post("/resend-verification")
 async def resend_verification(
     request: Request,
     session: AsyncSession = Depends(get_session),
