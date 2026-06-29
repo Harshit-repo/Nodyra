@@ -531,10 +531,13 @@ async def test_sso_connection(
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, "discovery_url is required for OIDC"
             )
+        from noodle_nodes.http_security import assert_public_http_url
+
+        assert_public_http_url(discovery_url, context="SSO test")
         import httpx
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
                 resp = await client.get(discovery_url)
                 resp.raise_for_status()
                 doc = resp.json()
@@ -564,10 +567,13 @@ async def test_sso_connection(
                 status.HTTP_400_BAD_REQUEST,
                 "idp_sso_url is required for SAML",
             )
+        from noodle_nodes.http_security import assert_public_http_url
+
+        assert_public_http_url(idp_sso_url, context="SSO test")
         import httpx
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
                 resp = await client.get(idp_sso_url)
                 resp.raise_for_status()
             return {"status": "ok", "detail": "IdP SSO URL reachable"}

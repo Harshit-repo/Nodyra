@@ -846,9 +846,18 @@ async def sso_acs(
     import base64
     import zlib
 
+    # Decompression bomb protection: reject payloads larger than 100 KiB
+    raw = saml_response.encode() if isinstance(saml_response, str) else saml_response
+    if len(raw) > 102_400:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "SAMLResponse too large (max 100 KiB)",
+        )
+
     try:
-        decoded = base64.b64decode(saml_response)
-        inflated = zlib.decompress(decoded, -15)
+        decoded = base64.b64decode(raw)
+        # Limit decompressed size to 1 MiB to prevent zip bombs
+        inflated = zlib.decompress(decoded, -15, bufsize=1_048_576)
         import xml.etree.ElementTree as ET
 
         root = ET.fromstring(inflated)
@@ -870,6 +879,16 @@ async def sso_acs(
             raise HTTPException(
                 status.HTTP_404_NOT_FOUND,
                 "No SSO configuration found for this email domain",
+            )
+        # TODO(ms4-4a): Replace manual SAML XML parsing with python3-saml library
+        # (OneLogin_Saml2_Auth) for proper assertion signature validation against
+        # sso_config.idp_certificate, Issuer verification, Audience restriction,
+        # Destination matching, and NotBefore/NotOnOrAfter enforcement.
+        # See: https://github.com/onelogin/python3-saml
+        if not sso_config.idp_certificate:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "SAML requires idp_certificate to be configured",
             )
         claims = {
             "email": email,

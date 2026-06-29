@@ -3,7 +3,13 @@
 
 Usage
 -----
+    # Migrate from env (SECRET_KEY) to HashiCorp Vault
+    export VAULT_URL=http://vault:8200
+    export VAULT_TOKEN=hvs...
     uv run python scripts/migrate_kms.py --from=env --to=vault
+
+    # Dry-run to preview without making changes
+    uv run python scripts/migrate_kms.py --from=env --to=vault --dry-run
 
 This script re-encrypts every org's ``wrapped_org_kek`` from the **source**
 provider to the **target** provider.  Credentials themselves (DEK-encrypted)
@@ -66,47 +72,66 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _build_provider(kind: str):
+    """Construct a KMS provider for the given kind directly from env vars.
+
+    This bypasses the ``get_kms_provider()`` singleton so the script can
+    hold **two** providers simultaneously (source + target).
+    """
+    import os
+
+    if kind == "env":
+        from app.services.kms.env_kms import EnvKMSProvider
+
+        return EnvKMSProvider()
+
+    if kind == "vault":
+        from app.services.kms.vault import VaultKMSProvider
+
+        return VaultKMSProvider(
+            vault_url=os.environ.get("VAULT_URL", ""),
+            token=os.environ.get("VAULT_TOKEN", ""),
+            mount=os.environ.get("VAULT_TRANSIT_MOUNT", "transit"),
+            key_name=os.environ.get("VAULT_TRANSIT_KEY", "noodle-master"),
+        )
+
+    if kind == "aws":
+        from app.services.kms.aws_kms import AWSKMSProvider
+
+        return AWSKMSProvider(
+            key_id=os.environ.get("AWS_KMS_KEY_ID", ""),
+            region=os.environ.get("AWS_KMS_REGION", "us-east-1"),
+        )
+
+    if kind == "gcp":
+        from app.services.kms.gcp_kms import GCPKMSProvider
+
+        return GCPKMSProvider(
+            key_name=os.environ.get("GCP_KMS_KEY_NAME", ""),
+        )
+
+    msg = f"Unknown provider kind: {kind!r}"
+    raise ValueError(msg)
+
+
 async def _migrate(
-    source_provider: str,
-    target_provider: str,
+    source: str,
+    target: str,
     dry_run: bool = False,
     batch_size: int = 100,
 ) -> int:
     """Migrate all org KEKs.  Returns the number of rows updated."""
-    # Import here so the script can be run without the full app context.
-    import os
-
-    # Force the source provider so we can decrypt existing KEKs.
-    os.environ["KMS_PROVIDER"] = source_provider
-    # Re-import config to pick up the overridden env var.
-    # In practice the caller sets the env before running the script.
-    from app.config import settings
-
-    # Validate that required config is present for both providers.
-    if source_provider != "env":
-        _logger.error("Source provider %s is not yet supported as source; only env is supported.", source_provider)
-        sys.exit(1)
-
     from app.db import SessionLocal
     from app.models import Organization
-    from app.services.kms import get_kms_provider, invalidate_kms_cache
     from sqlalchemy import select, update
 
-    # Build source and target providers.
-    invalidate_kms_cache()
-    src_provider = get_kms_provider()
-
-    os.environ["KMS_PROVIDER"] = target_provider
-    # Re-initialize settings to pick up the new provider env.
-    settings.__init__(_env_file=None)  # type: ignore[misc]
-    invalidate_kms_cache()
-    tgt_provider = get_kms_provider()
+    src_provider = _build_provider(source)
+    tgt_provider = _build_provider(target)
 
     updated = 0
     skipped = 0
     errors = 0
     async with SessionLocal() as session:
-        # Fetch all orgs that have a wrapped KEK.
         result = await session.scalars(
             select(Organization).where(Organization.wrapped_org_kek.isnot(None))
         )
@@ -115,18 +140,16 @@ async def _migrate(
         _logger.info(
             "Migrating %d org KEKs from %s → %s%s",
             len(orgs),
-            source_provider,
-            target_provider,
+            source,
+            target,
             " (DRY RUN)" if dry_run else "",
         )
 
         for org in orgs:
             try:
-                # Decrypt with source provider.
                 plaintext_kek = await src_provider.decrypt(
                     org.wrapped_org_kek.encode("utf-8")
                 )
-                # Re-encrypt with target provider.
                 new_wrapped = await tgt_provider.encrypt(plaintext_kek)
 
                 if dry_run:
@@ -155,7 +178,6 @@ async def _migrate(
                 errors += 1
                 continue
 
-        # Final commit.
         if updated > 0 and not dry_run:
             await session.commit()
 
@@ -173,17 +195,10 @@ def main() -> None:
     if args.source == args.target:
         _logger.info("Source and target are the same — nothing to do.")
         return
-    if args.source != "env":
-        _logger.error(
-            "Only --from=env is supported in V1. "
-            "For other source providers, the old provider must still be "
-            "reachable and configured at the env level."
-        )
-        sys.exit(1)
     asyncio.run(
         _migrate(
-            source_provider=args.source,
-            target_provider=args.target,
+            source=args.source,
+            target=args.target,
             dry_run=args.dry_run,
             batch_size=args.batch_size,
         )
