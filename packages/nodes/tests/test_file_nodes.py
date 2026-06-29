@@ -1,5 +1,6 @@
 """Tests for file reading nodes (read_text_file, read_csv_file, read_json_file, read_xml_file,
-read_s3_file, read_url_file, stream_large_file)."""
+read_s3_file, read_url_file, stream_large_file, read_parquet_file, write_parquet_file,
+read_excel_file, write_excel_file)."""
 
 from __future__ import annotations
 
@@ -665,3 +666,157 @@ def test_stream_large_file_auto_format_json_extension(store_ctx) -> None:
 
     result = stream_large_file(input=None, file="upload-005", format="auto")
     assert result.get("__noodle_dataset__") is True
+
+
+# ---------------------------------------------------------------------------
+# read_parquet_file / write_parquet_file
+# ---------------------------------------------------------------------------
+
+import pathlib as _pathlib
+
+import pyarrow as _pa
+import pyarrow.parquet as _pq
+
+from noodle_nodes.file_nodes import read_parquet_file, write_parquet_file
+
+
+def _write_test_parquet(path: _pathlib.Path) -> None:
+    table = _pa.table({"name": ["Alice", "Bob"], "score": [95, 87]})
+    _pq.write_table(table, str(path))
+
+
+def test_read_parquet_file_from_path(tmp_path: Path, store_ctx) -> None:
+    p = tmp_path / "data.parquet"
+    _write_test_parquet(p)
+    result = read_parquet_file(input=None, path=str(p))
+    assert result["row_count"] == 2
+    assert result["format"] == "parquet"
+    assert "artifact" in result
+
+
+def test_read_parquet_file_column_filter(tmp_path: Path, store_ctx) -> None:
+    p = tmp_path / "data.parquet"
+    _write_test_parquet(p)
+    result = read_parquet_file(input=None, path=str(p), columns="name")
+    assert all(col["name"] == "name" for col in result["schema"])
+
+
+def test_read_parquet_file_row_limit(tmp_path: Path, store_ctx) -> None:
+    p = tmp_path / "data.parquet"
+    _write_test_parquet(p)
+    result = read_parquet_file(input=None, path=str(p), limit=1)
+    assert result["row_count"] == 1
+
+
+def test_read_parquet_file_no_source() -> None:
+    with pytest.raises(ValueError, match="either path or file"):
+        read_parquet_file(input=None, path="", file="")
+
+
+def test_read_parquet_file_from_upload(store_ctx, tmp_path: Path) -> None:
+    p = tmp_path / "up.parquet"
+    _write_test_parquet(p)
+    raw = p.read_bytes()
+    with patch(
+        "noodle_nodes.file_nodes._read_upload_bytes",
+        return_value=(raw, "up.parquet"),
+    ):
+        result = read_parquet_file(input=None, file="abc123")
+    assert result["row_count"] == 2
+
+
+def test_write_parquet_from_list(store_ctx) -> None:
+    data = [{"x": 1, "y": "a"}, {"x": 2, "y": "b"}]
+    result = write_parquet_file(input=data)
+    assert result["row_count"] == 2
+    assert result["format"] == "parquet"
+
+
+def test_write_parquet_from_dataset_ref(tmp_path: Path, store_ctx) -> None:
+    p = tmp_path / "src.parquet"
+    _write_test_parquet(p)
+    ref = read_parquet_file(input=None, path=str(p))
+    result = write_parquet_file(input=ref)
+    assert result["row_count"] == 2
+
+
+def test_write_parquet_rejects_none_input(store_ctx) -> None:
+    with pytest.raises(ValueError, match="write_parquet_file"):
+        write_parquet_file(input=None)
+
+
+# ---------------------------------------------------------------------------
+# read_excel_file / write_excel_file
+# ---------------------------------------------------------------------------
+
+import openpyxl as _openpyxl
+
+from noodle_nodes.file_nodes import read_excel_file, write_excel_file
+
+
+def _write_test_excel(path: _pathlib.Path) -> None:
+    wb = _openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["name", "score"])
+    ws.append(["Alice", 95])
+    ws.append(["Bob", 87])
+    wb.save(str(path))
+
+
+def test_read_excel_file_from_path(tmp_path: Path, store_ctx) -> None:
+    p = tmp_path / "data.xlsx"
+    _write_test_excel(p)
+    result = read_excel_file(input=None, path=str(p))
+    assert result["row_count"] == 2
+    assert result["format"] == "parquet"
+    assert result.get("__noodle_dataset__") is True
+
+
+def test_read_excel_file_column_filter(tmp_path: Path, store_ctx) -> None:
+    p = tmp_path / "data.xlsx"
+    _write_test_excel(p)
+    result = read_excel_file(input=None, path=str(p), columns="name")
+    assert all(col["name"] == "name" for col in result["schema"])
+
+
+def test_read_excel_file_row_limit(tmp_path: Path, store_ctx) -> None:
+    p = tmp_path / "data.xlsx"
+    _write_test_excel(p)
+    result = read_excel_file(input=None, path=str(p), limit=1)
+    assert result["row_count"] == 1
+
+
+def test_read_excel_file_no_source() -> None:
+    with pytest.raises(ValueError, match="either path or file"):
+        read_excel_file(input=None, path="", file="")
+
+
+def test_read_excel_file_from_upload(store_ctx, tmp_path: Path) -> None:
+    p = tmp_path / "up.xlsx"
+    _write_test_excel(p)
+    raw = p.read_bytes()
+    with patch(
+        "noodle_nodes.file_nodes._read_upload_bytes",
+        return_value=(raw, "up.xlsx"),
+    ):
+        result = read_excel_file(input=None, file="abc456")
+    assert result["row_count"] == 2
+
+
+def test_write_excel_from_dataset_ref(tmp_path: Path, store_ctx) -> None:
+    p = tmp_path / "src.xlsx"
+    _write_test_excel(p)
+    ref = read_excel_file(input=None, path=str(p))
+    result = write_excel_file(input=ref)
+    assert result.get("content_type") == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def test_write_excel_from_list(store_ctx) -> None:
+    data = [{"x": 1, "y": "a"}, {"x": 2, "y": "b"}]
+    result = write_excel_file(input=data)
+    assert result.get("content_type") == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def test_write_excel_rejects_none_input(store_ctx) -> None:
+    with pytest.raises(ValueError, match="write_excel_file"):
+        write_excel_file(input=None)

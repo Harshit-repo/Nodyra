@@ -821,3 +821,337 @@ def stream_large_file(
             os.unlink(tmp.name)
         except OSError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Parquet nodes
+# ---------------------------------------------------------------------------
+
+@node(
+    id="read_parquet_file",
+    name="Read Parquet File",
+    category="Files",
+    description="Read a Parquet file from a server path or browser-uploaded artifact and return it as a dataset.",
+    icon="file",
+    params={
+        "file": {
+            "widget": "file_upload",
+            "display_name": "Upload file",
+            "accept": ".parquet",
+            "required": False,
+        },
+        "path": {
+            "type": "string",
+            "display_name": "Server path",
+            "required": False,
+        },
+        "columns": {
+            "type": "string",
+            "display_name": "Columns (comma-separated, blank = all)",
+            "required": False,
+        },
+        "limit": {
+            "type": "integer",
+            "display_name": "Row limit (0 = unlimited)",
+            "default": 0,
+            "required": False,
+        },
+    },
+    input_kinds={"main": "any"},
+    output_kinds={"main": "dataset"},
+)
+def read_parquet_file(
+    input: Any,
+    *,
+    path: str = "",
+    file: str = "",
+    columns: str = "",
+    limit: int = 0,
+) -> dict:
+    """Read a Parquet file and emit a DatasetRef."""
+    try:
+        import pyarrow.parquet as _pq
+    except ImportError:
+        raise RuntimeError("pyarrow is required: pip install pyarrow")
+
+    from noodle_nodes.datasets import _finalize_parquet
+    from noodle.datasets import reserve_artifact_path
+
+    raw: bytes | None = None
+    if file:
+        raw, _ = _read_upload_bytes(file)
+    elif path:
+        raw = pathlib.Path(path).read_bytes()
+    else:
+        raise ValueError("read_parquet_file requires either path or file")
+
+    import io
+    buf = io.BytesIO(raw)
+    col_list = [c.strip() for c in columns.split(",") if c.strip()] or None
+    pf = _pq.ParquetFile(buf)
+    table = pf.read(columns=col_list)
+    if limit and limit > 0:
+        table = table.slice(0, limit)
+
+    out_path, out_partial = reserve_artifact_path(
+        "parquet_output",
+        content_type="application/vnd.apache.parquet",
+        kind="dataset",
+    )
+    _pq.write_table(table, str(out_path), compression="zstd")
+    result = _finalize_parquet(out_path, out_partial)
+
+    schema = [{"name": f.name, "type": str(f.type)} for f in table.schema]
+    result["schema"] = schema
+    result["row_count"] = len(table)
+    result["format"] = "parquet"
+    return result
+
+
+@node(
+    id="write_parquet_file",
+    name="Write Parquet File",
+    category="Files",
+    description="Write data to a Parquet file. Accepts a list of records or a dataset ref.",
+    icon="file",
+    params={
+        "compression": {
+            "type": "string",
+            "display_name": "Compression",
+            "default": "zstd",
+            "enum": ["zstd", "snappy", "gzip", "none"],
+            "required": False,
+        },
+    },
+    input_kinds={"main": "any"},
+    output_kinds={"main": "dataset"},
+)
+def write_parquet_file(
+    input: Any,
+    *,
+    compression: str = "zstd",
+) -> dict:
+    """Write a list of records or an existing DatasetRef to a Parquet artifact."""
+    try:
+        import pyarrow as _pa
+        import pyarrow.parquet as _pq
+    except ImportError:
+        raise RuntimeError("pyarrow is required: pip install pyarrow")
+
+    from noodle_nodes.datasets import _finalize_parquet
+    from noodle.datasets import reserve_artifact_path
+
+    if input is None:
+        raise ValueError("write_parquet_file requires input data (list of records or dataset ref)")
+
+    comp = compression if compression != "none" else None
+
+    out_path, out_partial = reserve_artifact_path(
+        "parquet_output",
+        content_type="application/vnd.apache.parquet",
+        kind="dataset",
+    )
+
+    if isinstance(input, dict) and input.get("__noodle_dataset__"):
+        # DatasetRef — copy the backing parquet file
+        from noodle.datasets import dataset_path_for_ref
+        import shutil
+        src = dataset_path_for_ref(input)
+        shutil.copy2(src, out_path)
+    elif isinstance(input, list):
+        if not input:
+            raise ValueError("write_parquet_file: input list is empty")
+        table = _pa.Table.from_pylist(input)
+        _pq.write_table(table, str(out_path), compression=comp)
+    else:
+        raise ValueError(
+            f"write_parquet_file: unsupported input type {type(input).__name__!r}. "
+            "Expected a list of records or a dataset ref."
+        )
+
+    import pyarrow.parquet as _pq2
+    meta = _pq2.read_metadata(str(out_path))
+    result = _finalize_parquet(out_path, out_partial)
+    result["row_count"] = meta.num_rows
+    result["format"] = "parquet"
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Excel nodes
+# ---------------------------------------------------------------------------
+
+_XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@node(
+    id="read_excel_file",
+    name="Read Excel File",
+    category="Files",
+    description="Read an Excel (.xlsx) file from a server path or browser-uploaded artifact and return it as a dataset.",
+    icon="file",
+    params={
+        "file": {
+            "widget": "file_upload",
+            "display_name": "Upload file",
+            "accept": ".xlsx,.xls",
+            "required": False,
+        },
+        "path": {
+            "type": "string",
+            "display_name": "Server path",
+            "required": False,
+        },
+        "sheet": {
+            "type": "string",
+            "display_name": "Sheet name (blank = first sheet)",
+            "required": False,
+        },
+        "columns": {
+            "type": "string",
+            "display_name": "Columns (comma-separated, blank = all)",
+            "required": False,
+        },
+        "limit": {
+            "type": "integer",
+            "display_name": "Row limit (0 = unlimited)",
+            "default": 0,
+            "required": False,
+        },
+    },
+    input_kinds={"main": "any"},
+    output_kinds={"main": "dataset"},
+)
+def read_excel_file(
+    input: Any,
+    *,
+    path: str = "",
+    file: str = "",
+    sheet: str = "",
+    columns: str = "",
+    limit: int = 0,
+) -> dict:
+    """Read an Excel file and emit a DatasetRef backed by Parquet."""
+    try:
+        import openpyxl as _openpyxl
+        import pyarrow as _pa
+        import pyarrow.parquet as _pq
+    except ImportError:
+        raise RuntimeError("openpyxl and pyarrow are required: pip install openpyxl pyarrow")
+
+    from noodle_nodes.datasets import _finalize_parquet
+    from noodle.datasets import reserve_artifact_path
+
+    import io
+
+    if file:
+        raw, _ = _read_upload_bytes(file)
+    elif path:
+        raw = pathlib.Path(path).read_bytes()
+    else:
+        raise ValueError("read_excel_file requires either path or file")
+
+    wb = _openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    ws = wb[sheet] if sheet else wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    wb.close()
+
+    if not rows:
+        headers: list[str] = []
+        data_rows: list[tuple] = []
+    else:
+        headers = [str(h) if h is not None else f"col_{i}" for i, h in enumerate(rows[0])]
+        data_rows = rows[1:]
+
+    col_set: set[str] | None = None
+    if columns:
+        col_set = {c.strip() for c in columns.split(",") if c.strip()}
+        col_indices = [i for i, h in enumerate(headers) if h in col_set]
+        headers = [headers[i] for i in col_indices]
+        data_rows = [tuple(r[i] for i in col_indices) for r in data_rows]
+
+    if limit and limit > 0:
+        data_rows = data_rows[:limit]
+
+    records = [dict(zip(headers, row, strict=False)) for row in data_rows]
+    table = _pa.Table.from_pylist(records) if records else _pa.table({h: [] for h in headers})
+
+    out_path, out_partial = reserve_artifact_path(
+        "excel_as_parquet",
+        content_type="application/vnd.apache.parquet",
+        kind="dataset",
+    )
+    _pq.write_table(table, str(out_path), compression="zstd")
+    result = _finalize_parquet(out_path, out_partial)
+    result["format"] = "parquet"
+    return result
+
+
+@node(
+    id="write_excel_file",
+    name="Write Excel File",
+    category="Files",
+    description="Write data to an Excel (.xlsx) file. Accepts a list of records or a dataset ref.",
+    icon="file",
+    params={
+        "sheet_name": {
+            "type": "string",
+            "display_name": "Sheet name",
+            "default": "Sheet1",
+            "required": False,
+        },
+    },
+    input_kinds={"main": "any"},
+    output_kinds={"main": "any"},
+)
+def write_excel_file(
+    input: Any,
+    *,
+    sheet_name: str = "Sheet1",
+) -> dict:
+    """Write a list of records or DatasetRef to an Excel artifact."""
+    try:
+        import openpyxl as _openpyxl
+    except ImportError:
+        raise RuntimeError("openpyxl is required: pip install openpyxl")
+
+    from noodle.datasets import reserve_artifact_path, finalize_artifact_ref
+
+    if input is None:
+        raise ValueError("write_excel_file requires input data (list of records or dataset ref)")
+
+    if isinstance(input, dict) and input.get("__noodle_dataset__"):
+        try:
+            import pyarrow.parquet as _pq
+        except ImportError:
+            raise RuntimeError("pyarrow is required: pip install pyarrow")
+        from noodle.datasets import dataset_path_for_ref
+        src = dataset_path_for_ref(input)
+        table = _pq.read_table(str(src))
+        records = table.to_pylist()
+    elif isinstance(input, list):
+        if not input:
+            raise ValueError("write_excel_file: input list is empty")
+        records = input
+    else:
+        raise ValueError(
+            f"write_excel_file: unsupported input type {type(input).__name__!r}. "
+            "Expected a list of records or a dataset ref."
+        )
+
+    wb = _openpyxl.Workbook()
+    ws = wb.active
+    ws.title = sheet_name
+    if records:
+        headers = list(records[0].keys())
+        ws.append(headers)
+        for row in records:
+            ws.append([row.get(h) for h in headers])
+
+    out_path, out_partial = reserve_artifact_path(
+        "output.xlsx",
+        content_type=_XLSX_CONTENT_TYPE,
+        kind="excel_export",
+    )
+    wb.save(str(out_path))
+    return finalize_artifact_ref(out_path, out_partial)
