@@ -1560,11 +1560,15 @@ name = "noodle-core"
 version = "0.0.1"
 source = { editable = "packages/core" }
 dependencies = [
+    { name = "jsonschema" },
     { name = "pydantic" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.6" }]
+requires-dist = [
+    { name = "jsonschema", specifier = ">=4.23" },
+    { name = "pydantic", specifier = ">=2.6" },
+]
 
 [[package]]
 name = "noodle-exporter"
