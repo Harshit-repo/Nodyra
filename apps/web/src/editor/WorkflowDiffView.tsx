@@ -22,6 +22,164 @@ interface Props {
   onClose: () => void;
 }
 
+// GraphDiffView: plain-graph variant — no version fetching, no pickers.
+// Used for inline diffs (e.g. AI draft modal).
+export interface GraphDiffViewProps {
+  baseGraph: WorkflowGraph;
+  compareGraph: WorkflowGraph;
+  onClose?: () => void;
+  rejectedNodeIds?: Set<string>;
+  onToggleReject?: (nodeId: string) => void;
+  readOnly?: boolean;
+}
+
+export function GraphDiffView({
+  baseGraph,
+  compareGraph,
+  onClose,
+  rejectedNodeIds,
+  readOnly,
+}: GraphDiffViewProps) {
+  const manifestsById = useEditor((s) => s.manifestsById);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
+  const result = useMemo(
+    () => diffWorkflowGraphs(baseGraph, compareGraph),
+    [baseGraph, compareGraph],
+  );
+
+  const statusMap = useMemo(
+    () =>
+      result
+        ? new Map<string, DiffStatus>([
+            ...result.added.map((id) => [id, "added"] as const),
+            ...result.changed.map((id) => [id, "changed"] as const),
+            ...result.unchanged.map((id) => [id, "unchanged"] as const),
+            ...result.removed.map((id) => [id, "removed"] as const),
+          ])
+        : new Map<string, DiffStatus>(),
+    [result],
+  );
+
+  const { renderNodes, renderEdges, truncated } = useMemo(() => {
+    if (!result) {
+      return { renderNodes: [] as Node[], renderEdges: [] as Edge[], truncated: false };
+    }
+
+    const shownNodeIds = new Set<string>();
+    const compareRF = compareGraph.nodes
+      .map((gn) => {
+        const status = statusMap.get(gn.id) ?? "unchanged";
+        // If node is removed AND rejected, include it
+        if (status === "removed" && !rejectedNodeIds?.has(gn.id)) return null;
+        shownNodeIds.add(gn.id);
+        return graphNodeToNode(gn, manifestsById);
+      })
+      .filter((n): n is NoodleNode => n !== null);
+
+    const ghostRF = result.removedNodes
+      .filter((gn) => rejectedNodeIds?.has(gn.id))
+      .map((gn) => graphNodeToNode({ ...gn, position: gn.position ?? { x: 0, y: 0 } }, manifestsById))
+      .filter((n): n is NoodleNode => n !== null);
+    ghostRF.forEach((n) => shownNodeIds.add(n.id));
+
+    const allNodes = [...compareRF, ...ghostRF];
+    const isTruncated = allNodes.length > MAX_RENDER_NODES;
+    const filtered = isTruncated
+      ? allNodes.filter((n) => statusMap.get(n.id) !== "unchanged")
+      : allNodes;
+
+    const renderNodeIds = new Set(filtered.map((n) => n.id));
+
+    const compareEdgesRF = compareGraph.edges
+      .filter((e) => renderNodeIds.has(e.source) && renderNodeIds.has(e.target))
+      .map((e) => ({
+        ...graphEdgeToEdge(e),
+        data: { diffStatus: result.addedEdges.includes(e.id) ? "added" : "unchanged" },
+      }));
+
+    const removedEdgesRF = result.removedEdges
+      .map((eid) => baseGraph.edges.find((e) => e.id === eid))
+      .filter(
+        (e): e is NonNullable<typeof e> =>
+          e != null && renderNodeIds.has(e.source) && renderNodeIds.has(e.target),
+      )
+      .map((e) => ({ ...graphEdgeToEdge(e), data: { diffStatus: "removed" as DiffStatus } }));
+
+    return {
+      renderNodes: filtered as Node[],
+      renderEdges: [...compareEdgesRF, ...removedEdgesRF] as Edge[],
+      truncated: isTruncated,
+    };
+  }, [result, compareGraph, baseGraph, manifestsById, statusMap, rejectedNodeIds]);
+
+  const selectedParams =
+    result && selectedNodeId && result.changedParams[selectedNodeId]
+      ? result.changedParams[selectedNodeId]
+      : null;
+  const selectedNodeLabel =
+    (renderNodes.find((n) => n.id === selectedNodeId) as NoodleNode | undefined)?.data.label;
+
+  return (
+    <div style={{ width: "100%", height: "100%", position: "relative" }}>
+      <DiffContext.Provider value={statusMap}>
+        <ReactFlow
+          nodes={renderNodes}
+          edges={renderEdges}
+          nodeTypes={diffNodeTypes}
+          edgeTypes={diffEdgeTypes}
+          fitView
+          nodesDraggable={false}
+          nodesConnectable={false}
+          elementsSelectable={!readOnly}
+          onNodeClick={(_, node) => {
+            if (readOnly) return;
+            if (statusMap.get(node.id) === "changed") {
+              setSelectedNodeId((prev) => (prev === node.id ? null : node.id));
+            }
+          }}
+        >
+          <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
+          {result && (
+            <Panel position="top-left">
+              <DiffSummaryBar
+                added={result.added}
+                removed={result.removed}
+                changed={result.changed}
+                unchanged={result.unchanged}
+              />
+            </Panel>
+          )}
+        </ReactFlow>
+      </DiffContext.Provider>
+      {selectedParams && selectedNodeId && (
+        <NodeParamDiffPanel
+          nodeId={selectedNodeId}
+          nodeLabel={selectedNodeLabel ?? undefined}
+          params={selectedParams}
+          onClose={() => setSelectedNodeId(null)}
+        />
+      )}
+      {onClose && (
+        <button
+          type="button"
+          className="ndv-close"
+          onClick={onClose}
+          style={{ position: "absolute", top: 8, right: 8, zIndex: 10 }}
+          aria-label="Close diff view"
+        >
+          ×
+        </button>
+      )}
+      {truncated && (
+        <div className="diff-overlay__truncate-banner">
+          Large workflow — showing only changed nodes.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function buildVersionLabel(v: WorkflowVersionInfo): string {
   const parts = [`v${v.version}`];
   if (v.notes) parts.push(v.notes);
