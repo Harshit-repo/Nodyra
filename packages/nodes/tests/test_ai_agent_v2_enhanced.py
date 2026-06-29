@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 
 import pytest
-from tests.test_ai_v2_nodes import DummyTool, ScriptedChatModel
 
 import noodle_nodes  # noqa: F401
 from noodle.ai_runtime import (
@@ -25,6 +24,7 @@ from noodle_nodes.ai_v2.agents import (
     _strip_control_messages,
     ai_agent_v2,
 )
+from packages.nodes.tests.ai_v2_test_helpers import DummyTool, ScriptedChatModel
 
 
 def test_apply_persona_prepends_template() -> None:

@@ -4,6 +4,7 @@ import socket
 import time
 import uuid
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, Response
 from sqlalchemy import func, select
@@ -122,7 +123,7 @@ async def ops_health(
         health["active_runs"] = active_count
 
         # Stuck: running runs that started >30 min ago with no recent node
-        from datetime import timedelta, UTC
+        from datetime import UTC, timedelta
 
         stuck_cutoff = datetime.now(UTC) - timedelta(seconds=1800)
         stuck_count = int(

@@ -26,7 +26,11 @@ from noodle.engine.datasets import (
     _auto_promote_outputs,
 )
 from noodle.engine.types import EventCallback
-from noodle.engine.validation import _validate_input_kinds, _validate_input_schemas, _validate_output_kinds
+from noodle.engine.validation import (
+    _validate_input_kinds,
+    _validate_input_schemas,
+    _validate_output_kinds,
+)
 from noodle.expr import build_context, evaluate
 from noodle.models import NodeRunResult, NodeStatus, RunStatus
 from noodle.node_tool import TOOL_MODE_OUTPUT, build_node_tool_adapter
@@ -651,10 +655,7 @@ async def _run_one_node(
                     node_def.func(**current_kwargs), timeout
                 )
             return await node_def.func(**current_kwargs)
-        if (
-            graph_node.type in PROCESS_ISOLATED_NODE_TYPES
-            or getattr(node_def, "is_user_code", False)
-        ):
+        if graph_node.type in PROCESS_ISOLATED_NODE_TYPES:
             # Timeout-evict and broken-pool translation live inside the
             # isolator; TimeoutError/ValueError surface here unchanged.
             isolator = (

@@ -27,7 +27,7 @@ from noodle.engine.node_exec import (
 )
 from noodle.engine.types import EventCallback, GraphError
 from noodle.engine.validation import _validate_connection_kinds
-from noodle.models import NodeRunResult, RunResult, RunStatus, WorkflowGraph
+from noodle.models import NodeRunResult, NodeStatus, RunResult, RunStatus, WorkflowGraph
 from noodle.sdk import NodeRegistry
 
 if TYPE_CHECKING:

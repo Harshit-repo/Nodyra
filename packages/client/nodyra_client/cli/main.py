@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,43 @@ from nodyra_client.client import NodyraClient, NodyraError
 
 # Token cache in user home directory.
 _TOKEN_FILE = Path.home() / ".nodyra" / "token"
+
+
+def _write_token_file(payload: bytes) -> None:
+    """Atomically replace the token file with owner-only permissions."""
+    token_dir = _TOKEN_FILE.parent
+    token_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        os.chmod(token_dir, 0o700)
+    except OSError:
+        pass
+
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{_TOKEN_FILE.name}.",
+        suffix=".tmp",
+        dir=token_dir,
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        try:
+            try:
+                os.fchmod(fd, 0o600)
+            except (AttributeError, OSError):
+                pass
+            os.write(fd, payload)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(tmp_path, _TOKEN_FILE)
+        try:
+            os.chmod(_TOKEN_FILE, 0o600)
+        except OSError:
+            pass
+    except Exception:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        finally:
+            raise
 
 
 def _client() -> NodyraClient:
@@ -79,16 +117,10 @@ def main() -> None:
 @click.option("--token", prompt=True, hide_input=True, help="Bearer token")
 def login(base_url: str, token: str) -> None:
     """Save credentials to ~/.nodyra/token."""
-    # Create directory with restricted permissions (owner-only).
-    _TOKEN_FILE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    # Atomically create the file with mode 0o600 so the token is never
-    # visible to other users — no TOCTOU window between creation and chmod.
+    # Atomically replace the file with mode 0o600 so an existing file or
+    # symlink cannot be followed and truncated.
     payload = json.dumps({"base_url": base_url.rstrip("/"), "token": token}).encode()
-    fd = os.open(str(_TOKEN_FILE), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
-    try:
-        os.write(fd, payload)
-    finally:
-        os.close(fd)
+    _write_token_file(payload)
     # Verify the token — use context manager to ensure the connection pool
     # is closed even if whoami() raises.
     with NodyraClient(base_url=base_url, token=token) as client:

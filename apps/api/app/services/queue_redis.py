@@ -16,9 +16,7 @@ Keys::
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from typing import Any
 
 from app.redis_client import redis_client
 

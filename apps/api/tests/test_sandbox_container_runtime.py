@@ -318,7 +318,11 @@ def test_docker_provider_spawns_hardened(monkeypatch):
                 {"nodes": [], "edges": []}, None, None, [], on_event,
             )
         )
-        await asyncio.sleep(0.3)  # let it spawn + consume ready
+        for _ in range(50):
+            if client.containers_made:
+                break
+            await asyncio.sleep(0.1)
+        assert client.containers_made
         sock = client.containers_made[0].sock._sock
         sock.feed({"type": "result", "status": "success"})
         return await task

@@ -9,14 +9,13 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import concurrent.futures
+import contextlib
 import html
 import json
 import math
-import os
 import shutil
-import signal
 import subprocess
-import sys
 import tempfile
 from dataclasses import dataclass, field
 from typing import Any
@@ -34,6 +33,7 @@ from noodle.ai_runtime import (
     ToolParameterSchema,
     ToolSchema,
 )
+from noodle.process_isolation import default_isolator
 from noodle.sdk import node
 from noodle_nodes.ai_v2.tools import collect_tool_adapters
 from noodle_nodes.http_security import assert_public_http_url, safe_request
@@ -236,66 +236,113 @@ def _ast_security_check(code: str, allowed_modules: set[str]) -> None:
                 raise PermissionError(f"blocked attribute access: {nodeobj.attr}")
 
 
-_AGENT_CODE_WORKER_TEMPLATE = r'''
-import ast, json, sys, traceback
-from io import StringIO
+def _run_agent_python_code_isolated(
+    *, code: str, allowed_modules: tuple[str, ...] | None, max_output: int
+) -> str:
+    """ProcessPoolExecutor worker for the AI code tool's Python mode."""
+    from io import StringIO
 
-_code = {code!r}
-_max_output = {max_output!r}
-_allowed = {allowed!r}
-
-# Apply the same sandbox as the regular Code node.
-if _allowed is None:
-    from noodle.expr import _CodeValidator
-    from noodle_nodes.builtin import _SAFE_BUILTINS
     try:
-        _tree = ast.parse(_code, mode="exec")
-        _CodeValidator().visit(_tree)
-    except (SyntaxError, ValueError) as _exc:
-        print(json.dumps({{"error": f"Code validation failed: {{_exc}}"}}))
-        sys.exit(1)
-    _namespace = {{"__builtins__": _SAFE_BUILTINS}}
-else:
-    import builtins as _builtins
+        tree = ast.parse(code, mode="exec")
+    except SyntaxError as exc:
+        return json.dumps({"error": f"SyntaxError: {exc}"})
+
+    if allowed_modules is None:
+        from noodle.expr import _CodeValidator
+        from noodle_nodes.builtin import _SAFE_BUILTINS
+
+        try:
+            _CodeValidator().visit(tree)
+        except ValueError as exc:
+            return json.dumps({"error": f"Code validation failed: {exc}"})
+        namespace = {"__builtins__": _SAFE_BUILTINS}
+    else:
+        import builtins
+
+        try:
+            _ast_security_check(code, set(allowed_modules))
+        except PermissionError as exc:
+            return json.dumps({"error": str(exc)})
+        namespace = {"__builtins__": vars(builtins)}
+
+    stdout = StringIO()
+    stderr = StringIO()
+    exit_code = 0
     try:
-        _tree = ast.parse(_code, mode="exec")
-    except SyntaxError as _exc:
-        print(json.dumps({{"error": f"SyntaxError: {{_exc}}"}}))
-        sys.exit(1)
-    _namespace = {{"__builtins__": vars(_builtins)}}
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exec(compile(tree, "<agent_code>", "exec"), namespace)  # noqa: S102
+    except SystemExit as exc:
+        exit_code = exc.code if isinstance(exc.code, int) else 1
+    except Exception as exc:  # noqa: BLE001
+        stderr.write(str(exc))
+        exit_code = 1
 
-_stdout = StringIO()
-_stderr = StringIO()
-_exit_code = 0
-try:
-    import contextlib
-    with contextlib.redirect_stdout(_stdout), contextlib.redirect_stderr(_stderr):
-        exec(compile(_tree, "<agent_code>", "exec"), _namespace)
-except SystemExit as _exc:
-    _exit_code = _exc.code if isinstance(_exc.code, int) else 1
-except Exception as _exc:
-    _exc.add_note(traceback.format_exc())
-    _stderr.write(str(_exc))
-    _exit_code = 1
+    stdout_s = stdout.getvalue()
+    stderr_s = stderr.getvalue()
+    truncated = False
+    if len(stdout_s) > max_output:
+        stdout_s = stdout_s[:max_output]
+        truncated = True
+    if len(stderr_s) > max_output:
+        stderr_s = stderr_s[:max_output]
+    return json.dumps(
+        {
+            "stdout": stdout_s,
+            "stderr": stderr_s,
+            "exit_code": exit_code,
+            "truncated": truncated,
+        }
+    )
 
-_stdout_s = _stdout.getvalue()
-_stderr_s = _stderr.getvalue()
-_truncated = False
-if len(_stdout_s) > _max_output:
-    _stdout_s, _truncated = _stdout_s[:_max_output], True
-if len(_stderr_s) > _max_output:
-    _stderr_s = _stderr_s[:_max_output]
-print(json.dumps({{
-    "stdout": _stdout_s,
-    "stderr": _stderr_s,
-    "exit_code": _exit_code,
-    "truncated": _truncated,
-}}))
-'''
+
+def _run_agent_javascript_code_isolated(
+    *, code: str, node_bin: str, timeout: int, max_output: int
+) -> str:
+    """ProcessPoolExecutor worker for the AI code tool's JavaScript mode."""
+    workdir = tempfile.mkdtemp(prefix="noodle_code_")
+    try:
+        proc = subprocess.run(
+            [
+                node_bin,
+                "--max-old-space-size=128",
+                "--disallow-code-generation-from-strings",
+                "-e",
+                code,
+            ],
+            cwd=workdir,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return json.dumps({"error": f"Code timed out after {timeout}s"})
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+    stdout = proc.stdout or ""
+    stderr = proc.stderr or ""
+    truncated = False
+    if len(stdout) > max_output:
+        stdout = stdout[:max_output]
+        truncated = True
+    if len(stderr) > max_output:
+        stderr = stderr[:max_output]
+        truncated = True
+    return json.dumps(
+        {
+            "stdout": stdout,
+            "stderr": stderr,
+            "exit_code": proc.returncode,
+            "truncated": truncated,
+        }
+    )
 
 
 class CodeExecToolAdapter(ToolAdapter):
-    """Runs Python/JS in an isolated subprocess with an AST pre-check."""
+    """Runs Python/JS through the shared process-isolation boundary."""
 
     def __init__(
         self,
@@ -340,7 +387,7 @@ class CodeExecToolAdapter(ToolAdapter):
     def side_effecting(self) -> bool:
         return True
 
-    def invoke(self, arguments: dict[str, Any]) -> str:
+    async def invoke_async(self, arguments: dict[str, Any]) -> str:
         code = str((arguments or {}).get("code") or "")
         if not code.strip():
             return json.dumps({"error": "No code provided"})
@@ -359,6 +406,7 @@ class CodeExecToolAdapter(ToolAdapter):
                 # Blocklist mode: reject the dangerous module set from _CodeValidator.
                 # Validated here (defence-in-depth) AND inside the worker process.
                 import ast as _ast
+
                 from noodle.expr import _CodeValidator
                 try:
                     tree = _ast.parse(code)
@@ -366,37 +414,24 @@ class CodeExecToolAdapter(ToolAdapter):
                 except (SyntaxError, ValueError) as exc:
                     return json.dumps({"error": f"Code validation failed: {exc}"})
 
-            # E-02: The wrapper template injects _SAFE_BUILTINS (same sandboxed
-            # __import__ as the regular Code node) inside the subprocess.  For
-            # allowlist mode normal builtins are used — the AST allowlist gate
-            # is the security boundary.
-            # Pass the raw value through to the template; !r in the template
-            # handles repr() for us (avoiding double-repr).
-            _allowed_val: object = None
+            # E-02: route through the same host-owned ProcessPoolExecutor
+            # boundary as the regular Code node. The worker applies the same
+            # sandbox validator and safe builtins again for defence in depth.
+            allowed_val: tuple[str, ...] | None = None
             if self._allowed is not None:
-                _allowed_val = frozenset(self._allowed)
-            worker_script = _AGENT_CODE_WORKER_TEMPLATE.format(
-                code=code,
-                max_output=self._max_output,
-                allowed=_allowed_val,
-            )
+                allowed_val = tuple(sorted(self._allowed))
             try:
-                proc = subprocess.run(
-                    [sys.executable, "-c", worker_script],
-                    capture_output=True,
-                    text=True,
+                return await default_isolator().run(
+                    _run_agent_python_code_isolated,
+                    {
+                        "code": code,
+                        "allowed_modules": allowed_val,
+                        "max_output": self._max_output,
+                    },
                     timeout=timeout,
                 )
-            except subprocess.TimeoutExpired:
+            except TimeoutError:
                 return json.dumps({"error": f"Code timed out after {timeout}s"})
-            if proc.stdout:
-                return proc.stdout.strip()
-            return json.dumps({
-                "stdout": "",
-                "stderr": proc.stderr or "",
-                "exit_code": proc.returncode,
-                "truncated": False,
-            })
         elif self._language == "javascript":
             node_bin = shutil.which("node")
             if not node_bin:
@@ -405,61 +440,33 @@ class CodeExecToolAdapter(ToolAdapter):
             # code-generation, disable network-related globals where possible.
             # Note: this is not a true OS-level sandbox — for multi-tenant
             # deployments the Docker sandbox executor must be used instead.
-            argv = [
-                node_bin,
-                "--max-old-space-size=128",
-                "--disallow-code-generation-from-strings",
-                "-e",
-                code,
-            ]
+            try:
+                return await default_isolator().run(
+                    _run_agent_javascript_code_isolated,
+                    {
+                        "code": code,
+                        "node_bin": node_bin,
+                        "timeout": timeout,
+                        "max_output": self._max_output,
+                    },
+                    timeout=timeout + 1,
+                )
+            except TimeoutError:
+                return json.dumps({"error": f"Code timed out after {timeout}s"})
         else:
             return json.dumps({"error": f"Unsupported language: {self._language}"})
 
-        workdir = tempfile.mkdtemp(prefix="noodle_code_")
-        popen_kwargs: dict[str, Any] = dict(
-            cwd=workdir,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        if os.name == "posix":
-            popen_kwargs["start_new_session"] = True  # own process group for killpg
+    def invoke(self, arguments: dict[str, Any]) -> str:
         try:
-            proc = subprocess.Popen(argv, **popen_kwargs)
-            try:
-                stdout, stderr = proc.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                self._kill(proc)
-                proc.communicate()
-                return json.dumps({"error": f"Code timed out after {timeout}s"})
-            truncated = False
-            if len(stdout) > self._max_output:
-                stdout, truncated = stdout[: self._max_output], True
-            if len(stderr) > self._max_output:
-                stderr, truncated = stderr[: self._max_output], True
-            return json.dumps(
-                {
-                    "stdout": stdout,
-                    "stderr": stderr,
-                    "exit_code": proc.returncode,
-                    "truncated": truncated,
-                }
-            )
-        finally:
-            shutil.rmtree(workdir, ignore_errors=True)
-
-    @staticmethod
-    def _kill(proc: subprocess.Popen) -> None:
-        try:
-            if os.name == "posix":
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            else:
-                proc.kill()
-        except (ProcessLookupError, PermissionError, OSError):
-            pass
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is None:
+            return asyncio.run(self.invoke_async(arguments))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(
+                lambda: asyncio.run(self.invoke_async(arguments))
+            ).result()
 
 
 @node(

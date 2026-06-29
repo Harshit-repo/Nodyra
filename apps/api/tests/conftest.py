@@ -104,6 +104,7 @@ def _reset_run_dispatch_state():
     """
     import asyncio
 
+    from app.services import github_sync_jobs as github_sync_jobs_mod
     from app.services import queue as queue_mod
     from app.services import runner as runner_module
     from app.services import runtime_pool as runtime_pool_mod
@@ -119,6 +120,7 @@ def _reset_run_dispatch_state():
         # test_health) binds it to that test's loop; the next test's loop then
         # raises "bound to a different event loop". Null it so it rebinds (TEST-1).
         queue_mod._wakeup = None
+        github_sync_jobs_mod._wakeup = None
         # Rebuild the runtime pool's loop-bound primitives so no permit slot
         # leaked by a prior test's interrupted run survives into this one.
         pool = runtime_pool_mod.pool
@@ -139,6 +141,30 @@ def _reset_run_dispatch_state():
     _reset()
     yield
     _reset()
+
+
+class _InlineTestProcessIsolator:
+    """Run Code-node workers inline for API tests.
+
+    The engine has dedicated process-isolator tests. API workflow tests use
+    trusted snippets and should not depend on Windows multiprocessing spawn
+    semantics for every Code node they exercise.
+    """
+
+    async def run(self, fn, kwargs, *, timeout=None):
+        import asyncio
+
+        if timeout is not None:
+            return await asyncio.wait_for(asyncio.to_thread(fn, **kwargs), timeout)
+        return await asyncio.to_thread(fn, **kwargs)
+
+
+@pytest.fixture(autouse=True)
+def _inline_code_process_isolator_for_api_tests():
+    previous = runner_module.process_isolator
+    runner_module.process_isolator = _InlineTestProcessIsolator()
+    yield
+    runner_module.process_isolator = previous
 
 
 @pytest.fixture(autouse=True)

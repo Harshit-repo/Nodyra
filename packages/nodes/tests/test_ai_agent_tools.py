@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 import noodle_nodes  # noqa: F401 - registers nodes
+import noodle_nodes.ai_v2.agent_tools as agent_tools_module
 from noodle.sdk import registry
 from noodle_nodes.ai_v2.agent_tools import (
     CalculatorToolAdapter,
@@ -106,6 +107,28 @@ def _py_adapter(**kw):
 
 def test_code_exec_simple_stdout() -> None:
     assert _code(_py_adapter(), "print(1 + 1)")["stdout"].strip() == "2"
+
+
+def test_code_exec_uses_process_isolator_for_python() -> None:
+    class FakeIsolator:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def run(self, fn, kwargs, *, timeout):
+            self.calls.append((fn, kwargs, timeout))
+            return fn(**kwargs)
+
+    fake = FakeIsolator()
+    with (
+        patch.object(agent_tools_module, "default_isolator", return_value=fake),
+        patch.object(agent_tools_module.subprocess, "run") as subprocess_run,
+    ):
+        out = _code(_py_adapter(), "print('isolated')")
+
+    assert out["stdout"].strip() == "isolated"
+    assert fake.calls
+    assert fake.calls[0][0] is agent_tools_module._run_agent_python_code_isolated
+    subprocess_run.assert_not_called()
 
 
 def test_code_exec_captures_stderr() -> None:
@@ -436,14 +459,13 @@ def test_rag_node_registered() -> None:
 # Sub-Agent adapter tests
 # ---------------------------------------------------------------------------
 
-from tests.test_ai_v2_nodes import DummyTool, ScriptedChatModel  # noqa: E402
-
 from noodle.ai_runtime import ChatResponse, ToolCall  # noqa: E402
 from noodle_nodes.ai_v2.agent_tools import (  # noqa: E402
     SubAgentAdapter,
     SubAgentToolAdapter,
     subagent_tool_adapters,
 )
+from packages.nodes.tests.ai_v2_test_helpers import DummyTool, ScriptedChatModel  # noqa: E402
 
 
 def _subagent(model, tools=(), **kw):

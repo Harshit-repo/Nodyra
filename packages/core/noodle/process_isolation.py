@@ -150,7 +150,16 @@ class PooledProcessIsolator:
         self._last_activity.pop(key, None)
         self._in_flight.pop(key, None)
         if pool is not None:
+            processes = list((getattr(pool, "_processes", None) or {}).values())
             pool.shutdown(wait=False, cancel_futures=True)
+            for proc in processes:
+                if proc.is_alive():
+                    proc.terminate()
+            for proc in processes:
+                proc.join(timeout=1.0)
+                if proc.is_alive():
+                    proc.kill()
+                    proc.join(timeout=1.0)
 
     def shutdown(self) -> None:
         with self._mutex:

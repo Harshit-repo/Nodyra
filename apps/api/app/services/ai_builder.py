@@ -1529,7 +1529,6 @@ def _build_test_gen_prompt(graph: dict, trigger: dict | None) -> str:
     for n in graph.get("nodes", []):
         if isinstance(n, dict):
             sanitized_params = _strip_credential_refs(n.get("params", {}))
-            ninfo = _NODE_REGISTRY.get(n.get("type", ""), {})
             node_info.append(
                 f"  {n.get('id')} ({n.get('type')}): params={sanitized_params}"
             )
@@ -1539,7 +1538,7 @@ def _build_test_gen_prompt(graph: dict, trigger: dict | None) -> str:
         f"Generate 3 test cases for this workflow graph.\n\n"
         f"{trigger_info}\n\n"
         f"All nodes:\n" + "\n".join(node_info) + "\n\n"
-        f"Respond as JSON: {{tests: [{{name, input_data: {{}}, expected_outputs: {{}}, assertions: [string]}}]}}"
+        "Respond as JSON: {tests: [{name, input_data: {}, expected_outputs: {}, assertions: [string]}]}"
     )
 
 

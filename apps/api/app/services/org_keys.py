@@ -10,6 +10,7 @@ can't each mint one and orphan the loser's credentials.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Protocol
 
 from cryptography.fernet import InvalidToken
@@ -51,6 +52,26 @@ _KEK_CACHE_TTL_SECONDS = 300.0  # 5 minutes
 _kek_cache: dict[str, tuple[bytes, float]] = {}
 
 
+def _cached_kek(org_id: str) -> bytes | None:
+    cached = _kek_cache.get(org_id)
+    if cached is None:
+        return None
+    # Older code cached raw bytes. Tolerate that shape so long-lived processes
+    # and tests that seed the cache directly do not crash during rolling deploys.
+    if isinstance(cached, bytes):
+        _kek_cache[org_id] = (cached, time.monotonic())
+        return cached
+    kek, cached_at = cached
+    if time.monotonic() - cached_at < _KEK_CACHE_TTL_SECONDS:
+        return kek
+    _kek_cache.pop(org_id, None)
+    return None
+
+
+def _store_kek(org_id: str, kek: bytes) -> None:
+    _kek_cache[org_id] = (kek, time.monotonic())
+
+
 def invalidate_kek_cache(org_id: str | None = None) -> None:
     """Clear cached KEKs.  When ``org_id`` is None the entire cache is cleared."""
     if org_id is None:
@@ -69,8 +90,8 @@ async def get_org_kek(
     """
     if not org_id:
         return None
-    cached, cached_at = _kek_cache.get(org_id, (None, 0.0))
-    if cached is not None and time.monotonic() - cached_at < _KEK_CACHE_TTL_SECONDS:
+    cached = _cached_kek(org_id)
+    if cached is not None:
         return cached
     org = await session.get(Organization, org_id)
     if org is None:
@@ -101,7 +122,7 @@ async def get_org_kek(
             org_id,
         )
         return None
-    _kek_cache[org_id] = kek
+    _store_kek(org_id, kek)
     return kek
 
 
@@ -121,7 +142,7 @@ async def batch_get_org_keks(
         if not oid:
             result[oid] = None
             continue
-        cached = _kek_cache.get(oid)
+        cached = _cached_kek(oid)
         if cached is not None:
             result[oid] = cached
         else:
@@ -148,7 +169,7 @@ async def batch_get_org_keks(
                 )
                 result[oid] = None
                 continue
-            _kek_cache[oid] = kek
+            _store_kek(oid, kek)
             result[oid] = kek
 
     return result

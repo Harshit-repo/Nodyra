@@ -15,31 +15,31 @@ from noodle_nodes.builtin import _run_code_isolated
 
 def test_code_node_blocks_subprocess_import() -> None:
     """subprocess must not be importable from inside the code sandbox."""
-    with pytest.raises(ImportError, match="not available in the code sandbox"):
+    with pytest.raises(ValueError, match="Unsafe code: Import of 'subprocess'"):
         _run_code_isolated(None, "import subprocess")
 
 
 def test_code_node_blocks_subprocess_via_from_import() -> None:
     """'from subprocess import ...' is also blocked."""
-    with pytest.raises(ImportError, match="not available in the code sandbox"):
+    with pytest.raises(ValueError, match="Unsafe code: Import from 'subprocess'"):
         _run_code_isolated(None, "from subprocess import run")
 
 
 def test_code_node_blocks_pty_import() -> None:
     """pty (pseudo-terminal, process spawning) must not be importable."""
-    with pytest.raises(ImportError, match="not available in the code sandbox"):
+    with pytest.raises(ValueError, match="Unsafe code: Import of 'pty'"):
         _run_code_isolated(None, "import pty")
 
 
 def test_code_node_blocks_ctypes_import() -> None:
     """ctypes (arbitrary C calls) must not be importable."""
-    with pytest.raises(ImportError, match="not available in the code sandbox"):
+    with pytest.raises(ValueError, match="Unsafe code: Import of 'ctypes'"):
         _run_code_isolated(None, "import ctypes")
 
 
 def test_code_node_blocks_multiprocessing_import() -> None:
     """multiprocessing must not be importable (process spawning)."""
-    with pytest.raises(ImportError, match="not available in the code sandbox"):
+    with pytest.raises(ValueError, match="Unsafe code: Import of 'multiprocessing'"):
         _run_code_isolated(None, "import multiprocessing")
 
 

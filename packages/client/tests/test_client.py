@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from pytest_httpx import HTTPXMock
-
 from nodyra_client.client import NodyraClient, NodyraError
 from nodyra_client.models import WorkflowDetail, WorkflowSummary
+from pytest_httpx import HTTPXMock
 
 
 def test_client_constructs_with_token():

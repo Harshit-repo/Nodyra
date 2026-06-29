@@ -1441,7 +1441,7 @@ async def _execute_run_impl(
             secret_values=secret_values,
         )
 
-    from app.services.metrics import active_runs, run_duration_seconds
+    from app.services.metrics import active_runs
     active_runs.dec()
     run_duration_seconds.observe(time.monotonic() - run_start, status=status)
 
@@ -1588,6 +1588,16 @@ async def _execute_queued_entry(run_id: str) -> None:
             cache = merged
         if isinstance(seed_targets, list) and seed_targets:
             targets = list(seed_targets)
+            if isinstance(cache, dict):
+                explicit_seed_cache_keys = (
+                    {str(key) for key in seed_cache.keys()}
+                    if isinstance(seed_cache, dict)
+                    else set()
+                )
+                for target_node_id in targets:
+                    target_key = str(target_node_id)
+                    if target_key not in explicit_seed_cache_keys:
+                        cache.pop(target_key, None)
         agent_action_resume = None
         if isinstance(seed_agent_resume, dict):
             agent_action_resume = {

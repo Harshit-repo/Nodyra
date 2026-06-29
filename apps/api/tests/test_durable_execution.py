@@ -15,8 +15,6 @@ from app.services.runner import (
     _save_checkpoint,
     _serialize_checkpoint_outputs,
 )
-from noodle.serialization import _approx_json_length
-
 
 # ---------------------------------------------------------------------------
 # _serialize_checkpoint_outputs
@@ -93,9 +91,6 @@ async def test_save_checkpoint_payload_structure() -> None:
     node_outputs = {"n1": {"result": 1}}
     completed = {"n1"}
     last_node_id = "n1"
-
-    # Track the checkpoint value passed to session.execute.
-    captured: list[dict | None] = []
 
     original_exec = runner_module.SessionLocal
     try:
@@ -216,11 +211,11 @@ async def test_checkpoint_truncates_oversized_payload() -> None:
 async def test_checkpoint_cleared_on_terminal_status_error() -> None:
     """When persist_run_outcome is called with a terminal status, checkpoint
     must be set to None."""
+    from collections import deque
     from unittest.mock import patch
 
     from app.services import run_persistence
     from app.services.run_persistence import persist_run_outcome
-    from collections import deque
 
     # Build a minimal mock session.  Critical: ``__aenter__`` must return *self*
     # so that ``async with session_factory() as session:`` gives us the same
@@ -237,7 +232,8 @@ async def test_checkpoint_cleared_on_terminal_status_error() -> None:
     mock_session.execute = AsyncMock(return_value=MagicMock())
     mock_session.__aenter__.return_value = mock_session
 
-    fake_session_factory = lambda: mock_session  # type: ignore[assignment]
+    def fake_session_factory():
+        return mock_session
 
     # Mock queue methods that are awaited.
     mock_queue = MagicMock()
@@ -277,10 +273,10 @@ async def test_checkpoint_cleared_on_terminal_status_error() -> None:
 @pytest.mark.asyncio
 async def test_checkpoint_preserved_on_waiting_status() -> None:
     """Checkpoint should NOT be cleared when status is 'waiting' (resumable)."""
-    from app.models import Run
+    from collections import deque
+
     from app.services import run_persistence
     from app.services.run_persistence import persist_run_outcome
-    from collections import deque
 
     # Use a plain MagicMock without spec to avoid SQLAlchemy descriptor issues.
     mock_run = MagicMock()
@@ -295,7 +291,8 @@ async def test_checkpoint_preserved_on_waiting_status() -> None:
     mock_session.execute = AsyncMock(return_value=MagicMock())
     mock_session.__aenter__.return_value = mock_session
 
-    fake_session_factory = lambda: mock_session  # type: ignore[assignment]
+    def fake_session_factory():
+        return mock_session
 
     mock_queue = MagicMock()
     mock_queue.complete = AsyncMock()

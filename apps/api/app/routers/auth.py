@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import secrets
 import time
 from datetime import UTC, datetime, timedelta
@@ -47,10 +48,9 @@ from app.services.crypto import (
     hash_password,
     verify_password,
 )
-
-import logging
-logger = logging.getLogger(__name__)
 from app.tenancy import DEFAULT_ORG_ID
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 # REST-conventional alias surface: /users/me mirrors /auth/me so clients that

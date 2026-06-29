@@ -12,9 +12,7 @@ Counters are safe for concurrent access: asyncio is single-threaded, so
 from __future__ import annotations
 
 import re
-import time
 from collections import defaultdict
-from typing import Any
 
 
 def _escape_label_value(v: str) -> str:

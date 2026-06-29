@@ -198,8 +198,8 @@ async def import_workflow(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
 
     # Validate the imported graph structure before persisting.
-    from noodle.engine.validation import _validate_graph
     from noodle.engine.types import GraphError
+    from noodle.engine.validation import _validate_graph
     from noodle.sdk import registry as node_registry
 
     try:

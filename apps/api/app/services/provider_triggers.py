@@ -14,8 +14,6 @@ from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
-
-logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -41,6 +39,8 @@ from noodle_nodes.integrations_v2.specs import (
     ProviderTriggerDeactivationContext,
     ProviderTriggerRequest,
 )
+
+logger = logging.getLogger(__name__)
 
 _SECRET_MARKERS = ("secret", "token", "password", "key", "credential")
 
@@ -532,7 +532,7 @@ async def dispatch_provider_webhook(
                     asyncio.to_thread(spec.handle_event, request, params),
                     timeout=30.0,  # P1-17: bounded handler to prevent hanging
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error(
                     "provider trigger handler timed out after 30s "
                     "subscription_id=%s provider=%s",

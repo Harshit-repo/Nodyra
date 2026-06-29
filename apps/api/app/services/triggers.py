@@ -862,6 +862,11 @@ async def dispatch_webhook(
                         node_payload = {**node_payload, "raw_body": raw_ref}
                     else:
                         pre_run_id = None
+                # End the dispatch read transaction before start_run opens its
+                # writer session. SQLite otherwise holds a shared lock here and
+                # rejects the run insert; Postgres also benefits from the
+                # shorter transaction boundary.
+                await dispatch_session.commit()
                 run_id = await start_run(
                     workflow.id,
                     graph,

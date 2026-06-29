@@ -12,6 +12,7 @@ import logging
 import os
 import time
 
+import jwt as _jwt  # PyJWT
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -278,9 +279,6 @@ def verify_password(password: str, stored: str) -> bool:
 # Legacy tokens use the format ``base64url(json).hex(HMAC)`` and are still
 # accepted during the transition period.  Remove the legacy path in a future
 # release once all tokens have cycled through their TTL.
-
-import jwt as _jwt  # PyJWT
-
 
 def _jwt_encode(payload: dict, ttl_seconds: float) -> str:
     """Encode a payload as a standard HS256 JWT."""

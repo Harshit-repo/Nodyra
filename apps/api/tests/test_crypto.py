@@ -2,7 +2,6 @@
 import base64
 import hashlib
 import time
-from unittest.mock import patch
 
 import pytest
 

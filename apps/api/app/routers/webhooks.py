@@ -72,7 +72,6 @@ def _normalize_webhook_path(path: str) -> str:
 
     Returns the normalized path, or raises ``HTTPException(400)`` for invalid input.
     """
-    import re
 
     # Reject path traversal — ``..`` and ``.`` as whole segments are never legitimate
     # in webhook paths.

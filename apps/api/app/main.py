@@ -53,6 +53,7 @@ from app.routers import (
 from app.routers import (
     github_sync as github_sync_router,
 )
+from app.security import get_client_ip
 from app.services import expr_preview
 from app.services.events import broker_reaper_loop
 from app.services.ghost_cleanup import ghost_cleanup_loop
@@ -63,9 +64,8 @@ from app.services.remote_dispatch import (
     dispatcher,
     runner_heartbeat_loop,
 )
-from app.services.retention import retention_loop
 from app.services.replica_health import replica_heartbeat_loop
-from app.services.stuck_run_detector import stuck_run_detector_loop
+from app.services.retention import retention_loop
 from app.services.runner import (
     drain_active_runs,
     process_isolator,
@@ -73,6 +73,7 @@ from app.services.runner import (
 )
 from app.services.runtime_pool import idle_reaper_loop, pool_autoscaler_loop
 from app.services.runtime_pool import pool as runtime_pool
+from app.services.stuck_run_detector import stuck_run_detector_loop
 from app.services.triggers import scheduler_loop
 
 
@@ -315,9 +316,9 @@ async def lifespan(app: FastAPI):
         fail-closed context fallback and silently skip every other tenant's
         schedules/queue entries/retention. No-op while the flag is off."""
 
-        async def system_loop():
+        async def system_loop(*args, **kwargs):
             with run_as_system():
-                await loop_fn()
+                await loop_fn(*args, **kwargs)
 
         return system_loop
 
@@ -371,7 +372,9 @@ async def lifespan(app: FastAPI):
     heartbeat = asyncio.create_task(_as_system(runner_heartbeat_loop)())
     github_sync = asyncio.create_task(_as_system(github_sync_dispatch_loop)())
     ghost_cleanup = asyncio.create_task(_as_system(ghost_cleanup_loop)())
-    replica_heartbeat = asyncio.create_task(replica_heartbeat_loop(role="api"))
+    replica_heartbeat = asyncio.create_task(
+        _as_system(replica_heartbeat_loop)(role="api")
+    )
     stuck_detector = (
         asyncio.create_task(_as_system(stuck_run_detector_loop)())
         if dispatch_inline
@@ -564,6 +567,7 @@ async def _body_size_limit(request: Request, call_next):
 async def _metrics_middleware(request: Request, call_next):
     """Record HTTP request count and duration for Prometheus metrics."""
     import time as _time
+
     from app.services.metrics import (
         _normalize_path,
         http_request_duration_seconds,

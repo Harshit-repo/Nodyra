@@ -9,18 +9,13 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from app.services.ai_builder import (
-    _call_llm_simple,
-    _fallback_explain,
+    _NODE_REGISTRY,
     _fallback_generate_tests,
     _fallback_refine,
-    _NODE_REGISTRY,
     explain_workflow,
     generate_tests,
 )
-
 
 # ── Test data ─────────────────────────────────────────────────────────────────
 

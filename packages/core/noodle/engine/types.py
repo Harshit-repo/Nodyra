@@ -2,7 +2,7 @@
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -16,9 +16,9 @@ class GraphError(Exception):
 
 
 if TYPE_CHECKING:
+    from noodle.engine.subworkflows import SubworkflowMeta, SubworkflowRunner
     from noodle.process_isolation import ProcessIsolator
     from noodle.sdk import NodeRegistry
-    from noodle.engine.subworkflows import SubworkflowMeta, SubworkflowRunner
 
 
 @dataclass

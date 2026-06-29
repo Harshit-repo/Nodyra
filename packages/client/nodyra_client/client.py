@@ -10,8 +10,6 @@ import httpx
 from nodyra_client._version import __version__
 from nodyra_client.models import (
     CredentialSummary,
-    ExportResult,
-    PaginatedResponse,
     RunCreated,
     RunDetail,
     RunSummary,
@@ -76,7 +74,7 @@ class NodyraClient:
         """Close the underlying HTTP client."""
         self._client.close()
 
-    def __enter__(self) -> "NodyraClient":
+    def __enter__(self) -> NodyraClient:
         return self
 
     def __exit__(self, *args: Any) -> None:
@@ -129,25 +127,25 @@ class NodyraClient:
     # ── Workflows ────────────────────────────────────────────────────────
 
     @property
-    def workflows(self) -> "_WorkflowsAPI":
+    def workflows(self) -> _WorkflowsAPI:
         return _WorkflowsAPI(self)
 
     # ── Runs ─────────────────────────────────────────────────────────────
 
     @property
-    def runs(self) -> "_RunsAPI":
+    def runs(self) -> _RunsAPI:
         return _RunsAPI(self)
 
     # ── Credentials ──────────────────────────────────────────────────────
 
     @property
-    def credentials(self) -> "_CredentialsAPI":
+    def credentials(self) -> _CredentialsAPI:
         return _CredentialsAPI(self)
 
     # ── Export ───────────────────────────────────────────────────────────
 
     @property
-    def export_(self) -> "_ExportAPI":
+    def export_(self) -> _ExportAPI:
         return _ExportAPI(self)
 
 
