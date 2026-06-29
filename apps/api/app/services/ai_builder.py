@@ -70,6 +70,19 @@ _ALLOWED_NODE_TYPES = {
     "csv_parse",
     "csv_write",
     "json_schema_validate",
+    # File nodes
+    "read_parquet_file",
+    "write_parquet_file",
+    "read_excel_file",
+    "write_excel_file",
+    # Data platform nodes
+    "snowflake_query",
+    "bigquery_query",
+    "dbt_cloud_trigger_job",
+    "mlflow_log_metric",
+    "mlflow_log_artifact",
+    # GitLab pipeline
+    "gitlab_trigger_pipeline_v2",
 }
 
 _NODE_REGISTRY: dict[str, dict[str, Any]] = {
@@ -295,6 +308,53 @@ _NODE_REGISTRY: dict[str, dict[str, Any]] = {
     "csv_parse": {"name": "CSV Parse", "params": ["text", "delimiter"]},
     "csv_write": {"name": "CSV Write", "params": ["rows", "delimiter"]},
     "json_schema_validate": {"name": "JSON Schema Validate", "params": ["schema"]},
+    # File nodes
+    "read_parquet_file": {
+        "name": "Read Parquet File",
+        "params": ["path", "file", "columns", "limit"],
+    },
+    "write_parquet_file": {
+        "name": "Write Parquet File",
+        "params": ["compression"],
+    },
+    "read_excel_file": {
+        "name": "Read Excel File",
+        "params": ["path", "file", "sheet", "columns", "limit"],
+    },
+    "write_excel_file": {
+        "name": "Write Excel File",
+        "params": ["sheet_name"],
+    },
+    # Data platform nodes
+    "snowflake_query": {
+        "name": "Snowflake Query",
+        "params": ["credentials", "query", "limit"],
+        "credential_specs": [{"type": "snowflake", "param": "credentials", "key": "*"}],
+    },
+    "bigquery_query": {
+        "name": "BigQuery Query",
+        "params": ["credentials", "query", "limit"],
+        "credential_specs": [{"type": "gcp_service_account", "param": "credentials", "key": "*"}],
+    },
+    "dbt_cloud_trigger_job": {
+        "name": "dbt Cloud Trigger Job",
+        "params": ["credentials", "job_id", "cause", "wait_for_completion"],
+        "credential_specs": [{"type": "dbt_cloud", "param": "credentials", "key": "*"}],
+    },
+    "mlflow_log_metric": {
+        "name": "MLflow Log Metric",
+        "params": ["tracking_uri", "run_id", "experiment_name", "metrics", "step"],
+    },
+    "mlflow_log_artifact": {
+        "name": "MLflow Log Artifact",
+        "params": ["tracking_uri", "run_id", "experiment_name", "artifact_path"],
+    },
+    # GitLab pipeline
+    "gitlab_trigger_pipeline_v2": {
+        "name": "GitLab Trigger Pipeline",
+        "params": ["credentials", "project_id", "ref", "variables"],
+        "credential_specs": [{"type": "gitlab_pat", "param": "credentials", "key": "*"}],
+    },
 }
 
 _SECRETISH = re.compile(r"(?i)(sk-[a-z0-9_-]{12,}|xox[baprs]-[a-z0-9-]{10,}|api[_-]?key\s*[:=])")

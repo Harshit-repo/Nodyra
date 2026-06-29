@@ -374,3 +374,43 @@ async def test_generated_node_executes_in_workflow(client: AsyncClient) -> None:
     # The node's output is an envelope dict (main → value).
     output = gen_run.get("output", {})
     assert {"received": {"hello": "world"}} in output.values()
+
+
+# ---- Allow-list / registry coverage for new nodes ----
+
+def test_new_nodes_in_allowed_node_types() -> None:
+    from app.services.ai_builder import _ALLOWED_NODE_TYPES, _NODE_REGISTRY
+
+    new_nodes = [
+        "read_parquet_file",
+        "write_parquet_file",
+        "read_excel_file",
+        "write_excel_file",
+        "snowflake_query",
+        "bigquery_query",
+        "dbt_cloud_trigger_job",
+        "mlflow_log_metric",
+        "mlflow_log_artifact",
+        "gitlab_trigger_pipeline_v2",
+    ]
+    for node_id in new_nodes:
+        assert node_id in _ALLOWED_NODE_TYPES, f"{node_id} missing from _ALLOWED_NODE_TYPES"
+        assert node_id in _NODE_REGISTRY, f"{node_id} missing from _NODE_REGISTRY"
+
+
+def test_new_node_registry_entries_have_params() -> None:
+    from app.services.ai_builder import _NODE_REGISTRY
+
+    checks = {
+        "snowflake_query": (["query"], "snowflake"),
+        "bigquery_query": (["query"], "gcp_service_account"),
+        "dbt_cloud_trigger_job": (["job_id"], "dbt_cloud"),
+        "gitlab_trigger_pipeline_v2": (["project_id", "ref"], "gitlab_pat"),
+    }
+    for node_id, (required_params, cred_type) in checks.items():
+        entry = _NODE_REGISTRY[node_id]
+        for param in required_params:
+            assert param in entry["params"], f"{node_id}: param {param!r} missing"
+        cred_specs = entry.get("credential_specs", [])
+        types = [cs["type"] for cs in cred_specs]
+        assert cred_type in types, f"{node_id}: credential type {cred_type!r} missing"
