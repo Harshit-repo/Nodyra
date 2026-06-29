@@ -1,4 +1,4 @@
-﻿import { CaretDown, CaretLeft, CaretRight, MagnifyingGlass, Star, X } from "@phosphor-icons/react";
+﻿import { CaretDown, CaretLeft, CaretRight, MagnifyingGlass, Sparkle, Star, X } from "@phosphor-icons/react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../api";
@@ -239,6 +239,8 @@ const PaletteItem = memo(function PaletteItem({
     };
   }, []);
 
+  const isAiGenerated = node.category === "AI Generated";
+
   function handleMouseEnter(): void {
     tipTimerRef.current = window.setTimeout(() => setShowTip(true), 300);
   }
@@ -254,7 +256,7 @@ const PaletteItem = memo(function PaletteItem({
   return (
     <div
       key={node.id}
-      className={`palette-item${active ? " active" : ""}`}
+      className={`palette-item${active ? " active" : ""}${isAiGenerated ? " palette-item--ai" : ""}`}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData("application/noodle", node.id);
@@ -264,6 +266,11 @@ const PaletteItem = memo(function PaletteItem({
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
+      {isAiGenerated && (
+        <span className="palette-item-ai-badge" title="AI Generated">
+          <Sparkle size={11} weight="fill" />
+        </span>
+      )}
       <span
         className={`palette-item-glyph${hasBrandIcon ? " has-brand-icon" : ""}`}
         style={
@@ -809,6 +816,14 @@ export function NodePalette() {
           </div>
         )}
       </div>
+      <button
+        type="button"
+        className="palette-generate-btn"
+        onClick={() => window.dispatchEvent(new Event("noodle:open-generate-modal"))}
+      >
+        <Sparkle size={14} weight="fill" />
+        Generate Node
+      </button>
     </aside>
   );
 }

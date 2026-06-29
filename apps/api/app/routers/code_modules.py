@@ -25,8 +25,11 @@ from app.schemas import (
     CodeModuleFunctionShape,
     CodeModuleInfo,
     CodeModuleUpdate,
+    GenerateNodeRequest,
+    GenerateNodeResponse,
 )
 from app.security import optional_current_user, require_permission
+from app.services.ai_builder import generate_custom_node
 from app.services.audit import log_audit
 from app.services.starter_graph import build_starter_graph
 from noodle.models import NodeManifest
@@ -175,6 +178,7 @@ async def create_code_module(
         name=body.name,
         contents=body.contents or "",
         include_undecorated=body.include_undecorated,
+        module_metadata=body.metadata or {},
     )
     session.add(module)
     await log_audit(
@@ -558,3 +562,53 @@ async def workflow_custom_node_manifests(
             continue
         manifests.extend(discovered)
     return manifests
+
+
+@router.post(
+    "/generate-node",
+    response_model=GenerateNodeResponse,
+    dependencies=[Depends(require_permission("code_module:write"))],
+)
+async def generate_node_from_description(
+    body: GenerateNodeRequest,
+    session: AsyncSession = Depends(get_session),
+) -> GenerateNodeResponse:
+    """Generate a ``@node``-decorated Python function from a natural language description.
+
+    Returns the generated code (or a TODO fallback) that the client displays
+    in Monaco for review/editing before the user calls ``POST /code-modules``
+    to save it permanently.
+    """
+    # Gather existing user: node IDs to detect collisions
+    existing_stmt = select(CodeModule)
+    existing_rows = (await session.scalars(existing_stmt)).all()
+    existing_ids: list[str] = []
+    for module in existing_rows:
+        if module.contents.strip():
+            try:
+                discovered, _ = discover_module_function_manifests(
+                    module.id,
+                    module.contents,
+                    include_undecorated=module.include_undecorated,
+                )
+                for manifest in discovered:
+                    existing_ids.append(manifest.id)
+            except SyntaxError:
+                continue
+
+    result = await generate_custom_node(
+        body.description,
+        session=session,
+        org_id="default",
+        existing_node_ids=existing_ids,
+    )
+
+    return GenerateNodeResponse(
+        code=result.get("code", ""),
+        node_id=result.get("node_id", "custom__generated"),
+        node_name=result.get("node_name", "Generated Node"),
+        input_ports=result.get("input_ports", {"main": "any"}),
+        output_ports=result.get("output_ports", {"result": "any"}),
+        is_template=result.get("is_template", False),
+        warnings=result.get("warnings", []),
+    )

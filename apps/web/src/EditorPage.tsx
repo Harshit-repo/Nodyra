@@ -12,6 +12,7 @@ import { ChatPanel } from "./editor/ChatPanel";
 import { ExecutionTimeline } from "./editor/ExecutionTimeline";
 import { CommandPalette } from "./editor/CommandPalette";
 import { FunctionsPanel } from "./editor/FunctionsPanel";
+import { GenerateNodeModal } from "./editor/GenerateNodeModal";
 import { Inspector } from "./editor/Inspector";
 import { NodePalette } from "./editor/NodePalette";
 import { PortDataViewer } from "./editor/PortDataViewer";
@@ -303,6 +304,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
     null,
   );
   const [functionsOpen, setFunctionsOpen] = useState(false);
+  const [generateNodeOpen, setGenerateNodeOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiMode, setAiMode] = useState<AiDraftMode>("draft");
   const [aiFixStrategy, setAiFixStrategy] = useState<AiFixStrategy>("minimal");
@@ -1365,6 +1367,12 @@ const aiAbortRef = useRef<AbortController | null>(null);
     return () => window.removeEventListener("noodle:open-shortcuts", onOpenShortcuts);
   }, []);
 
+  useEffect(() => {
+    function onOpenGenerateNode() { setGenerateNodeOpen(true); }
+    window.addEventListener("noodle:open-generate-modal", onOpenGenerateNode);
+    return () => window.removeEventListener("noodle:open-generate-modal", onOpenGenerateNode);
+  }, []);
+
   async function viewRun(runId: string): Promise<void> {
     try {
       const run = await api.getRun(runId);
@@ -1870,6 +1878,21 @@ const aiAbortRef = useRef<AbortController | null>(null);
           }}
         />
       )}
+
+      <GenerateNodeModal
+        open={generateNodeOpen}
+        onClose={() => setGenerateNodeOpen(false)}
+        onSaved={async () => {
+          const [builtins, custom] = await Promise.all([
+            nodesQuery.refetch(),
+            customNodesQuery.refetch(),
+          ]);
+          setManifests([...(builtins.data ?? []), ...(custom.data ?? [])]);
+        }}
+        environments={environments.map((e) => ({ id: e.id, name: e.name }))}
+        defaultScope="environment"
+        defaultScopeId={environmentId ?? undefined}
+      />
 
       {showHistory && id && (
         <WorkflowHistory

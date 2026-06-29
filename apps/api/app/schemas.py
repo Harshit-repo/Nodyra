@@ -804,6 +804,7 @@ class CodeModuleCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     contents: str = ""
     include_undecorated: bool = False
+    metadata: dict = Field(default_factory=dict)
 
 
 class CodeModuleUpdate(BaseModel):
@@ -822,8 +823,31 @@ class CodeModuleInfo(BaseModel):
     name: str
     contents: str
     include_undecorated: bool = False
+    # ``module_metadata`` is the model's Python attribute (``metadata`` is
+    # reserved by SQLAlchemy's Declarative API).
+    metadata: dict = Field(default_factory=dict, validation_alias="module_metadata")
     created_at: datetime
     updated_at: datetime
+
+
+class GenerateNodeRequest(BaseModel):
+    """Request to generate a custom @node function from a description."""
+
+    description: str = Field(min_length=1, max_length=2000)
+    scope: Literal["environment", "global"] = "environment"
+    scope_id: str | None = Field(default=None, max_length=32)
+
+
+class GenerateNodeResponse(BaseModel):
+    """Generated code + metadata returned before the user decides to save."""
+
+    code: str
+    node_id: str
+    node_name: str
+    input_ports: dict[str, str] = Field(default_factory=dict)
+    output_ports: dict[str, str] = Field(default_factory=dict)
+    is_template: bool = False
+    warnings: list[str] = Field(default_factory=list)
 
 
 class CodeModuleFunctionShape(BaseModel):

@@ -896,6 +896,14 @@ class CodeModule(Base):
     include_undecorated: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
     )
+    # Stowable metadata — AI generation provenance, generation description, etc.
+    # ``module_metadata.ai_generated = true`` marks AI-generated nodes.
+    # Python attribute differs from column name (``metadata`` is reserved by
+    # SQLAlchemy's Declarative API) — use the same naming pattern as
+    # Artifact.artifact_metadata → "metadata".
+    module_metadata: Mapped[dict] = mapped_column(
+        "metadata", JSON, default=dict, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -1237,8 +1245,9 @@ class MCPConnection(Base):
         Text, nullable=False, default="none"
     )
     auth_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # SQLite-compatible default: `'{}'::jsonb` is Postgres-only.
     headers: Mapped[dict] = mapped_column(
-        JSON, nullable=False, server_default=text("'{}'::jsonb")
+        JSON, nullable=False, default=dict
     )
     tool_cache: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(

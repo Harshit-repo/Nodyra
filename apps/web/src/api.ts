@@ -28,6 +28,7 @@ import type {
   CodeModule,
   CodeModuleFunctionPreview,
   LintDiagnostic,
+  GenerateNodeResponse,
   Deployment,
   DeploymentCreate,
   DeploymentUpdate,
@@ -692,6 +693,11 @@ export const api = {
       "/code-modules/lint",
       { method: "POST", body: JSON.stringify({ code }) },
     ),
+  generateNode: (body: { description: string; scope: string; scope_id?: string | null }) =>
+    request<GenerateNodeResponse>("/code-modules/generate-node", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   listCredentials: () => requestAllPages<Credential>("/credentials"),
   listCredentialTypes: () => request<CredentialTypeInfo[]>("/credentials/types"),

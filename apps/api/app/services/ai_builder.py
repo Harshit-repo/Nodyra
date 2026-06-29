@@ -9,6 +9,7 @@ invalid graph, a deterministic fallback produces a conservative editable graph.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import os
@@ -1576,3 +1577,354 @@ def _fallback_generate_tests(graph: dict, trigger: dict | None) -> list[dict]:
             "assertions": ["run.status == 'success'"],
         })
     return tests
+
+
+# ---------------------------------------------------------------------------
+# Slice 3E: AI-Generated Custom Typed Nodes
+# ---------------------------------------------------------------------------
+
+_BLOCKED_IMPORTS = frozenset({
+    "os", "socket", "subprocess", "sys", "shutil", "ctypes",
+    "importlib", "pickle", "shelve", "tempfile",
+})
+_BLOCKED_BUILTINS = frozenset({"eval", "exec", "compile", "open", "__import__", "input"})
+
+
+def _build_node_gen_system_prompt() -> str:
+    """Build the system prompt for the custom node generator LLM call.
+
+    Teaches the LLM the ``@node`` decorator API, ``PortDataKind``,
+    and security constraints, then asks for raw Python code
+    inside a JSON ``{"code": "..."}`` envelope.
+    """
+    return (
+        "You generate Noodle workflow node functions. "
+        "A node function is a Python function decorated with ``@node(...)``.\n\n"
+        "## ``@node`` decorator API\n"
+        "```python\n"
+        "from typing import Any\n"
+        "from noodle import node\n\n"
+        "@node(\n"
+        '    id="my_action",          # unique snake_case id\n'
+        '    name="My Action",        # human-readable name\n'
+        '    category="AI Generated", # always use this category\n'
+        '    description="What it does",\n'
+        '    input_kinds={"main": "any"},  # port_name → PortDataKind\n'
+        '    output_kinds={"result": "any"}, # at least one output port\n'
+        ")\n"
+        "def my_action(\n"
+        "    input: Any = None,  # wired input from upstream\n"
+        "    *,                  # everything after * is a param (inspector field)\n"
+        "    # add your own params here with defaults\n"
+        "    api_key: str = \"\",\n"
+        ") -> Any:\n"
+        '    """Implement the logic."""\n'
+        "    result = do_something(input, api_key)\n"
+        "    return result\n"
+        "```\n\n"
+        "## PortDataKind options\n"
+        "``any``, ``text``, ``number``, ``boolean``, ``json``, ``file``, "
+        "``dataset``, ``table``, ``image``, ``audio``, ``error``\n\n"
+        "## Examples\n\n"
+        "### HTTP call node\n"
+        "```python\n"
+        "from typing import Any\n"
+        "from noodle import node\n\n"
+        "@node(\n"
+        '    id="http_get",\n'
+        '    name="HTTP GET",\n'
+        '    category="AI Generated",\n'
+        '    description="Make an HTTP GET request",\n'
+        '    input_kinds={"input": "any"},\n'
+        '    output_kinds={"result": "any"},\n'
+        ")\n"
+        "def http_get(\n"
+        "    input: Any = None,\n"
+        "    *,\n"
+        "    url: str = \"https://api.example.com/data\",\n"
+        ") -> Any:\n"
+        '    """Fetch data from a URL."""\n'
+        "    import httpx\n"
+        "    resp = httpx.get(url, timeout=30)\n"
+        "    resp.raise_for_status()\n"
+        "    return resp.json()\n"
+        "```\n\n"
+        "### Data transform node\n"
+        "```python\n"
+        "from typing import Any\n"
+        "from noodle import node\n\n"
+        "@node(\n"
+        '    id="filter_items",\n'
+        '    name="Filter Items",\n'
+        '    category="AI Generated",\n'
+        '    description="Filter a list of items by a predicate",\n'
+        '    input_kinds={"items": "json"},\n'
+        '    output_kinds={"filtered": "json"},\n'
+        ")\n"
+        "def filter_items(\n"
+        "    items: list = None,\n"
+        "    *,\n"
+        "    field: str = \"\",\n"
+        "    min_value: float = 0,\n"
+        ") -> list:\n"
+        '    """Filter items by field >= min_value."""\n'
+        "    if not items:\n"
+        "        return []\n"
+        "    return [\n"
+        "        item for item in items\n"
+        "        if item.get(field, 0) >= min_value\n"
+        "    ]\n"
+        "```\n\n"
+        "## Constraints\n"
+        "- Always import: ``from typing import Any`` and ``from noodle import node`` at the top of the code.\n"
+        "- Only import safe libraries: ``httpx``, ``json``, ``re``, ``math``, ``datetime``, ``typing``, ``collections``, ``itertools``, ``random``, ``statistics``\n"
+        "- **NEVER** import: ``os``, ``socket``, ``subprocess``, ``sys``, ``shutil``, ``ctypes``, ``importlib``, ``pickle``\n"
+        "- **NEVER** use: ``eval()``, ``exec()``, ``compile()``, ``open()``, ``__import__()``, ``input()``\n"
+        "- Return a JSON object with a single key ``\"code\"`` containing the raw Python code.\n"
+        "- Output raw Python code only — no markdown fences around it inside the JSON value.\n"
+        "- The function name must be a valid Python identifier in snake_case.\n"
+        "- Always include the ``@node`` decorator.\n"
+        "- Every parameter after ``*`` must have a default value.\n"
+        "- The function must return a value (not None). Use ``return result``.\n"
+        "- When using httpx, always set a timeout.\n"
+    )
+
+
+def _strip_markdown_fences(code: str) -> str:
+    """Remove markdown code fences (```python ... ``` or ``` ... ```) if present."""
+    code = code.strip()
+    if code.startswith("```"):
+        # Remove opening fence (possibly with language hint)
+        code = re.sub(r"^```[a-zA-Z]*\s*\n?", "", code)
+        # Remove closing fence
+        code = re.sub(r"\n?```\s*$", "", code)
+    return code.strip()
+
+
+def _generate_fallback_template(description: str) -> dict:
+    """Generate a deterministic TODO-stub template when no LLM is configured."""
+    slug = re.sub(r"[^a-z0-9_]+", "_", description.lower()).strip("_")[:48] or "custom_node"
+    node_id = f"custom__{slug}"
+    node_name = slug.replace("_", " ").title()
+    code = (
+        f"from typing import Any\n"
+        f"from noodle import node\n\n\n"
+        f"# Generated by Noodle (no AI — fill in the TODO sections)\n"
+        f"@node(\n"
+        f'    id="{node_id}",\n'
+        f'    name="{node_name}",\n'
+        f'    category="AI Generated",\n'
+        f'    description="{description}",\n'
+        f'    input_kinds={{"main": "any"}},\n'
+        f'    output_kinds={{"main": "any"}},\n'
+        f")\n"
+        f"def {slug}(input: Any = None) -> Any:\n"
+        f'    """{description}"""\n'
+        f"    # TODO: implement \"{description}\"\n"
+        f"    output = input\n"
+        f"    return output\n"
+    )
+    return {
+        "code": code,
+        "node_id": node_id,
+        "node_name": node_name,
+        "input_ports": {"main": "any"},
+        "output_ports": {"main": "any"},
+        "is_template": True,
+        "warnings": ["No LLM provider configured — generated a TODO template."],
+    }
+
+
+def _parse_and_validate_node_code(
+    raw_code: str,
+    existing_node_ids: list[str] | None = None,
+) -> dict:
+    """AST-validate generated node code and extract metadata.
+
+    Steps:
+    1. Strip markdown fences if present.
+    2. ``ast.parse(code)`` — syntax check.
+    3. AST walk: verify ``@node`` decorator is present.
+    4. Extract ``id=``, ``name=``, ``category=``, ``input_kinds=``,
+       ``output_kinds=`` from decorator kwargs.
+    5. Verify no blocked imports.
+    6. Verify no dangerous builtins.
+    7. Return parsed metadata + cleaned code.
+
+    Returns a dict matching ``generate_custom_node`` return shape, including
+    ``warnings`` for any issues found.
+    """
+    existing_node_ids = existing_node_ids or []
+    warnings: list[str] = []
+    code = _strip_markdown_fences(raw_code)
+
+    # 1. Syntax check
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as exc:
+        return {
+            "code": code,
+            "node_id": "custom__error",
+            "node_name": "Parsing Error",
+            "input_ports": {"main": "any"},
+            "output_ports": {"main": "any"},
+            "is_template": True,
+            "warnings": [f"Syntax error: line {exc.lineno}: {exc.msg}"],
+        }
+
+    # 2. Verify @node decorator present
+    decorator_found = False
+    decorator_kwargs: dict[str, Any] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            for decorator in node.decorator_list:
+                if isinstance(decorator, ast.Call):
+                    func = decorator.func
+                    if isinstance(func, ast.Name) and func.id == "node":
+                        decorator_found = True
+                        for kw in decorator.keywords:
+                            if isinstance(kw.value, ast.Constant):
+                                decorator_kwargs[kw.arg] = kw.value.value
+                            elif isinstance(kw.value, ast.Dict):
+                                # Parse dict literals for input_kinds / output_kinds
+                                try:
+                                    decorator_kwargs[kw.arg] = ast.literal_eval(kw.value)
+                                except (ValueError, TypeError):
+                                    decorator_kwargs[kw.arg] = {}
+                            elif isinstance(kw.value, (ast.List, ast.Tuple, ast.Set)):
+                                try:
+                                    decorator_kwargs[kw.arg] = ast.literal_eval(kw.value)
+                                except (ValueError, TypeError):
+                                    decorator_kwargs[kw.arg] = []
+                            elif isinstance(kw.value, ast.Name):
+                                # Handle name constants like True/False/None
+                                decorator_kwargs[kw.arg] = ast.literal_eval(kw.value)
+                        break
+            break
+
+    if not decorator_found:
+        return {
+            "code": code,
+            "node_id": "custom__error",
+            "node_name": "Missing @node Decorator",
+            "input_ports": {"main": "any"},
+            "output_ports": {"main": "any"},
+            "is_template": True,
+            "warnings": ["Generated code is missing the @node decorator."],
+        }
+
+    # 3. Check blocked imports
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".", 1)[0]
+                if top in _BLOCKED_IMPORTS:
+                    warnings.append(f"Blocked import '{alias.name}' removed.")
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                top = node.module.split(".", 1)[0]
+                if top in _BLOCKED_IMPORTS:
+                    warnings.append(f"Blocked import '{node.module}' removed.")
+
+    # 4. Check dangerous builtins
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in _BLOCKED_BUILTINS:
+                warnings.append(f"Dangerous built-in '{node.func.id}()' detected.")
+
+    # 5. Extract node metadata
+    node_id = str(decorator_kwargs.get("id", "custom__generated"))
+    node_name = str(decorator_kwargs.get("name", "Generated Node"))
+    input_kinds = decorator_kwargs.get("input_kinds", {"main": "any"})
+    output_kinds = decorator_kwargs.get("output_kinds", {"result": "any"})
+
+    if not isinstance(input_kinds, dict):
+        input_kinds = {"main": "any"}
+    if not isinstance(output_kinds, dict):
+        output_kinds = {"result": "any"}
+
+    # 6. Collision detection
+    if existing_node_ids and node_id in existing_node_ids:
+        original_id = node_id
+        counter = 1
+        while node_id in existing_node_ids:
+            node_id = f"{original_id}_{counter}"
+            counter += 1
+        warnings.append(f"Node id '{original_id}' already exists — using '{node_id}'.")
+
+    return {
+        "code": code,
+        "node_id": node_id,
+        "node_name": node_name,
+        "input_ports": dict(input_kinds),
+        "output_ports": dict(output_kinds),
+        "is_template": False,
+        "warnings": warnings,
+    }
+
+
+async def generate_custom_node(
+    description: str,
+    *,
+    session: AsyncSession,
+    org_id: str,
+    existing_node_ids: list[str] | None = None,
+) -> dict:
+    """Generate a ``@node``-decorated Python function from a natural language description.
+
+    Calls the configured LLM via ``_call_llm_simple``. When no LLM is configured
+    or the call fails, returns a deterministic TODO fallback template.
+
+    Returns:
+        dict with keys: code, node_id, node_name, input_ports, output_ports,
+        is_template, warnings
+    """
+    system_msg = _build_node_gen_system_prompt()
+    user_msg = f"Generate a Noodle @node function that: {description}"
+
+    try:
+        result = await _call_llm_simple(user_msg, system=system_msg)
+    except Exception:  # noqa: BLE001
+        result = None
+
+    if result is None:
+        return _generate_fallback_template(description)
+
+    raw_code = result.get("code", "")
+    if not raw_code.strip():
+        return _generate_fallback_template(description)
+
+    parsed = _parse_and_validate_node_code(raw_code, existing_node_ids)
+
+    # If validation produced warnings about blocked imports / dangerous builtins,
+    # retry once with feedback, then fall back to template on second failure.
+    if parsed.get("warnings") and not parsed.get("is_template"):
+        feedback = "; ".join(parsed["warnings"])
+        retry_msg = (
+            f"Generate a Noodle @node function that: {description}\n\n"
+            f"The previous attempt had these issues that MUST be fixed:\n{feedback}\n"
+            "Fix all issues and return only safe Python code."
+        )
+        try:
+            retry_result = await _call_llm_simple(retry_msg, system=system_msg)
+        except Exception:  # noqa: BLE001
+            retry_result = None
+
+        if retry_result is not None:
+            retry_code = retry_result.get("code", "")
+            if retry_code.strip():
+                reparsed = _parse_and_validate_node_code(retry_code, existing_node_ids)
+                if not reparsed.get("is_template"):
+                    reparsed["warnings"] = list(
+                        set(reparsed.get("warnings", []) + parsed.get("warnings", []))
+                    )
+                    return reparsed
+
+        # Retry still failed — return fallback
+        fallback = _generate_fallback_template(description)
+        fallback["warnings"] = list(
+            set(fallback.get("warnings", []) + parsed.get("warnings", []))
+        )
+        return fallback
+
+    return parsed

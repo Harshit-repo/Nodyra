@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.models import MCPConnection
-from app.security import get_current_user, require_permission
+from app.security import current_user, require_permission
 from app.services.mcp_client import (
     _load_conn_with_secret,
     discover_tools,
@@ -39,7 +39,7 @@ def _org() -> str:
 @router.get("")
 async def list_mcp_connections(
     session: AsyncSession = Depends(get_session),
-    current_user=Depends(get_current_user),
+    current_user=Depends(current_user),
     _: None = Depends(require_permission("mcp_connection:manage")),
 ) -> list[dict]:
     org_id = _org()
@@ -55,7 +55,7 @@ async def list_mcp_connections(
 async def create_mcp_connection(
     body: dict[str, Any],
     session: AsyncSession = Depends(get_session),
-    current_user=Depends(get_current_user),
+    current_user=Depends(current_user),
     _: None = Depends(require_permission("mcp_connection:manage")),
 ) -> dict:
     org_id = _org()
@@ -97,7 +97,7 @@ async def create_mcp_connection(
 async def get_mcp_connection(
     connection_id: str,
     session: AsyncSession = Depends(get_session),
-    current_user=Depends(get_current_user),
+    current_user=Depends(current_user),
     _: None = Depends(require_permission("mcp_connection:manage")),
 ) -> dict:
     org_id = _org()
@@ -113,7 +113,7 @@ async def update_mcp_connection(
     connection_id: str,
     body: dict[str, Any],
     session: AsyncSession = Depends(get_session),
-    current_user=Depends(get_current_user),
+    current_user=Depends(current_user),
     _: None = Depends(require_permission("mcp_connection:manage")),
 ) -> dict:
     org_id = _org()
@@ -158,7 +158,7 @@ async def update_mcp_connection(
 async def delete_mcp_connection(
     connection_id: str,
     session: AsyncSession = Depends(get_session),
-    current_user=Depends(get_current_user),
+    current_user=Depends(current_user),
     _: None = Depends(require_permission("mcp_connection:manage")),
 ) -> None:
     org_id = _org()
@@ -178,7 +178,7 @@ async def delete_mcp_connection(
 async def sync_mcp_connection(
     connection_id: str,
     session: AsyncSession = Depends(get_session),
-    current_user=Depends(get_current_user),
+    current_user=Depends(current_user),
     _: None = Depends(require_permission("mcp_connection:manage")),
 ) -> dict:
     org_id = _org()
@@ -201,7 +201,7 @@ async def sync_mcp_connection(
 async def list_mcp_tools(
     connection_id: str,
     session: AsyncSession = Depends(get_session),
-    current_user=Depends(get_current_user),
+    current_user=Depends(current_user),
     _: None = Depends(require_permission("mcp_connection:manage")),
 ) -> list[dict]:
     org_id = _org()

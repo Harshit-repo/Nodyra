@@ -480,8 +480,19 @@ export interface CodeModule {
   name: string;
   contents: string;
   include_undecorated: boolean;
+  metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+}
+
+export interface GenerateNodeResponse {
+  code: string;
+  node_id: string;
+  node_name: string;
+  input_ports: Record<string, string>;
+  output_ports: Record<string, string>;
+  is_template: boolean;
+  warnings: string[];
 }
 
 export interface CodeModuleFunctionShape {
