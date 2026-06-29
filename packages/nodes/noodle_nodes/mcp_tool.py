@@ -11,8 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from noodle.engine.types import RuntimeContext
-from noodle.expr import build_context, evaluate
-from noodle.sdk import NodeParam, node
+from noodle.sdk import node
 
 
 @node(
@@ -22,11 +21,11 @@ from noodle.sdk import NodeParam, node
     description="Execute a tool from an external MCP server",
     input_kinds={"main": "any"},
     output_kinds={"main": "any"},
-    params=[
-        NodeParam("connection_id", label="MCP Connection", type="mcp_connection"),
-        NodeParam("tool_name", label="Tool Name", type="string"),
-        NodeParam("arguments", label="Arguments", type="object"),
-    ],
+    params={
+        "connection_id": {"type": "mcp_connection", "label": "MCP Connection", "required": True},
+        "tool_name": {"type": "string", "label": "Tool Name", "required": True},
+        "arguments": {"type": "object", "label": "Arguments"},
+    },
 )
 async def mcp_tool(input: Any = None, *, ctx: RuntimeContext) -> Any:  # noqa: ANN401
     """Execute an MCP tool call through the runner's platform hook."""

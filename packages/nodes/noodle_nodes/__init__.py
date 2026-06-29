@@ -14,6 +14,7 @@ from noodle_nodes import charts as charts
 from noodle_nodes import cloud_devops as cloud_devops
 from noodle_nodes import communication as communication
 from noodle_nodes import crypto_extra_nodes as crypto_extra_nodes
+from noodle_nodes import data_platform_nodes as data_platform_nodes
 from noodle_nodes import data_quality as data_quality
 from noodle_nodes import data_transform_nodes as data_transform_nodes
 from noodle_nodes import datasets as datasets
@@ -25,6 +26,7 @@ from noodle_nodes import geospatial as geospatial
 from noodle_nodes import image_nodes as image_nodes
 from noodle_nodes import integrations as integrations
 from noodle_nodes import llm as llm
+from noodle_nodes import mcp_tool as mcp_tool
 from noodle_nodes import llm_evals as llm_evals
 from noodle_nodes import llm_training as llm_training
 from noodle_nodes import ml as ml
@@ -98,6 +100,7 @@ __version__ = "0.0.1"
 __all__ = [
     "ai_extra",
     "browser_automation",
+    "data_platform_nodes",
     "data_quality",
     "statistical_analysis",
     "document_intelligence",
@@ -174,6 +177,7 @@ __all__ = [
     "llm",
     "llm_evals",
     "llm_training",
+    "mcp_tool",
     "ml",
     "model_monitoring",
     "model_serving",
