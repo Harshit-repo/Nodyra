@@ -58,8 +58,10 @@ async def agentic_build(
     event to the stream.  When the client disconnects the loop is cancelled
     cleanly.
     """
-    # --- Validate workflow exists -----------------------------------------------
-    wf = await session.scalar(select(Workflow).where(Workflow.id == workflow_id))
+    # --- Validate workflow exists + org scope -----------------------------------
+    wf = await session.scalar(
+        select(Workflow).where(Workflow.id == workflow_id, Workflow.org_id == org_id)
+    )
     if wf is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
 

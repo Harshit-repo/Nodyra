@@ -64,7 +64,7 @@ async def list_custom_roles(
             .order_by(CustomRole.created_at.desc())
         )
     ).all()
-    return list(rows.all())
+    return rows
 
 
 @router.get(

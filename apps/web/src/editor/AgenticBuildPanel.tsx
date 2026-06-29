@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 
 import type {
   AgenticBuildEvent,
@@ -60,7 +60,12 @@ export function AgenticBuildPanel({
   const sourceRef = useRef<EventSource | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
-  // The panel is "busy" when the loop is running
+  // Clean up SSE stream on unmount
+  useEffect(() => {
+    return () => {
+      sourceRef.current?.close();
+    };
+  }, []);
   const busy =
     status === "drafting" ||
     status === "running" ||

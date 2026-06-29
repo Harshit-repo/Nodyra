@@ -20,7 +20,7 @@ def upgrade() -> None:
     op.create_table(
         "custom_roles",
         sa.Column("id", sa.String(32), primary_key=True, default=sa.text("gen_ulid()")),
-        sa.Column("org_id", sa.String(32), sa.ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True),
+        sa.Column("org_id", sa.String(32), sa.ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False),
         sa.Column("name", sa.String(200), nullable=False),
         sa.Column("permissions", sa.JSON, nullable=False, server_default=sa.text("'[]'::json")),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
@@ -39,9 +39,17 @@ def upgrade() -> None:
     )
     op.create_index("ix_memberships_custom_role_id", "memberships", ["custom_role_id"])
 
+    # RLS: custom_roles holds tenant data — must be org-scoped
+    op.execute("ALTER TABLE custom_roles ENABLE ROW LEVEL SECURITY")
+    op.execute(
+        "CREATE POLICY custom_roles_org ON custom_roles "
+        "USING (org_id = current_setting('app.org_id', true))"
+    )
+
 
 def downgrade() -> None:
+    op.execute("DROP POLICY IF EXISTS custom_roles_org ON custom_roles")
+    op.execute("ALTER TABLE custom_roles DISABLE ROW LEVEL SECURITY")
     op.drop_index("ix_memberships_custom_role_id", table_name="memberships")
     op.drop_column("memberships", "custom_role_id")
     op.drop_table("custom_roles")
-    # custom_roles table dropped cascades to drop its indices

@@ -38,6 +38,7 @@ export function GraphDiffView({
   compareGraph,
   onClose,
   rejectedNodeIds,
+  onToggleReject,
   readOnly,
 }: GraphDiffViewProps) {
   const manifestsById = useEditor((s) => s.manifestsById);
@@ -134,7 +135,13 @@ export function GraphDiffView({
           elementsSelectable={!readOnly}
           onNodeClick={(_, node) => {
             if (readOnly) return;
-            if (statusMap.get(node.id) === "changed") {
+            const status = statusMap.get(node.id);
+            // Ctrl+Click to toggle reject for added/modified/removed nodes
+            if (onToggleReject && status && status !== "unchanged") {
+              onToggleReject(node.id);
+              return;
+            }
+            if (status === "changed") {
               setSelectedNodeId((prev) => (prev === node.id ? null : node.id));
             }
           }}

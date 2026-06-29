@@ -78,7 +78,7 @@ async def oidc_exchange_code(
     discovery = await _fetch_oidc_discovery(sso_config.discovery_url)
     client_secret = await _decrypt_client_secret(sso_config, session)
     tokens = await _token_exchange(discovery, sso_config, code, client_secret)
-    claims = await _validate_id_token(tokens["id_token"], discovery, nonce=nonce)
+    claims = await _validate_id_token(tokens["id_token"], discovery, nonce=nonce, client_id=sso_config.client_id or "")
     return {
         "email": claims["email"],
         "name": claims.get("name") or claims.get("email"),
@@ -187,15 +187,22 @@ async def _fetch_oidc_discovery(discovery_url: str) -> dict:
         cached_at, doc = _discovery_cache[discovery_url]
         if now - cached_at < 3600:
             return doc
+    from noodle_nodes.http_security import assert_public_http_url
+
+    assert_public_http_url(discovery_url, context="OIDC discovery")
     async with _discovery_lock:
         if discovery_url in _discovery_cache:
             cached_at, doc = _discovery_cache[discovery_url]
             if now - cached_at < 3600:
                 return doc
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
             resp = await client.get(discovery_url)
             resp.raise_for_status()
             doc = resp.json()
+        # Validate JWKS and token endpoints from discovery doc before caching
+        for key in ("jwks_uri", "token_endpoint", "authorization_endpoint"):
+            if key in doc and isinstance(doc[key], str):
+                assert_public_http_url(doc[key], context=f"OIDC discovery {key}")
         _discovery_cache[discovery_url] = (time.monotonic(), doc)
         return doc
 
@@ -237,7 +244,7 @@ async def _token_exchange(
 
 
 async def _validate_id_token(
-    id_token: str, discovery: dict, *, nonce: str
+    id_token: str, discovery: dict, *, nonce: str, client_id: str
 ) -> dict:
     """Validate OIDC ID token using authlib."""
     from authlib.jose import JsonWebKey, JsonWebToken
@@ -256,6 +263,8 @@ async def _validate_id_token(
     claims.validate()
     if claims.get("nonce") != nonce:
         raise AuthError("ID token nonce mismatch - replay attack suspected")
+    if claims.get("aud") != client_id:
+        raise AuthError("ID token audience mismatch — not issued for this client")
     if "email" not in claims:
         raise AuthError("ID token missing email claim")
     return dict(claims)
