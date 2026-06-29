@@ -311,6 +311,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiFailedNodeId, setAiFailedNodeId] = useState<string | null>(null);
   const [aiFailedError, setAiFailedError] = useState<string | null>(null);
+  const [rejectedAiNodeIds, setRejectedAiNodeIds] = useState<Set<string>>(new Set());
   const [publishing, setPublishing] = useState(false);
   const [publishReviewOpen, setPublishReviewOpen] = useState(false);
   const [publishUpdateDeployments, setPublishUpdateDeployments] = useState(false);
@@ -883,18 +884,71 @@ const aiAbortRef = useRef<AbortController | null>(null);
     }
   }
 
+  function applyWithFilters(
+    currentGraph: WorkflowGraph,
+    proposedGraph: WorkflowGraph,
+    rejectedNodeIds: Set<string>,
+  ): WorkflowGraph {
+    const currentById = new Map(currentGraph.nodes.map((n) => [n.id, n]));
+    const proposedById = new Map(proposedGraph.nodes.map((n) => [n.id, n]));
+    const resultNodes: GraphNode[] = [];
+    const resultNodeIds = new Set<string>();
+
+    for (const node of proposedGraph.nodes) {
+      const isRejected = rejectedNodeIds.has(node.id);
+      if (!currentById.has(node.id)) {
+        // Added node — drop if rejected
+        if (!isRejected) { resultNodes.push(node); resultNodeIds.add(node.id); }
+      } else if (isRejected) {
+        // Modified node rejected — restore original
+        resultNodes.push(currentById.get(node.id)!);
+        resultNodeIds.add(node.id);
+      } else {
+        // Accepted
+        resultNodes.push(node);
+        resultNodeIds.add(node.id);
+      }
+    }
+
+    // Restore removed nodes that were rejected
+    for (const node of currentGraph.nodes) {
+      if (!proposedById.has(node.id) && rejectedNodeIds.has(node.id)) {
+        resultNodes.push(node);
+        resultNodeIds.add(node.id);
+      }
+    }
+
+    // Filter edges to valid nodes + restore edges for restored nodes
+    const filteredEdges = proposedGraph.edges.filter(
+      (e) => resultNodeIds.has(e.source) && resultNodeIds.has(e.target),
+    );
+    const restoredEdges = currentGraph.edges.filter(
+      (e) =>
+        resultNodeIds.has(e.source) &&
+        resultNodeIds.has(e.target) &&
+        !filteredEdges.some((fe) => fe.id === e.id),
+    );
+
+    return { nodes: resultNodes, edges: [...filteredEdges, ...restoredEdges] };
+  }
+
   async function applyAiDraft(): Promise<void> {
     if (!id || !aiPreview) return;
     setAiBusy(true);
     setMessage("");
     try {
-      await api.updateWorkflow(id, { graph: aiPreview.graph });
-      loadGraph(aiPreview.graph);
+      let graph = aiPreview.graph;
+      if (rejectedAiNodeIds.size > 0) {
+        graph = applyWithFilters(toGraph(), graph, rejectedAiNodeIds);
+      }
+      await api.updateWorkflow(id, { graph });
+      loadGraph(graph);
       markClean();
       const detail = await api.getWorkflow(id);
       setWorkflow(detail);
       setAiOpen(false);
       setAiPreview(null);
+      setRejectedAiNodeIds(new Set());
       const missing = aiPreview.missing_credentials.length
         ? ` Missing credentials: ${aiPreview.missing_credentials.join(", ")}.`
         : "";
@@ -906,6 +960,15 @@ const aiAbortRef = useRef<AbortController | null>(null);
       setAiBusy(false);
     }
   }
+
+  const handleToggleRejectAiNode = (nodeId: string) => {
+    setRejectedAiNodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
+  };
 
   function openAiFixFailedRun(): void {
     const failedNodeId = Object.entries(runStatusMap).find(
@@ -1610,7 +1673,11 @@ const aiAbortRef = useRef<AbortController | null>(null);
           onClose={() => {
             setAiOpen(false);
             setAiPreview(null);
+            setRejectedAiNodeIds(new Set());
           }}
+          currentGraph={aiPreview ? toGraph() : null}
+          rejectedNodeIds={rejectedAiNodeIds}
+          onToggleRejectNode={handleToggleRejectAiNode}
         />
       )}
 
