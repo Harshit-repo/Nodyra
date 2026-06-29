@@ -59,6 +59,7 @@ export function AgenticBuildPanel({
 
   const sourceRef = useRef<EventSource | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
+  const iterationRef = useRef(0);
 
   // Clean up SSE stream on unmount
   useEffect(() => {
@@ -98,6 +99,7 @@ export function AgenticBuildPanel({
       switch (event.type) {
         case "iteration_start": {
           setCurrentIteration(event.iteration);
+          iterationRef.current = event.iteration;
           const actionLabel = event.action === "draft" ? "Drafting" : "Fixing";
           setStatus(event.action === "draft" ? "drafting" : "fixing");
           addLog(
@@ -110,7 +112,7 @@ export function AgenticBuildPanel({
         case "graph_updated": {
           setLatestGraph(event.graph);
           addLog(
-            currentIteration,
+            iterationRef.current,
             "Graph updated",
             `Graph updated: ${event.explanation.substring(0, 200)}`,
           );
@@ -120,7 +122,7 @@ export function AgenticBuildPanel({
           setStatus("running");
           setRunId(event.run_id);
           addLog(
-            currentIteration,
+            iterationRef.current,
             "Run started",
             `Test run ${event.run_id.substring(0, 8)}...`,
           );
@@ -131,7 +133,7 @@ export function AgenticBuildPanel({
           const ids = event.errors.map((e) => e.node_id);
           setFailingNodes(ids);
           addLog(
-            currentIteration,
+            iterationRef.current,
             "Run failed",
             `${event.errors.length} node(s) failed: ${ids.join(", ")}`,
           );
@@ -139,7 +141,7 @@ export function AgenticBuildPanel({
         }
         case "fix_planned": {
           addLog(
-            currentIteration,
+            iterationRef.current,
             "Fix planned",
             `Target nodes: ${event.target_nodes.join(", ")} — ${event.diagnosis.substring(0, 300)}`,
           );
@@ -174,7 +176,7 @@ export function AgenticBuildPanel({
         }
       }
     },
-    [currentIteration, addLog],
+    [addLog],
   );
 
   // -----------------------------------------------------------------------

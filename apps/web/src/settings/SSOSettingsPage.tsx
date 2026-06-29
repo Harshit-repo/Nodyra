@@ -66,9 +66,11 @@ export function SSOSettingsPage() {
       setLoading(false);
       return;
     }
+    let cancelled = false;
     api
       .getSSOConfig()
       .then((cfg) => {
+        if (cancelled) return;
         if (cfg) {
           setConfig(cfg);
           setProtocol(cfg.protocol);
@@ -84,9 +86,13 @@ export function SSOSettingsPage() {
         setLoading(false);
       })
       .catch((err) => {
+        if (cancelled) return;
         setError(errorMessage(err));
         setLoading(false);
       });
+    return () => {
+      cancelled = true;
+    };
   }, [ssoEnabled]);
 
   const handleProtocolChange = useCallback((p: Protocol) => {

@@ -312,9 +312,14 @@ export function McpConnectionsPage() {
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState<MCPConnection | null>(null);
   const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set());
+  const connectionsFetchCancelledRef = useRef(false);
 
   useEffect(() => {
+    connectionsFetchCancelledRef.current = false;
     loadConnections();
+    return () => {
+      connectionsFetchCancelledRef.current = true;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -323,12 +328,14 @@ export function McpConnectionsPage() {
     setError("");
     try {
       const data = await api.listMcpConnections();
+      if (connectionsFetchCancelledRef.current) return;
       setConnections(data);
     } catch (err) {
+      if (connectionsFetchCancelledRef.current) return;
       setError(userFriendlyError(err));
       setConnections([]);
     } finally {
-      setLoading(false);
+      if (!connectionsFetchCancelledRef.current) setLoading(false);
     }
   }
 

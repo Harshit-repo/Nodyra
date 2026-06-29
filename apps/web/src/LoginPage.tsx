@@ -33,19 +33,21 @@ export function LoginPage({
     if (ssoTimerRef.current) window.clearTimeout(ssoTimerRef.current);
     setSsoDetect(null);
     if (!email.includes("@")) return;
+    let cancelled = false;
     ssoTimerRef.current = window.setTimeout(async () => {
       setSsoChecking(true);
       try {
         const result = await api.detectSSO(email);
-        setSsoDetect(result);
+        if (!cancelled) setSsoDetect(result);
       } catch {
-        setSsoDetect(null);
+        if (!cancelled) setSsoDetect(null);
       } finally {
-        setSsoChecking(false);
+        if (!cancelled) setSsoChecking(false);
       }
     }, 500);
     return () => {
       if (ssoTimerRef.current) window.clearTimeout(ssoTimerRef.current);
+      cancelled = true;
     };
   }, [email]);
 

@@ -71,7 +71,7 @@ async def run_agentic_build_loop(
     The best graph produced (either the converged graph or the most recent
     iteration's graph when convergence was not reached).
     """
-    current_graph = await _get_draft_graph(workflow_id)
+    current_graph = await _get_draft_graph(workflow_id, org_id=org_id)
     latest_graph: dict = current_graph
     failing_nodes: list[str] = []
     error_details: list[dict[str, str]] = []
@@ -91,10 +91,13 @@ async def run_agentic_build_loop(
         # --- AI step: draft or fix ------------------------------------------------
         try:
             if iteration == 1:
-                new_graph, explanation = await _ai_draft(goal, workflow_id)
+                new_graph, explanation = await _ai_draft(
+                    goal, workflow_id, cancel_event=cancel_event,
+                )
             else:
                 new_graph, explanation = await _ai_fix(
                     goal, workflow_id, current_graph, failing_nodes, error_details,
+                    cancel_event=cancel_event,
                 )
         except Exception as exc:
             await event_callback({"type": "error", "message": f"LLM call failed: {exc}"})
@@ -107,7 +110,7 @@ async def run_agentic_build_loop(
             "graph": new_graph,
             "explanation": explanation,
         })
-        await _save_draft_graph(workflow_id, new_graph)
+        await _save_draft_graph(workflow_id, new_graph, org_id=org_id)
 
         # --- Test run -------------------------------------------------------------
         run_id = await _start_test_run(workflow_id, new_graph, test_data, org_id)
@@ -162,17 +165,29 @@ async def run_agentic_build_loop(
 # ---------------------------------------------------------------------------
 
 
-async def _get_draft_graph(workflow_id: str) -> dict:
-    """Load the current draft graph from the workflow's ``draft_graph`` field."""
+async def _get_draft_graph(workflow_id: str, org_id: str | None = None) -> dict:
+    """Load the current draft graph from the workflow's ``draft_graph`` field.
+
+    When *org_id* is provided the lookup is scoped to the owning org.
+    """
     async with SessionLocal() as session:
-        wf = await session.scalar(select(Workflow).where(Workflow.id == workflow_id))
+        stmt = select(Workflow).where(Workflow.id == workflow_id)
+        if org_id is not None:
+            stmt = stmt.where(Workflow.org_id == org_id)
+        wf = await session.scalar(stmt)
         return wf.draft_graph if wf and wf.draft_graph else {"nodes": [], "edges": []}
 
 
-async def _save_draft_graph(workflow_id: str, graph: dict) -> None:
-    """Persist the draft graph to the workflow row (same field the editor uses)."""
+async def _save_draft_graph(workflow_id: str, graph: dict, org_id: str | None = None) -> None:
+    """Persist the draft graph to the workflow row (same field the editor uses).
+
+    When *org_id* is provided the lookup is scoped to the owning org.
+    """
     async with SessionLocal() as session:
-        wf = await session.scalar(select(Workflow).where(Workflow.id == workflow_id))
+        stmt = select(Workflow).where(Workflow.id == workflow_id)
+        if org_id is not None:
+            stmt = stmt.where(Workflow.org_id == org_id)
+        wf = await session.scalar(stmt)
         if wf is not None:
             wf.draft_graph = graph
             await session.commit()
@@ -181,12 +196,19 @@ async def _save_draft_graph(workflow_id: str, graph: dict) -> None:
 async def _ai_draft(
     goal: str,
     workflow_id: str,
+    *,
+    cancel_event: asyncio.Event | None = None,
 ) -> tuple[dict, str]:
     """Generate the initial graph from a goal string.
 
     Delegates to ``build_workflow_draft()`` with mode ``"draft"``.
     Returns ``(graph_dict, explanation)``.
+
+    If *cancel_event* is provided and set between internal async operations
+    the call returns early with an empty graph.
     """
+    if cancel_event and cancel_event.is_set():
+        return {"nodes": [], "edges": []}, ""
     async with SessionLocal() as session:
         result = await build_workflow_draft(
             session, workflow_id,
@@ -201,12 +223,19 @@ async def _ai_fix(
     current_graph: dict,
     failing_nodes: list[str],
     error_details: list[dict],
+    *,
+    cancel_event: asyncio.Event | None = None,
 ) -> tuple[dict, str]:
     """Fix failing nodes in the current graph.
 
     Uses ``mode="refine"`` with ``target_node_ids`` so the LLM focuses on the
     broken nodes.  Returns ``(graph_dict, explanation)``.
+
+    If *cancel_event* is provided and set between internal async operations
+    the call returns early with the current graph unchanged.
     """
+    if cancel_event and cancel_event.is_set():
+        return current_graph, ""
     from noodle.models import WorkflowGraph
 
     error_summary = "; ".join(

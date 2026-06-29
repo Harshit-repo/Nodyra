@@ -64,14 +64,14 @@ async def oidc_authorization_url(sso_config: SSOConfig) -> str:
 
 
 async def oidc_exchange_code(
-    sso_config: SSOConfig, code: str, state: str, *, session: AsyncSession
+    sso_config: SSOConfig, code: str, *, pending: dict, session: AsyncSession
 ) -> dict:
-    """Exchange authorization code for tokens, validate nonce, return user claims."""
-    raw = await redis_client.getdel(f"noodle:sso:state:{state}")
-    if raw is None:
-        raise AuthError("Invalid or expired SSO state - CSRF protection")
-    pending = json.loads(raw)
-    if pending["org_id"] != sso_config.org_id:
+    """Exchange authorization code for tokens, validate nonce, return user claims.
+
+    *pending* is the dict previously stored in Redis under the state key
+    (already parsed by the caller).  It must contain ``org_id`` and ``nonce``.
+    """
+    if pending.get("org_id") != sso_config.org_id:
         raise AuthError("SSO state org mismatch")
     nonce = pending["nonce"]
 
@@ -276,18 +276,38 @@ async def _validate_id_token(
 
 
 def build_saml_sp_metadata(sso_config: SSOConfig) -> str:
-    """Generate SP metadata XML for SAML configuration."""
+    """Generate SP metadata XML for SAML configuration using proper XML construction
+    (avoids injection via f-string interpolation of entity_id / acs_url)."""
+    import xml.etree.ElementTree as ET
+
     entity_id = _saml_entity_id()
     acs_url = _saml_acs_url()
-    return f"""<?xml version="1.0"?>
-<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
-                     entityID="{entity_id}">
-  <md:SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
-    <md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
-                                 Location="{acs_url}"
-                                 index="0"/>
-  </md:SPSSODescriptor>
-</md:EntityDescriptor>"""
+
+    # Build the XML tree programmatically so entity_id and acs_url are
+    # properly escaped by ElementTree rather than interpolated raw.
+    root = ET.Element(
+        "{urn:oasis:names:tc:SAML:2.0:metadata}EntityDescriptor",
+        attrib={"entityID": entity_id},
+    )
+    sp = ET.SubElement(
+        root,
+        "{urn:oasis:names:tc:SAML:2.0:metadata}SPSSODescriptor",
+        attrib={
+            "protocolSupportEnumeration": "urn:oasis:names:tc:SAML:2.0:protocol",
+        },
+    )
+    ET.SubElement(
+        sp,
+        "{urn:oasis:names:tc:SAML:2.0:metadata}AssertionConsumerService",
+        attrib={
+            "Binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
+            "Location": acs_url,
+            "index": "0",
+        },
+    )
+    # Use minidom or simple serialisation for a clean XML declaration
+    xml_bytes = ET.tostring(root, encoding="unicode", xml_declaration=True)
+    return xml_bytes
 
 
 def _saml_entity_id() -> str:

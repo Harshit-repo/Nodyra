@@ -30,17 +30,12 @@ function McpToolNodeComponent({ data, selected }: NodeProps) {
     return classes;
   }, [selected, disabled]);
 
-  const nodeClass = useMemo(() => {
-    const classes = ["node"];
-    return classes;
-  }, []);
-
   // Build input/output handle info from manifest
   const inputs = manifest.inputs ?? [];
   const outputs = manifest.outputs ?? [];
 
   return (
-    <div className={nodeClass.join(" ")} style={{ "--cat": color } as React.CSSProperties}>
+    <div className="node" style={{ "--cat": color } as React.CSSProperties}>
       <div className={tileClass.join(" ")}>
         <Plug size={26} weight="fill" style={{ color }} />
 

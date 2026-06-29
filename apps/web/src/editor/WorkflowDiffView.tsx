@@ -255,8 +255,18 @@ function WorkflowDiffViewInner({ workflowId, initialVersion, versions, onClose }
     [workflowId],
   );
 
-  useEffect(() => fetchGraph(compareId, setCompareFetch), [compareId, fetchGraph]);
-  useEffect(() => fetchGraph(baseId, setBaseFetch), [baseId, fetchGraph]);
+  useEffect(() => {
+    const cleanup = fetchGraph(compareId, setCompareFetch);
+    return cleanup;
+  }, [compareId, fetchGraph]);
+  useEffect(() => {
+    const cleanup = fetchGraph(baseId, setBaseFetch);
+    return cleanup;
+  }, [baseId, fetchGraph]);
+  useEffect(() => {
+    const cleanup = fetchGraph(compareId, setCompareFetch);
+    return cleanup;
+  }, [compareId, fetchGraph]);
 
   const compareGraph: WorkflowGraph | null =
     compareId === DRAFT_SENTINEL ? draftGraph : (compareFetch.state === "loaded" ? compareFetch.graph : null);

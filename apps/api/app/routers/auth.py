@@ -774,13 +774,14 @@ async def sso_callback(
     session: AsyncSession = Depends(get_session),
 ):
     """OIDC callback: exchange authorization code for tokens, create session."""
-    raw = await redis_client.get(f"noodle:sso:state:{state}")
+    raw = await redis_client.getdel(f"noodle:sso:state:{state}")
     if raw is None:
         raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "Invalid or expired SSO state"
+            status.HTTP_400_BAD_REQUEST,
+            "SSO state expired or never created — please retry authentication",
         )
     pending = json.loads(raw)
-    org_id = pending["org_id"]
+    org_id = pending.get("org_id")
 
     sso_config = await session.scalar(
         select(SSOConfig).where(SSOConfig.org_id == org_id)
@@ -790,7 +791,7 @@ async def sso_callback(
             status.HTTP_404_NOT_FOUND, "SSO configuration not found"
         )
 
-    claims = await oidc_exchange_code(sso_config, code, state, session=session)
+    claims = await oidc_exchange_code(sso_config, code, pending=pending, session=session)
     user = await get_or_create_sso_user(claims, sso_config, session=session)
     await session.commit()
 
@@ -844,6 +845,7 @@ async def sso_acs(
             status.HTTP_400_BAD_REQUEST, "Missing SAMLResponse"
         )
     import base64
+    import xml.etree.ElementTree as ET
     import zlib
 
     # Decompression bomb protection: reject payloads larger than 100 KiB
@@ -858,7 +860,6 @@ async def sso_acs(
         decoded = base64.b64decode(raw)
         # Limit decompressed size to 1 MiB to prevent zip bombs
         inflated = zlib.decompress(decoded, -15, bufsize=1_048_576)
-        import xml.etree.ElementTree as ET
 
         root = ET.fromstring(inflated)
         ns = {
@@ -902,10 +903,20 @@ async def sso_acs(
         return result
     except HTTPException:
         raise
-    except Exception as exc:
-        logger.error("SAML ACS error: %s", exc)
+    except (ValueError, ET.ParseError) as exc:
+        logger.warning("SAML ACS parse error: %s", exc)
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "Invalid SAML response"
+        ) from exc
+    except Exception as exc:
+        correlation_id = secrets.token_urlsafe(8)
+        logger.error(
+            "SAML ACS internal error [%s]: %s",
+            correlation_id, exc, exc_info=True,
+        )
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Internal error processing SAML response (ref: {correlation_id})",
         ) from exc
 
 

@@ -76,6 +76,10 @@ class VaultKMSProvider(KMSProvider):
         resp.raise_for_status()
         return base64.b64decode(resp.json()["data"]["plaintext"])
 
+    async def aclose(self) -> None:
+        """Close the underlying httpx client, releasing connection pool resources."""
+        await self._client.aclose()
+
     async def health_check(self) -> bool:
         try:
             resp = await self._client.get(

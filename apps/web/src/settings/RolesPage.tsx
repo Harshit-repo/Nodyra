@@ -197,14 +197,19 @@ export function RolesPage() {
   const [editing, setEditing] = useState<CustomRoleInfo | null>(null);
 
   const hasFeature = entitlements.has("advanced_rbac");
+  const rolesFetchCancelledRef = useRef(false);
 
   useEffect(() => {
+    rolesFetchCancelledRef.current = false;
     if (hasFeature) {
       loadRoles();
     } else {
       setLoading(false);
       setRoles([]);
     }
+    return () => {
+      rolesFetchCancelledRef.current = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasFeature]);
 
@@ -213,12 +218,14 @@ export function RolesPage() {
     setError("");
     try {
       const data = await api.listCustomRoles();
+      if (rolesFetchCancelledRef.current) return;
       setRoles(data);
     } catch (err) {
+      if (rolesFetchCancelledRef.current) return;
       setError(userFriendlyError(err));
       setRoles([]);
     } finally {
-      setLoading(false);
+      if (!rolesFetchCancelledRef.current) setLoading(false);
     }
   }
 

@@ -321,7 +321,12 @@ async def export_audit_logs_csv(
     if to is not None:
         stmt = stmt.where(AuditEvent.created_at <= to)
 
-    rows = (await session.scalars(stmt)).all()
+    _CSV_EXPORT_MAX_ROWS = 10_000
+    rows = (await session.scalars(stmt.limit(_CSV_EXPORT_MAX_ROWS + 1))).all()
+
+    truncated = len(rows) > _CSV_EXPORT_MAX_ROWS
+    if truncated:
+        rows = rows[:_CSV_EXPORT_MAX_ROWS]
 
     output = io.StringIO()
     writer = csv.writer(output)
@@ -338,10 +343,13 @@ async def export_audit_logs_csv(
         ])
 
     csv_bytes = output.getvalue().encode("utf-8")
+    headers = {"Content-Disposition": "attachment; filename=audit-log.csv"}
+    if truncated:
+        headers["X-Audit-Export-Truncated"] = "true"
     return Response(
         content=csv_bytes,
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=audit-log.csv"},
+        headers=headers,
     )
 
 
@@ -424,13 +432,20 @@ async def upsert_sso_config(
             "Protocol must be 'oidc' or 'saml'",
         )
 
+    # Validate SSO URLs before storing them
+    from noodle_nodes.http_security import assert_public_http_url
+
+    discovery_url = body.get("discovery_url")
+    if discovery_url:
+        assert_public_http_url(discovery_url, context="SSO discovery URL")
+    idp_sso_url = body.get("idp_sso_url")
+    if idp_sso_url:
+        assert_public_http_url(idp_sso_url, context="SSO IdP SSO URL")
+
     # Encrypt client_secret if provided (new or changed)
     client_secret_raw = body.get("client_secret")
     client_secret_stored = existing.client_secret if existing else None
-    if client_secret_raw and (
-        not existing
-        or client_secret_raw != _mask_secret(existing.client_secret)
-    ):
+    if client_secret_raw:
         org_kek = await get_org_kek(org_id, session)
         if org_kek is None:
             raise HTTPException(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from itertools import count
 from typing import Any
 
 import httpx
@@ -23,6 +24,22 @@ _JSON_TYPE_TO_PORT_KIND: dict[str, str] = {
     "object": "object",
 }
 
+# Headers the caller is never allowed to override via conn.headers
+_DANGEROUS_HEADERS = frozenset({
+    "connection", "transfer-encoding", "host", "content-length",
+    "cookie", "authorization", "set-cookie",
+})
+
+
+def _is_dangerous_header(name: str) -> bool:
+    """Return True if *name* (lowercase) matches the dangerous header blocklist."""
+    lower = name.lower()
+    if lower in _DANGEROUS_HEADERS:
+        return True
+    if lower.startswith("x-forwarded-") or lower.startswith("proxy-"):
+        return True
+    return False
+
 
 class MCPError(Exception):
     """Raised when an MCP server returns a JSON-RPC error response."""
@@ -35,14 +52,28 @@ def _build_auth_headers(
 
     For auth_type='bearer': adds an Authorization: Bearer header.
     For auth_type='header': auth_secret is stored as "Header-Name:value".
+
+    Custom headers from ``conn.headers`` are included *unless* they match
+    the dangerous header blocklist (connection, transfer-encoding, host,
+    x-forwarded-*, proxy-*, cookie, authorization, set-cookie,
+    content-length).
     """
-    headers = dict(conn.headers or {})
+    headers: dict[str, str] = {}
+    for raw_name, raw_value in (conn.headers or {}).items():
+        if _is_dangerous_header(raw_name):
+            _logger.warning("Dropping forbidden custom header %r on MCP connection %s", raw_name, conn.id)
+            continue
+        headers[raw_name] = raw_value
     if conn.auth_type == "bearer" and decrypted_secret:
         headers["Authorization"] = f"Bearer {decrypted_secret}"
     elif conn.auth_type == "header" and decrypted_secret:
         k, _, v = decrypted_secret.partition(":")
         headers[k.strip()] = v.strip()
     return headers
+
+
+# Monotonically increasing JSON-RPC request ID
+_rpc_id = count(1)
 
 
 def _unwrap_mcp_result(result: dict) -> Any:
@@ -66,7 +97,7 @@ async def discover_tools(
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
             conn.url.rstrip("/"),
-            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            json={"jsonrpc": "2.0", "id": next(_rpc_id), "method": "tools/list", "params": {}},
             headers={"Content-Type": "application/json", **headers},
         )
         resp.raise_for_status()
@@ -94,7 +125,7 @@ async def call_tool(
             conn.url.rstrip("/"),
             json={
                 "jsonrpc": "2.0",
-                "id": 1,
+                "id": next(_rpc_id),
                 "method": "tools/call",
                 "params": {"name": tool_name, "arguments": arguments},
             },

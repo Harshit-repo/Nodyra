@@ -1,5 +1,5 @@
 import { Article, DownloadSimple, Funnel } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { EmptyState } from "../EmptyState";
 import { api, userFriendlyError } from "../api";
@@ -114,14 +114,19 @@ export function AuditLogPage() {
   const PAGE_SIZE = 50;
 
   const hasFeature = entitlements.has("audit_logs");
+  const logsFetchCancelledRef = useRef(false);
 
   useEffect(() => {
+    logsFetchCancelledRef.current = false;
     if (hasFeature) {
       loadLogs();
     } else {
       setLoading(false);
       setLogs([]);
     }
+    return () => {
+      logsFetchCancelledRef.current = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, hasFeature]);
 
@@ -143,13 +148,15 @@ export function AuditLogPage() {
         from: filters.from || undefined,
         to: filters.to || undefined,
       });
+      if (logsFetchCancelledRef.current) return;
       setLogs(data.items);
       setTotal(data.total);
     } catch (err) {
+      if (logsFetchCancelledRef.current) return;
       setError(userFriendlyError(err));
       setLogs([]);
     } finally {
-      setLoading(false);
+      if (!logsFetchCancelledRef.current) setLoading(false);
     }
   }
 

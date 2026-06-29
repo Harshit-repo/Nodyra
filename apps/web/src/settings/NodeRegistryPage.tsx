@@ -97,9 +97,11 @@ export function NodeRegistryPage() {
   // Refresh installed packages list when tab switches to "installed" or after install
   useEffect(() => {
     if (tab !== "installed") return;
+    let cancelled = false;
     api
       .listEnvironments()
       .then((data) => {
+        if (cancelled) return;
         const envs = data ?? [];
         setEnvironments(envs);
         const installed = new Set<string>();
@@ -113,6 +115,9 @@ export function NodeRegistryPage() {
       .catch(() => {
         /* ignore */
       });
+    return () => {
+      cancelled = true;
+    };
   }, [tab]);
 
   function handleSearch(e: React.ChangeEvent<HTMLInputElement>) {

@@ -59,6 +59,11 @@ async def create_mcp_connection(
     _: None = Depends(require_permission("mcp_connection:manage")),
 ) -> dict:
     org_id = _org()
+    from noodle_nodes.http_security import assert_public_http_url
+
+    url = str(body.get("url", "")).rstrip("/")
+    assert_public_http_url(url, context="MCP connection")
+
     transport = str(
         body.get("transport", "streamable-http") or "streamable-http"
     )
@@ -81,7 +86,7 @@ async def create_mcp_connection(
     conn = MCPConnection(
         org_id=org_id,
         name=str(body.get("name", "")),
-        url=str(body.get("url", "")).rstrip("/"),
+        url=url,
         transport=transport,
         auth_type=auth_type,
         auth_secret=encrypted_secret,
@@ -125,7 +130,11 @@ async def update_mcp_connection(
     if "name" in body:
         conn.name = str(body["name"])
     if "url" in body:
-        conn.url = str(body["url"]).rstrip("/")
+        from noodle_nodes.http_security import assert_public_http_url
+
+        new_url = str(body["url"]).rstrip("/")
+        assert_public_http_url(new_url, context="MCP connection")
+        conn.url = new_url
     if "transport" in body:
         t = str(body["transport"])
         if t == "sse":

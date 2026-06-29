@@ -17,16 +17,16 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "audit_events",
-        sa.Column("session_id", sa.String(64), nullable=True),
-    )
-    op.add_column(
-        "audit_events",
-        sa.Column("actor_type", sa.String(20), nullable=False, server_default="user"),
-    )
+    with op.batch_alter_table("audit_events") as batch_op:
+        batch_op.add_column(
+            sa.Column("session_id", sa.String(64), nullable=True),
+        )
+        batch_op.add_column(
+            sa.Column("actor_type", sa.String(20), nullable=False, server_default="user"),
+        )
 
 
 def downgrade() -> None:
-    op.drop_column("audit_events", "actor_type")
-    op.drop_column("audit_events", "session_id")
+    with op.batch_alter_table("audit_events") as batch_op:
+        batch_op.drop_column("actor_type")
+        batch_op.drop_column("session_id")

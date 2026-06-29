@@ -204,7 +204,7 @@ export function CodeNodeSchemaEditor({ value, onChange }: CodeNodeSchemaEditorPr
           <div className="ncs-editor">
             <div className="ncs-rows">
               {rows.map((prop, idx) => (
-                <div className="ncs-row" key={idx}>
+                <div className="ncs-row" key={prop.name || `row-${idx}`}>
                   <input
                     className="ncs-name-input"
                     type="text"

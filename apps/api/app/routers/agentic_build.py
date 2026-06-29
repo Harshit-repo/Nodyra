@@ -25,9 +25,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import StreamingResponse
 
 from app.db import get_session
-from app.models import Workflow
+from app.models import User, Workflow
 from app.schemas import AgenticBuildRequest
-from app.security import optional_current_user, require_permission
+from app.security import current_user, optional_current_user, require_permission
 from app.services import rate_limit
 from app.services.agentic_builder import run_agentic_build_loop
 from app.tenancy import current_org_id
@@ -50,6 +50,7 @@ async def agentic_build(
     req: AgenticBuildRequest,
     request: Request,
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(current_user),
 ):
     """Start an agentic build loop and stream progress as SSE events.
 
@@ -68,16 +69,17 @@ async def agentic_build(
     org_id = current_org_id.get() or "default"
 
     # --- Rate limit -------------------------------------------------------------
+    rate_identifier = f"{org_id}:{current_user.id}"
     allowed = await rate_limit.allow(
         "agentic_build_iterations",
-        org_id,
+        rate_identifier,
         limit=_AGENTIC_BUILD_RATE_LIMIT,
         window_seconds=_AGENTIC_BUILD_RATE_WINDOW,
     )
     if not allowed:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
-            "Org agentic-build iteration limit exceeded (max 20 iterations/hour). "
+            "Agentic-build iteration limit exceeded (max 20 iterations/hour). "
             "Wait or reduce max_iterations.",
         )
 
@@ -103,10 +105,13 @@ async def agentic_build(
             pass
         except Exception:
             logger.exception("agentic build loop crashed unexpectedly")
-            await event_callback({
-                "type": "error",
-                "message": "Internal error during agentic build loop.",
-            })
+            try:
+                await event_callback({
+                    "type": "error",
+                    "message": "Internal error during agentic build loop.",
+                })
+            except Exception:
+                logger.exception("event_callback failed during error handling")
         finally:
             await queue.put(None)  # sentinel -- signals stream() to stop
 
