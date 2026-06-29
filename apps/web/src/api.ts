@@ -17,6 +17,10 @@ import type {
   GithubRepoValidation,
   GithubCreateRepoResponse,
   LicenseInfo,
+  MCPConnection,
+  MCPConnectionCreate,
+  MCPConnectionUpdate,
+  MCPToolInfo,
   NodeManifest,
   NodeSource,
   PackageUsage,
@@ -885,6 +889,37 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  // --- MCP Connections ---------------------------------------------------------
+  listMcpConnections: () =>
+    request<MCPConnection[]>("/mcp-connections"),
+
+  createMcpConnection: (body: MCPConnectionCreate) =>
+    request<MCPConnection>("/mcp-connections", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  getMcpConnection: (id: string) =>
+    request<MCPConnection>(`/mcp-connections/${id}`),
+
+  updateMcpConnection: (id: string, body: MCPConnectionUpdate) =>
+    request<MCPConnection>(`/mcp-connections/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  deleteMcpConnection: (id: string) =>
+    request<void>(`/mcp-connections/${id}`, { method: "DELETE" }),
+
+  syncMcpConnection: (id: string) =>
+    request<{ tools_count: number; tools: MCPToolInfo[] }>(
+      `/mcp-connections/${id}/sync`,
+      { method: "POST" },
+    ),
+
+  getMcpTools: (id: string) =>
+    request<MCPToolInfo[]>(`/mcp-connections/${id}/tools`),
 
   // --- Ops dashboard --------------------------------------------------------
   runtimeMode: () => request<RuntimeModeStatus>("/ops/runtime-mode"),

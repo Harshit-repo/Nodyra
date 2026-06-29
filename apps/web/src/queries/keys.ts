@@ -54,4 +54,8 @@ export const queryKeys = {
     ["orgs", orgId, "usage", days] as const,
 
   githubSyncConfig: ["github-sync-config"] as const,
+
+  mcpConnections: ["mcp-connections"] as const,
+  mcpConnection: (id: string) => ["mcp-connections", id] as const,
+  mcpTools: (id: string) => ["mcp-connections", id, "tools"] as const,
 };

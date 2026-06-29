@@ -1,10 +1,11 @@
 ﻿import { CaretDown, CaretLeft, CaretRight, MagnifyingGlass, Star, X } from "@phosphor-icons/react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { api } from "../api";
 import { CATEGORY_ORDER, categoryColor } from "../categories";
 import { isBrandIconName, NodeIcon } from "../NodeIcon";
 import { safeGetItem, safeSetItem } from "../safeStorage";
-import type { NodeManifest } from "../types";
+import type { MCPConnection, NodeManifest } from "../types";
 import { isTriggerManifest, useEditor } from "./store";
 
 const FAVORITES_KEY = "noodle_palette_favorites";
@@ -133,6 +134,76 @@ function isMemoryRelatedNode(node: NodeManifest): boolean {
   );
 }
 
+/** Read tool_cache and extract MCP tools into synthetic NodeManifest entries.
+ *  tool_cache is an array of MCP tool objects: {name, description, input_schema}.
+ *  Returns an empty array when no connections have tools cached. */
+function buildMcpToolManifests(connections: MCPConnection[]): NodeManifest[] {
+  const manifests: NodeManifest[] = [];
+  for (const conn of connections) {
+    if (!conn.tool_cache) continue;
+    const tools: unknown[] = Array.isArray(conn.tool_cache)
+      ? conn.tool_cache
+      : (conn.tool_cache as Record<string, unknown>).tools as unknown[] ?? [];
+    if (!Array.isArray(tools)) continue;
+    for (const tool of tools) {
+      if (!tool || typeof tool !== "object") continue;
+      const t = tool as Record<string, unknown>;
+      const toolName = String(t.name ?? "");
+      if (!toolName) continue;
+      const safeId = toolName.replace(/[^a-zA-Z0-9_-]/g, "_").toLowerCase();
+      manifests.push({
+        id: `mcp_tool__${conn.id}__${safeId}`,
+        name: toolName,
+        category: "MCP",
+        version: "1.0",
+        description: String(t.description ?? ""),
+        icon: "plug",
+        inputs: [{ name: "input", description: "Input data" }],
+        params: [
+          {
+            name: "connection_id",
+            type: "string",
+            required: true,
+            default: conn.id,
+            description: "MCP connection ID",
+            placeholder: "",
+            choices: null,
+            multiline: false,
+            key_value: false,
+            advanced: true,
+          },
+          {
+            name: "tool_name",
+            type: "string",
+            required: true,
+            default: toolName,
+            description: "MCP tool name",
+            placeholder: "",
+            choices: null,
+            multiline: false,
+            key_value: false,
+            advanced: true,
+          },
+          {
+            name: "connection_name",
+            type: "string",
+            required: false,
+            default: conn.name,
+            description: "Connection display name",
+            placeholder: "",
+            choices: null,
+            multiline: false,
+            key_value: false,
+            advanced: true,
+          },
+        ],
+        outputs: [{ name: "result", description: "Tool output" }],
+      });
+    }
+  }
+  return manifests;
+}
+
 function browseSort(a: NodeManifest, b: NodeManifest): number {
   if (a.category === "AI" && b.category === "AI") {
     const am = isMemoryRelatedNode(a);
@@ -247,6 +318,7 @@ const DEFAULT_EXPANDED_GROUPS: string[] = [];
 
 export function NodePalette() {
   const manifests = useEditor((s) => s.manifests);
+  const setManifests = useEditor((s) => s.setManifests);
   const selectedManifest = useEditor((s) =>
     s.nodes.find((node) => node.id === s.selectedId)?.data?.manifest ?? null,
   );
@@ -347,6 +419,28 @@ export function NodePalette() {
     return () =>
       window.removeEventListener("noodle:toggle-node-palette", toggleNodePalette);
   }, []);
+
+  // Fetch MCP connections with tool_cache and inject synthetic MCP tool
+  // manifests into the editor store. These appear as draggable nodes under a
+  // dedicated "MCP" category in the palette.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const connections = await api.listMcpConnections();
+        if (cancelled) return;
+        const mcpTools = buildMcpToolManifests(connections);
+        if (mcpTools.length === 0) return;
+        const current = useEditor.getState().manifests;
+        setManifests([...current, ...mcpTools]);
+      } catch {
+        // MCP connections may not be available (e.g. backend without MCP support).
+        // Silently skip — the MCP category simply won't appear.
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setManifests]);
 
   useEffect(() => {
     const el = chipsRef.current;

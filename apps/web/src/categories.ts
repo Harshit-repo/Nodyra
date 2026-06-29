@@ -8,6 +8,7 @@ export const CATEGORY_COLORS: Record<string, string> = {
   Integrations: "#ff6f91",
   Utility: "#8a93a8",
   General: "#8a93a8",
+  MCP: "#ff8c42",
 };
 
 export function categoryColor(category: string): string {
@@ -22,6 +23,7 @@ export const CATEGORY_ORDER = [
   "Data",
   "Transform",
   "Integrations",
+  "MCP",
   "Utility",
   "General",
 ];

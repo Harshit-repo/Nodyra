@@ -1,3 +1,40 @@
+export interface MCPConnection {
+  id: string;
+  name: string;
+  url: string;
+  transport: string;
+  auth_type: string;
+  auth_secret: string;
+  tool_cache: Record<string, unknown> | null;
+  last_synced_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MCPConnectionCreate {
+  name: string;
+  url: string;
+  transport: string;
+  auth_type: string;
+  auth_secret?: string;
+  auth_header_name?: string;
+}
+
+export interface MCPConnectionUpdate {
+  name?: string;
+  url?: string;
+  transport?: string;
+  auth_type?: string;
+  auth_secret?: string;
+  auth_header_name?: string;
+}
+
+export interface MCPToolInfo {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+}
+
 export interface CredentialParamSpec {
   type: string;
   key: string;

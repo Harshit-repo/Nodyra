@@ -2186,6 +2186,21 @@ body.is-resizing-vertical {
   line-height: 1.25;
   color: var(--ink);
 }
+.node-subtitle {
+  margin: 2px -22px 0;
+  width: 116px;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--ink-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .node-loop-badge {
   margin-top: 4px;
   align-self: center;
@@ -3498,6 +3513,9 @@ body.is-resizing-vertical {
   to {
     transform: rotate(360deg);
   }
+}
+.spin {
+  animation: spin 0.8s linear infinite;
 }
 @keyframes pulse-soft {
   0%,
@@ -5460,6 +5478,109 @@ body.is-resizing {
   background: rgba(240, 116, 122, 0.15);
   border-color: rgba(240, 116, 122, 0.3);
   color: #f0747a;
+}
+
+/* ---- CodeNode Schema Editor ---- */
+.ncs-editor {
+  margin-top: 8px;
+}
+.ncs-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ncs-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.ncs-name-input {
+  flex: 0 0 140px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--editor-radius-tight);
+  background: var(--canvas);
+  color: var(--ink-1);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+.ncs-name-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.ncs-type-select {
+  flex: 0 0 100px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--editor-radius-tight);
+  background: var(--canvas);
+  color: var(--ink-1);
+  font-size: 12px;
+  cursor: pointer;
+}
+.ncs-type-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.ncs-required-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.ncs-required-label input[type="checkbox"] {
+  margin: 0;
+}
+.ncs-remove {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-3);
+  border-radius: var(--editor-radius-tight);
+  width: 28px;
+  font-size: 14px;
+  cursor: pointer;
+  transition:
+    background 110ms ease,
+    color 110ms ease,
+    border-color 110ms ease;
+}
+.ncs-remove:hover:not(:disabled) {
+  background: rgba(240, 116, 122, 0.15);
+  border-color: rgba(240, 116, 122, 0.3);
+  color: #f0747a;
+}
+.ncs-remove:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.ncs-add {
+  margin-top: 6px;
+  padding: 4px 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--editor-radius-tight);
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 110ms ease;
+}
+.ncs-add:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.ncs-preview {
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: var(--editor-radius-tight);
+  font-size: 11px;
+  color: var(--ink-2);
+  line-height: 1.4;
+}
+.ncs-preview strong {
+  color: var(--ink-1);
 }
 
 /* ---- pinned node badge ---- */

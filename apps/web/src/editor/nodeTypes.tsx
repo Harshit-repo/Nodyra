@@ -8,6 +8,7 @@ import { NodeCard } from "./NodeCard";
 import { NodeGroup } from "./NodeGroup";
 import { NoodleEdge } from "./NoodleEdge";
 import { StickyNote } from "./StickyNote";
+import { McpToolNode } from "./nodes/McpToolNode";
 
 export const nodeTypes = {
   noodle: NodeCard,
@@ -16,6 +17,7 @@ export const nodeTypes = {
   mapGroup: MapGroupNode,
   loopFrame: LoopFrame,
   metaBar: MetaBar,
+  mcpTool: McpToolNode,
 };
 
 export const edgeTypes = { default: NoodleEdge };

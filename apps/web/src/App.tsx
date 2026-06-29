@@ -47,6 +47,9 @@ const SecurityPage = lazy(named(() => import("./SecurityPage"), "SecurityPage"))
 const OrganizationPage = lazy(
   named(() => import("./OrganizationPage"), "OrganizationPage"),
 );
+const McpConnectionsPage = lazy(
+  named(() => import("./settings/McpConnectionsPage"), "McpConnectionsPage"),
+);
 const SettingsPage = lazy(named(() => import("./SettingsPage"), "SettingsPage"));
 const WorkflowsPage = lazy(named(() => import("./WorkflowsPage"), "WorkflowsPage"));
 
@@ -206,6 +209,7 @@ export default function App() {
               <Route path="/runner-pools" element={<PageErrorBoundary><RunnerPoolsPage /></PageErrorBoundary>} />
               <Route path="/security" element={<PageErrorBoundary><SecurityPage /></PageErrorBoundary>} />
               <Route path="/organization" element={<PageErrorBoundary><OrganizationPage /></PageErrorBoundary>} />
+              <Route path="/settings/mcp-connections" element={<PageErrorBoundary><McpConnectionsPage /></PageErrorBoundary>} />
               <Route path="/settings" element={<PageErrorBoundary><SettingsPage /></PageErrorBoundary>} />
               <Route path="*" element={<PageErrorBoundary><NotFound /></PageErrorBoundary>} />
             </Route>

@@ -274,7 +274,7 @@ export function graphNodeToNode(
   }
   return {
     id: gn.id,
-    type: gn.type === "map_group" ? "mapGroup" : "noodle",
+    type: gn.type === "map_group" ? "mapGroup" : gn.type === "mcp_tool" ? "mcpTool" : "noodle",
     position: gn.position,
     data: {
       manifest,
@@ -1390,7 +1390,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
       if (!outputsOverride && manifest.id === "api_endpoint") {
         outputsOverride = deriveApiEndpointOutputs(params.routes);
       }
-      const rfType = n.type === "map_group" ? "mapGroup" : "noodle";
+      const rfType = n.type === "map_group" ? "mapGroup" : n.type === "mcp_tool" ? "mcpTool" : "noodle";
       nodes.push({
         id: n.id,
         type: rfType,
@@ -1706,9 +1706,10 @@ export const useEditor = create<EditorStore>((set, get) => ({
     }
 
     const nodeId = newNodeId();
+    const sourceOut = edge.sourceHandle ?? findOutputPort(source.data.manifest, edge.sourceHandle)?.name ?? "main";
     const node: NoodleNode = {
       id: nodeId,
-      type: manifest.id === "map_group" ? "mapGroup" : "noodle",
+      type: manifest.id === "map_group" ? "mapGroup" : manifest.id.startsWith("mcp_tool") ? "mcpTool" : "noodle",
       position,
       ...(manifest.id === "map_group" ? { style: { width: 380, height: 280, zIndex: -1 } } : {}),
       data: {
@@ -1726,7 +1727,6 @@ export const useEditor = create<EditorStore>((set, get) => ({
       },
     };
 
-    const sourceOut = edge.sourceHandle ?? findOutputPort(source.data.manifest, edge.sourceHandle)?.name ?? "main";
     const targetIn = edge.targetHandle ?? findInputPort(target.data.manifest, edge.targetHandle)?.name ?? "input";
     const candidateNodes = [...state.nodes, node];
     const sourceCheck = validateConnection(candidateNodes, {
@@ -1782,7 +1782,7 @@ export const useEditor = create<EditorStore>((set, get) => ({
 
     const makeNode = (m: NodeManifest, pos: { x: number; y: number }): NoodleNode => ({
       id: newNodeId(),
-      type: m.id === "map_group" ? "mapGroup" : "noodle",
+      type: m.id === "map_group" ? "mapGroup" : m.id.startsWith("mcp_tool") ? "mcpTool" : "noodle",
       position: pos,
       ...(m.id === "map_group" ? { style: { width: 380, height: 280, zIndex: -1 } } : {}),
       data: {
