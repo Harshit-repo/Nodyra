@@ -1058,8 +1058,8 @@ async def pool_autoscaler_loop() -> None:
 
     while True:
         try:
-            from app.services.queue import stats as _queue_stats
             from app.db import SessionLocal
+            from app.services.queue import stats as _queue_stats
 
             async with SessionLocal() as session:
                 qs = await _queue_stats(session)

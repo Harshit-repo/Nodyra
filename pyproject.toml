@@ -26,6 +26,7 @@ dev = [
     # broker waiting on a pub/sub message that never arrives) fails fast in CI
     # instead of wedging the whole run. Enabled via --timeout in the CI lanes.
     "pytest-timeout>=2.3",
+    "pytest-httpx>=0.32",
     "ruff>=0.6",
     "httpx>=0.27",
     "aiosqlite>=0.20",

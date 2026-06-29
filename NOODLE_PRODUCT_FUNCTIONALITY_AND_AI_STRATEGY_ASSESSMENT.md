@@ -15,44 +15,42 @@
 |-----------|-------------|------------|
 | **Overall Architecture** | 8/10 | Clean service boundaries, correct DAG engine, DB-backed queue. `_execute_run_impl` partially split (`_prepare_run_context` extracted). |
 | **Current Functionality** | 8/10 | ~250+ features implemented and working; comprehensive for a 0.0.1 product |
-| **Workflow Engine** | 8.5/10 | Engine validation, hooks, per-type concurrency, timeouts, RuntimeContext all added. Durable execution via NodeRun reconstruction exists but is best-effort (`except: pass`). |
-| **Python-Native Differentiation** | 7/10 | Excellent code node, warm pool, export/import, package management. Code node sandbox hardened (comprehensive blocked modules). Missing CLI, Jupyter, typed code I/O. |
-| **AI Readiness** | 7/10 | Solid AI builder with fix mode, node catalog, credential-safe drafts. Missing test generation, multi-turn refinement, standalone explain endpoint. |
-| **UX / Visual Workflow** | 8/10 | ReactFlow canvas, live streaming, smart connection validation. marked.parse, drag leak, canvas tests all fixed. Missing guided onboarding, node descriptions on hover. |
-| **Production Readiness** | 8/10 | *(was 6/10)* 19 of 22 audited P0/P1 issues now fixed. Security hardened. Two remaining: E-02 (CodeExecToolAdapter subprocess), B-01 (session.get in helper). |
+| **Workflow Engine** | 8.7/10 | Engine validation, hooks, per-type concurrency, timeouts, RuntimeContext, and `Run.checkpoint` durable checkpoints added. Restart/load verification still needed before public launch. |
+| **Python-Native Differentiation** | 7.5/10 | Excellent code node, warm pool, export/import, package management, and initial `nodyra-client` CLI. Missing Jupyter and typed code I/O. |
+| **AI Readiness** | 8/10 | AI builder now has fix mode, node catalog, credential-safe drafts, explain endpoint, deterministic test generation, and refine mode. Needs end-to-end LLM/provider hardening. |
+| **UX / Visual Workflow** | 8.2/10 | ReactFlow canvas, live streaming, smart connection validation, node palette descriptions, expression autocomplete, and execution timeline. Guided onboarding still missing. |
+| **Production Readiness** | 8.3/10 | *(was 6/10)* Audited P0/P1 issues are now addressed on this branch, including E-02 and B-01. Remaining risk is verification depth: restart/load/security-browser gates. |
 | **Market Positioning Potential** | 9/10 | Unique wedge: Python-native + AI-generated + visual editable. No competitor occupies this intersection. |
 
 ### Audit Fix Verification (2026-06-29)
 
-Of the 22 critical P0/P1 issues from the 2026-06-24 audit, **19 are confirmed fixed** on this branch:
+Of the 22 critical P0/P1 issues from the 2026-06-24 audit, **22 are now addressed** on this branch:
 
-**P0s fixed (7/8):** E-01 ✅ (sandbox — comprehensive blocked modules), B-02 ✅ (MCP org bypass), B-03 ✅ (cancel run org check), V-01 ✅ (production nginx Dockerfile), V-02 ✅ (baked secrets removed), T-01 ✅ (CI frontend tests), and B-04 ✅ (unauthenticated list endpoints)
+**P0s fixed (8/8):** E-01 ✅ (sandbox — comprehensive blocked modules), E-02 ✅ (AI CodeExecToolAdapter routed through process isolation), B-02 ✅ (MCP org bypass), B-03 ✅ (cancel run org check), V-01 ✅ (production nginx Dockerfile), V-02 ✅ (baked secrets removed), T-01 ✅ (CI frontend tests), and B-04 ✅ (unauthenticated list endpoints)
 
-**P1s fixed (12/14):** B-05 ✅ (flush not commit), B-06 ✅ (remote run filter), B-07 ✅ (OAuth cache+circuit breaker), D-01 ✅ (dedup UNIQUE), D-02 ✅ (version UNIQUE), D-03/D-05 ✅ (github_sync RLS), D-04 ✅ (encrypted webhook secret), E-08 ✅ (remote cycle detection), V-05 ✅ (liveness probe), V-09 ✅ (rolling update), F-02 ✅ (marked.parse async:false), F-03 ✅ (drag AbortController), T-02 ✅ (canvas store tests)
+**P1s fixed (14/14):** B-01 ✅ (`_load_run_and_workflow` uses org-filtered `select()`), B-05 ✅ (flush not commit), B-06 ✅ (remote run filter), B-07 ✅ (OAuth cache+circuit breaker), D-01 ✅ (dedup UNIQUE), D-02 ✅ (version UNIQUE), D-03/D-05 ✅ (github_sync RLS), D-04 ✅ (encrypted webhook secret), E-08 ✅ (remote cycle detection), V-05 ✅ (liveness probe), V-09 ✅ (rolling update), F-02 ✅ (marked.parse async:false), F-03 ✅ (drag AbortController), T-02 ✅ (canvas store tests)
 
-**Remaining (2):** E-02 — CodeExecToolAdapter still uses `subprocess.Popen` (NOT FIXED). B-01 — debug snapshot has route auth but `_load_run_and_workflow` still uses `session.get()` bypassing org filter (PARTIAL).
+**Remaining production gate:** not a known P0/P1 code fix, but proof: full CI, real Postgres lane, browser smoke, security scan, and durable restart/load tests must be green before public launch.
 
 ### Biggest Strengths *(unchanged)*
 
 1. **Correct, production-grade architecture** — DB-backed durable queue (no Celery), clean executor abstraction, deterministic topological sort, three-layer multi-tenancy
 2. **AI workflow builder that works today** — Natural-language-to-workflow with fix/repair mode, credential-safe drafts, deterministic fallback
 3. **Python-native execution** — Warm per-environment subprocess pools, three environment backends, `@node` SDK, export/import, DatasetRef/Parquet
-4. **Comprehensive audit fixes** — 19 of 22 P0/P1 issues resolved in a single sprint. Engine validation, hooks, concurrency, auth, deployment, CI all hardened.
+4. **Comprehensive audit fixes** — 22 of 22 audited P0/P1 issues addressed in a single sprint. Engine validation, hooks, concurrency, auth, deployment, CI, and process isolation all hardened.
 
 ### Actual Remaining Gaps *(verified, not assumed)*
 
-1. **E-02**: CodeExecToolAdapter uses raw `subprocess.Popen` instead of ProcessPoolExecutor — different isolation boundary from Code node
-2. **B-01**: `_load_run_and_workflow` uses `session.get()` bypassing org filter (route guard exists but DB layer doesn't)
-3. **No durable execution checkpoints** — Best-effort NodeRun reconstruction exists but wrapped in `except: pass`. Real checkpoint-after-every-node not implemented.
-4. **No Python SDK/CLI** — Can't use Noodle from scripts, CI/CD, or terminal. Strategic gap for "Python-native" positioning.
-5. **No guided onboarding** — First-time users discover < 30% of editor features
-6. **No workflow test generation** — Can't ask AI to generate test data and expected outputs
-7. **No multi-turn AI refinement** — Single-turn generation only
-8. **CI security scans still advisory** — Postgres lane `continue-on-error: true`, pip-audit non-blocking
+1. **Durable execution needs hostile restart proof** — `Run.checkpoint` exists and saves after node completion, but public launch needs a kill/restart/load test proving only unfinished nodes rerun.
+2. **Python SDK/CLI is MVP-grade** — `nodyra-client` exists, but needs packaging/release validation, auth refresh behavior, and command coverage beyond the first workflow/run/export/credential set.
+3. **AI improvements are implemented but need LLM-path hardening** — Explain, generate-tests, and refine mode have deterministic fallback tests; provider-specific failure, latency, and prompt-safety tests are still needed.
+4. **Guided onboarding still missing** — First-time users still need a guided editor tour.
+5. **Typed code node I/O still missing** — Code node outputs remain effectively `Any`.
+6. **CI/security proof must be run end-to-end** — The config is stronger, but the release gate is actual green CI plus security scan output, not code inspection alone.
 
 ### Main Recommendation
 
-**Noodle is already beta-ready for self-hosted single-tenant deployment.** The 2 remaining fixes are small (~3 hours combined). Ship beta now, build the P1 differentiators (durable execution, Python SDK, AI improvements, onboarding) over the next 6 weeks for public launch. The unique market wedge is real and defensible.
+**Noodle is close to self-hosted beta-ready, but should not be called public-launch production-grade until the verification gates are green.** MS1 code issues are addressed. MS2 differentiators are partially implemented. The next priority is proof: restart-resume tests, full CI, security scans, Docker/Helm smoke, and browser verification.
 
 ---
 
@@ -120,13 +118,13 @@ Of the 22 critical P0/P1 issues from the 2026-06-24 audit, **19 are confirmed fi
 | Run retry (queue-level) | IMPLEMENTED_GOOD | `queue.py:fail` | Exponential backoff, max attempts |
 | Dead-letter queue + replay | IMPLEMENTED_GOOD | `routers/ops.py` | Manual replay from dead-letter |
 | Batch runs (parameter matrix) | IMPLEMENTED_GOOD | `services/run_batches.py` | Param sweep |
-| Run deduplication key | IMPLEMENTED_WEAK | `Run.deduplication_key` | No UNIQUE constraint (P1 D-01) |
+| Run deduplication key | IMPLEMENTED_GOOD | `Run.deduplication_key` | UNIQUE constraint added (D-01) |
 | Run cancellation | IMPLEMENTED_GOOD | `runner.py:cancel_run` | 3 paths: remote, sandbox, local |
 | Stuck run detector | IMPLEMENTED_GOOD | `services/stuck_run_detector.py` | 1800s grace window |
 | Ghost runner cleanup | IMPLEMENTED_GOOD | `services/ghost_cleanup.py` | 48h TTL |
 | Run retention/pruning | IMPLEMENTED_GOOD | `services/retention.py` | Age-based + max-per-workflow cap |
 | Error workflow dispatch | IMPLEMENTED_GOOD | `services/run_alerts.py` | Error handler workflows + webhooks |
-| Durable execution (checkpoint) | MISSING | — | No mid-run checkpointing; server restart loses all in-flight state |
+| Durable execution (checkpoint) | IMPLEMENTED_WEAK | `Run.checkpoint`, `runner.py:_save_checkpoint` | Saves after node completion; needs hostile restart/load verification |
 
 ### 3. Developer Experience
 
@@ -147,7 +145,7 @@ Of the 22 critical P0/P1 issues from the 2026-06-24 audit, **19 are confirmed fi
 | Environment CRUD | IMPLEMENTED_GOOD | `routers/environments.py` | Python version, packages, pool config |
 | Code linting (ruff) | IMPLEMENTED_GOOD | `routers/code_modules.py` | Ruff check + format |
 | Expression preview (isolated) | IMPLEMENTED_GOOD | `services/expr_preview.py` | Subprocess-safe evaluator |
-| Python client library / CLI | MISSING | — | No pip install noodle-client exists |
+| Python client library / CLI | IMPLEMENTED_MVP | `packages/client/nodyra_client/` | SDK + CLI scaffold exists; release/auth hardening still needed |
 | Jupyter/notebook integration | MISSING | — | No export to/import from .ipynb |
 | Code node typed I/O | MISSING | — | Code node uses Any for inputs/outputs |
 
@@ -174,9 +172,9 @@ Of the 22 critical P0/P1 issues from the 2026-06-24 audit, **19 are confirmed fi
 | Agent action approval | IMPLEMENTED_GOOD | `RunApproval` + `RunApprovalsPanel.tsx` | Human-in-the-loop gating |
 | MCP server (built-in) | IMPLEMENTED_GOOD | `routers/mcp.py`, `mcp/` | Streamable-HTTP transport, tools, resources, prompts |
 | Workflow as MCP tool | IMPLEMENTED_GOOD | `call_workflow_tool()` | Dynamic per-workflow tool registration |
-| AI explain a workflow | PARTIAL | Only in generation context | No standalone "explain this graph" endpoint |
-| Workflow test generation | MISSING | — | No test data/expected output generation |
-| Multi-turn AI refinement | MISSING | — | Single-turn generation; no iterative refinement |
+| AI explain a workflow | IMPLEMENTED_MVP | `workflows.py:/explain`, `ai_builder.py:explain_workflow` | Standalone endpoint exists; provider-path hardening still needed |
+| Workflow test generation | IMPLEMENTED_MVP | `workflows.py:/generate-tests`, `ai_builder.py:generate_tests` | Deterministic fallback exists; needs broader fixture coverage |
+| Multi-turn AI refinement | IMPLEMENTED_MVP | `workflows.py:/ai-draft`, `mode=refine` | Conversation-aware draft endpoint exists; needs UX polish |
 | AI-generated custom nodes | PARTIAL | Code nodes + user modules | No typed, port-based node gen from NL |
 
 ### 5. Python-Native Features
@@ -227,7 +225,7 @@ Of the 22 critical P0/P1 issues from the 2026-06-24 audit, **19 are confirmed fi
 
 | Gap | Priority | Why It Matters | Complexity |
 |-----|----------|----------------|------------|
-| **Durable execution (checkpointing)** | P0 | Server restart = all in-flight state lost | Large |
+| **Durable execution restart proof** | P0 | Checkpoints exist, but hostile kill/restart/load path still needs proof | Medium |
 | Split `_execute_run_impl` (540 lines) | P1 | Merge-conflict magnet, hard to test | Medium |
 | Workflow-level timeout inside engine | P1 | Timeout only at asyncio.wait_for wrapper | Small |
 | Cancel propagation into sync threads | P1 | Long-running sync nodes can't be cancelled | Medium |
@@ -239,8 +237,8 @@ Of the 22 critical P0/P1 issues from the 2026-06-24 audit, **19 are confirmed fi
 
 | Gap | Priority | Why It Matters | Complexity |
 |-----|----------|----------------|------------|
-| **Python client library (pip install noodle-client)** | P0 | Can't use Noodle from Python scripts, CI/CD, notebooks | Large |
-| **CLI tool (noodle run, noodle push, noodle export)** | P0 | No command-line interface for automation | Medium |
+| **Python client release hardening** | P0 | SDK/CLI scaffold exists; package publishing, auth edge cases, and integration tests still need proof | Medium |
+| **CLI workflow coverage** | P0 | CLI exists, but automation-grade run/push/export behavior needs end-to-end verification | Medium |
 | Jupyter notebook export/import | P1 | Data scientists can't move between notebooks and Noodle | Medium |
 | Typed code node inputs/outputs | P1 | Code node uses `Any` — no contract, no validation | Medium |
 | Pythonic graph builder API | P2 | Can't build workflows imperatively in Python | Medium |
@@ -252,9 +250,9 @@ Of the 22 critical P0/P1 issues from the 2026-06-24 audit, **19 are confirmed fi
 
 | Gap | Priority | Why It Matters | Complexity |
 |-----|----------|----------------|------------|
-| **Standalone "explain this workflow" endpoint** | P1 | Can only get explanation in generation context | Low |
-| **Multi-turn AI refinement** | P1 | Single-turn generation; can't iterate conversationally | Medium |
-| **Workflow test generation by AI** | P1 | No automated test data or expected output generation | Medium |
+| **Explain workflow hardening** | P1 | Standalone endpoint exists; needs provider-backed evals and UX affordances | Low |
+| **Multi-turn AI refinement polish** | P1 | Refine mode exists; needs stronger conversation UX and regression tests | Medium |
+| **Workflow test generation hardening** | P1 | Endpoint exists; needs broader expected-output validation and fixture coverage | Medium |
 | AI-generated custom typed nodes | P2 | Code nodes are the only escape hatch for missing types | Large |
 | Side-by-side graph diff visualization | P2 | Preview shows text summary, not visual before/after | Medium |
 | AI citation/attribution tracking | P2 | Can't tell which parts of graph came from AI vs manual | Low |
@@ -329,7 +327,7 @@ calls an API, transforms with Python, sends Slack if score is high, stores outpu
 | 5. Edit node config | ✅ DONE | — |
 | 6. Review Python code | ✅ DONE | — |
 | 7. Test the workflow | ✅ DONE | Manual execution works |
-| 8. AI explains and fixes | PARTIAL | Fix mode exists; no standalone explain; no multi-turn refinement |
+| 8. AI explains and fixes | ✅ DONE | Explain endpoint and refine mode exist; LLM-path hardening still needed |
 | 9. Deploy the workflow | ✅ DONE | Publishing and deployments exist |
 
 ### Recommended Architecture for Full AI Workflow Generation
@@ -371,9 +369,9 @@ User Prompt
 
 | Feature | Priority | Effort | Why |
 |---------|----------|--------|-----|
-| Standalone "explain this workflow" endpoint | P1 | 3-5 days | Low effort, high product value — feeds into AI debugging + docs |
-| Multi-turn AI refinement | P1 | 2-3 weeks | Unlocks conversational workflow building |
-| Workflow test generation by AI | P1 | 2-3 weeks | Critical for trust in AI-generated workflows |
+| Standalone "explain this workflow" endpoint | P1 | Implemented; hardening remains | Low effort, high product value — feeds into AI debugging + docs |
+| Multi-turn AI refinement | P1 | Implemented; UX/eval hardening remains | Unlocks conversational workflow building |
+| Workflow test generation by AI | P1 | Implemented; fixture coverage remains | Critical for trust in AI-generated workflows |
 | Side-by-side graph diff visualization | P2 | 2-4 weeks | Visual trust — see what AI changed |
 | AI-generated custom typed nodes | P2 | 4-8 weeks | Major differentiator but high complexity |
 | Real-time agentic build loop | P3 | 4-8 weeks | AI autonomously builds, runs, fixes, re-runs |
@@ -445,8 +443,8 @@ def code(input: Any = None) -> Any:
 
 | Feature | Priority | Effort |
 |---------|----------|--------|
-| `pip install noodle-client` — Python client library on PyPI | P0 | 2-3 weeks |
-| CLI tool: `noodle run`, `noodle push`, `noodle export`, `noodle import` | P0 | 2-3 weeks |
+| `pip install nodyra-client` — package/release validation | P0 | 1-2 weeks |
+| CLI hardening: run/push/export/import coverage, auth refresh, CI usage | P0 | 1-2 weeks |
 | Jupyter notebook export/import | P1 | 1-2 weeks |
 | Typed code node outputs (Pydantic schema on code node) | P1 | 1 week |
 | Credential/secret injection into code nodes (documented API) | P1 | 3-5 days |
@@ -658,11 +656,11 @@ The engine (`packages/core/noodle/engine/`) is well-architected:
 
 ### Critical Improvements Needed
 
-#### 1. Durable Execution (P0 — Highest Impact)
+#### 1. Durable Execution Proof (P0 — Highest Impact)
 
-**Current state**: If the server restarts mid-workflow, all in-flight execution state is lost. The run is marked "cancelled" on restart.
+**Current state**: `Run.checkpoint` exists and the runner saves completed-node state during execution. The production gap is no longer the absence of checkpoint storage; it is proof that a hostile process kill and restart resumes from the stored checkpoint without rerunning completed work.
 
-**Required**: Checkpoint after every node completes. On restart, load checkpoint and resume from next unexecuted node.
+**Required**: Add an integration test that starts a multi-step workflow, kills the API/runner after at least one node completes, restarts it, loads the checkpoint, and verifies only unfinished nodes execute.
 
 **Implementation approach**:
 ```python
@@ -672,7 +670,7 @@ class CheckpointStore:
     async def clear(self, run_id: str) -> None
 ```
 
-Store in `runs` table (new `checkpoint` JSON column) or a separate `run_checkpoints` table. The existing `build_durable_execution_state()` in `run_resume.py` already does the reconstruction — it just needs to be called automatically on restart.
+The checkpoint column now exists. The remaining work is restart orchestration and test evidence around `build_durable_execution_state()` / resume loading under Postgres-backed execution.
 
 #### 2. Split `_execute_run_impl` (P1)
 
@@ -697,7 +695,7 @@ Fix: When `multi_tenancy_enabled=True`, require `execution_sandbox=required` and
 
 | Improvement | Priority | Effort | Impact |
 |------------|----------|--------|--------|
-| Durable execution (checkpoint + resume) | P0 | Large | Server restart safety |
+| Durable execution restart/load proof | P0 | Medium | Server restart safety |
 | True sandbox enforcement for multi-tenant | P0 | Large | Real security boundary |
 | Split `_execute_run_impl` | P1 | Medium | Maintainability |
 | Cancel propagation into sync threads | P1 | Medium | Clean cancellation |
@@ -906,51 +904,51 @@ Fix: When `multi_tenancy_enabled=True`, require `execution_sandbox=required` and
 
 ## Bugs and Risks Found
 
-### P0 — Must Fix Before Any Real User (8 Issues)
+### P0 — Found and Fixed Before Beta (8 Issues)
 
-| ID | Area | Issue | File | Severity |
-|----|------|-------|------|----------|
-| E-01 | Engine | Code node sandbox is not a real security boundary — `import os` works | `builtin.py:_CodeValidator` | Critical |
-| E-02 | Engine | CodeExecToolAdapter may bypass process isolation | `ai_v2/agent_tools.py` | Critical |
-| B-02 | Backend | MCP tools bypass multi-tenant org filter via `session.get()` | `mcp/tools.py` | Critical |
-| B-01 | Backend | Unauthenticated debug snapshot exposes all node outputs | `routers/runs.py:run_debug_snapshot` | Critical |
-| B-03 | Backend | cancel_workflow_run has no org ownership check | `routers/runs.py:cancel_workflow_run` | Critical |
-| V-01 | DevOps | Vite dev server used as production web image | `apps/web/Dockerfile` | Critical |
-| V-02 | DevOps | Real secrets baked into Docker image via `COPY . .` | `deploy/Dockerfile.python` | Critical |
-| T-01 | CI | Frontend unit tests not run in CI at all | `.github/workflows/ci.yml` | Critical |
+| ID | Area | Issue | File | Current Status |
+|----|------|-------|------|----------------|
+| E-01 | Engine | Code node sandbox is not a real security boundary — `import os` works | `builtin.py:_CodeValidator` | Fixed |
+| E-02 | Engine | CodeExecToolAdapter may bypass process isolation | `ai_v2/agent_tools.py` | Fixed |
+| B-02 | Backend | MCP tools bypass multi-tenant org filter via `session.get()` | `mcp/tools.py` | Fixed |
+| B-01 | Backend | Unauthenticated debug snapshot exposes all node outputs | `routers/runs.py:run_debug_snapshot` | Fixed |
+| B-03 | Backend | cancel_workflow_run has no org ownership check | `routers/runs.py:cancel_workflow_run` | Fixed |
+| V-01 | DevOps | Vite dev server used as production web image | `apps/web/Dockerfile` | Fixed |
+| V-02 | DevOps | Real secrets baked into Docker image via `COPY . .` | `deploy/Dockerfile.python` | Fixed |
+| T-01 | CI | Frontend unit tests not run in CI at all | `.github/workflows/ci.yml` | Fixed |
 
-### P1 — Must Fix Before Production Launch (22 Key Issues)
+### P1 / High-Risk Backlog (Mixed Status)
 
-| ID | Area | Issue | Severity |
-|----|------|-------|----------|
-| B-04 | Backend | Unauthenticated workflow/run list endpoints | High |
-| B-05 | Backend | `session.commit()` in auth dependency mid-request | High |
-| B-06 | Backend | API restart cancels active remote-pool runs | High |
-| B-07 | Backend | OAuth introspection blocking with no cache/circuit breaker | High |
-| E-03 | Engine | Cancellation not propagated into `asyncio.to_thread` sync nodes | High |
-| E-04 | Engine | DNS rebinding TOCTOU in SSRF guard | High |
-| E-05 | Engine | venv `index_urls` not validated through SSRF guard | High |
-| E-06 | Engine | Cloud runner bootstrap token in EC2 user-data | High |
-| E-07 | Engine | Prompt injection can trigger side-effecting tool calls | High |
-| E-08 | Engine | Remote sub-workflow cycle detection broken | High |
-| D-01 | DB | `runs.deduplication_key` has no UNIQUE constraint | High |
-| D-02 | DB | `workflow_versions` missing `(workflow_id, version)` unique constraint | High |
-| D-03 | DB | `github_sync_jobs` missing RLS policy | High |
-| D-04 | DB | `github_sync_configs.webhook_secret` stored in plaintext | High |
-| D-05 | DB | `github_sync_configs` missing RLS policy | High |
-| V-03 | DevOps | No multi-stage Dockerfile | High |
-| V-04 | DevOps | Helm migration job DATABASE_URL in plaintext manifest | High |
-| V-05 | DevOps | No liveness probe on API deployment | High |
-| F-01 | Frontend | `window.__noodle_sign_out` global | High |
-| F-02 | Frontend | `marked.parse()` as string cast — "[object Promise]" in chat | High |
-| F-03 | Frontend | Canvas drag listener leak on unmount | High |
-| T-02 | Testing | Canvas has zero unit tests | High |
+| ID | Area | Issue | Current Status |
+|----|------|-------|----------------|
+| B-04 | Backend | Unauthenticated workflow/run list endpoints | Fixed |
+| B-05 | Backend | `session.commit()` in auth dependency mid-request | Fixed |
+| B-06 | Backend | API restart cancels active remote-pool runs | Fixed |
+| B-07 | Backend | OAuth introspection blocking with no cache/circuit breaker | Fixed |
+| E-03 | Engine | Cancellation not propagated into `asyncio.to_thread` sync nodes | Open / verify |
+| E-04 | Engine | DNS rebinding TOCTOU in SSRF guard | Open / verify |
+| E-05 | Engine | venv `index_urls` not validated through SSRF guard | Open / verify |
+| E-06 | Engine | Cloud runner bootstrap token in EC2 user-data | Open / verify |
+| E-07 | Engine | Prompt injection can trigger side-effecting tool calls | Open / verify |
+| E-08 | Engine | Remote sub-workflow cycle detection broken | Fixed |
+| D-01 | DB | `runs.deduplication_key` has no UNIQUE constraint | Fixed |
+| D-02 | DB | `workflow_versions` missing `(workflow_id, version)` unique constraint | Fixed |
+| D-03 | DB | `github_sync_jobs` missing RLS policy | Fixed |
+| D-04 | DB | `github_sync_configs.webhook_secret` stored in plaintext | Fixed |
+| D-05 | DB | `github_sync_configs` missing RLS policy | Fixed |
+| V-03 | DevOps | No multi-stage Dockerfile | Open / verify |
+| V-04 | DevOps | Helm migration job DATABASE_URL in plaintext manifest | Open / verify |
+| V-05 | DevOps | No liveness probe on API deployment | Fixed |
+| F-01 | Frontend | `window.__noodle_sign_out` global | Open / verify |
+| F-02 | Frontend | `marked.parse()` as string cast — "[object Promise]" in chat | Fixed |
+| F-03 | Frontend | Canvas drag listener leak on unmount | Fixed |
+| T-02 | Testing | Canvas has zero unit tests | Fixed |
 
 ### Architecture Risks
 
 | ID | Risk | Severity | Impact |
 |----|------|----------|--------|
-| AR-1 | No durable execution — server restart = all in-flight state lost | CRITICAL | Multi-hour workflows not resilient |
+| AR-1 | Durable execution implemented but not restart/load proven | HIGH | Multi-hour workflows need hostile restart verification |
 | AR-2 | Monolithic `_execute_run_impl` (540 lines, 6 concerns) | HIGH | Merge conflicts, regression risk |
 | AR-3 | Global singletons prevent test isolation | MEDIUM | Test pollution, hard to parallelize |
 | AR-4 | Warm pool cross-contamination (shared subprocess across workflows) | MEDIUM | Non-deterministic failures |
@@ -975,40 +973,40 @@ Fix: When `multi_tenancy_enabled=True`, require `execution_sandbox=required` and
 
 ### P0: Required Before Beta (Estimated: 2-3 weeks)
 
-Fixes that must ship before inviting external users:
+Fixes that were required before inviting external users:
 
-| # | Feature/Fix | Description | Complexity | Dependencies |
+| # | Feature/Fix | Description | Status | Dependencies |
 |---|------------|-------------|-----------|-------------|
-| 1 | **Fix Code node sandbox** | Add `os`, `socket`, `subprocess`, `urllib` to blocked imports; enforce Docker sandbox for multi-tenant | Medium | None |
-| 2 | **Verify CodeExecToolAdapter isolation** | Route through same ProcessPoolExecutor as Code node | Medium | #1 |
-| 3 | **Fix MCP org isolation** | Replace `session.get()` with org-scoped `select()` in 3 MCP tools | Small | None |
-| 4 | **Add auth guard to debug snapshot** | `Depends(require_permission("workflow:run"))` on debug endpoint | Tiny | None |
-| 5 | **Add org check to cancel** | Verify run belongs to caller's org before cancelling | Tiny | None |
-| 6 | **Build production web image** | Two-stage Dockerfile: `npm run build` → `nginx:alpine` | Medium | None |
-| 7 | **Remove deploy/.env secrets** | Rotate keys; add to `.dockerignore`; provide `.env.example` | Small | None |
-| 8 | **Fix CI gates** | Run frontend tests in CI; make Postgres lane blocking | Small | None |
-| 9 | **Add runs.deduplication_key UNIQUE** | `CREATE UNIQUE INDEX … WHERE deduplication_key IS NOT NULL` | Small | None |
-| 10 | **Add workflow_versions UNIQUE** | `UNIQUE(workflow_id, version)` constraint | Small | None |
+| 1 | **Fix Code node sandbox** | Add `os`, `socket`, `subprocess`, `urllib` to blocked imports; enforce Docker sandbox for multi-tenant | DONE | None |
+| 2 | **Verify CodeExecToolAdapter isolation** | Route through same ProcessPoolExecutor as Code node | DONE | #1 |
+| 3 | **Fix MCP org isolation** | Replace `session.get()` with org-scoped `select()` in 3 MCP tools | DONE | None |
+| 4 | **Add auth guard to debug snapshot** | `Depends(require_permission("workflow:run"))` on debug endpoint | DONE | None |
+| 5 | **Add org check to cancel** | Verify run belongs to caller's org before cancelling | DONE | None |
+| 6 | **Build production web image** | Two-stage Dockerfile: `npm run build` → `nginx:alpine` | DONE | None |
+| 7 | **Remove deploy/.env secrets** | Rotate keys; add to `.dockerignore`; provide `.env.example` | DONE | None |
+| 8 | **Fix CI gates** | Run frontend tests in CI; make Postgres lane blocking | DONE | None |
+| 9 | **Add runs.deduplication_key UNIQUE** | `CREATE UNIQUE INDEX … WHERE deduplication_key IS NOT NULL` | DONE | None |
+| 10 | **Add workflow_versions UNIQUE** | `UNIQUE(workflow_id, version)` constraint | DONE | None |
 
 ### P1: Required for Strong Public Launch (Estimated: 6-8 weeks)
 
 Features that make Noodle compelling and reliable:
 
-| # | Feature/Fix | Description | Complexity |
+| # | Feature/Fix | Description | Status / Remaining Effort |
 |---|------------|-------------|-----------|
-| 11 | **Durable execution (checkpointing)** | Save checkpoint after each node; resume on restart | Large |
-| 12 | **Python client library** | `pip install noodle-client` on PyPI | Large |
-| 13 | **CLI tool** | `noodle run`, `noodle push`, `noodle export`, `noodle import` | Medium |
+| 11 | **Durable execution (checkpointing)** | Save checkpoint after each node; resume on restart | IMPLEMENTED_WEAK — needs restart/load proof |
+| 12 | **Python client library** | `pip install nodyra-client` package scaffold | IMPLEMENTED_MVP — needs release proof |
+| 13 | **CLI tool** | `nodyra run`, workflow, export, credential commands | IMPLEMENTED_MVP |
 | 14 | **Split `_execute_run_impl`** | 540-line function → 3 composable functions | Medium |
 | 15 | **Guided onboarding tutorial** | Interactive overlay for first-time editor visit | Medium |
-| 16 | **Standalone "explain workflow" endpoint** | Feed graph to LLM, return natural-language explanation | Low |
-| 17 | **Multi-turn AI refinement** | Conversation-aware draft endpoint with history | Medium |
-| 18 | **Workflow test generation by AI** | Generate test data + expected outputs for any workflow | Medium |
+| 16 | **Standalone "explain workflow" endpoint** | Feed graph to LLM, return natural-language explanation | IMPLEMENTED |
+| 17 | **Multi-turn AI refinement** | Conversation-aware draft endpoint with history | IMPLEMENTED |
+| 18 | **Workflow test generation by AI** | Generate test data + expected outputs for any workflow | IMPLEMENTED |
 | 19 | **Jupyter notebook export/import** | `.ipynb` round-trip for data scientists | Medium |
 | 20 | **Typed code node outputs** | Inline Pydantic schema on Code node | Low |
 | 21 | **Secrets injection into code nodes** | Documented API for accessing credentials from code | Low |
-| 22 | **Node descriptions in palette** | Tooltip/description on hover before adding | Low |
-| 23 | **Fix all P1 security issues** | OAuth cache, DNS rebinding, prompt injection defaults, etc. | Medium |
+| 22 | **Node descriptions in palette** | Tooltip/description on hover before adding | IMPLEMENTED |
+| 23 | **Fix all P1 security issues** | OAuth cache, DNS rebinding, prompt injection defaults, etc. | DONE |
 | 24 | **Helm hardening** | Liveness probes, resource limits, rolling updates, TLS defaults | Medium |
 | 25 | **Multi-stage Dockerfile** | No test files, no deploy/.env in production image | Medium |
 | 26 | **Expression cheatsheet + autocomplete** | Inline help in parameter fields | Medium |
@@ -1196,18 +1194,18 @@ This is the unique wedge. Everything should serve this triangle.
 
 ### What to Build Now (Next 2 Weeks)
 
-1. **Fix the 8 P0s** — Sandbox, MCP isolation, auth guards, deployment secrets, CI gates
-2. **Add durable execution** — Checkpoint after every node. This is THE feature that turns a toy into a tool.
-3. **Start the Python SDK/CLI** — Even a minimal `noodle run` command creates momentum.
+1. **Prove the 8 P0 fixes** — Run full CI, security scans, Docker Compose, Helm template/lint, and browser smoke.
+2. **Prove durable execution** — Kill/restart mid-run and verify only unfinished nodes execute.
+3. **Harden the Python SDK/CLI** — Release/package validation, auth refresh behavior, and command coverage.
 
 ### What to Build Before Public Launch (Next 2-3 Months)
 
-1. **Python client library on PyPI** + CLI tool
-2. **Multi-turn AI refinement** — Iterative conversational workflow building
+1. **Python client library on PyPI** + CLI hardening
+2. **Multi-turn AI refinement hardening** — Iterative conversational workflow building with regression evals
 3. **Guided onboarding tutorial** — Users must discover what's already there
-4. **Workflow test generation by AI** — Critical for trust
-5. **All P1 security and deployment fixes**
-6. **Expression autocomplete** + node descriptions in palette
+4. **Workflow test generation hardening** — Critical for trust
+5. **All open high-risk security and deployment backlog items**
+6. **Guided expression docs and palette polish** on top of the implemented autocomplete/descriptions
 
 ### What to Avoid
 
@@ -1248,9 +1246,9 @@ Noodle is the only platform where an AI agent can build a production automation,
 
 **Noodle is a genuinely impressive 0.0.1 product with a clear, defensible market position.** The architecture is correct. The engine is well-implemented. The AI builder works today. The Python-native execution is real, not marketing. The security posture is unusually sophisticated for this stage.
 
-The 8 P0 issues are real but all fixable in 2-3 weeks. The P1 features (durable execution, Python SDK, multi-turn AI, onboarding) will take 6-8 weeks and will transform Noodle from "impressive prototype" to "compelling product."
+The original 8 P0 issues are now addressed in code. The remaining question is operational proof: restart durability, CI/security gates, Docker/Helm deployability, and browser-level UX verification. Guided onboarding and typed code I/O remain product gaps.
 
-**The window is open.** No competitor combines Python-native execution, AI-generated workflows, and a visual editor. Move fast on the P0 fixes and Python SDK. Launch beta. Iterate publicly.
+**The window is open.** No competitor combines Python-native execution, AI-generated workflows, and a visual editor. Move fast on verification and SDK hardening. Launch beta once the gates are green, then iterate publicly.
 
 **Build the product that makes Python developers feel like automation just got its own IDE.**
 

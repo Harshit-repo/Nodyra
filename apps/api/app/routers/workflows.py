@@ -2,8 +2,6 @@ import logging
 import re
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
-
-logger = logging.getLogger("noodle")
 from jsonschema.exceptions import SchemaError
 from jsonschema.validators import validator_for
 from pydantic import BaseModel
@@ -48,6 +46,8 @@ from app.services.github_sync_jobs import notify_sync_workers
 from app.services.provider_triggers import sync_workflow_provider_triggers
 from noodle.models import WorkflowGraph
 from noodle.sdk import registry as node_registry
+
+logger = logging.getLogger("noodle")
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
