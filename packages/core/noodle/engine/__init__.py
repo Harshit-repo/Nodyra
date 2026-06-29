@@ -27,6 +27,9 @@ from noodle.engine.node_exec import (
     PROCESS_ISOLATED_NODE_TYPES,
     _approx_encoded_length,
     _install_capture,
+    _sanitize_schema,
+    _validate_node_input_schema,
+    _validate_node_output_schema,
 )
 from noodle.engine.scheduler import (
     _build_plan,
@@ -45,7 +48,7 @@ from noodle.engine.subworkflows import (
     extract_leaf_value,
     make_workflow_caller,
 )
-from noodle.engine.types import EventCallback, GraphError
+from noodle.engine.types import EventCallback, GraphError, NodeError, NodeValidationError, ValidationWarning
 from noodle.engine.validation import (
     AI_PORT_KINDS,
     _validate_connection_kinds,
@@ -53,6 +56,7 @@ from noodle.engine.validation import (
     _validate_input_kinds,
     _validate_input_schemas,
     _validate_output_kinds,
+    validate_graph,
 )
 
 __all__ = [
@@ -64,6 +68,9 @@ __all__ = [
     "EventCallback",
     "GraphError",
     "InlineSubworkflow",
+    "NodeError",
+    "NodeValidationError",
+    "ValidationWarning",
     "LoopRegion",
     "PROCESS_ISOLATED_NODE_TYPES",
     "SubworkflowCall",
@@ -73,6 +80,7 @@ __all__ = [
     "extract_leaf_value",
     "make_workflow_caller",
     "run",
+    "validate_graph",
     # test-consumed internals (compat with pre-split import paths)
     "_MAX_AGENT_LOOP_ITERATIONS",
     "_approx_encoded_length",
@@ -88,10 +96,13 @@ __all__ = [
     "_needed_nodes",
     "_topo_order",
     "_validate_connection_kinds",
+    "_sanitize_schema",
     "_validate_graph",
     "_validate_input_kinds",
     "_validate_input_schemas",
     "_validate_loop_regions",
+    "_validate_node_input_schema",
+    "_validate_node_output_schema",
     "_validate_output_kinds",
     "_worse_status",
 ]

@@ -3,7 +3,7 @@ name = "noodle-core"
 version = "0.0.1"
 description = "Noodle execution engine, node SDK, and shared models"
 requires-python = ">=3.12"
-dependencies = ["pydantic>=2.6"]
+dependencies = ["pydantic>=2.6", "jsonschema>=4.23"]
 
 [build-system]
 requires = ["hatchling"]

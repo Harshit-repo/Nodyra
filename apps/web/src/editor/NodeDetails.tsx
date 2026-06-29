@@ -34,6 +34,7 @@ import { DataPanel } from "./DataPanel";
 import { ConditionsField } from "./ConditionsField";
 import { VariablePickerPopover } from "./VariablePickerPopover";
 import { TimezoneSelect } from "./fields/TimezoneSelect";
+import { CodeNodeSchemaEditor } from "./fields/CodeNodeSchemaEditor";
 import { fromAiExpr, isFromAiExpr, paramArgType } from "./toolParam";
 import { missingFor } from "./missingPackages";
 import { useEditor } from "./store";
@@ -4528,7 +4529,7 @@ export function NodeDetails({
   const platform = useServerPlatform();
   const activeEnv = environmentsList.find((e) => e.id === envId);
 
-  const [mode, setMode] = useState<"inspector" | "python">("inspector");
+  const [mode, setMode] = useState<"inspector" | "python" | "schema">("inspector");
   const [pkgBusy, setPkgBusy] = useState(false);
   const [pkgElapsed, setPkgElapsed] = useState(0);
   const [pkgDone, setPkgDone] = useState(false);
@@ -4693,7 +4694,7 @@ export function NodeDetails({
           <div
             className="ndv-mode-toggle"
             role="tablist"
-            aria-label="Inspector or Python"
+            aria-label="Inspector, Python, or Schema"
           >
             <button
               type="button"
@@ -4712,6 +4713,15 @@ export function NodeDetails({
               onClick={() => setMode("python")}
             >
               Python
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "schema"}
+              className={mode === "schema" ? "active" : ""}
+              onClick={() => setMode("schema")}
+            >
+              Schema
             </button>
           </div>
         </div>
@@ -4741,6 +4751,26 @@ export function NodeDetails({
           inputData={hasIncomingInputs ? incomingInputs : undefined}
           onClose={() => setMode("inspector")}
         />
+      ) : mode === "schema" ? (
+        <div className="inspector-section">
+          <div className="inspector-section-head">Input Schema</div>
+          <p className="field-desc">
+            Define the expected shape of wired inputs. Validation runs before node execution.
+          </p>
+          <CodeNodeSchemaEditor
+            value={params.input_schema as unknown as any}
+            onChange={(v) => setParam("input_schema", v)}
+          />
+
+          <div className="inspector-section-head" style={{ marginTop: 16 }}>Output Schema</div>
+          <p className="field-desc">
+            Define the expected shape of node outputs. Validation runs after node execution.
+          </p>
+          <CodeNodeSchemaEditor
+            value={params.output_schema as unknown as any}
+            onChange={(v) => setParam("output_schema", v)}
+          />
+        </div>
       ) : (
         <>
 

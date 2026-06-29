@@ -30,6 +30,9 @@ from noodle.engine.validation import _validate_connection_kinds
 from noodle.models import NodeRunResult, NodeStatus, RunResult, RunStatus, WorkflowGraph
 from noodle.sdk import NodeRegistry
 
+import logging
+LOG = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from noodle.engine.loops import LoopRegion
     from noodle.engine.subworkflows import SubworkflowMeta, SubworkflowRunner
@@ -499,7 +502,7 @@ async def _execute_impl(
     # so importing them here (not at the top) breaks the cycle.
     from noodle.engine.loops import _loop_regions, _validate_loop_regions
     from noodle.engine.metanodes import _expand_metanodes
-    from noodle.engine.validation import _validate_graph
+    from noodle.engine.validation import validate_graph
 
     _install_capture()
     default_timeouts = DEFAULT_NODE_TIMEOUTS if default_timeouts is None else default_timeouts
@@ -519,7 +522,11 @@ async def _execute_impl(
     # node types, missing edge references. Must run BEFORE _topo_order so the
     # error message is specific ("Duplicate node id 'x'") rather than a generic
     # cycle error.
-    _validate_graph(graph, registry)
+    # `validate_graph` also runs schema compatibility checks and returns
+    # `ValidationWarning` objects that the runner logs without blocking.
+    _graph_warnings = validate_graph(graph, registry)
+    for _w in _graph_warnings:
+        LOG.warning("validation: node %s: %s", _w.node_id, _w.message)
     target_set = set(targets) if targets is not None else None
     needed = _needed_nodes(graph, target_set, cache)
     _validate_connection_kinds(graph, registry, needed)

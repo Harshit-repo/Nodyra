@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from noodle.engine.types import GraphError
+from noodle.engine.types import GraphError, NodeValidationError, ValidationWarning
 from noodle.models import GraphNode, PortSpec, WorkflowGraph
 from noodle.node_tool import TOOL_MODE_OUTPUT
 from noodle.sdk import NodeRegistry
@@ -318,3 +318,158 @@ def _validate_graph(
                 raise GraphError(
                     f"Unknown node type '{n.type}' for node '{n.id}'"
                 )
+
+
+def _schema_type_to_port_kind(schema_type: str) -> str:
+    """Map a JSON Schema type to a display-friendly port kind label.
+
+    Used for UI badge rendering (e.g. amber "number" badge).
+    """
+    mapping = {
+        "string": "string",
+        "number": "number",
+        "integer": "integer",
+        "boolean": "boolean",
+        "array": "array",
+        "object": "object",
+        "null": "null",
+    }
+    return mapping.get(schema_type, "any")
+
+
+def _infer_schema_port_kinds(params: dict[str, Any]) -> dict[str, str]:
+    """Infer port kind annotations from an ``output_schema`` in node params.
+
+    Returns a dict mapping property name → type label (e.g. ``{"score": "number"}``).
+    Empty dict if no ``output_schema`` or it has no properties.
+    """
+    output_schema = params.get("output_schema")
+    if not isinstance(output_schema, dict):
+        return {}
+    properties = output_schema.get("properties", {})
+    if not isinstance(properties, dict):
+        return {}
+    result: dict[str, str] = {}
+    for prop_name, prop_schema in properties.items():
+        if isinstance(prop_schema, dict):
+            schema_type = prop_schema.get("type", "any")
+            if "enum" in prop_schema:
+                result[prop_name] = "enum"
+            else:
+                result[prop_name] = _schema_type_to_port_kind(str(schema_type))
+    return result
+
+
+def _check_schema_compatibility(
+    graph: WorkflowGraph,
+    registry: NodeRegistry | None,
+) -> list[ValidationWarning]:
+    """Check schema compatibility between connected nodes at graph validation time.
+
+    For each code node with an ``output_schema``, checks that downstream nodes
+    wired to its output ports have compatible input expectations. Emits
+    ``ValidationWarning`` (not errors) for mismatches — warn but don't block.
+
+    Args:
+        graph: The workflow graph to validate.
+        registry: Node registry for looking up node type definitions.
+
+    Returns:
+        A list of ``ValidationWarning`` objects for any schema mismatches found.
+    """
+    warnings: list[ValidationWarning] = []
+    if registry is None:
+        return warnings
+
+    nodes_by_id = {node.id: node for node in graph.nodes}
+
+    for node in graph.nodes:
+        # Only code nodes can have output_schema in params.
+        if node.type != "code":
+            continue
+        output_schema = node.params.get("output_schema")
+        if not isinstance(output_schema, dict):
+            continue
+        output_properties = output_schema.get("properties", {})
+        if not isinstance(output_properties, dict):
+            continue
+
+        # Find downstream edges from this node.
+        downstream_edges = [e for e in graph.edges if e.source == node.id]
+        for edge in downstream_edges:
+            target_node = nodes_by_id.get(edge.target)
+            if target_node is None:
+                continue
+            target_output = edge.source_output
+
+            # Skip edges that don't match a schema property.
+            if target_output not in output_properties:
+                continue
+
+            try:
+                target_def = registry.get(target_node.type)
+            except KeyError:
+                continue
+
+            # Check if target port expects a specific data_kind.
+            target_port = _find_port(
+                target_def.manifest.inputs,
+                edge.target_input,
+                "input",
+            )
+            target_kind = _port_kind(target_port)
+
+            # If target expects a specific kind and source has a typed schema,
+            # check that they're compatible.
+            source_schema = output_properties[target_output]
+            if isinstance(source_schema, dict):
+                source_type = source_schema.get("type", "any")
+                source_kind = _schema_type_to_port_kind(str(source_type))
+
+                # Special data kinds (dataset, artifact, file) don't
+                # map from JSON Schema types — skip those.
+                if target_kind in ("dataset", "artifact", "file", "control"):
+                    continue
+
+                # If target expects an AI port kind but source produces
+                # a basic type, that's a potential mismatch.
+                if target_kind in AI_PORT_KINDS:
+                    warnings.append(ValidationWarning(
+                        node_id=node.id,
+                        message=(
+                            f"Output port '{target_output}' has type "
+                            f"'{source_kind}' (from output_schema), but downstream "
+                            f"node '{edge.target}' input '{edge.target_input}' expects "
+                            f"'{_kind_label(target_kind)}'. "
+                            "This may cause a runtime error."
+                        ),
+                    ))
+
+    return warnings
+
+
+def validate_graph(
+    graph: WorkflowGraph,
+    registry: NodeRegistry | None = None,
+) -> list[ValidationWarning]:
+    """Public entry point for graph validation.
+
+    Performs structural validation (empty graph, duplicate ids, self-loops,
+    missing edges, unknown node types) and schema compatibility checks.
+
+    Structural failures raise ``GraphError``. Schema mismatches produce
+    ``ValidationWarning`` objects that are returned to the caller without
+    blocking execution.
+
+    Args:
+        graph: The workflow graph to validate.
+        registry: Optional node registry for type lookups.
+
+    Returns:
+        A list of ``ValidationWarning`` objects for non-blocking issues.
+
+    Raises:
+        GraphError: On structural graph problems.
+    """
+    _validate_graph(graph, registry)
+    return _check_schema_compatibility(graph, registry)
