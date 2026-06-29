@@ -1041,7 +1041,6 @@ export const api = {
 
   kmsHealth: () =>
     request<{ status: string; provider: string }>("/admin/kms/health"),
-};
 
   // --- Community Node Registry (MS4 Slice 4E) --------------------------------
 

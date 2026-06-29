@@ -21,7 +21,7 @@ export function LoginPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [ssoDetect, setSsoDetect] = useState<SSODetectResponse | null>(null);
-  const [ssoChecking, setSsoChecking] = useState(false);
+  const [, setSsoChecking] = useState(false);
   const ssoTimerRef = useRef<number | null>(null);
 
   useEffect(() => {

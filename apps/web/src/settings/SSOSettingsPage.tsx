@@ -31,7 +31,7 @@ const PROTOCOL_DESCRIPTIONS: Record<Protocol, string> = {
   saml: "Okta, Azure AD, PingFederate, and any SAML 2.0-compliant IdP.",
 };
 
-export default function SSOSettingsPage() {
+export function SSOSettingsPage() {
   const { has } = useEntitlements();
   const toast = useToast();
   const confirm = useConfirm();
@@ -131,7 +131,7 @@ export default function SSOSettingsPage() {
       }
 
       await api.upsertSSOConfig(payload);
-      toast.success("SSO configuration saved");
+      toast.notify("SSO configuration saved", "success");
       hasChangesRef.current = false;
       // Reload config to refresh masked secrets
       const updated = await api.getSSOConfig();
@@ -150,10 +150,8 @@ export default function SSOSettingsPage() {
   async function deleteConfig(): Promise<void> {
     const ok = await confirm({
       title: "Remove SSO configuration?",
-      message:
-        "This will disable SSO login for your organization. Existing sessions are not affected.",
+      body: "This will disable SSO login for your organization. Existing sessions are not affected.",
       confirmLabel: "Remove",
-      variant: "danger",
     });
     if (!ok) return;
     try {
@@ -168,7 +166,7 @@ export default function SSOSettingsPage() {
       setIdpCertificate("");
       setEmailDomain("");
       setJitProvisioning(true);
-      toast.success("SSO configuration removed");
+      toast.notify("SSO configuration removed", "success");
     } catch (err) {
       setError(userFriendlyError(err));
     }
