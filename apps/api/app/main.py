@@ -24,6 +24,8 @@ from app.db import SessionLocal, engine
 from app.models import Environment, Run, RunQueueEntry
 from app.redis_client import redis_client
 from app.routers import (
+    admin,
+    agentic_build,
     artifacts,
     audit,
     auth,
@@ -40,6 +42,7 @@ from app.routers import (
     internal,
     mcp,
     mcp_connections,
+    node_registry,
     nodes,
     ops,
     orgs,
@@ -813,6 +816,7 @@ if settings.webhook_role != "disabled":
     app.include_router(provider_webhooks.router)
 app.include_router(folders.router)
 app.include_router(workflows.router)
+app.include_router(agentic_build.router)
 app.include_router(runs.router)
 app.include_router(chat.router)
 app.include_router(chat_public.router)
@@ -824,6 +828,7 @@ if settings.mcp_server_enabled:
 app.include_router(export.router)
 app.include_router(auth.router)
 app.include_router(credentials.router)
+app.include_router(admin.router)
 app.include_router(audit.router)
 app.include_router(auth.users_router)
 app.include_router(artifacts.router)
@@ -835,6 +840,7 @@ app.include_router(orgs.router)
 app.include_router(expressions.router)
 app.include_router(mcp_connections.router)
 app.include_router(github_sync_router.router, prefix="/api")
+app.include_router(node_registry.router)
 
 
 @app.get("/")

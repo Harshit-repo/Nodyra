@@ -50,3 +50,8 @@ class QuotaExceeded(ServiceError):
 class DedicatedPoolRequired(ServiceError):
     """An org requires isolated execution but no docker/kubernetes pool is assigned."""
     http_status = _http_status.HTTP_400_BAD_REQUEST
+
+
+class AuthError(ServiceError):
+    """Authentication failure (invalid credentials, expired token, etc.)."""
+    http_status = _http_status.HTTP_401_UNAUTHORIZED

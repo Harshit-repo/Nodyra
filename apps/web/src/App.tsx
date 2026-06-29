@@ -50,7 +50,22 @@ const OrganizationPage = lazy(
 const McpConnectionsPage = lazy(
   named(() => import("./settings/McpConnectionsPage"), "McpConnectionsPage"),
 );
+const NodeRegistryPage = lazy(
+  named(() => import("./settings/NodeRegistryPage"), "NodeRegistryPage"),
+);
+const KMSSettingsPage = lazy(
+  named(() => import("./settings/KMSSettingsPage"), "KMSSettingsPage"),
+);
 const SettingsPage = lazy(named(() => import("./SettingsPage"), "SettingsPage"));
+const RolesPage = lazy(
+  named(() => import("./settings/RolesPage"), "RolesPage"),
+);
+const AuditLogPage = lazy(
+  named(() => import("./settings/AuditLogPage"), "AuditLogPage"),
+);
+const SSOSettingsPage = lazy(
+  named(() => import("./settings/SSOSettingsPage"), "SSOSettingsPage"),
+);
 const WorkflowsPage = lazy(named(() => import("./WorkflowsPage"), "WorkflowsPage"));
 
 // Catch-all for unknown URLs. Without this, an unmatched path renders an empty
@@ -209,7 +224,12 @@ export default function App() {
               <Route path="/runner-pools" element={<PageErrorBoundary><RunnerPoolsPage /></PageErrorBoundary>} />
               <Route path="/security" element={<PageErrorBoundary><SecurityPage /></PageErrorBoundary>} />
               <Route path="/organization" element={<PageErrorBoundary><OrganizationPage /></PageErrorBoundary>} />
+              <Route path="/settings/roles" element={<PageErrorBoundary><RolesPage /></PageErrorBoundary>} />
+              <Route path="/settings/audit-log" element={<PageErrorBoundary><AuditLogPage /></PageErrorBoundary>} />
               <Route path="/settings/mcp-connections" element={<PageErrorBoundary><McpConnectionsPage /></PageErrorBoundary>} />
+              <Route path="/settings/node-registry" element={<PageErrorBoundary><NodeRegistryPage /></PageErrorBoundary>} />
+              <Route path="/settings/kms" element={<PageErrorBoundary><KMSSettingsPage /></PageErrorBoundary>} />
+              <Route path="/settings/sso" element={<PageErrorBoundary><SSOSettingsPage /></PageErrorBoundary>} />
               <Route path="/settings" element={<PageErrorBoundary><SettingsPage /></PageErrorBoundary>} />
               <Route path="*" element={<PageErrorBoundary><NotFound /></PageErrorBoundary>} />
             </Route>

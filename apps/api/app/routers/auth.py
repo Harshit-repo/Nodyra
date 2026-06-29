@@ -1,4 +1,5 @@
 import hashlib
+import json
 import logging
 import secrets
 import time
@@ -11,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_session
-from app.models import ApiToken, Environment, Membership, Organization, User
+from app.models import ApiToken, Environment, Membership, Organization, SSOConfig, User
 from app.schemas import (
     ApiTokenCreate,
     ApiTokenCreated,
@@ -49,6 +50,16 @@ from app.services.crypto import (
     verify_password,
 )
 from app.tenancy import DEFAULT_ORG_ID
+from app.exceptions import AuthError
+from app.redis_client import redis_client
+from app.services.sso import (
+    build_saml_sp_metadata,
+    detect_sso_by_email,
+    get_or_create_sso_user,
+    get_sso_config_by_org_slug,
+    oidc_authorization_url,
+    oidc_exchange_code,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -702,3 +713,201 @@ async def delete_user(
     )
     await session.delete(user)
     await session.commit()
+
+
+# ---------------------------------------------------------------------------
+# SSO routes
+# ---------------------------------------------------------------------------
+
+
+@router.get("/sso/start")
+async def sso_start(
+    org_slug: str = Query(..., description="Organization slug"),
+    session: AsyncSession = Depends(get_session),
+):
+    """Initiate SSO login: redirects to the IdP's authorization page."""
+    sso_config = await get_sso_config_by_org_slug(org_slug, session)
+    if sso_config is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "SSO not configured for this organization"
+        )
+    from app.services.licensing import Feature, has_feature
+
+    if not await has_feature(Feature.SSO):
+        raise HTTPException(
+            status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "error": "feature_locked",
+                "feature": "sso",
+                "message": "SSO requires an Enterprise license.",
+            },
+        )
+
+    if sso_config.protocol == "oidc":
+        redirect_url = await oidc_authorization_url(sso_config)
+        return Response(
+            status_code=status.HTTP_302_FOUND,
+            headers={"Location": redirect_url},
+        )
+    elif sso_config.protocol == "saml":
+        from app.services.sso import _saml_acs_url, _saml_entity_id
+
+        acs_url = _saml_acs_url()
+        entity_id = _saml_entity_id()
+        saml_request = _build_saml_authn_request(entity_id, acs_url)
+        return Response(
+            status_code=status.HTTP_302_FOUND,
+            headers={"Location": f"{sso_config.idp_sso_url}?SAMLRequest={saml_request}"},
+        )
+    else:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"Unknown SSO protocol: {sso_config.protocol}"
+        )
+
+
+@router.get("/sso/callback")
+async def sso_callback(
+    request: Request,
+    response: Response,
+    code: str = Query(...),
+    state: str = Query(...),
+    session: AsyncSession = Depends(get_session),
+):
+    """OIDC callback: exchange authorization code for tokens, create session."""
+    raw = await redis_client.get(f"noodle:sso:state:{state}")
+    if raw is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Invalid or expired SSO state"
+        )
+    pending = json.loads(raw)
+    org_id = pending["org_id"]
+
+    sso_config = await session.scalar(
+        select(SSOConfig).where(SSOConfig.org_id == org_id)
+    )
+    if sso_config is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "SSO configuration not found"
+        )
+
+    claims = await oidc_exchange_code(sso_config, code, state, session=session)
+    user = await get_or_create_sso_user(claims, sso_config, session=session)
+    await session.commit()
+
+    result = _token_response(user)
+    _set_session_cookies(response, result.token)
+    return result
+
+
+@router.get("/sso/detect")
+async def sso_detect(
+    email: str = Query(..., description="Email address to check"),
+    session: AsyncSession = Depends(get_session),
+):
+    """Check if an email domain has SSO configured."""
+    result = await detect_sso_by_email(email, session)
+    if result is None:
+        return {"has_sso": False}
+    return result
+
+
+@router.get("/sso/metadata")
+async def sso_metadata(
+    org_slug: str = Query(..., description="Organization slug"),
+    session: AsyncSession = Depends(get_session),
+):
+    """Return SAML SP metadata XML for the given org."""
+    sso_config = await get_sso_config_by_org_slug(org_slug, session)
+    if sso_config is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "SSO not configured for this organization"
+        )
+    xml = build_saml_sp_metadata(sso_config)
+    return Response(
+        content=xml,
+        media_type="application/xml",
+        headers={"Content-Disposition": f'inline; filename="saml-sp-metadata-{org_slug}.xml"'},
+    )
+
+
+@router.post("/sso/acs")
+async def sso_acs(
+    request: Request,
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+):
+    """SAML assertion consumer service (ACS)."""
+    form = await request.form()
+    saml_response = form.get("SAMLResponse")
+    if not saml_response:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Missing SAMLResponse"
+        )
+    import base64
+    import zlib
+
+    try:
+        decoded = base64.b64decode(saml_response)
+        inflated = zlib.decompress(decoded, -15)
+        import xml.etree.ElementTree as ET
+
+        root = ET.fromstring(inflated)
+        ns = {
+            "saml2": "urn:oasis:names:tc:SAML:2.0:assertion",
+            "saml2p": "urn:oasis:names:tc:SAML:2.0:protocol",
+        }
+        name_id_el = root.find(".//saml2:NameID", ns)
+        email = name_id_el.text if name_id_el is not None else ""
+        if not email or "@" not in email:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "SAML response missing valid NameID/email"
+            )
+        domain = email.split("@")[1].lower()
+        sso_config = await session.scalar(
+            select(SSOConfig).where(SSOConfig.email_domain == domain)
+        )
+        if sso_config is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "No SSO configuration found for this email domain",
+            )
+        claims = {
+            "email": email,
+            "name": email.split("@")[0],
+            "sub": f"saml:{email}",
+        }
+        user = await get_or_create_sso_user(claims, sso_config, session=session)
+        await session.commit()
+        result = _token_response(user)
+        _set_session_cookies(response, result.token)
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("SAML ACS error: %s", exc)
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Invalid SAML response"
+        ) from exc
+
+
+def _build_saml_authn_request(entity_id: str, acs_url: str) -> str:
+    """Build a minimal SAML AuthnRequest and return it base64-encoded."""
+    import base64
+    import zlib
+
+    request_id = f"_{secrets.token_urlsafe(16)}"
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<saml2p:AuthnRequest xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol"
+    xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion"
+    ID="{request_id}"
+    Version="2.0"
+    IssueInstant="{datetime.now(UTC).isoformat()}"
+    Destination=""
+    AssertionConsumerServiceURL="{acs_url}"
+    ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST">
+    <saml2:Issuer>{entity_id}</saml2:Issuer>
+    <saml2p:NameIDPolicy AllowCreate="true"
+        Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"/>
+</saml2p:AuthnRequest>"""
+    compressed = zlib.compress(xml.encode())[2:-4]
+    return base64.b64encode(compressed).decode()

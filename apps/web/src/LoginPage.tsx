@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api, setUser } from "./api";
 import { Logo } from "./Logo";
-import type { UserInfo } from "./types";
+import type { SSODetectResponse, UserInfo } from "./types";
 
 export function LoginPage({
   registrationOpen,
@@ -20,10 +20,34 @@ export function LoginPage({
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [ssoDetect, setSsoDetect] = useState<SSODetectResponse | null>(null);
+  const [ssoChecking, setSsoChecking] = useState(false);
+  const ssoTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     setMode(registrationOpen ? "register" : "login");
   }, [registrationOpen]);
+
+  // SSO email domain detection: check when email changes (debounced)
+  useEffect(() => {
+    if (ssoTimerRef.current) window.clearTimeout(ssoTimerRef.current);
+    setSsoDetect(null);
+    if (!email.includes("@")) return;
+    ssoTimerRef.current = window.setTimeout(async () => {
+      setSsoChecking(true);
+      try {
+        const result = await api.detectSSO(email);
+        setSsoDetect(result);
+      } catch {
+        setSsoDetect(null);
+      } finally {
+        setSsoChecking(false);
+      }
+    }, 500);
+    return () => {
+      if (ssoTimerRef.current) window.clearTimeout(ssoTimerRef.current);
+    };
+  }, [email]);
 
   const canSubmit =
     !busy &&
@@ -145,6 +169,20 @@ export function LoginPage({
             ? mode === "login" ? "Signing in…" : "Creating…"
             : mode === "login" ? "Sign in" : "Create owner"}
         </button>
+        {/* SSO login */}
+        {mode === "login" && ssoDetect?.has_sso && (
+          <div className="sso-login-section">
+            <div className="sso-divider">
+              <span>or</span>
+            </div>
+            <a
+              className="btn btn-outline sso-login-btn"
+              href={api.ssoAuthorize(ssoDetect.org_slug!)}
+            >
+              Sign in with SSO
+            </a>
+          </div>
+        )}
         </form>
         {registrationOpen ? (
           <button

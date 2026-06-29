@@ -22,7 +22,7 @@ from sqlalchemy import delete, func, select
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import NodeRun, Run, RunApproval, RunEvent, RunQueueEntry
+from app.models import AuditEvent, NodeRun, Run, RunApproval, RunEvent, RunQueueEntry
 from app.services.artifacts import delete_artifacts_for_run_ids
 from app.services.live_settings import get_live_settings
 
@@ -113,6 +113,27 @@ async def prune_old_runs(now: datetime | None = None) -> tuple[int, int]:
 _prune_lock = asyncio.Lock()
 
 
+async def prune_audit_logs(now: datetime | None = None) -> int:
+    """Delete audit log rows older than ``audit_log_retention_days``.
+
+    Returns the number of deleted rows. No-op when the retention setting is 0.
+    """
+    now = now or datetime.now(UTC)
+    days = settings.audit_log_retention_days
+    if days <= 0:
+        return 0
+    cutoff = now - timedelta(days=days)
+    async with SessionLocal() as session:
+        result = await session.execute(
+            delete(AuditEvent).where(AuditEvent.created_at < cutoff)
+        )
+        await session.commit()
+    return int(result.rowcount or 0)
+
+
+_audit_prune_lock = asyncio.Lock()
+
+
 async def retention_loop() -> None:
     """Background loop. Bounded by graceful shutdown via task cancellation.
 
@@ -120,6 +141,9 @@ async def retention_loop() -> None:
     longer than ``run_retention_tick_seconds`` (e.g. a very large DB). If a
     prune is still running when the next tick fires, the new tick is skipped
     harmlessly rather than piling on and risking connection exhaustion.
+
+    Also runs the nightly audit log purge on the same interval (which is short
+    enough to be practical for audit retention too).
     """
     interval = max(60, settings.run_retention_tick_seconds)
     while True:
@@ -131,4 +155,16 @@ async def retention_loop() -> None:
                     logger.exception("retention tick failed")
         else:
             logger.debug("retention: skipping tick — previous prune still in progress")
+
+        if not _audit_prune_lock.locked():
+            async with _audit_prune_lock:
+                try:
+                    purged = await prune_audit_logs()
+                    if purged:
+                        logger.info("audit retention: purged %d rows", purged)
+                except Exception:
+                    logger.exception("audit retention tick failed")
+        else:
+            logger.debug("audit retention: skipping tick — previous prune still in progress")
+
         await asyncio.sleep(interval)

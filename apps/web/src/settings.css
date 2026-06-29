@@ -287,6 +287,187 @@
   padding: 0 11px;
 }
 
+/* ------------------------------------------------------------------ */
+/* Custom roles                                                       */
+/* ------------------------------------------------------------------ */
+
+.custom-role-permissions {
+  margin-top: 16px;
+}
+
+.custom-role-permissions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.custom-role-permissions-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.custom-role-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.custom-role-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+
+.custom-role-checkbox:hover {
+  background: var(--surface-2);
+}
+
+.custom-role-checkbox.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.custom-role-checkbox input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.custom-role-checkbox .checkbox-icon {
+  visibility: hidden;
+  flex-shrink: 0;
+}
+
+.custom-role-checkbox.is-selected .checkbox-icon {
+  visibility: visible;
+  color: var(--accent);
+}
+
+.custom-roles-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 32px;
+}
+
+.custom-roles-section {
+  margin-top: 24px;
+}
+
+.custom-roles-section h3 {
+  margin-bottom: 4px;
+}
+
+.custom-roles-section > p {
+  margin-bottom: 16px;
+}
+
+.custom-roles-builtin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Audit logs                                                         */
+/* ------------------------------------------------------------------ */
+
+.audit-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 12px 0;
+}
+
+.audit-filter-bar select,
+.audit-filter-bar input {
+  max-width: 200px;
+}
+
+.audit-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.audit-log-table th,
+.audit-log-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.audit-log-table th {
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  background: var(--surface-1);
+}
+
+.audit-log-cell-time {
+  white-space: nowrap;
+  min-width: 140px;
+}
+
+.audit-log-cell-id {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.audit-log-cell-detail {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.audit-log-action {
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+
+.audit-log-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 0;
+}
+
+.home-bar-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.pagination-info {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
 .noodle-theme-option > strong { font-size: 12px; }
 .noodle-theme-option > small { padding-bottom: 10px; color: var(--ink-3); font-size: 10px; }
 .noodle-theme-check { position: absolute; top: 12px; right: 12px; color: var(--accent); }
@@ -567,4 +748,160 @@
 
 @media (prefers-reduced-motion: reduce) {
   .noodle-settings-skeleton span { animation: none; }
+}
+
+/* SSO Settings */
+.noodle-sso-settings {
+  max-width: 740px;
+}
+.noodle-sso-protocol-selector {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.noodle-sso-protocol-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.noodle-sso-protocol-option:hover {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+.noodle-sso-protocol-option.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-glow);
+}
+.noodle-sso-protocol-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.noodle-sso-protocol-option strong {
+  font-size: 14px;
+}
+.noodle-sso-protocol-option small {
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: 1.4;
+}
+.noodle-sso-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.noodle-sso-secret-wrap {
+  position: relative;
+}
+.noodle-sso-secret-wrap .field-input {
+  padding-right: 40px;
+}
+.noodle-sso-toggle-vis {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-3);
+  padding: 4px;
+}
+.noodle-sso-cert-input {
+  min-height: 80px;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  resize: vertical;
+}
+.noodle-sso-test-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 6px;
+  margin-top: 16px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.noodle-sso-test-ok {
+  background: #132a1e;
+  color: #4caf50;
+}
+.noodle-sso-test-error {
+  background: var(--color-error-bg);
+  color: var(--color-error);
+}
+.noodle-sso-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+.noodle-sso-save-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.login-field-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  padding: 8px 0;
+}
+.login-field-checkbox input[type="checkbox"] {
+  margin-top: 3px;
+}
+.login-field-checkbox small {
+  color: var(--ink-3);
+}
+.field-help {
+  display: block;
+  font-size: 12px;
+  color: var(--ink-3);
+  margin-top: 4px;
+}
+
+/* SSO on login page */
+.sso-login-section {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sso-divider {
+  text-align: center;
+  position: relative;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.sso-divider::before,
+.sso-divider::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 42%;
+  height: 1px;
+  background: var(--line);
+}
+.sso-divider::before {
+  left: 0;
+}
+.sso-divider::after {
+  right: 0;
+}
+.sso-login-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
 }

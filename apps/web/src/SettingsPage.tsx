@@ -752,6 +752,7 @@ function ManagementPanel({
         <div className="noodle-management-links">
           {canWorkspaceManage && <Link to="/organization"><Buildings size={18} aria-hidden="true" /><span><strong>Workspace</strong><small>Members, roles, quotas, and usage</small></span></Link>}
           {canAdmin && <Link to="/security"><ShieldCheck size={18} aria-hidden="true" /><span><strong>Instance access</strong><small>Users and installation-wide roles</small></span></Link>}
+          {canAdmin && <Link to="/settings/sso"><IdentificationCard size={18} aria-hidden="true" /><span><strong>SSO</strong><small>Single sign-on via OIDC or SAML</small></span></Link>}
           {canAudit && <Link to="/activity"><GearSix size={18} aria-hidden="true" /><span><strong>Activity log</strong><small>Review workspace administrative changes</small></span></Link>}
         </div>
       ) : (

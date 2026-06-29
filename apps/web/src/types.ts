@@ -35,6 +35,34 @@ export interface MCPToolInfo {
   input_schema: Record<string, unknown>;
 }
 
+export interface SSOConfig {
+  id?: string;
+  org_id?: string;
+  org_slug?: string;
+  protocol: "oidc" | "saml";
+  client_id?: string;
+  client_secret?: string;
+  discovery_url?: string;
+  idp_entity_id?: string;
+  idp_sso_url?: string;
+  idp_certificate?: string;
+  email_domain?: string;
+  attribute_map?: Record<string, string>;
+  jit_provisioning?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SSODetectResponse {
+  has_sso: boolean;
+  org_slug?: string;
+}
+
+export interface SSOTestResult {
+  status: string;
+  detail: string;
+}
+
 export interface CredentialParamSpec {
   type: string;
   key: string;
@@ -682,6 +710,72 @@ export interface AiWorkflowDraftResponse {
   planner: "llm" | "deterministic_fallback" | string;
 }
 
+// ---------------------------------------------------------------------------
+// Agentic build loop (MS4 Slice 4D)
+// ---------------------------------------------------------------------------
+
+export interface AgenticBuildRequest {
+  goal: string;
+  test_data?: Record<string, unknown> | null;
+  max_iterations?: number;
+}
+
+export interface AgenticBuildIterationStart {
+  type: "iteration_start";
+  iteration: number;
+  action: "draft" | "fix";
+}
+
+export interface AgenticBuildGraphUpdated {
+  type: "graph_updated";
+  graph: WorkflowGraph;
+  explanation: string;
+}
+
+export interface AgenticBuildRunStarted {
+  type: "run_started";
+  run_id: string;
+}
+
+export interface AgenticBuildRunFailed {
+  type: "run_failed";
+  run_id: string;
+  errors: Array<{ node_id: string; error: string }>;
+}
+
+export interface AgenticBuildFixPlanned {
+  type: "fix_planned";
+  target_nodes: string[];
+  diagnosis: string;
+}
+
+export interface AgenticBuildConverged {
+  type: "converged";
+  iterations: number;
+  final_graph: WorkflowGraph;
+}
+
+export interface AgenticBuildMaxIterations {
+  type: "max_iterations_reached";
+  best_graph: WorkflowGraph;
+  remaining_errors: Array<{ node_id: string; error: string }>;
+}
+
+export interface AgenticBuildError {
+  type: "error";
+  message: string;
+}
+
+export type AgenticBuildEvent =
+  | AgenticBuildIterationStart
+  | AgenticBuildGraphUpdated
+  | AgenticBuildRunStarted
+  | AgenticBuildRunFailed
+  | AgenticBuildFixPlanned
+  | AgenticBuildConverged
+  | AgenticBuildMaxIterations
+  | AgenticBuildError;
+
 export interface AuditEvent {
   id: string;
   action: string;
@@ -689,6 +783,47 @@ export interface AuditEvent {
   target_id: string;
   detail: string;
   created_at: string;
+}
+
+export interface AuditEventInfo {
+  id: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  detail: string;
+  actor_id: string | null;
+  actor_email: string | null;
+  session_id: string | null;
+  actor_type: string;
+  created_at: string;
+}
+
+export interface CustomRoleInfo {
+  id: string;
+  org_id: string;
+  name: string;
+  permissions: string[];
+  created_at: string;
+}
+
+export interface CustomRoleCreate {
+  name: string;
+  permissions: string[];
+}
+
+export interface CustomRoleUpdate {
+  name?: string;
+  permissions?: string[];
+}
+
+export interface AuditLogQuery {
+  user_id?: string;
+  action?: string;
+  resource_type?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
 }
 
 export interface PinnedItem {
@@ -875,4 +1010,34 @@ export interface ChatPublicConfig {
   placeholder: string;
   initial_message: string;
   require_login: boolean;
+}
+
+// ── Community Node Registry (MS4 Slice 4E) ────────────────────────────
+
+export interface RegistryPackage {
+  id: string;
+  name: string;
+  description: string;
+  author: string;
+  version: string;
+  nodes: string[];
+  install_url: string;
+  pypi_package: string;
+}
+
+export interface RegistrySearchResult {
+  packages: RegistryPackage[];
+}
+
+export interface RegistryInstallResponse {
+  install_id: string;
+  status: string;
+}
+
+export interface RegistryInstallStatus {
+  install_id: string;
+  status: string;
+  error: string | null;
+  environment_id: string;
+  package_id: string;
 }

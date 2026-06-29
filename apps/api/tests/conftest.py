@@ -13,6 +13,7 @@ import app.main as main_module
 import app.mcp.tools as mcp_tools_module
 import app.routers.chat_public as chat_public_module
 import app.routers.runner_pools as runner_pools_module
+import app.services.agentic_builder as agentic_builder_module
 import app.services.artifacts as artifacts_module
 import app.services.backends as backends_module
 import app.services.chat_service as chat_service_module
@@ -338,6 +339,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     live_settings_module.invalidate_live_settings_cache()
     licensing_module.invalidate_license_cache()
     originals = {
+        agentic_builder_module: agentic_builder_module.SessionLocal,
         backends_module: backends_module.SessionLocal,
         artifacts_module: artifacts_module.SessionLocal,
         chat_service_module: chat_service_module.SessionLocal,

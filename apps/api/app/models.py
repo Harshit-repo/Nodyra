@@ -73,6 +73,33 @@ class Membership(Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="viewer")
+    custom_role_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("custom_roles.id", ondelete="SET NULL"), index=True, nullable=True, default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class CustomRole(Base):
+    """A custom role with a named set of permissions within an organization.
+
+    Custom roles completely replace the built-in role for permission checks,
+    not add to them. When ``memberships.custom_role_id`` is set, the built-in
+    ``role`` field is used only as a fallback display label.
+    """
+
+    __tablename__ = "custom_roles"
+    __table_args__ = (
+        UniqueConstraint("org_id", "name", name="uq_custom_roles_org_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    permissions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -516,6 +543,7 @@ class User(Base):
     sessions_valid_after: Mapped[float | None] = mapped_column(
         Float, nullable=True, default=None
     )
+    sso_subject: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ApiToken(Base):
@@ -611,6 +639,8 @@ class AuditEvent(Base):
     detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
     actor_id: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
     actor_email: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
+    actor_type: Mapped[str] = mapped_column(String(20), nullable=False, default="user")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -1252,6 +1282,40 @@ class MCPConnection(Base):
     tool_cache: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class SSOConfig(Base):
+    """Per-org SSO configuration (OIDC or SAML)."""
+
+    __tablename__ = "sso_configs"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    protocol: Mapped[str] = mapped_column(Text, nullable=False, default="oidc")
+    # OIDC fields
+    client_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    client_secret: Mapped[str | None] = mapped_column(Text, nullable=True)  # Fernet-encrypted
+    discovery_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # SAML fields (IdP-provided values)
+    idp_entity_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idp_sso_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idp_certificate: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Common
+    email_domain: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attribute_map: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
+    jit_provisioning: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

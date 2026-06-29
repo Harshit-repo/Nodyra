@@ -1,0 +1,295 @@
+"""SSO authentication service: OIDC + SAML flows.
+
+OIDC implements the authorization-code flow: authorization URL builder with
+Redis-backed state storage, code exchange, and ID token validation.
+SAML stubs are provided for the POST-based ACS endpoint.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import secrets
+import time
+import urllib.parse
+
+import httpx
+from cryptography.fernet import Fernet
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import settings
+from app.exceptions import AuthError
+from app.models import Membership, Organization, SSOConfig, User
+from app.redis_client import redis_client
+
+logger = logging.getLogger(__name__)
+
+_discovery_cache: dict[str, tuple[float, dict]] = {}
+_discovery_lock = asyncio.Lock()
+_jwks_cache: dict[str, tuple[float, dict]] = {}
+_jwks_lock = asyncio.Lock()
+
+
+# ---------------------------------------------------------------------------
+# OIDC Flow
+# ---------------------------------------------------------------------------
+
+
+async def oidc_authorization_url(sso_config: SSOConfig) -> str:
+    """Build the OIDC authorization redirect URL.
+
+    Persists state + nonce in Redis with 600s TTL for callback validation.
+    Returns the redirect URL only.
+    """
+    discovery = await _fetch_oidc_discovery(sso_config.discovery_url)
+    state = secrets.token_urlsafe(32)
+    nonce = secrets.token_urlsafe(32)
+    await redis_client.set(
+        f"noodle:sso:state:{state}",
+        json.dumps({"nonce": nonce, "org_id": sso_config.org_id}),
+        ex=600,
+    )
+    redirect_uri = _sso_redirect_uri()
+    params = {
+        "client_id": sso_config.client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "nonce": nonce,
+    }
+    return f"{discovery['authorization_endpoint']}?{urllib.parse.urlencode(params)}"
+
+
+async def oidc_exchange_code(
+    sso_config: SSOConfig, code: str, state: str, *, session: AsyncSession
+) -> dict:
+    """Exchange authorization code for tokens, validate nonce, return user claims."""
+    raw = await redis_client.getdel(f"noodle:sso:state:{state}")
+    if raw is None:
+        raise AuthError("Invalid or expired SSO state - CSRF protection")
+    pending = json.loads(raw)
+    if pending["org_id"] != sso_config.org_id:
+        raise AuthError("SSO state org mismatch")
+    nonce = pending["nonce"]
+
+    discovery = await _fetch_oidc_discovery(sso_config.discovery_url)
+    client_secret = await _decrypt_client_secret(sso_config, session)
+    tokens = await _token_exchange(discovery, sso_config, code, client_secret)
+    claims = await _validate_id_token(tokens["id_token"], discovery, nonce=nonce)
+    return {
+        "email": claims["email"],
+        "name": claims.get("name") or claims.get("email"),
+        "sub": claims["sub"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# JIT Provisioning
+# ---------------------------------------------------------------------------
+
+
+async def get_or_create_sso_user(
+    claims: dict, sso_config: SSOConfig, session: AsyncSession
+) -> User:
+    """Find or create a user from SSO claims, ensuring org membership."""
+    email = claims["email"].lower()
+    user = await session.scalar(select(User).where(User.email == email))
+    if user is None:
+        if not sso_config.jit_provisioning:
+            raise AuthError("JIT provisioning disabled; user must be pre-invited")
+        user = User(
+            email=email,
+            name=claims.get("name", email),
+            email_verified=True,
+            sso_subject=claims["sub"],
+        )
+        session.add(user)
+        await session.flush()
+
+    # Always ensure org membership exists
+    existing_membership = await session.scalar(
+        select(Membership).where(
+            Membership.user_id == user.id,
+            Membership.org_id == sso_config.org_id,
+        )
+    )
+    if existing_membership is None:
+        if not sso_config.jit_provisioning:
+            raise AuthError("JIT provisioning disabled; user must be pre-invited")
+        session.add(
+            Membership(
+                user_id=user.id, org_id=sso_config.org_id, role="member"
+            )
+        )
+        await session.flush()
+    return user
+
+
+# ---------------------------------------------------------------------------
+# Lookup helpers
+# ---------------------------------------------------------------------------
+
+
+async def get_sso_config_by_org_slug(
+    slug: str, session: AsyncSession
+) -> SSOConfig | None:
+    """Resolve ``org_slug`` -> ``Organization`` -> ``SSOConfig``."""
+    org = await session.scalar(
+        select(Organization).where(Organization.slug == slug)
+    )
+    if org is None:
+        return None
+    return await session.scalar(
+        select(SSOConfig).where(SSOConfig.org_id == org.id)
+    )
+
+
+async def detect_sso_by_email(
+    email: str, session: AsyncSession
+) -> dict | None:
+    """Check if an email domain has SSO configured.
+
+    Returns ``{"has_sso": True, "org_slug": "..."}`` or ``None``.
+    """
+    domain = email.strip().lower().split("@")[-1] if "@" in email else None
+    if not domain:
+        return None
+    config = await session.scalar(
+        select(SSOConfig).where(SSOConfig.email_domain == domain)
+    )
+    if config is None:
+        return None
+    org = await session.get(Organization, config.org_id)
+    if org is None:
+        return None
+    return {"has_sso": True, "org_slug": org.slug}
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _sso_redirect_uri() -> str:
+    base = settings.oauth_redirect_base_url or settings.public_api_url or ""
+    if base:
+        return f"{base.rstrip('/')}/auth/sso/callback"
+    return "/auth/sso/callback"
+
+
+async def _fetch_oidc_discovery(discovery_url: str) -> dict:
+    """Fetch and cache the OIDC discovery document (1h TTL)."""
+    now = time.monotonic()
+    if discovery_url in _discovery_cache:
+        cached_at, doc = _discovery_cache[discovery_url]
+        if now - cached_at < 3600:
+            return doc
+    async with _discovery_lock:
+        if discovery_url in _discovery_cache:
+            cached_at, doc = _discovery_cache[discovery_url]
+            if now - cached_at < 3600:
+                return doc
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(discovery_url)
+            resp.raise_for_status()
+            doc = resp.json()
+        _discovery_cache[discovery_url] = (time.monotonic(), doc)
+        return doc
+
+
+async def _decrypt_client_secret(
+    sso_config: SSOConfig, session: AsyncSession
+) -> str | None:
+    """Decrypt single-field Fernet-encrypted client_secret using org KEK."""
+    if not sso_config.client_secret:
+        return None
+    from app.services.org_keys import get_org_kek
+
+    org_kek = await get_org_kek(sso_config.org_id, session)
+    if org_kek is None:
+        raise AuthError("Cannot decrypt client_secret: org KEK not available")
+    return Fernet(org_kek).decrypt(sso_config.client_secret.encode()).decode()
+
+
+async def _token_exchange(
+    discovery: dict,
+    sso_config: SSOConfig,
+    code: str,
+    client_secret: str | None,
+) -> dict:
+    """POST authorization code to token endpoint."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            discovery["token_endpoint"],
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "client_id": sso_config.client_id,
+                "client_secret": client_secret,
+                "redirect_uri": _sso_redirect_uri(),
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def _validate_id_token(
+    id_token: str, discovery: dict, *, nonce: str
+) -> dict:
+    """Validate OIDC ID token using authlib."""
+    from authlib.jose import JsonWebKey, JsonWebToken
+
+    jwks_uri = discovery["jwks_uri"]
+    now = time.monotonic()
+    async with _jwks_lock:
+        if jwks_uri not in _jwks_cache or now - _jwks_cache[jwks_uri][0] >= 3600:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(jwks_uri)
+                resp.raise_for_status()
+            _jwks_cache[jwks_uri] = (time.monotonic(), resp.json())
+    jwks_data = _jwks_cache[jwks_uri][1]
+    jwt = JsonWebToken(["RS256", "ES256"])
+    claims = jwt.decode(id_token, JsonWebKey.import_key_set(jwks_data))
+    claims.validate()
+    if claims.get("nonce") != nonce:
+        raise AuthError("ID token nonce mismatch - replay attack suspected")
+    if "email" not in claims:
+        raise AuthError("ID token missing email claim")
+    return dict(claims)
+
+
+# ---------------------------------------------------------------------------
+# SAML stubs
+# ---------------------------------------------------------------------------
+
+
+def build_saml_sp_metadata(sso_config: SSOConfig) -> str:
+    """Generate SP metadata XML for SAML configuration."""
+    entity_id = _saml_entity_id()
+    acs_url = _saml_acs_url()
+    return f"""<?xml version="1.0"?>
+<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
+                     entityID="{entity_id}">
+  <md:SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+                                 Location="{acs_url}"
+                                 index="0"/>
+  </md:SPSSODescriptor>
+</md:EntityDescriptor>"""
+
+
+def _saml_entity_id() -> str:
+    base = settings.oauth_redirect_base_url or settings.public_api_url or ""
+    if base:
+        return f"{base.rstrip('/')}/auth/sso/metadata"
+    return "/auth/sso/metadata"
+
+
+def _saml_acs_url() -> str:
+    base = settings.oauth_redirect_base_url or settings.public_api_url or ""
+    if base:
+        return f"{base.rstrip('/')}/auth/sso/acs"
+    return "/auth/sso/acs"

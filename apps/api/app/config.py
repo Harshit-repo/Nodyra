@@ -3,6 +3,9 @@ from typing import Literal
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Known KMS provider names used in settings validation.
+KMS_PROVIDERS = frozenset({"env", "vault", "aws", "gcp"})
+
 # The shipped placeholder secret. Centralised so the field default, the
 # advisory warning, and the hard startup guard all reference one value.
 DEFAULT_SECRET_KEY = "noodle-dev-secret-change-me-in-production"
@@ -180,6 +183,9 @@ class Settings(BaseSettings):
     run_retention_days: int = 14
     run_retention_max_per_workflow: int = 0
     run_retention_tick_seconds: int = 3600
+    # Audit log retention. Rows older than this many days are purged nightly
+    # by the maintenance loop. 0 disables the automatic purge.
+    audit_log_retention_days: int = 90
     # Per-NodeRun output cap (bytes of the JSON-serialised value). Outputs
     # above this are replaced with a small {_truncated, size, preview} stub
     # before persisting so one fat DataFrame can't bloat the DB. 0 disables.
@@ -271,6 +277,12 @@ class Settings(BaseSettings):
     # PEM-encoded Ed25519 public key used to verify license keys. Blank → use
     # the key baked into app/services/licensing.py. Tests override this.
     license_public_key: str = ""
+    # Community Node Registry (MS4 Slice 4E). When False, the registry feature
+    # is disabled (air-gapped / maximum-security deployments). Default True.
+    allow_registry: bool = True
+    # URL of the community registry index JSON. The MVPC uses a GitHub-backed
+    # JSON file — a PR-based registry index hosted in a public repo.
+    registry_index_url: str = "https://raw.githubusercontent.com/noodle-registry/packages/main/index.json"
     auth_required: bool = False
     auth_allow_registration: bool = False
     auth_registration_role: str = "viewer"
@@ -310,6 +322,22 @@ class Settings(BaseSettings):
     # exposure or when the proxy is not trusted to set that header correctly.
     trusted_proxy_count: int = 0
     secret_key: str = DEFAULT_SECRET_KEY
+    # KMS provider for master KEK encryption. "env" (default) uses the legacy
+    # Fernet key derived from SECRET_KEY. "vault", "aws", and "gcp" delegate
+    # to external key-management services (requires EXTERNAL_KMS feature).
+    kms_provider: Literal["env", "vault", "aws", "gcp"] = "env"
+    # HashiCorp Vault Transit engine settings (used when kms_provider="vault").
+    vault_url: str | None = None
+    vault_token: str | None = None
+    vault_transit_mount: str = "transit"
+    vault_transit_key: str = "noodle-master"
+    # AWS KMS settings (used when kms_provider="aws").
+    # AWS credentials come from the standard boto3 chain (env vars, IAM role, profile).
+    aws_kms_key_id: str | None = None
+    aws_kms_region: str = "us-east-1"
+    # GCP Cloud KMS settings (used when kms_provider="gcp").
+    # GCP credentials come from Application Default Credentials (ADC).
+    gcp_kms_key_name: str | None = None  # projects/*/locations/*/keyRings/*/cryptoKeys/* (NOT cryptoKeyVersions)
     # Shared secret the worker presents to call /internal/* endpoints.
     # Blank = no check (fine for local dev where only your machine reaches
     # the API). Set this when exposing the API to anything else.
@@ -453,6 +481,25 @@ class Settings(BaseSettings):
             errors.append(
                 "MCP_AUTHORIZATION_SERVER_URL is set without "
                 "MCP_OAUTH_INTROSPECTION_URL; OAuth access tokens could not be validated."
+            )
+        # KMS provider validation: external providers require certain fields.
+        if self.kms_provider == "vault" and not self.vault_url:
+            errors.append(
+                "kms_provider=vault requires VAULT_URL to be set. "
+                "Also set VAULT_TOKEN, VAULT_TRANSIT_MOUNT, and VAULT_TRANSIT_KEY."
+            )
+        if self.kms_provider == "vault" and not self.vault_token:
+            errors.append(
+                "kms_provider=vault requires VAULT_TOKEN to be set."
+            )
+        if self.kms_provider == "aws" and not self.aws_kms_key_id:
+            errors.append(
+                "kms_provider=aws requires AWS_KMS_KEY_ID to be set (key ID, ARN, or alias)."
+            )
+        if self.kms_provider == "gcp" and not self.gcp_kms_key_name:
+            errors.append(
+                "kms_provider=gcp requires GCP_KMS_KEY_NAME to be set "
+                "(full resource path of a symmetric CryptoKey)."
             )
         return errors
 

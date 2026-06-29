@@ -27,7 +27,7 @@ from starlette.requests import HTTPConnection
 
 from app.config import settings
 from app.db import get_session
-from app.models import ApiToken, Membership, Organization, User
+from app.models import ApiToken, CustomRole, Membership, Organization, User
 from app.services.crypto import decode_session_token
 from app.tenancy import DEFAULT_ORG_ID, current_org_id, run_as_system
 
@@ -95,6 +95,27 @@ def _cb_record_success() -> None:
 
 VALID_ROLES = ("viewer", "editor", "admin", "owner")
 
+# Permissions assignable to custom roles — operational permissions only.
+# Admin/billing/SSO permissions are EXCLUDED: they remain locked to built-in roles.
+CUSTOM_ROLE_PERMISSION_REGISTRY: frozenset[str] = frozenset({
+    "workflow:read", "workflow:write", "workflow:run", "workflow:delete",
+    "workflow:publish",
+    "run:cancel_others",
+    "credential:read_names",
+    "credential:create",
+    "audit:read",
+    "mcp_connection:manage",
+})
+
+# Built-in role permission maps (NOT overridable by custom roles).
+# Each entry includes ALL permissions the built-in role grants.
+_BUILTIN_ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
+    "owner":  frozenset(CUSTOM_ROLE_PERMISSION_REGISTRY | {"admin:users", "admin:sso", "admin:billing", "node_registry:install"}),
+    "admin":  frozenset(CUSTOM_ROLE_PERMISSION_REGISTRY | {"admin:users", "node_registry:install"}),
+    "editor": frozenset({"workflow:read", "workflow:write", "workflow:run", "credential:create"}),
+    "viewer": frozenset({"workflow:read"}),
+}
+
 
 @dataclass(frozen=True)
 class ExternalTokenGrant:
@@ -147,6 +168,15 @@ _PERMISSION_MIN_ROLE = {
     "runner_pool:write": "admin",
     "audit:read": "admin",
     "mcp_connection:manage": "admin",
+    "workflow:delete": "admin",
+    "workflow:publish": "editor",
+    "run:cancel_others": "admin",
+    "credential:read_names": "editor",
+    "credential:create": "editor",
+    "admin:users": "owner",
+    "admin:sso": "owner",
+    "admin:billing": "owner",
+    "node_registry:install": "admin",
     "user:manage": "admin",
     "ops:drain": "admin",
     "ops:dead-letter:read": "editor",
@@ -518,6 +548,19 @@ async def _role_for(
     return membership_role
 
 
+async def _membership_for(
+    session: AsyncSession, user: User, org_id: str | None
+) -> Membership | None:
+    """Return the user's membership within the request org, or None."""
+    if not settings.multi_tenancy_enabled or org_id is None:
+        return None
+    return await session.scalar(
+        select(Membership).where(
+            Membership.org_id == org_id, Membership.user_id == user.id
+        )
+    )
+
+
 def require_role(
     minimum: str,
     *,
@@ -540,6 +583,30 @@ def require_role(
                 )
             return None
         role = await _role_for(session, user, org_id)
+        # C4: Custom role check — if the user has a custom_role_id, use its
+        # permissions exclusively (replaces, not augments, the built-in role).
+        # admin:* and node_registry:install are never in custom roles.
+        if permission:
+            # Resolve membership to check for custom_role_id.
+            membership = await _membership_for(session, user, org_id)
+            if membership and membership.custom_role_id:
+                custom_role = await session.get(CustomRole, membership.custom_role_id)
+                if custom_role is not None:
+                    perms = frozenset(custom_role.permissions or [])
+                    if permission not in perms:
+                        raise HTTPException(
+                            status.HTTP_403_FORBIDDEN,
+                            f"Custom role '{custom_role.name}' does not grant '{permission}'.",
+                        )
+                    # Custom role granted the permission — skip built-in role check.
+                    token_scopes = getattr(request.state, "api_token_scopes", None)
+                    if token_scopes is not None and permission not in token_scopes and "*" not in token_scopes:
+                        raise HTTPException(
+                            status.HTTP_403_FORBIDDEN,
+                            f"Automation token does not grant {permission}.",
+                        )
+                    return user
+
         if not role_allows(role, minimum):
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
@@ -559,6 +626,19 @@ def require_role(
         return user
 
     return dependency
+
+
+def validate_custom_role_permissions(permissions: list[str]) -> None:
+    """Validate that all permission strings are in the registry. Raises 422 on unknown strings."""
+    for p in permissions:
+        if p not in CUSTOM_ROLE_PERMISSION_REGISTRY:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Unknown permission '{p}'. "
+                    f"Valid permissions: {', '.join(sorted(CUSTOM_ROLE_PERMISSION_REGISTRY))}."
+                ),
+            )
 
 
 # Permissions that MUST have an authenticated actor even when ``auth_required``

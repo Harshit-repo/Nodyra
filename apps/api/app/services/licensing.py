@@ -26,7 +26,7 @@ from fastapi import status as _http_status
 from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
-from app.config import settings as boot_settings
+from app.config import KMS_PROVIDERS, settings as boot_settings
 from app.db import SessionLocal
 
 # Production public key. Verifies license keys signed offline with the matching
@@ -312,6 +312,13 @@ async def reconcile_capabilities() -> list[str]:
     if boot_settings.otel_enabled and not await has_feature(Feature.OBSERVABILITY):
         boot_settings.otel_enabled = False
         warnings.append("otel_enabled requires the Pro edition or higher; disabled.")
+    if boot_settings.kms_provider != "env" and not await has_feature(Feature.EXTERNAL_KMS):
+        _kms_provider = boot_settings.kms_provider
+        boot_settings.kms_provider = "env"
+        warnings.append(
+            f"kms_provider={_kms_provider!r} requires the Enterprise edition; "
+            "reverted to 'env'."
+        )
     return warnings
 
 

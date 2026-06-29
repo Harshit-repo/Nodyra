@@ -557,6 +557,28 @@ class AuditEventInfo(BaseModel):
     detail: str
     actor_id: str | None = None
     actor_email: str | None = None
+    session_id: str | None = None
+    actor_type: str = "user"
+    created_at: datetime
+
+
+class CustomRoleCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    permissions: list[str] = Field(default_factory=list)
+
+
+class CustomRoleUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    permissions: list[str] | None = None
+
+
+class CustomRoleInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    org_id: str
+    name: str
+    permissions: list[str]
     created_at: datetime
 
 
@@ -1091,6 +1113,20 @@ class AiWorkflowDraftResponse(BaseModel):
     confidence: str = "medium"
     focus_node_id: str | None = None
     planner: str = "llm"
+
+
+class AgenticBuildRequest(BaseModel):
+    """Request body for POST /workflows/{id}/agentic-build.
+
+    Launches an autonomous build loop: AI drafts the workflow, runs it with
+    test data, inspects results, repairs failing nodes, and repeats until
+    convergence or max_iterations.  Hard-capped at 5 iterations to bound
+    LLM cost.
+    """
+
+    goal: str = Field(min_length=1, max_length=4000)
+    test_data: dict | None = None
+    max_iterations: int = Field(default=5, ge=1, le=5)
 
 
 class RuntimeModeStatus(BaseModel):

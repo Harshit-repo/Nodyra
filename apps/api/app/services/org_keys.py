@@ -1,17 +1,15 @@
 """Org KEK resolution + credential envelope helpers (Phase E).
 
 Every organization holds ``wrapped_org_kek`` — its KEK wrapped by the master
-KEK (derived from SECRET_KEY today; the ``KekProvider`` seam is where a
-Vault/KMS backend plugs in for the Enterprise ``external_secrets`` feature).
-KEKs are minted lazily on first use with a compare-and-set so two replicas
-can't each mint one and orphan the loser's credentials.
+KEK (from the configured KMS provider). KEKs are minted lazily on first use
+with a compare-and-set so two replicas can't each mint one and orphan the
+loser's credentials.
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from typing import Protocol
 
 from cryptography.fernet import InvalidToken
 from sqlalchemy import select, update
@@ -19,31 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Credential, Organization
 from app.services import crypto
+from app.services.kms import get_kms_provider
 
 _logger = logging.getLogger(__name__)
-
-
-class KekProvider(Protocol):
-    """Wraps/unwraps org KEKs with the deployment's root of trust."""
-
-    def wrap(self, org_kek: bytes) -> str: ...
-    def unwrap(self, wrapped: str) -> bytes: ...
-
-
-class EnvMasterKekProvider:
-    """Default provider: master Fernet key derived from SECRET_KEY."""
-
-    @staticmethod
-    def wrap(org_kek: bytes) -> str:
-        return crypto.wrap_org_kek(org_kek)
-
-    @staticmethod
-    def unwrap(wrapped: str) -> bytes:
-        return crypto.unwrap_org_kek(wrapped)
-
-
-# Swapped at startup for KMS/Vault deployments (Enterprise external_secrets).
-kek_provider: KekProvider = EnvMasterKekProvider()
 
 # Unwrapped KEKs cached per org.  Each entry carries a TTL so a KEK rotation
 # on another replica is picked up within _KEK_CACHE_TTL_SECONDS without needing
@@ -100,18 +76,21 @@ async def get_org_kek(
         # Compare-and-set mint: only the writer that finds the column still
         # NULL wins; everyone re-reads the winning value afterwards, so two
         # replicas can never split an org across two KEKs.
+        wrapped = await get_kms_provider().encrypt(crypto.generate_org_kek())
         await session.execute(
             update(Organization)
             .where(
                 Organization.id == org_id,
                 Organization.wrapped_org_kek.is_(None),
             )
-            .values(wrapped_org_kek=kek_provider.wrap(crypto.generate_org_kek()))
+            .values(wrapped_org_kek=wrapped.decode("utf-8"))
         )
         await session.flush()
         await session.refresh(org)
     try:
-        kek = kek_provider.unwrap(org.wrapped_org_kek)
+        kek = await get_kms_provider().decrypt(
+            org.wrapped_org_kek.encode("utf-8")
+        )
     except (InvalidToken, ValueError):
         _logger.error(
             "get_org_kek: cannot unwrap org KEK for org %s — SECRET_KEY may have "
@@ -161,7 +140,9 @@ async def batch_get_org_keks(
                 result[oid] = None
                 continue
             try:
-                kek = kek_provider.unwrap(org.wrapped_org_kek)
+                kek = await get_kms_provider().decrypt(
+                    org.wrapped_org_kek.encode("utf-8")
+                )
             except (InvalidToken, ValueError):
                 _logger.error(
                     "batch_get_org_keks: cannot unwrap KEK for org %s — SECRET_KEY may have changed",

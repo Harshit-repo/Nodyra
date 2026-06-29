@@ -1,8 +1,11 @@
 import { safeGetItem, safeRemoveItem, safeSetItem } from "./safeStorage";
 import type {
   AuditEvent,
+  AuditEventInfo,
+  AuditLogQuery,
   AuthState,
   ArtifactInfo,
+  AgenticBuildEvent,
   AiWorkflowDraftRequest,
   AiWorkflowDraftResponse,
   ChatPublicConfig,
@@ -27,6 +30,9 @@ import type {
   PinnedItem,
   CodeModule,
   CodeModuleFunctionPreview,
+  CustomRoleCreate,
+  CustomRoleInfo,
+  CustomRoleUpdate,
   LintDiagnostic,
   GenerateNodeResponse,
   Deployment,
@@ -47,6 +53,9 @@ import type {
   RunnerInfo,
   RunnerPoolInfo,
   RegistrationTokenResponse,
+  SSOConfig,
+  SSODetectResponse,
+  SSOTestResult,
   SystemSettings,
   UserAdminInfo,
   UserInfo,
@@ -55,6 +64,10 @@ import type {
   WorkflowPublishResponse,
   WorkflowSummary,
   WorkflowVersionInfo,
+  RegistryPackage,
+  RegistrySearchResult,
+  RegistryInstallResponse,
+  RegistryInstallStatus,
 } from "./types";
 
 const BASE = "/api";
@@ -927,6 +940,30 @@ export const api = {
   getMcpTools: (id: string) =>
     request<MCPToolInfo[]>(`/mcp-connections/${id}/tools`),
 
+  // --- SSO ------------------------------------------------------------------
+  getSSOConfig: () => request<SSOConfig | null>("/admin/sso"),
+
+  upsertSSOConfig: (config: Partial<SSOConfig>) =>
+    request<{ status: string; protocol: string; org_id: string }>("/admin/sso", {
+      method: "POST",
+      body: JSON.stringify(config),
+    }),
+
+  deleteSSOConfig: () =>
+    request<void>("/admin/sso", { method: "DELETE" }),
+
+  testSSOConnection: (config: Partial<SSOConfig>) =>
+    request<SSOTestResult>("/admin/sso/test", {
+      method: "POST",
+      body: JSON.stringify(config),
+    }),
+
+  detectSSO: (email: string) =>
+    request<SSODetectResponse>(`/auth/sso/detect?email=${encodeURIComponent(email)}`),
+
+  ssoAuthorize: (orgSlug: string) =>
+    `/auth/sso/start?org_slug=${encodeURIComponent(orgSlug)}`,
+
   // --- Ops dashboard --------------------------------------------------------
   runtimeMode: () => request<RuntimeModeStatus>("/ops/runtime-mode"),
   queueStats: () => request<QueueStats>("/ops/queue"),
@@ -945,6 +982,173 @@ export const api = {
     }),
   runDebugSnapshot: (runId: string) =>
     request<RunDebugSnapshot>(`/runs/${runId}/debug-snapshot`),
+
+  // --- Custom roles (ADVANCED_RBAC feature) ----------------------------------
+
+  listCustomRoles: () =>
+    request<CustomRoleInfo[]>("/admin/custom-roles"),
+
+  getCustomRole: (id: string) =>
+    request<CustomRoleInfo>(`/admin/custom-roles/${id}`),
+
+  createCustomRole: (body: CustomRoleCreate) =>
+    request<CustomRoleInfo>("/admin/custom-roles", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  updateCustomRole: (id: string, body: CustomRoleUpdate) =>
+    request<CustomRoleInfo>(`/admin/custom-roles/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  deleteCustomRole: (id: string) =>
+    request<void>(`/admin/custom-roles/${id}`, { method: "DELETE" }),
+
+  listPermissions: () =>
+    request<string[]>("/admin/permissions"),
+
+  // --- Audit logs (AUDIT_LOGS feature) ---------------------------------------
+
+  listAuditLogs: (params: AuditLogQuery) => {
+    const qs = new URLSearchParams();
+    if (params.user_id) qs.set("user_id", params.user_id);
+    if (params.action) qs.set("action", params.action);
+    if (params.resource_type) qs.set("resource_type", params.resource_type);
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    if (params.limit) qs.set("limit", String(params.limit));
+    if (params.offset) qs.set("offset", String(params.offset));
+    return request<Page<AuditEventInfo>>(`/admin/audit-logs?${qs.toString()}`);
+  },
+
+  exportAuditLogsCsv: (params: AuditLogQuery) => {
+    const qs = new URLSearchParams();
+    if (params.user_id) qs.set("user_id", params.user_id);
+    if (params.action) qs.set("action", params.action);
+    if (params.resource_type) qs.set("resource_type", params.resource_type);
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    return request<BlobPart>(
+      `/admin/audit-logs/export?${qs.toString()}`,
+      // Override default JSON accept header — we want raw CSV
+      { headers: { Accept: "text/csv" } },
+    );
+  },
+
+  // --- KMS (EXTERNAL_KMS feature) --------------------------------------------
+
+  kmsHealth: () =>
+    request<{ status: string; provider: string }>("/admin/kms/health"),
+};
+
+  // --- Community Node Registry (MS4 Slice 4E) --------------------------------
+
+  searchRegistry: (q?: string) => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    const qs = params.toString();
+    return request<RegistrySearchResult>(
+      `/node-registry/search${qs ? `?${qs}` : ""}`,
+    );
+  },
+
+  getRegistryPackage: (id: string) =>
+    request<RegistryPackage>(`/node-registry/packages/${encodeURIComponent(id)}`),
+
+  installRegistryPackage: (body: {
+    package_id: string;
+    environment_id: string;
+  }) =>
+    request<RegistryInstallResponse>("/node-registry/install", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  getRegistryInstallStatus: (installId: string) =>
+    request<RegistryInstallStatus>(`/node-registry/installs/${installId}`),
+
+  // --- Agentic Build (MS4 Slice 4D) -----------------------------------------
+
+  /** Start an agentic build loop and return an EventSource for SSE events. */
+  startAgenticBuild: (
+    workflowId: string,
+    body: { goal: string; test_data?: Record<string, unknown> | null; max_iterations?: number },
+    onEvent: (event: AgenticBuildEvent) => void,
+    onError: (error: Error) => void,
+    onClose: () => void,
+  ): EventSource => {
+    const url = `${BASE}/workflows/${workflowId}/agentic-build`;
+    const headers = authHeaders();
+    const controller = new AbortController();
+
+    // SSE via EventSource doesn't support POST + custom headers directly, so
+    // we POST with fetch and consume the body as a ReadableStream.
+    void (async () => {
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...headers,
+          },
+          body: JSON.stringify({
+            goal: body.goal,
+            test_data: body.test_data ?? null,
+            max_iterations: body.max_iterations ?? 5,
+          }),
+          signal: controller.signal,
+        });
+        if (!resp.ok) {
+          let detail = resp.statusText;
+          try {
+            const json = (await resp.json()) as { detail?: unknown };
+            if (json.detail) detail = String(json.detail);
+          } catch {
+            /* ignore */
+          }
+          onError(new Error(`${resp.status} ${detail}`));
+          return;
+        }
+        const reader = resp.body?.getReader();
+        if (!reader) {
+          onError(new Error("Response body is not readable"));
+          return;
+        }
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const parsed = JSON.parse(line.slice(6)) as AgenticBuildEvent;
+                onEvent(parsed);
+              } catch {
+                // ignore malformed JSON chunks
+              }
+            }
+          }
+        }
+      } catch (err) {
+        if ((err as Error)?.name === "AbortError") return;
+        onError(err instanceof Error ? err : new Error(String(err)));
+      } finally {
+        onClose();
+      }
+    })();
+
+    return {
+      close: () => controller.abort(),
+    } as EventSource;
+  },
 };
 
 export async function uploadArtifact(file: File): Promise<ArtifactInfo> {
