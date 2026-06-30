@@ -8,7 +8,6 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.dialects import postgresql
 
 revision: str = "0074"
 down_revision: str | None = "0073"
@@ -20,6 +19,15 @@ _PREDICATE = f"({_GUC} IS NULL OR org_id = {_GUC})"
 
 
 def upgrade() -> None:
+    is_pg = op.get_bind().dialect.name == "postgresql"
+    if is_pg:
+        from sqlalchemy.dialects.postgresql import JSONB
+        json_type = JSONB()
+        headers_default = sa.text("'{}'::jsonb")
+    else:
+        json_type = sa.JSON()
+        headers_default = sa.text("'{}'")
+
     op.create_table(
         "mcp_connections",
         sa.Column("id", sa.Text(), nullable=False),
@@ -41,11 +49,11 @@ def upgrade() -> None:
         sa.Column("auth_secret", sa.Text(), nullable=True),
         sa.Column(
             "headers",
-            postgresql.JSONB(),
+            json_type,
             nullable=False,
-            server_default=sa.text("'{}'::jsonb"),
+            server_default=headers_default,
         ),
-        sa.Column("tool_cache", postgresql.JSONB(), nullable=True),
+        sa.Column("tool_cache", json_type, nullable=True),
         sa.Column(
             "last_synced_at", sa.DateTime(timezone=True), nullable=True
         ),

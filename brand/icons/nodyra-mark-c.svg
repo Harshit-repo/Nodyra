@@ -1,0 +1,28 @@
+<svg width="200" height="200" viewBox="0 0 50 50" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodyra — Graph N mark">
+  <rect width="50" height="50" rx="11" fill="#090b10"/>
+
+  <!-- Graph edges: 5 nodes, edges trace an N -->
+  <!-- Left column connection -->
+  <line x1="12" y1="38" x2="12" y2="12" stroke="#4c9eff" stroke-width="2.4" stroke-linecap="round" opacity="0.7"/>
+  <!-- Diagonal — uses quadratic arc for flow feel -->
+  <path d="M12 12 Q 29 29, 38 38" stroke="url(#gc)" stroke-width="2.4" stroke-linecap="round" fill="none"/>
+  <!-- Right column connection -->
+  <line x1="38" y1="38" x2="38" y2="12" stroke="#79b6ff" stroke-width="2.4" stroke-linecap="round" opacity="0.7"/>
+  <!-- Cross link at top (implied connection) -->
+  <line x1="12" y1="12" x2="38" y2="12" stroke="#4c9eff" stroke-width="1.5" stroke-linecap="round" stroke-dasharray="2 3" opacity="0.35"/>
+
+  <!-- Nodes -->
+  <circle cx="12" cy="12" r="3.8" fill="#79b6ff"/>
+  <circle cx="12" cy="38" r="3.8" fill="#4c9eff"/>
+  <circle cx="38" cy="12" r="3.8" fill="#79b6ff"/>
+  <circle cx="38" cy="38" r="3.8" fill="#4c9eff"/>
+  <!-- Midpoint node on diagonal -->
+  <circle cx="25" cy="25" r="2.8" fill="#161b25" stroke="#4c9eff" stroke-width="2"/>
+
+  <defs>
+    <linearGradient id="gc" x1="12" y1="12" x2="38" y2="38" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#79b6ff"/>
+      <stop offset="100%" stop-color="#4c9eff"/>
+    </linearGradient>
+  </defs>
+</svg>

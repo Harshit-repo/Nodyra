@@ -9,7 +9,6 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.dialects import postgresql
 
 revision: str = "0077_sso_configs"
 down_revision: str | None = "0076_audit_log_actor"
@@ -21,6 +20,15 @@ _PREDICATE = f"({_GUC} IS NULL OR org_id = {_GUC})"
 
 
 def upgrade() -> None:
+    is_pg = op.get_bind().dialect.name == "postgresql"
+    if is_pg:
+        from sqlalchemy.dialects.postgresql import JSONB
+        attr_map_type = JSONB()
+        attr_map_default = sa.text("'{}'::jsonb")
+    else:
+        attr_map_type = sa.JSON()
+        attr_map_default = sa.text("'{}'")
+
     op.create_table(
         "sso_configs",
         sa.Column("id", sa.Text(), nullable=False),
@@ -33,7 +41,7 @@ def upgrade() -> None:
         sa.Column("idp_sso_url", sa.Text(), nullable=True),
         sa.Column("idp_certificate", sa.Text(), nullable=True),
         sa.Column("email_domain", sa.Text(), nullable=True),
-        sa.Column("attribute_map", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column("attribute_map", attr_map_type, nullable=False, server_default=attr_map_default),
         sa.Column("jit_provisioning", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),

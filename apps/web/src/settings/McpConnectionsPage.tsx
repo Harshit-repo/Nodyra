@@ -362,7 +362,7 @@ export function McpConnectionsPage() {
     try {
       const result = await api.syncMcpConnection(conn.id);
       notify(
-        `Synced ${result.tools_count} tool${result.tools_count !== 1 ? "s" : ""}.`,
+        `Synced ${result.tools_discovered} tool${result.tools_discovered !== 1 ? "s" : ""}.`,
         "success",
       );
       await loadConnections();

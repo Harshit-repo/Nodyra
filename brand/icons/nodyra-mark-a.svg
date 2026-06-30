@@ -1,0 +1,22 @@
+<svg width="200" height="200" viewBox="0 0 50 50" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nodyra — Sinuous N mark">
+  <rect width="50" height="50" rx="11" fill="#090b10"/>
+
+  <!-- N letterform: left upright, bezier diagonal, right upright -->
+  <path d="M14 39 L14 11" stroke="#4c9eff" stroke-width="3" stroke-linecap="round"/>
+  <path d="M14 11 C 20 30, 30 20, 36 39"
+        stroke="url(#ga)" stroke-width="3" stroke-linecap="round" fill="none"/>
+  <path d="M36 39 L36 11" stroke="#79b6ff" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- Node circles at four corners -->
+  <circle cx="14" cy="11" r="3.2" fill="#79b6ff"/>
+  <circle cx="14" cy="39" r="3.2" fill="#4c9eff"/>
+  <circle cx="36" cy="11" r="3.2" fill="#79b6ff"/>
+  <circle cx="36" cy="39" r="3.2" fill="#4c9eff"/>
+
+  <defs>
+    <linearGradient id="ga" x1="14" y1="11" x2="36" y2="39" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#79b6ff"/>
+      <stop offset="100%" stop-color="#4c9eff"/>
+    </linearGradient>
+  </defs>
+</svg>

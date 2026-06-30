@@ -15,6 +15,8 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    if op.get_bind().dialect.name != "postgresql":
+        return
     op.create_foreign_key(
         "fk_run_queue_workflow_id",
         "run_queue",
@@ -42,6 +44,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if op.get_bind().dialect.name != "postgresql":
+        return
     op.drop_constraint("fk_run_queue_runner_pool_id", "run_queue", type_="foreignkey")
     op.drop_constraint("fk_run_queue_environment_id", "run_queue", type_="foreignkey")
     op.drop_constraint("fk_run_queue_workflow_id", "run_queue", type_="foreignkey")
