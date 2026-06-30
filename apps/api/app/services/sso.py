@@ -230,7 +230,7 @@ async def _token_exchange(
     client_secret: str | None,
 ) -> dict:
     """POST authorization code to token endpoint."""
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
         resp = await client.post(
             discovery["token_endpoint"],
             data={
@@ -255,7 +255,7 @@ async def _validate_id_token(
     now = time.monotonic()
     async with _jwks_lock:
         if jwks_uri not in _jwks_cache or now - _jwks_cache[jwks_uri][0] >= 3600:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
                 resp = await client.get(jwks_uri)
                 resp.raise_for_status()
             _jwks_cache[jwks_uri] = (time.monotonic(), resp.json())
@@ -263,6 +263,10 @@ async def _validate_id_token(
     jwt = JsonWebToken(["RS256", "ES256"])
     claims = jwt.decode(id_token, JsonWebKey.import_key_set(jwks_data))
     claims.validate()
+    # Validate issuer against discovery document (OIDC Core 3.1.3.7.2)
+    expected_iss = discovery.get("issuer", "")
+    if expected_iss and claims.get("iss") != expected_iss:
+        raise AuthError("ID token issuer mismatch")
     if claims.get("nonce") != nonce:
         raise AuthError("ID token nonce mismatch - replay attack suspected")
     if claims.get("aud") != client_id:
