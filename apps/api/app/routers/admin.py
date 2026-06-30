@@ -51,7 +51,10 @@ router = APIRouter(tags=["admin"])
 @router.get(
     "/admin/custom-roles",
     response_model=list[CustomRoleInfo],
-    dependencies=[Depends(require_permission("admin:users"))],
+    dependencies=[
+        Depends(require_permission("admin:users")),
+        Depends(require_feature(Feature.ADVANCED_RBAC)),
+    ],
 )
 async def list_custom_roles(
     session: AsyncSession = Depends(get_session),
@@ -70,7 +73,10 @@ async def list_custom_roles(
 @router.get(
     "/admin/custom-roles/{role_id}",
     response_model=CustomRoleInfo,
-    dependencies=[Depends(require_permission("admin:users"))],
+    dependencies=[
+        Depends(require_permission("admin:users")),
+        Depends(require_feature(Feature.ADVANCED_RBAC)),
+    ],
 )
 async def get_custom_role(
     role_id: str,
@@ -176,7 +182,10 @@ async def update_custom_role(
 @router.delete(
     "/admin/custom-roles/{role_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_permission("admin:users"))],
+    dependencies=[
+        Depends(require_permission("admin:users")),
+        Depends(require_feature(Feature.ADVANCED_RBAC)),
+    ],
 )
 async def delete_custom_role(
     role_id: str,
@@ -365,6 +374,7 @@ async def get_sso_config(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(current_user),
     _: None = Depends(require_admin),
+    __: None = Depends(require_feature(Feature.SSO)),
 ):
     """Get the SSO config for the current user's org."""
     from app.tenancy import DEFAULT_ORG_ID
@@ -504,6 +514,7 @@ async def delete_sso_config(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(current_user),
     _: None = Depends(require_admin),
+    __: None = Depends(require_feature(Feature.SSO)),
 ):
     """Remove the SSO configuration for the org."""
     from app.tenancy import DEFAULT_ORG_ID
@@ -536,6 +547,7 @@ async def test_sso_connection(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(current_user),
     _: None = Depends(require_admin),
+    __: None = Depends(require_feature(Feature.SSO)),
 ):
     """Test SSO connection by checking provider reachability."""
     protocol = body.get("protocol", "oidc")

@@ -924,7 +924,7 @@ export const api = {
 
   updateMcpConnection: (id: string, body: MCPConnectionUpdate) =>
     request<MCPConnection>(`/mcp-connections/${id}`, {
-      method: "PUT",
+      method: "PATCH",
       body: JSON.stringify(body),
     }),
 
@@ -932,7 +932,7 @@ export const api = {
     request<void>(`/mcp-connections/${id}`, { method: "DELETE" }),
 
   syncMcpConnection: (id: string) =>
-    request<{ tools_count: number; tools: MCPToolInfo[] }>(
+    request<{ tools_discovered: number; tools: MCPToolInfo[] }>(
       `/mcp-connections/${id}/sync`,
       { method: "POST" },
     ),
