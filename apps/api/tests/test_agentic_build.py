@@ -104,6 +104,21 @@ async def _create_workflow(client: AsyncClient) -> str:
     return wf["id"]
 
 
+async def _auth_headers(client: AsyncClient) -> dict[str, str]:
+    """Create an owner user and return an Authorization header."""
+    resp = await client.post(
+        "/auth/register",
+        json={
+            "name": "Agentic Tester",
+            "email": "agentic@example.com",
+            "password": "supersecret",
+        },
+    )
+    assert resp.status_code in (200, 201)
+    token = resp.json().get("access_token") or resp.json()["token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
 # ---------------------------------------------------------------------------
 # Mock helpers
 # ---------------------------------------------------------------------------
@@ -165,6 +180,7 @@ async def _mock_ai_draft_two_iterations(
 async def test_agentic_loop_converges_in_one_iteration(client: AsyncClient) -> None:
     """If the AI draft produces a runnable graph and the test run succeeds, the
     loop should converge immediately (1 iteration) and emit ``converged``."""
+    headers = await _auth_headers(client)
     workflow_id = await _create_workflow(client)
 
     with (
@@ -175,13 +191,14 @@ async def test_agentic_loop_converges_in_one_iteration(client: AsyncClient) -> N
     ):
         async with client.stream(
             "POST",
-            f"/workflows/{workflow_id}/agentic-build",
-            json=AgenticBuildRequest(
-                goal="Say hello to the user",
-                test_data={"text": "world"},
-                max_iterations=3,
-            ).model_dump(),
-        ) as resp:
+                f"/workflows/{workflow_id}/agentic-build",
+                json=AgenticBuildRequest(
+                    goal="Say hello to the user",
+                    test_data={"text": "world"},
+                    max_iterations=3,
+                ).model_dump(),
+                headers=headers,
+            ) as resp:
             assert resp.status_code == 200
             events = await _collect_sse_events(resp)
 
@@ -200,6 +217,7 @@ async def test_agentic_loop_converges_in_one_iteration(client: AsyncClient) -> N
 async def test_agentic_loop_converges_in_two_iterations(client: AsyncClient) -> None:
     """If the first run fails, the loop should fix the graph and converge on
     the second iteration."""
+    headers = await _auth_headers(client)
     workflow_id = await _create_workflow(client)
 
     with (
@@ -238,12 +256,13 @@ async def test_agentic_loop_converges_in_two_iterations(client: AsyncClient) -> 
 
         async with client.stream(
             "POST",
-            f"/workflows/{workflow_id}/agentic-build",
-            json=AgenticBuildRequest(
-                goal="Say hello and send to Slack",
-                max_iterations=3,
-            ).model_dump(),
-        ) as resp:
+                f"/workflows/{workflow_id}/agentic-build",
+                json=AgenticBuildRequest(
+                    goal="Say hello and send to Slack",
+                    max_iterations=3,
+                ).model_dump(),
+                headers=headers,
+            ) as resp:
             assert resp.status_code == 200
             events = await _collect_sse_events(resp)
 
@@ -268,6 +287,7 @@ async def test_agentic_loop_converges_in_two_iterations(client: AsyncClient) -> 
 async def test_agentic_loop_stops_at_max_iterations(client: AsyncClient) -> None:
     """If every run fails, the loop should emit ``max_iterations_reached``
     after the configured max_iterations and NOT emit ``converged``."""
+    headers = await _auth_headers(client)
     workflow_id = await _create_workflow(client)
 
     with (
@@ -303,12 +323,13 @@ async def test_agentic_loop_stops_at_max_iterations(client: AsyncClient) -> None
 
         async with client.stream(
             "POST",
-            f"/workflows/{workflow_id}/agentic-build",
-            json=AgenticBuildRequest(
-                goal="Do something",
-                max_iterations=2,
-            ).model_dump(),
-        ) as resp:
+                f"/workflows/{workflow_id}/agentic-build",
+                json=AgenticBuildRequest(
+                    goal="Do something",
+                    max_iterations=2,
+                ).model_dump(),
+                headers=headers,
+            ) as resp:
             assert resp.status_code == 200
             events = await _collect_sse_events(resp)
 
@@ -324,9 +345,11 @@ async def test_agentic_loop_stops_at_max_iterations(client: AsyncClient) -> None
 @pytest.mark.asyncio
 async def test_agentic_loop_requires_valid_workflow(client: AsyncClient) -> None:
     """POST to a non-existent workflow should return 404 before starting the loop."""
+    headers = await _auth_headers(client)
     resp = await client.post(
         "/workflows/nonexistent-id/agentic-build",
         json={"goal": "test", "max_iterations": 3},
+        headers=headers,
     )
     assert resp.status_code == 404
 
@@ -334,11 +357,13 @@ async def test_agentic_loop_requires_valid_workflow(client: AsyncClient) -> None
 @pytest.mark.asyncio
 async def test_agentic_loop_validation_goal_required(client: AsyncClient) -> None:
     """Empty goal should return 422."""
+    headers = await _auth_headers(client)
     workflow_id = await _create_workflow(client)
 
     resp = await client.post(
         f"/workflows/{workflow_id}/agentic-build",
         json={"goal": "", "max_iterations": 3},
+        headers=headers,
     )
     assert resp.status_code == 422
 
@@ -346,11 +371,13 @@ async def test_agentic_loop_validation_goal_required(client: AsyncClient) -> Non
 @pytest.mark.asyncio
 async def test_agentic_loop_validation_max_iterations_capped(client: AsyncClient) -> None:
     """max_iterations > 5 should return 422."""
+    headers = await _auth_headers(client)
     workflow_id = await _create_workflow(client)
 
     resp = await client.post(
         f"/workflows/{workflow_id}/agentic-build",
         json={"goal": "test", "max_iterations": 10},
+        headers=headers,
     )
     assert resp.status_code == 422
 
@@ -359,6 +386,7 @@ async def test_agentic_loop_validation_max_iterations_capped(client: AsyncClient
 async def test_agentic_loop_emits_error_on_draft_failure(client: AsyncClient) -> None:
     """If the AI draft step raises an exception, an ``error`` event should be
     emitted and the loop should stop."""
+    headers = await _auth_headers(client)
     workflow_id = await _create_workflow(client)
 
     async def _broken_draft(session, workflow_id, prompt_or_body):  # noqa: ARG001
@@ -373,12 +401,13 @@ async def test_agentic_loop_emits_error_on_draft_failure(client: AsyncClient) ->
     ):
         async with client.stream(
             "POST",
-            f"/workflows/{workflow_id}/agentic-build",
-            json=AgenticBuildRequest(
-                goal="Say hello",
-                max_iterations=3,
-            ).model_dump(),
-        ) as resp:
+                f"/workflows/{workflow_id}/agentic-build",
+                json=AgenticBuildRequest(
+                    goal="Say hello",
+                    max_iterations=3,
+                ).model_dump(),
+                headers=headers,
+            ) as resp:
             assert resp.status_code == 200
             events = await _collect_sse_events(resp)
 

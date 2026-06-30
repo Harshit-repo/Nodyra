@@ -96,7 +96,7 @@ async def discover_tools(
     headers = _build_auth_headers(conn, decrypted_secret)
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
-            conn.url.rstrip("/"),
+            conn.url,
             json={"jsonrpc": "2.0", "id": next(_rpc_id), "method": "tools/list", "params": {}},
             headers={"Content-Type": "application/json", **headers},
         )
@@ -122,7 +122,7 @@ async def call_tool(
     headers = _build_auth_headers(conn, decrypted_secret)
     async with httpx.AsyncClient(timeout=timeout_seconds) as client:
         resp = await client.post(
-            conn.url.rstrip("/"),
+            conn.url,
             json={
                 "jsonrpc": "2.0",
                 "id": next(_rpc_id),

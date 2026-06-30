@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import get_session
 from app.models import ApiToken, Environment, Membership, Organization, SSOConfig, User
+from app.redis_client import redis_client
 from app.schemas import (
     ApiTokenCreate,
     ApiTokenCreated,
@@ -49,9 +50,6 @@ from app.services.crypto import (
     hash_password,
     verify_password,
 )
-from app.tenancy import DEFAULT_ORG_ID
-from app.exceptions import AuthError
-from app.redis_client import redis_client
 from app.services.sso import (
     build_saml_sp_metadata,
     detect_sso_by_email,
@@ -60,6 +58,7 @@ from app.services.sso import (
     oidc_authorization_url,
     oidc_exchange_code,
 )
+from app.tenancy import DEFAULT_ORG_ID
 
 logger = logging.getLogger(__name__)
 
@@ -867,7 +866,7 @@ async def sso_acs(
             "saml2p": "urn:oasis:names:tc:SAML:2.0:protocol",
         }
         name_id_el = root.find(".//saml2:NameID", ns)
-        email = name_id_el.text if name_id_el is not None else ""
+        email = (name_id_el.text or "").strip() if name_id_el is not None else ""
         if not email or "@" not in email:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, "SAML response missing valid NameID/email"

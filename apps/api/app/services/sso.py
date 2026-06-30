@@ -23,6 +23,7 @@ from app.config import settings
 from app.exceptions import AuthError
 from app.models import Membership, Organization, SSOConfig, User
 from app.redis_client import redis_client
+from app.services.crypto import hash_password
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,7 @@ async def get_or_create_sso_user(
         user = User(
             email=email,
             name=claims.get("name", email),
+            password_hash=hash_password(secrets.token_urlsafe(48)),
             email_verified=True,
             sso_subject=claims["sub"],
         )
@@ -121,7 +123,7 @@ async def get_or_create_sso_user(
             raise AuthError("JIT provisioning disabled; user must be pre-invited")
         session.add(
             Membership(
-                user_id=user.id, org_id=sso_config.org_id, role="member"
+                user_id=user.id, org_id=sso_config.org_id, role="editor"
             )
         )
         await session.flush()

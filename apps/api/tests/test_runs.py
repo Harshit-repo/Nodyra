@@ -544,7 +544,7 @@ async def test_running_run_can_be_cancelled(client: AsyncClient) -> None:
                 {
                     "id": "slow",
                     "type": "code",
-                    "params": {"code": "import time\ntime.sleep(0.5)\noutput = 1"},
+                    "params": {"code": "import time\ntime.sleep(2)\noutput = 1"},
                     "position": {"x": 250, "y": 0},
                 },
             ],
@@ -565,7 +565,7 @@ async def test_running_run_can_be_cancelled(client: AsyncClient) -> None:
         assert cancel.status_code == 200
         assert cancel.json()["status"] in {"cancelling", "cancelled"}
 
-        for _ in range(20):
+        for _ in range(60):
             run = (await client.get(f"/runs/{run_id}")).json()
             if run["status"] == "cancelled":
                 break

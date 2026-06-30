@@ -27,7 +27,7 @@ from starlette.responses import StreamingResponse
 from app.db import get_session
 from app.models import User, Workflow
 from app.schemas import AgenticBuildRequest
-from app.security import current_user, optional_current_user, require_permission
+from app.security import current_user, require_permission
 from app.services import rate_limit
 from app.services.agentic_builder import run_agentic_build_loop
 from app.tenancy import current_org_id
@@ -59,14 +59,14 @@ async def agentic_build(
     event to the stream.  When the client disconnects the loop is cancelled
     cleanly.
     """
+    org_id = current_org_id.get() or "default"
+
     # --- Validate workflow exists + org scope -----------------------------------
     wf = await session.scalar(
         select(Workflow).where(Workflow.id == workflow_id, Workflow.org_id == org_id)
     )
     if wf is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow not found")
-
-    org_id = current_org_id.get() or "default"
 
     # --- Rate limit -------------------------------------------------------------
     rate_identifier = f"{org_id}:{current_user.id}"
@@ -122,7 +122,7 @@ async def agentic_build(
             while True:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=30)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": keepalive\n\n"  # prevent proxy/browser timeout
                     continue
                 if event is None:

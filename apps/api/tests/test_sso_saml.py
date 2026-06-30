@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import ANY, AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import AsyncClient
-
 
 pytestmark = pytest.mark.asyncio
 
@@ -14,22 +13,36 @@ pytestmark = pytest.mark.asyncio
 @pytest.fixture(autouse=True)
 def _patch_redis(monkeypatch):
     mock_redis = AsyncMock()
+    store: dict[str, str] = {}
+
+    async def _set(key: str, value: str, ex: int | None = None) -> None:  # noqa: ARG001
+        store[key] = value
+
+    async def _getdel(key: str) -> str | None:
+        return store.pop(key, None)
+
+    mock_redis.set.side_effect = _set
+    mock_redis.getdel.side_effect = _getdel
     monkeypatch.setattr(
         "app.redis_client.redis_client",
         mock_redis,
     )
     # Also patch the module-level reference in sso service
+    import app.routers.auth as auth_mod
     import app.services.sso as sso_mod
     monkeypatch.setattr(sso_mod, "redis_client", mock_redis)
+    monkeypatch.setattr(auth_mod, "redis_client", mock_redis)
 
 
 @pytest.fixture
 async def _seed_saml(client):
     """Seed an org and SAML SSO config."""
-    from app.models import Organization, SSOConfig
-    import app.main as main_module
+    from uuid import uuid4
 
-    org = Organization(name="SamlOrg", slug="samlorg")
+    import app.main as main_module
+    from app.models import Organization, SSOConfig
+
+    org = Organization(id=uuid4().hex, name="SamlOrg", slug="samlorg")
     config = SSOConfig(
         org_id=org.id,
         protocol="saml",
@@ -91,7 +104,7 @@ async def test_saml_acs_with_valid_response_creates_user(
     import base64
     import zlib
 
-    saml_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+    saml_xml = """<?xml version="1.0" encoding="UTF-8"?>
 <saml2p:Response xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol"
     xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion"
     ID="_test-response-id"
@@ -125,12 +138,23 @@ async def test_saml_acs_with_valid_response_creates_user(
     assert data["user"]["email"] == "samluser@samltest.com"
 
     # Verify user was created
+    from sqlalchemy import select
+
     import app.main as main_module
-    from app.models import User
+    from app.models import Membership, User
 
     async with main_module.SessionLocal() as session:
         user = await session.scalar(
-            User.__table__.select().where(User.email == "samluser@samltest.com")
+            select(User).where(User.email == "samluser@samltest.com")
         )
         assert user is not None
         assert user.email_verified is True
+        assert user.password_hash
+        membership = await session.scalar(
+            select(Membership).where(
+                Membership.user_id == user.id,
+                Membership.org_id == _seed_saml[0].id,
+            )
+        )
+        assert membership is not None
+        assert membership.role == "editor"

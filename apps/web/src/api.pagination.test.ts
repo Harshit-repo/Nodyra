@@ -39,3 +39,30 @@ describe("workflow collection pagination", () => {
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain("limit=500&offset=500");
   });
 });
+
+describe("paginated list normalization", () => {
+  it("normalizes deployment, environment, deployment-run, and user pages to arrays", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const path = new URL(url, "http://localhost").pathname;
+      return new Response(
+        JSON.stringify({
+          items: [{ id: path, name: path }],
+          total: 1,
+          limit: 500,
+          offset: 0,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.listDeployments()).resolves.toHaveLength(1);
+    await expect(api.listEnvironments()).resolves.toHaveLength(1);
+    await expect(api.listDeploymentRuns("deployment-1")).resolves.toHaveLength(1);
+    await expect(api.listUsers()).resolves.toHaveLength(1);
+  });
+});

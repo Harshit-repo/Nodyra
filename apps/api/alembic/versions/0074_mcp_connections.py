@@ -15,6 +15,9 @@ down_revision: str | None = "0073"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+_GUC = "NULLIF(current_setting('app.current_org', true), '')"
+_PREDICATE = f"({_GUC} IS NULL OR org_id = {_GUC})"
+
 
 def upgrade() -> None:
     op.create_table(
@@ -64,17 +67,21 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("idx_mcp_connections_org", "mcp_connections", ["org_id"])
-    op.execute("ALTER TABLE mcp_connections ENABLE ROW LEVEL SECURITY")
-    op.execute(
-        "CREATE POLICY mcp_connections_org ON mcp_connections "
-        "USING (org_id = current_setting('app.org_id', true))"
-    )
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute("ALTER TABLE mcp_connections ENABLE ROW LEVEL SECURITY")
+        op.execute("ALTER TABLE mcp_connections FORCE ROW LEVEL SECURITY")
+        op.execute(
+            "CREATE POLICY mcp_connections_org ON mcp_connections "
+            f"USING {_PREDICATE} WITH CHECK {_PREDICATE}"
+        )
 
 
 def downgrade() -> None:
-    op.execute(
-        "DROP POLICY IF EXISTS mcp_connections_org ON mcp_connections"
-    )
-    op.execute("ALTER TABLE mcp_connections DISABLE ROW LEVEL SECURITY")
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute(
+            "DROP POLICY IF EXISTS mcp_connections_org ON mcp_connections"
+        )
+        op.execute("ALTER TABLE mcp_connections NO FORCE ROW LEVEL SECURITY")
+        op.execute("ALTER TABLE mcp_connections DISABLE ROW LEVEL SECURITY")
     op.drop_index("idx_mcp_connections_org", table_name="mcp_connections")
     op.drop_table("mcp_connections")

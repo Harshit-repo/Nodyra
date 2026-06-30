@@ -447,7 +447,7 @@ export const api = {
       body: JSON.stringify({ restore_version_id: versionId }),
     }),
 
-  listEnvironments: () => request<Environment[]>("/environments"),
+  listEnvironments: () => requestAllPages<Environment>("/environments"),
   getEnvironment: (id: string) => request<Environment>(`/environments/${id}`),
   listBackends: () =>
     request<{
@@ -632,7 +632,7 @@ export const api = {
     request<{ run_id: string }>(`/runs/${runId}/retry`, { method: "POST" }),
 
   listDeployments: (workflowId?: string) =>
-    request<Deployment[]>(
+    requestAllPages<Deployment>(
       `/deployments${workflowId ? `?workflow_id=${workflowId}` : ""}`,
     ),
   createDeployment: (body: DeploymentCreate) =>
@@ -650,7 +650,7 @@ export const api = {
   runDeployment: (id: string) =>
     request<{ run_id: string }>(`/deployments/${id}/run`, { method: "POST" }),
   listDeploymentRuns: (id: string) =>
-    request<RunListItem[]>(`/deployments/${id}/runs`),
+    requestAllPages<RunListItem>(`/deployments/${id}/runs`),
 
   // ---- Code modules (upload-to-nodes) ----
   listCodeModules: (filters: {
@@ -836,7 +836,7 @@ export const api = {
     }),
   getOrgUsage: (orgId: string, days = 14) =>
     request<OrgUsageDay[]>(`/orgs/${orgId}/usage?days=${days}`),
-  listUsers: () => request<UserAdminInfo[]>("/auth/users"),
+  listUsers: () => requestAllPages<UserAdminInfo>("/auth/users"),
   createUser: (body: {
     name?: string;
     company?: string;

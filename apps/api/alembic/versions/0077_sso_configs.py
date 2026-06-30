@@ -5,16 +5,19 @@ Revises: 0076_audit_log_actor
 Create Date: 2026-06-30 00:00:00.000000
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0077_sso_configs"
 down_revision: str | None = "0076_audit_log_actor"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+_GUC = "NULLIF(current_setting('app.current_org', true), '')"
+_PREDICATE = f"({_GUC} IS NULL OR org_id = {_GUC})"
 
 
 def upgrade() -> None:
@@ -45,11 +48,13 @@ def upgrade() -> None:
         unique=True,
         postgresql_where=sa.text("email_domain IS NOT NULL"),
     )
-    op.execute("ALTER TABLE sso_configs ENABLE ROW LEVEL SECURITY")
-    op.execute(
-        "CREATE POLICY sso_configs_org ON sso_configs "
-        "USING (org_id = current_setting('app.org_id', true))"
-    )
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute("ALTER TABLE sso_configs ENABLE ROW LEVEL SECURITY")
+        op.execute("ALTER TABLE sso_configs FORCE ROW LEVEL SECURITY")
+        op.execute(
+            "CREATE POLICY sso_configs_org ON sso_configs "
+            f"USING {_PREDICATE} WITH CHECK {_PREDICATE}"
+        )
 
     # Add sso_subject column to users
     with op.batch_alter_table("users") as batch_op:
@@ -57,8 +62,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("DROP POLICY IF EXISTS sso_configs_org ON sso_configs")
-    op.execute("ALTER TABLE sso_configs DISABLE ROW LEVEL SECURITY")
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute("DROP POLICY IF EXISTS sso_configs_org ON sso_configs")
+        op.execute("ALTER TABLE sso_configs NO FORCE ROW LEVEL SECURITY")
+        op.execute("ALTER TABLE sso_configs DISABLE ROW LEVEL SECURITY")
     op.drop_index("ix_sso_configs_email_domain", table_name="sso_configs")
     op.drop_table("sso_configs")
 

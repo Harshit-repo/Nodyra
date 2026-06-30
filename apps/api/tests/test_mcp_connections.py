@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from httpx import ASGITransport
-from sqlalchemy import select
 
-from app.main import app
 from app.models import MCPConnection
 from app.services.mcp_client import (
     MCPError,
@@ -22,7 +18,6 @@ from app.services.mcp_client import (
     encrypt_auth_secret,
     mcp_tool_to_node_manifest,
 )
-from app.services.org_keys import get_org_kek
 
 pytestmark = pytest.mark.asyncio
 
@@ -304,9 +299,12 @@ class TestEncryptDecrypt:
 
 
 class TestLoadConnWithSecret:
-    async def test_connection_not_found(self, db_session):
-        with pytest.raises(ValueError, match="not found"):
-            await _load_conn_with_secret("nonexistent", "org-1", db_session)
+    async def test_connection_not_found(self, client):  # noqa: ARG002
+        from app.main import SessionLocal
+
+        async with SessionLocal() as session:
+            with pytest.raises(ValueError, match="not found"):
+                await _load_conn_with_secret("nonexistent", "org-1", session)
 
 
 # ---------------------------------------------------------------------------

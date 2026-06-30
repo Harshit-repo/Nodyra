@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import json
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -566,16 +568,26 @@ def test_document_intelligence_nodes_have_requirements() -> None:
 
 def test_import_does_not_import_optional_packages() -> None:
     """Importing noodle_nodes must not pull in any optional document packages."""
-    import sys
-    # If any of these were imported at module scope of document_intelligence.py,
-    # they would be present in sys.modules after `import noodle_nodes` at the top of this file.
-    # Tests that use pytest.importorskip skip entirely when the package is absent,
-    # so they cannot pollute sys.modules in this environment.
-    forbidden = {
-        "pdfplumber", "weasyprint", "docx", "openpyxl",
-        "qrcode", "barcode", "pyzbar",
-    }
-    leaked = forbidden & set(sys.modules.keys())
+    # Check in a fresh interpreter so earlier tests that intentionally exercise
+    # optional Excel/PDF features cannot pollute this assertion via sys.modules.
+    code = """
+import json
+import sys
+import noodle_nodes  # noqa: F401
+
+forbidden = {
+    "pdfplumber", "weasyprint", "docx", "openpyxl",
+    "qrcode", "barcode", "pyzbar",
+}
+print(json.dumps(sorted(forbidden & set(sys.modules))))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    leaked = set(json.loads(result.stdout))
     assert not leaked, f"Optional packages leaked into module scope: {leaked}"
 
 

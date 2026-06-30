@@ -133,7 +133,7 @@ services:
       # specific runtime is mandatory.
       # SANDBOX_RUNTIME: auto
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f app.worker_main > /dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "python -c \"from pathlib import Path; import sys; sys.exit(0 if b'app.worker_main' in Path('/proc/1/cmdline').read_bytes() else 1)\""]
       interval: 30s
       timeout: 10s
       retries: 3

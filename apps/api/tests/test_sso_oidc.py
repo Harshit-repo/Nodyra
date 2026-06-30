@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import ANY, AsyncMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
-
 
 pytestmark = pytest.mark.asyncio
 
@@ -15,13 +14,25 @@ pytestmark = pytest.mark.asyncio
 def _patch_redis(monkeypatch):
     """Patch Redis to avoid needing a running Redis server."""
     mock_redis = AsyncMock()
+    store: dict[str, str] = {}
+
+    async def _set(key: str, value: str, ex: int | None = None) -> None:  # noqa: ARG001
+        store[key] = value
+
+    async def _getdel(key: str) -> str | None:
+        return store.pop(key, None)
+
+    mock_redis.set.side_effect = _set
+    mock_redis.getdel.side_effect = _getdel
     monkeypatch.setattr(
         "app.redis_client.redis_client",
         mock_redis,
     )
     # Also patch the module-level reference in sso service
+    import app.routers.auth as auth_mod
     import app.services.sso as sso_mod
     monkeypatch.setattr(sso_mod, "redis_client", mock_redis)
+    monkeypatch.setattr(auth_mod, "redis_client", mock_redis)
 
 
 _OIDC_DISCOVERY = {
@@ -36,10 +47,12 @@ _OIDC_DISCOVERY = {
 @pytest.fixture
 async def _seed(client):
     """Seed an org and SSO config."""
-    from app.models import Organization, SSOConfig
-    import app.main as main_module
+    from uuid import uuid4
 
-    org = Organization(name="TestOrg", slug="testorg")
+    import app.main as main_module
+    from app.models import Organization, SSOConfig
+
+    org = Organization(id=uuid4().hex, name="TestOrg", slug="testorg")
     config = SSOConfig(
         org_id=org.id,
         protocol="oidc",
@@ -121,10 +134,10 @@ async def test_oidc_callback_creates_new_user_jit(
     _seed,
 ):
     """OIDC callback with valid code and state creates a new user via JIT."""
-    from app.redis_client import redis_client
-
     # Pre-seed Redis with a valid state
     import json
+
+    from app.redis_client import redis_client
 
     state = "test-valid-state"
     nonce = "test-nonce"
@@ -152,16 +165,27 @@ async def test_oidc_callback_creates_new_user_jit(
     assert data["user"]["name"] == "New User"
 
     # Verify user was created in DB
+    from sqlalchemy import select
+
     import app.main as main_module
-    from app.models import User
+    from app.models import Membership, User
 
     async with main_module.SessionLocal() as session:
         user = await session.scalar(
-            User.__table__.select().where(User.email == "newuser@example.com")
+            select(User).where(User.email == "newuser@example.com")
         )
         assert user is not None
         assert user.sso_subject == "oidc-sub-12345"
         assert user.email_verified is True
+        assert user.password_hash
+        membership = await session.scalar(
+            select(Membership).where(
+                Membership.user_id == user.id,
+                Membership.org_id == _seed[0].id,
+            )
+        )
+        assert membership is not None
+        assert membership.role == "editor"
 
 
 @patch("app.services.sso._validate_id_token")
@@ -175,20 +199,22 @@ async def test_oidc_callback_reuses_existing_user(
     """OIDC callback with existing email returns existing user."""
     import app.main as main_module
     from app.models import User
+    from app.services.crypto import hash_password
 
     # Create existing user
     async with main_module.SessionLocal() as session:
         existing = User(
             email="existing@example.com",
             name="Existing User",
+            password_hash=hash_password("local-password"),
             sso_subject="oidc-sub-old",
         )
         session.add(existing)
         await session.commit()
 
-    from app.redis_client import redis_client
-
     import json
+
+    from app.redis_client import redis_client
 
     state = "test-valid-state-2"
     nonce = "test-nonce-2"
