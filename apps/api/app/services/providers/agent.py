@@ -768,7 +768,11 @@ def _terminate_cloud_instance(instance_id: str, cfg: dict) -> None:
 
 
 def _terminate_ec2(instance_id: str, cfg: dict) -> None:
-    import boto3  # noqa: PLC0415
+    try:
+        import boto3  # type: ignore[import-untyped]  # noqa: PLC0415
+    except ImportError:
+        logger.warning("boto3 not installed — cannot terminate EC2 instance")
+        return
     kw: dict = {"region_name": cfg.get("region", "us-east-1")}
     if cfg.get("aws_access_key_id"):
         kw["aws_access_key_id"] = cfg["aws_access_key_id"]
@@ -778,8 +782,14 @@ def _terminate_ec2(instance_id: str, cfg: dict) -> None:
 
 
 def _terminate_gce(instance_name: str, cfg: dict) -> None:
-    from google.cloud import compute_v1  # noqa: PLC0415
-    from google.oauth2 import service_account  # noqa: PLC0415
+    try:
+        from google.cloud import compute_v1  # type: ignore[import-untyped]  # noqa: PLC0415
+        from google.oauth2 import service_account  # type: ignore[import-untyped]  # noqa: PLC0415
+    except ImportError:
+        logger.warning(
+            "google-cloud-compute not installed — cannot terminate GCE instance"
+        )
+        return
     creds = None
     sa_json = cfg.get("service_account_json")
     if sa_json:
@@ -795,11 +805,20 @@ def _terminate_gce(instance_name: str, cfg: dict) -> None:
 
 
 def _terminate_azure(vm_name: str, cfg: dict) -> None:
-    from azure.identity import (  # noqa: PLC0415
-        ClientSecretCredential,
-        DefaultAzureCredential,
-    )
-    from azure.mgmt.compute import ComputeManagementClient  # noqa: PLC0415
+    try:
+        from azure.identity import (  # type: ignore[import-untyped]  # noqa: PLC0415
+            ClientSecretCredential,
+            DefaultAzureCredential,
+        )
+        from azure.mgmt.compute import (  # type: ignore[import-untyped]  # noqa: PLC0415
+            ComputeManagementClient,
+        )
+    except ImportError:
+        logger.warning(
+            "azure SDK not installed — cannot terminate Azure VM "
+            "(need azure-identity + azure-mgmt-compute)"
+        )
+        return
     if cfg.get("client_secret"):
         cred = ClientSecretCredential(
             tenant_id=cfg["tenant_id"], client_id=cfg["client_id"],

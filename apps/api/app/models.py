@@ -79,6 +79,9 @@ class Membership(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    custom_role: Mapped["CustomRole | None"] = relationship(
+        "CustomRole", foreign_keys=[custom_role_id], lazy="joined"
+    )
 
 
 class CustomRole(Base):
@@ -373,7 +376,7 @@ class GithubSyncConfig(Base):
         server_default="default",
     )
     credential_id: Mapped[str | None] = mapped_column(
-        ForeignKey("credentials.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("credentials.id", ondelete="SET NULL"), nullable=True, index=True
     )
     repo: Mapped[str] = mapped_column(String(200), nullable=False)
     base_path: Mapped[str] = mapped_column(String(200), nullable=False, default="workflows/")
@@ -455,10 +458,10 @@ class Workflow(Base):
         # ALM-2: SET NULL so deleting an environment leaves the workflow on the
         # default env (the runner already treats a NULL env_id as the default)
         # rather than blocking the delete or orphaning a dead reference.
-        ForeignKey("environments.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("environments.id", ondelete="SET NULL"), nullable=True, index=True
     )
     default_runner_pool_id: Mapped[str | None] = mapped_column(
-        ForeignKey("runner_pools.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("runner_pools.id", ondelete="SET NULL"), nullable=True, index=True
     )
     draft_graph: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     published_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -982,7 +985,7 @@ class Deployment(Base):
     # deployment (the runner treats a NULL env_id as the global/default env),
     # matching workflows.environment_id and the rest of the FK policy.
     environment_id: Mapped[str | None] = mapped_column(
-        ForeignKey("environments.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("environments.id", ondelete="SET NULL"), nullable=True, index=True
     )
     workflow_version_id: Mapped[str | None] = mapped_column(
         ForeignKey("workflow_versions.id", ondelete="SET NULL"),
@@ -1184,10 +1187,10 @@ class RunQueueEntry(Base):
         ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True
     )
     environment_id: Mapped[str | None] = mapped_column(
-        ForeignKey("environments.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("environments.id", ondelete="SET NULL"), nullable=True, index=True
     )
     runner_pool_id: Mapped[str | None] = mapped_column(
-        ForeignKey("runner_pools.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("runner_pools.id", ondelete="SET NULL"), nullable=True, index=True
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

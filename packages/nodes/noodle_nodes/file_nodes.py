@@ -426,8 +426,13 @@ def read_s3_file(
     has_header: bool = True,
     output_as_dataset: bool = True,
 ) -> Any:
-    import boto3
-    import boto3.session
+    try:
+        import boto3  # type: ignore[import-untyped]
+        import boto3.session  # type: ignore[import-untyped]
+    except ImportError:
+        raise ImportError(
+            "boto3 is required to read from S3. Install it with: pip install boto3"
+        )
 
     creds = credentials if isinstance(credentials, dict) else {}
     endpoint = creds.get("endpoint_url") or None

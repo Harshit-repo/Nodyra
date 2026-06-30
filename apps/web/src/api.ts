@@ -1023,20 +1023,6 @@ export const api = {
     return request<Page<AuditEventInfo>>(`/admin/audit-logs?${qs.toString()}`);
   },
 
-  exportAuditLogsCsv: (params: AuditLogQuery) => {
-    const qs = new URLSearchParams();
-    if (params.user_id) qs.set("user_id", params.user_id);
-    if (params.action) qs.set("action", params.action);
-    if (params.resource_type) qs.set("resource_type", params.resource_type);
-    if (params.from) qs.set("from", params.from);
-    if (params.to) qs.set("to", params.to);
-    return request<BlobPart>(
-      `/admin/audit-logs/export?${qs.toString()}`,
-      // Override default JSON accept header — we want raw CSV
-      { headers: { Accept: "text/csv" } },
-    );
-  },
-
   // --- KMS (EXTERNAL_KMS feature) --------------------------------------------
 
   kmsHealth: () =>

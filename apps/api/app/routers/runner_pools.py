@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import SessionLocal, get_session
+from app.services.licensing import Feature, require_feature
 from app.models import (
     Artifact,
     Run,
@@ -344,7 +345,10 @@ async def list_runner_pools(
     "",
     response_model=RunnerPoolInfo,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_permission("runner_pool:write"))],
+    dependencies=[
+        Depends(require_permission("runner_pool:write")),
+        Depends(require_feature(Feature.DEDICATED_POOLS)),
+    ],
 )
 async def create_runner_pool(
     body: RunnerPoolCreate,
@@ -383,7 +387,10 @@ async def get_runner_pool(
 @router.patch(
     "/{pool_id}",
     response_model=RunnerPoolInfo,
-    dependencies=[Depends(require_permission("runner_pool:write"))],
+    dependencies=[
+        Depends(require_permission("runner_pool:write")),
+        Depends(require_feature(Feature.DEDICATED_POOLS)),
+    ],
 )
 async def update_runner_pool(
     pool_id: str,
@@ -411,7 +418,10 @@ async def update_runner_pool(
 @router.delete(
     "/{pool_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_permission("runner_pool:write"))],
+    dependencies=[
+        Depends(require_permission("runner_pool:write")),
+        Depends(require_feature(Feature.DEDICATED_POOLS)),
+    ],
 )
 async def delete_runner_pool(
     pool_id: str, session: AsyncSession = Depends(get_session)

@@ -4,8 +4,11 @@ Provides search, browse, and async-install of community node packages
 published on PyPI and indexed in a GitHub-backed registry JSON file.
 """
 
+import logging
 import uuid
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -255,7 +258,7 @@ async def _rollback_install(environment_id: str, record: dict[str, Any]) -> None
                     env.status = "ready"
                     await rollback_session.commit()
     except BaseException:
-        pass  # best-effort rollback
+        logger.exception("rollback failed")  # best-effort rollback
 
 
 @router.get("/installs/{install_id}")

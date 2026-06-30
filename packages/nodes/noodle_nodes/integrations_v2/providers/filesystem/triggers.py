@@ -122,7 +122,13 @@ def _poll_local(ctx: ProviderTriggerPollContext) -> ProviderTriggerPollResult:
 
 
 def _poll_s3(ctx: ProviderTriggerPollContext) -> ProviderTriggerPollResult:
-    import boto3  # type: ignore[import-not-found]
+    try:
+        import boto3  # type: ignore[import-untyped]
+    except ImportError:
+        raise ImportError(
+            "boto3 is required to poll S3 for file changes. "
+            "Install it with: pip install boto3"
+        )
 
     params = ctx.params
     bucket = str(params.get("bucket") or "").strip()

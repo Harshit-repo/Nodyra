@@ -107,15 +107,6 @@ CUSTOM_ROLE_PERMISSION_REGISTRY: frozenset[str] = frozenset({
     "mcp_connection:manage",
 })
 
-# Built-in role permission maps (NOT overridable by custom roles).
-# Each entry includes ALL permissions the built-in role grants.
-_BUILTIN_ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
-    "owner":  frozenset(CUSTOM_ROLE_PERMISSION_REGISTRY | {"admin:users", "admin:sso", "admin:billing", "node_registry:install"}),
-    "admin":  frozenset(CUSTOM_ROLE_PERMISSION_REGISTRY | {"admin:users", "node_registry:install"}),
-    "editor": frozenset({"workflow:read", "workflow:write", "workflow:run", "credential:create"}),
-    "viewer": frozenset({"workflow:read"}),
-}
-
 
 @dataclass(frozen=True)
 class ExternalTokenGrant:

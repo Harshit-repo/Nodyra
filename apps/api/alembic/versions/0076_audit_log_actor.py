@@ -24,9 +24,11 @@ def upgrade() -> None:
         batch_op.add_column(
             sa.Column("actor_type", sa.String(20), nullable=False, server_default="user"),
         )
+        batch_op.create_index("ix_audit_events_session_id", ["session_id"])
 
 
 def downgrade() -> None:
     with op.batch_alter_table("audit_events") as batch_op:
+        batch_op.drop_index("ix_audit_events_session_id")
         batch_op.drop_column("actor_type")
         batch_op.drop_column("session_id")

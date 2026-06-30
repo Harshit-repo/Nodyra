@@ -42,6 +42,8 @@ from app.security import (
     role_allows,
 )
 from app.services import rate_limit
+from app.services.licensing import Feature as _Feature
+from app.services.licensing import require_feature
 from app.services.audit import log_audit
 from app.services.crypto import (
     create_payload_token,
@@ -51,6 +53,8 @@ from app.services.crypto import (
     verify_password,
 )
 from app.services.sso import (
+    _saml_acs_url,
+    _saml_entity_id,
     build_saml_sp_metadata,
     detect_sso_by_email,
     get_or_create_sso_user,
@@ -815,6 +819,7 @@ async def sso_detect(
 async def sso_metadata(
     org_slug: str = Query(..., description="Organization slug"),
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_feature(_Feature.SSO)),
 ):
     """Return SAML SP metadata XML for the given org."""
     sso_config = await get_sso_config_by_org_slug(org_slug, session)
@@ -835,17 +840,29 @@ async def sso_acs(
     request: Request,
     response: Response,
     session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_feature(_Feature.SSO)),
 ):
-    """SAML assertion consumer service (ACS)."""
+    """SAML assertion consumer service (ACS).
+
+    Parses and validates a SAML 2.0 ``Response`` using ``signxml`` to verify
+    the XML-DSig signature against the IdP's ``idp_certificate``, and enforces
+    NotBefore / NotOnOrAfter conditions, AudienceRestriction, and Destination
+    matching.
+    """
+    import base64
+    import zlib
+    from datetime import UTC, datetime
+    from xml.etree.ElementTree import ParseError
+
+    from lxml import etree as _lxml_etree
+    from signxml import XMLVerifier
+
     form = await request.form()
     saml_response = form.get("SAMLResponse")
     if not saml_response:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "Missing SAMLResponse"
         )
-    import base64
-    import xml.etree.ElementTree as ET
-    import zlib
 
     # Decompression bomb protection: reject payloads larger than 100 KiB
     raw = saml_response.encode() if isinstance(saml_response, str) else saml_response
@@ -860,16 +877,28 @@ async def sso_acs(
         # Limit decompressed size to 1 MiB to prevent zip bombs
         inflated = zlib.decompress(decoded, -15, bufsize=1_048_576)
 
-        root = ET.fromstring(inflated)
-        ns = {
+        root = _lxml_etree.fromstring(inflated)
+        NS = {
             "saml2": "urn:oasis:names:tc:SAML:2.0:assertion",
             "saml2p": "urn:oasis:names:tc:SAML:2.0:protocol",
         }
-        name_id_el = root.find(".//saml2:NameID", ns)
+
+        # -- Step 1: extract the Assertion --
+        assertion = root.find(".//saml2:Assertion", NS)
+        if assertion is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "SAML response missing Assertion element",
+            )
+
+        # -- Step 2: resolve SSO config from the NameID domain so we have
+        #    the IdP certificate before attempting verification. --
+        name_id_el = assertion.find(".//saml2:NameID", NS)
         email = (name_id_el.text or "").strip() if name_id_el is not None else ""
         if not email or "@" not in email:
             raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, "SAML response missing valid NameID/email"
+                status.HTTP_400_BAD_REQUEST,
+                "SAML response missing valid NameID/email",
             )
         domain = email.split("@")[1].lower()
         sso_config = await session.scalar(
@@ -880,16 +909,77 @@ async def sso_acs(
                 status.HTTP_404_NOT_FOUND,
                 "No SSO configuration found for this email domain",
             )
-        # TODO(ms4-4a): Replace manual SAML XML parsing with python3-saml library
-        # (OneLogin_Saml2_Auth) for proper assertion signature validation against
-        # sso_config.idp_certificate, Issuer verification, Audience restriction,
-        # Destination matching, and NotBefore/NotOnOrAfter enforcement.
-        # See: https://github.com/onelogin/python3-saml
+
         if not sso_config.idp_certificate:
             raise HTTPException(
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
                 "SAML requires idp_certificate to be configured",
             )
+
+        # -- Step 3: verify the XML-DSig signature using signxml --
+        try:
+            XMLVerifier().verify(
+                assertion,
+                x509_cert=sso_config.idp_certificate.strip(),
+            )
+        except Exception as sig_exc:
+            logger.warning("SAML signature verification failed: %s", sig_exc)
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "SAML assertion signature verification failed",
+            ) from sig_exc
+
+        # -- Step 4: validate Conditions (NotBefore / NotOnOrAfter) --
+        conditions = assertion.find("./saml2:Conditions", NS)
+        if conditions is not None:
+            not_before_str = conditions.get("NotBefore")
+            not_on_or_after_str = conditions.get("NotOnOrAfter")
+            now = datetime.now(UTC)
+            _datetime_iso = "%Y-%m-%dT%H:%M:%SZ"
+            if not_before_str:
+                try:
+                    nb = datetime.strptime(not_before_str, _datetime_iso).replace(tzinfo=UTC)
+                    if now < nb:
+                        raise HTTPException(
+                            status.HTTP_400_BAD_REQUEST,
+                            "SAML assertion not yet valid (NotBefore)",
+                        )
+                except ValueError:
+                    pass  # lenient parsing — some IdPs use fractional seconds
+            if not_on_or_after_str:
+                try:
+                    noa = datetime.strptime(not_on_or_after_str, _datetime_iso).replace(tzinfo=UTC)
+                    if now >= noa:
+                        raise HTTPException(
+                            status.HTTP_400_BAD_REQUEST,
+                            "SAML assertion expired (NotOnOrAfter)",
+                        )
+                except ValueError:
+                    pass
+
+        # -- Step 5: validate AudienceRestriction --
+        audience_el = assertion.find(
+            ".//saml2:AudienceRestriction/saml2:Audience", NS
+        )
+        if audience_el is not None and audience_el.text:
+            expected_audience = _saml_entity_id()
+            if audience_el.text.strip() != expected_audience:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "SAML Audience mismatch — expected "
+                    f"{expected_audience}",
+                )
+
+        # -- Step 6: validate Destination --
+        dest = root.get("Destination")
+        if dest:
+            expected_acs = _saml_acs_url()
+            if dest.rstrip("/") != expected_acs.rstrip("/"):
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "SAML Destination mismatch",
+                )
+
         claims = {
             "email": email,
             "name": email.split("@")[0],
@@ -902,7 +992,7 @@ async def sso_acs(
         return result
     except HTTPException:
         raise
-    except (ValueError, ET.ParseError) as exc:
+    except (ValueError, ParseError) as exc:
         logger.warning("SAML ACS parse error: %s", exc)
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "Invalid SAML response"
