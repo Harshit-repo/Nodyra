@@ -22,7 +22,8 @@ from app.schemas import (
     QueueStats,
     RuntimeModeStatus,
 )
-from app.security import require_permission
+from app.security import current_user, require_permission
+from app.models import User
 from app.services import queue as run_queue
 
 router = APIRouter(tags=["ops"])
@@ -161,7 +162,10 @@ async def ops_health(
 
 
 @router.get("/system/status")
-async def system_status(session: AsyncSession = Depends(get_session)) -> dict:
+async def system_status(
+    session: AsyncSession = Depends(get_session),
+    _user: User = Depends(current_user),
+) -> dict:
     counts = await _counts(session)
     return {
         "version": _VERSION,
@@ -176,6 +180,7 @@ async def system_status(session: AsyncSession = Depends(get_session)) -> dict:
 @router.get("/ops/runtime-mode", response_model=RuntimeModeStatus)
 async def runtime_mode(
     session: AsyncSession = Depends(get_session),
+    _user: User = Depends(current_user),
 ) -> RuntimeModeStatus:
     """Report the active runtime topology and any production misconfigurations."""
     try:
@@ -201,7 +206,10 @@ async def runtime_mode(
 
 
 @router.get("/ops/queue", response_model=QueueStats)
-async def queue_stats(session: AsyncSession = Depends(get_session)) -> QueueStats:
+async def queue_stats(
+    session: AsyncSession = Depends(get_session),
+    _user: User = Depends(current_user),
+) -> QueueStats:
     """Aggregate run-queue health for the ops/backpressure surface.
 
     Pulls straight from ``services.queue.stats`` so the endpoint stays in sync
@@ -212,7 +220,9 @@ async def queue_stats(session: AsyncSession = Depends(get_session)) -> QueueStat
 
 
 @router.get("/ops/drain")
-async def drain_status() -> dict:
+async def drain_status(
+    _user: User = Depends(current_user),
+) -> dict:
     """Whether the dispatch loop is currently draining (no new leases)."""
     return {"draining": settings.queue_drain}
 

@@ -155,7 +155,12 @@ async def detect_sso_by_email(
     """Check if an email domain has SSO configured.
 
     Returns ``{"has_sso": True, "org_slug": "..."}`` or ``None``.
+
+    Timing-safe: adds a small random delay when no SSO is found to prevent
+    enumeration of configured domains via response-time analysis.
     """
+    import random
+
     domain = email.strip().lower().split("@")[-1] if "@" in email else None
     if not domain:
         return None
@@ -163,6 +168,9 @@ async def detect_sso_by_email(
         select(SSOConfig).where(SSOConfig.email_domain == domain)
     )
     if config is None:
+        # Mitigate timing enumeration: add jitter so "no config" takes ~same
+        # time as the org lookup that follows a successful config match.
+        await asyncio.sleep(random.uniform(0.01, 0.05))
         return None
     org = await session.get(Organization, config.org_id)
     if org is None:
