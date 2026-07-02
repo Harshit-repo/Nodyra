@@ -21,6 +21,7 @@ from app.config import settings
 from app.db import engine
 from app.redis_client import redis_client
 from app.services.events import broker, broker_reaper_loop
+from app.services.environment_builds import run_environment_build_dispatch_loop
 from app.services.queue import run_queue_dispatch_loop
 from app.services.runner import (
     drain_active_runs,
@@ -95,6 +96,7 @@ async def _amain() -> None:
 
     tasks = [
         asyncio.create_task(_as_system(run_queue_dispatch_loop)()),
+        asyncio.create_task(_as_system(run_environment_build_dispatch_loop)()),
         asyncio.create_task(broker_reaper_loop()),
         asyncio.create_task(_as_system(stuck_run_detector_loop)()),
     ]

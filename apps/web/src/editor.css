@@ -287,6 +287,21 @@
   padding: 7px var(--editor-space-lg);
   border-bottom: 1px solid var(--line);
 }
+.toolbar-message-conflict {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--editor-warning-bg);
+  color: var(--editor-warning-text);
+  border-bottom-color: var(--editor-warning-border);
+}
+.toolbar-message-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
 .production-warning {
   background: var(--editor-warning-bg);
   color: var(--editor-warning-text);

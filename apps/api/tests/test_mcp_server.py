@@ -15,6 +15,8 @@ MANUAL_GRAPH = {
     "edges": [],
 }
 
+APPROVED = {"approved_by_user": True}
+
 
 def rpc(method: str, params: dict | None = None, req_id: int = 1) -> dict:
     return {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params or {}}
@@ -226,7 +228,11 @@ async def test_build_and_run_workflow_via_mcp(client: AsyncClient) -> None:
                 "tools/call",
                 {
                     "name": "set_workflow_graph",
-                    "arguments": {"workflow_id": workflow_id, "graph": MANUAL_GRAPH},
+                    "arguments": {
+                        "workflow_id": workflow_id,
+                        "graph": MANUAL_GRAPH,
+                        **APPROVED,
+                    },
                 },
             ),
         )
@@ -246,6 +252,23 @@ async def test_build_and_run_workflow_via_mcp(client: AsyncClient) -> None:
     assert "run_id" in run
 
 
+async def test_destructive_mcp_tool_requires_explicit_approval(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "Approval WF")
+    resp = await client.post(
+        "/mcp",
+        json=rpc(
+            "tools/call",
+            {
+                "name": "set_workflow_graph",
+                "arguments": {"workflow_id": workflow_id, "graph": MANUAL_GRAPH},
+            },
+        ),
+    )
+    result = resp.json()["result"]
+    assert result["isError"] is True
+    assert "requires explicit human approval" in result["content"][0]["text"]
+
+
 async def test_set_graph_rejects_unknown_node_type(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "Bad Graph WF")
     resp = await client.post(
@@ -260,6 +283,7 @@ async def test_set_graph_rejects_unknown_node_type(client: AsyncClient) -> None:
                         "nodes": [{"id": "x", "type": "no_such_node", "params": {}}],
                         "edges": [],
                     },
+                    **APPROVED,
                 },
             },
         ),
@@ -504,6 +528,8 @@ async def test_get_workflow_stats_missing_workflow(client: AsyncClient) -> None:
 
 
 async def test_patch_node(client: AsyncClient) -> None:
+    from app.services import events
+
     workflow_id = await make_workflow(client, "Patch WF")
     # patch the trigger node's params
     data = _tool_payload(
@@ -524,6 +550,59 @@ async def test_patch_node(client: AsyncClient) -> None:
     )
     assert data["node_id"] == "t"
     assert data["params"]["label"] == "patched"
+    assert data["graph_revision"] == 2
+    workflow_events = events.workflow_broker._events[workflow_id]
+    assert workflow_events[-1]["type"] == "workflow_graph_changed"
+    assert workflow_events[-1]["origin"] == "mcp"
+    assert workflow_events[-1]["operation"] == "patch_node"
+    assert workflow_events[-1]["graph_revision"] == 2
+    assert workflow_events[-1]["patch"] == {
+        "type": "node_updated",
+        "node_id": "t",
+        "param_keys": ["label"],
+    }
+
+    revisions = _tool_payload(
+        await client.post(
+            "/mcp",
+            json=rpc(
+                "tools/call",
+                {
+                    "name": "list_workflow_revisions",
+                    "arguments": {"workflow_id": workflow_id},
+                },
+            ),
+        )
+    )
+    assert revisions["current_graph_revision"] == 2
+    assert revisions["revisions"][0]["operation"] == "patch_node"
+    assert revisions["revisions"][0]["patch"]["param_keys"] == ["label"]
+
+
+async def test_patch_node_rejects_stale_graph_revision(client: AsyncClient) -> None:
+    workflow_id = await make_workflow(client, "Stale Patch WF")
+    resp = await client.post(
+        "/mcp",
+        json=rpc(
+            "tools/call",
+            {
+                "name": "patch_node",
+                "arguments": {
+                    "workflow_id": workflow_id,
+                    "node_id": "t",
+                    "params": {"label": "stale"},
+                    "expected_graph_revision": 0,
+                },
+            },
+        ),
+    )
+    result = resp.json()["result"]
+    assert result["isError"] is True
+    assert "expected graph_revision 0" in result["content"][0]["text"]
+
+    detail = (await client.get(f"/workflows/{workflow_id}")).json()
+    assert detail["graph_revision"] == 1
+    assert detail["graph"]["nodes"][0]["params"] == {}
 
 
 async def test_patch_node_missing_node(client: AsyncClient) -> None:
@@ -564,7 +643,10 @@ async def test_add_and_remove_node(client: AsyncClient) -> None:
             "/mcp",
             json=rpc(
                 "tools/call",
-                {"name": "remove_node", "arguments": {"workflow_id": workflow_id, "node_id": "n2"}},
+                {
+                    "name": "remove_node",
+                    "arguments": {"workflow_id": workflow_id, "node_id": "n2", **APPROVED},
+                },
             ),
         )
     )
@@ -608,7 +690,13 @@ async def test_remove_node_also_removes_edges(client: AsyncClient) -> None:
     )
     await client.post(
         "/mcp",
-        json=rpc("tools/call", {"name": "remove_node", "arguments": {"workflow_id": workflow_id, "node_id": "n2"}}),
+        json=rpc(
+            "tools/call",
+            {
+                "name": "remove_node",
+                "arguments": {"workflow_id": workflow_id, "node_id": "n2", **APPROVED},
+            },
+        ),
     )
     graph_data = _tool_payload(
         await client.post("/mcp", json=rpc("tools/call", {"name": "get_workflow", "arguments": {"workflow_id": workflow_id}}))
@@ -634,7 +722,18 @@ async def test_add_and_remove_edge(client: AsyncClient) -> None:
     rm_data = _tool_payload(
         await client.post(
             "/mcp",
-            json=rpc("tools/call", {"name": "remove_edge", "arguments": {"workflow_id": workflow_id, "source": "t", "target": "n2"}}),
+            json=rpc(
+                "tools/call",
+                {
+                    "name": "remove_edge",
+                    "arguments": {
+                        "workflow_id": workflow_id,
+                        "source": "t",
+                        "target": "n2",
+                        **APPROVED,
+                    },
+                },
+            ),
         )
     )
     assert rm_data["removed_count"] == 1
@@ -653,7 +752,18 @@ async def test_remove_edge_not_found(client: AsyncClient) -> None:
     workflow_id = await make_workflow(client, "EdgeNotFound WF")
     resp = await client.post(
         "/mcp",
-        json=rpc("tools/call", {"name": "remove_edge", "arguments": {"workflow_id": workflow_id, "source": "t", "target": "ghost"}}),
+        json=rpc(
+            "tools/call",
+            {
+                "name": "remove_edge",
+                "arguments": {
+                    "workflow_id": workflow_id,
+                    "source": "t",
+                    "target": "ghost",
+                    **APPROVED,
+                },
+            },
+        ),
     )
     assert resp.json()["result"]["isError"] is True
 
@@ -663,7 +773,13 @@ async def test_delete_workflow(client: AsyncClient) -> None:
     data = _tool_payload(
         await client.post(
             "/mcp",
-            json=rpc("tools/call", {"name": "delete_workflow", "arguments": {"workflow_id": workflow_id}}),
+            json=rpc(
+                "tools/call",
+                {
+                    "name": "delete_workflow",
+                    "arguments": {"workflow_id": workflow_id, **APPROVED},
+                },
+            ),
         )
     )
     assert data["deleted"] is True
@@ -747,7 +863,13 @@ async def test_rollback_workflow(client: AsyncClient) -> None:
     data = _tool_payload(
         await client.post(
             "/mcp",
-            json=rpc("tools/call", {"name": "rollback_workflow", "arguments": {"workflow_id": workflow_id, "version": 1}}),
+            json=rpc(
+                "tools/call",
+                {
+                    "name": "rollback_workflow",
+                    "arguments": {"workflow_id": workflow_id, "version": 1, **APPROVED},
+                },
+            ),
         )
     )
     assert data["draft_restored_from_version"] == 1
@@ -770,6 +892,7 @@ async def test_schedule_crud(client: AsyncClient) -> None:
                         "name": "Hourly run",
                         "schedule_cron": "0 * * * *",
                         "schedule_tz": "UTC",
+                        **APPROVED,
                     },
                 },
             ),
@@ -798,6 +921,7 @@ async def test_schedule_crud(client: AsyncClient) -> None:
                         "schedule_id": schedule_id,
                         "name": "Every two hours",
                         "schedule_cron": "0 */2 * * *",
+                        **APPROVED,
                     },
                 },
             ),
@@ -809,7 +933,13 @@ async def test_schedule_crud(client: AsyncClient) -> None:
     toggled = _tool_payload(
         await client.post(
             "/mcp",
-            json=rpc("tools/call", {"name": "toggle_schedule", "arguments": {"schedule_id": schedule_id, "active": False}}),
+            json=rpc(
+                "tools/call",
+                {
+                    "name": "toggle_schedule",
+                    "arguments": {"schedule_id": schedule_id, "active": False, **APPROVED},
+                },
+            ),
         )
     )
     assert toggled["active"] is False
@@ -818,7 +948,13 @@ async def test_schedule_crud(client: AsyncClient) -> None:
     deleted = _tool_payload(
         await client.post(
             "/mcp",
-            json=rpc("tools/call", {"name": "delete_schedule", "arguments": {"schedule_id": schedule_id}}),
+            json=rpc(
+                "tools/call",
+                {
+                    "name": "delete_schedule",
+                    "arguments": {"schedule_id": schedule_id, **APPROVED},
+                },
+            ),
         )
     )
     assert deleted["deleted"] is True
@@ -827,7 +963,13 @@ async def test_schedule_crud(client: AsyncClient) -> None:
 async def test_create_schedule_missing_workflow(client: AsyncClient) -> None:
     resp = await client.post(
         "/mcp",
-        json=rpc("tools/call", {"name": "create_schedule", "arguments": {"workflow_id": "ghost", "name": "Bad"}}),
+        json=rpc(
+            "tools/call",
+            {
+                "name": "create_schedule",
+                "arguments": {"workflow_id": "ghost", "name": "Bad", **APPROVED},
+            },
+        ),
     )
     assert resp.json()["result"]["isError"] is True
 
@@ -1160,6 +1302,182 @@ async def test_list_environments(client: AsyncClient) -> None:
     result = await _tool(client, "list_environments", {})
     data = json.loads(result["content"][0]["text"])
     assert "environments" in data
+
+
+async def test_apply_workflow_patch_atomic(client: AsyncClient) -> None:
+    wf_id = await make_workflow(client)
+    current = json.loads(
+        (await _tool(client, "get_workflow", {"workflow_id": wf_id}))["content"][0]["text"]
+    )
+    revision = current["graph_revision"]
+    operations = [
+        {
+            "op": "add_node",
+            "node": {
+                "id": "code",
+                "type": "code",
+                "params": {"code": "output = input"},
+                "position": {"x": 260, "y": 0},
+            },
+        },
+        {
+            "op": "add_edge",
+            "edge": {"source": "t", "target": "code"},
+        },
+    ]
+    preview = await _tool(
+        client,
+        "preview_workflow_patch",
+        {"workflow_id": wf_id, "operations": operations, "expected_graph_revision": revision},
+    )
+    preview_data = json.loads(preview["content"][0]["text"])
+    assert preview_data["valid"] is True
+    assert preview_data["change_count"] == 2
+
+    applied = await _tool(
+        client,
+        "apply_workflow_patch",
+        {
+            "workflow_id": wf_id,
+            "operations": operations,
+            "expected_graph_revision": revision,
+            **APPROVED,
+        },
+    )
+    applied_data = json.loads(applied["content"][0]["text"])
+    assert applied_data["node_count"] == 2
+    assert applied_data["edge_count"] == 1
+    assert applied_data["graph_revision"] == revision + 1
+
+    stale = await _tool(
+        client,
+        "apply_workflow_patch",
+        {
+            "workflow_id": wf_id,
+            "operations": [{"op": "rename_node", "node_id": "t", "label": "Start"}],
+            "expected_graph_revision": revision,
+            **APPROVED,
+        },
+    )
+    assert stale["isError"] is True
+
+
+async def test_preview_workflow_patch_reports_invalid_without_saving(client: AsyncClient) -> None:
+    wf_id = await make_workflow(client)
+    before = json.loads(
+        (await _tool(client, "get_workflow", {"workflow_id": wf_id}))["content"][0]["text"]
+    )
+    preview = await _tool(
+        client,
+        "preview_workflow_patch",
+        {
+            "workflow_id": wf_id,
+            "operations": [
+                {"op": "add_edge", "edge": {"source": "ghost", "target": "t"}},
+            ],
+        },
+    )
+    preview_data = json.loads(preview["content"][0]["text"])
+    assert preview_data["valid"] is False
+    assert "missing node" in preview_data["error"].lower()
+    after = json.loads(
+        (await _tool(client, "get_workflow", {"workflow_id": wf_id}))["content"][0]["text"]
+    )
+    assert after["graph_revision"] == before["graph_revision"]
+    assert len(after["graph"]["edges"]) == 0
+
+
+async def test_search_node_catalog_and_suggest_config(client: AsyncClient) -> None:
+    search = await _tool(client, "search_node_catalog", {"query": "manual", "limit": 5})
+    search_data = json.loads(search["content"][0]["text"])
+    assert any(node["id"] == "manual_trigger" for node in search_data["nodes"])
+
+    suggested = await _tool(
+        client,
+        "suggest_node_config",
+        {"node_type": "manual_trigger", "node_id": "start", "x": 10, "y": 20},
+    )
+    suggested_data = json.loads(suggested["content"][0]["text"])
+    assert suggested_data["node"]["id"] == "start"
+    assert suggested_data["node"]["type"] == "manual_trigger"
+    assert suggested_data["node"]["position"] == {"x": 10.0, "y": 20.0}
+
+
+async def test_environment_package_tools(client: AsyncClient, monkeypatch) -> None:
+    async def fake_build_environment(env_id: str) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "app.services.backends.build_environment",
+        fake_build_environment,
+    )
+    created = await _tool(
+        client,
+        "create_environment",
+        {"name": "MCP Env", "packages": ["numpy==2.0.0"], **APPROVED},
+    )
+    created_data = json.loads(created["content"][0]["text"])
+    env_id = created_data["id"]
+    build_job_id = created_data["build_job_id"]
+    assert created_data["build_started"] is True
+    assert build_job_id
+    assert created_data["build_job_status"] == "queued"
+    assert created_data["packages"] == ["numpy==2.0.0"]
+
+    build_job = await _tool(
+        client,
+        "get_environment_build_job",
+        {"build_job_id": build_job_id, "environment_id": env_id},
+    )
+    build_job_data = json.loads(build_job["content"][0]["text"])
+    assert build_job_data["id"] == build_job_id
+    assert build_job_data["status"] == "queued"
+
+    added = await _tool(
+        client,
+        "add_environment_package",
+        {"environment_id": env_id, "package": "requests==2.32.0", **APPROVED},
+    )
+    added_data = json.loads(added["content"][0]["text"])
+    assert "requests==2.32.0" in added_data["packages"]
+
+    removed = await _tool(
+        client,
+        "remove_environment_package",
+        {"environment_id": env_id, "package": "requests", **APPROVED},
+    )
+    removed_data = json.loads(removed["content"][0]["text"])
+    assert all("requests" not in package for package in removed_data["packages"])
+
+    set_result = await _tool(
+        client,
+        "set_environment_packages",
+        {
+            "environment_id": env_id,
+            "packages": ["pandas==2.2.2", "pandas>=2"],
+            **APPROVED,
+        },
+    )
+    set_data = json.loads(set_result["content"][0]["text"])
+    assert set_data["packages"] == ["pandas>=2"]
+
+    jobs = await _tool(
+        client,
+        "list_environment_build_jobs",
+        {"environment_id": env_id, "limit": 10},
+    )
+    jobs_data = json.loads(jobs["content"][0]["text"])
+    assert len(jobs_data["build_jobs"]) >= 1
+
+
+async def test_create_environment_validation_error_is_tool_error(client: AsyncClient) -> None:
+    result = await _tool(
+        client,
+        "create_environment",
+        {"name": "Bad Env", "python_version": "2.7", **APPROVED},
+    )
+    assert result["isError"] is True
+    assert "invalid environment request" in result["content"][0]["text"].lower()
 
 
 async def test_list_credentials(client: AsyncClient) -> None:

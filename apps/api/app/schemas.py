@@ -33,6 +33,7 @@ class WorkflowUpdate(BaseModel):
     # Per-workflow wall-clock cap (seconds) for a run. None leaves it unset
     # (falls back to the server default); 0 disables the cap for this workflow.
     run_timeout_seconds: float | None = Field(default=None, ge=0)
+    expected_graph_revision: int | None = Field(default=None, ge=0)
     mcp_enabled: bool | None = None
     mcp_tool_name: str | None = None
     mcp_description: str | None = None
@@ -109,6 +110,7 @@ class WorkflowSummary(BaseModel):
     active: bool
     version: int
     published_version: int
+    graph_revision: int = 0
     has_unpublished_changes: bool
     node_count: int
     environment_id: str | None
@@ -132,6 +134,7 @@ class WorkflowDetail(BaseModel):
     active: bool
     version: int
     published_version: int
+    graph_revision: int = 0
     has_unpublished_changes: bool
     environment_id: str | None
     default_runner_pool_id: str | None = None
@@ -160,6 +163,19 @@ class WorkflowVersionInfo(BaseModel):
     created_at: datetime
     node_count: int = 0
     published: bool = False
+
+
+class WorkflowRevisionInfo(BaseModel):
+    id: str
+    workflow_id: str
+    graph_revision: int
+    origin: str
+    operation: str
+    summary: str = ""
+    patch: dict[str, Any] | None = None
+    actor_id: str | None = None
+    actor_email: str | None = None
+    created_at: datetime
 
 
 class WorkflowPublishRequest(BaseModel):
@@ -237,6 +253,30 @@ class PackageUsageInfo(BaseModel):
     packages: list[PackageUsagePackage]
 
 
+class EnvironmentBuildJobInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    environment_id: str
+    reason: str
+    status: str
+    attempts: int
+    max_attempts: int
+    package_snapshot: list[str] = Field(default_factory=list)
+    packages_hash: str = ""
+    python_version: str = ""
+    backend: str = ""
+    last_error: str | None = None
+    requested_by_email: str | None = None
+    lease_owner: str | None = None
+    lease_expires_at: datetime | None = None
+    available_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class EnvironmentInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -256,6 +296,8 @@ class EnvironmentInfo(BaseModel):
     worker_rss_estimate_bytes: int | None = None
     backend: str = "venv"
     backend_config: dict = Field(default_factory=dict)
+    build_job_id: str | None = None
+    build_job_status: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -714,11 +756,34 @@ class ApiTokenCreate(BaseModel):
     scopes: list[str] = Field(min_length=1, max_length=32)
     expires_in_days: int = Field(default=90, ge=1, le=365)
 
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("token name cannot be blank")
+        return cleaned
+
+    @field_validator("scopes")
+    @classmethod
+    def _validate_scopes(cls, value: list[str]) -> list[str]:
+        cleaned = [scope.strip() for scope in value if scope.strip()]
+        if not cleaned:
+            raise ValueError("at least one scope is required")
+        return cleaned
+
+
+class ApiTokenScopeInfo(BaseModel):
+    scope: str
+    minimum_role: str
+    grantable: bool
+
 
 class ApiTokenInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    org_id: str
     name: str
     token_prefix: str
     scopes: list[str]

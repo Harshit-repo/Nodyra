@@ -17,6 +17,7 @@ import app.services.agentic_builder as agentic_builder_module
 import app.services.artifacts as artifacts_module
 import app.services.backends as backends_module
 import app.services.chat_service as chat_service_module
+import app.services.environment_builds as environment_builds_module
 import app.services.licensing as licensing_module
 import app.services.live_settings as live_settings_module
 import app.services.provider_triggers as provider_triggers_module
@@ -52,23 +53,28 @@ settings.secret_key = "noodle-test-secret-deterministic-not-the-default"
 def _reset_event_broker():
     """Isolate the module-level run-event broker between tests.
 
-    The broker is a singleton. pytest-asyncio hands each test a fresh event
+    The brokers are singletons. pytest-asyncio hands each test a fresh event
     loop, so any asyncio object it retains from a prior test — a subscriber
     ``Queue``, or the shared Redis client's internal connection lock once
     ``connect()`` has pinned Redis mode — is bound to a now-closed loop and
     raises ``bound to a different event loop`` in the next test. Reset to a
-    clean in-process broker around every test so event streaming is
+    clean in-process brokers around every test so event streaming is
     deterministic and loop-safe. Production pins the Redis transport for real
     via the app lifespan's ``broker.connect()`` (which tests don't run).
     """
     from app.services import events
 
+    def _clear_broker(broker) -> None:
+        broker._events.clear()
+        broker._subscribers.clear()
+        broker._finished.clear()
+        broker._last_activity.clear()
+        broker._mode = "inprocess"
+        broker._redis = None
+
     def _clear() -> None:
-        events.broker._events.clear()
-        events.broker._subscribers.clear()
-        events.broker._finished.clear()
-        events.broker._mode = "inprocess"
-        events.broker._redis = None
+        _clear_broker(events.broker)
+        _clear_broker(events.workflow_broker)
 
     _clear()
     yield
@@ -121,6 +127,7 @@ def _reset_run_dispatch_state():
         # test_health) binds it to that test's loop; the next test's loop then
         # raises "bound to a different event loop". Null it so it rebinds (TEST-1).
         queue_mod._wakeup = None
+        environment_builds_module._wakeup = None
         github_sync_jobs_mod._wakeup = None
         # Rebuild the runtime pool's loop-bound primitives so no permit slot
         # leaked by a prior test's interrupted run survives into this one.
@@ -158,6 +165,14 @@ class _InlineTestProcessIsolator:
         if timeout is not None:
             return await asyncio.wait_for(asyncio.to_thread(fn, **kwargs), timeout)
         return await asyncio.to_thread(fn, **kwargs)
+
+    def shutdown(self) -> None:
+        """Interface parity with PooledProcessIsolator.
+
+        Tests that reload ``app.main`` (e.g. the webhook_role reload test)
+        rebind ``main.process_isolator`` to THIS fake for the rest of the
+        session; any later test that runs the app lifespan then calls
+        ``process_isolator.shutdown()`` on it during teardown."""
 
 
 @pytest.fixture(autouse=True)
@@ -346,6 +361,7 @@ async def client() -> AsyncIterator[AsyncClient]:
         runner_module: runner_module.SessionLocal,
         triggers_module: triggers_module.SessionLocal,
         queue_module: queue_module.SessionLocal,
+        environment_builds_module: environment_builds_module.SessionLocal,
         retention_module: retention_module.SessionLocal,
         live_settings_module: live_settings_module.SessionLocal,
         licensing_module: licensing_module.SessionLocal,
@@ -365,6 +381,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     runner_module.SessionLocal = test_session
     triggers_module.SessionLocal = test_session
     queue_module.SessionLocal = test_session
+    environment_builds_module.SessionLocal = test_session
     retention_module.SessionLocal = test_session
     live_settings_module.SessionLocal = test_session
     licensing_module.SessionLocal = test_session

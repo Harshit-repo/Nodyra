@@ -151,7 +151,7 @@ async def test_environment_create_validates_dedicated_pool_assignment(
     client: AsyncClient, mt_on
 ):
     """Creating an environment must enforce the same X4 assignment rule as PATCH."""
-    from fastapi import BackgroundTasks, HTTPException
+    from fastapi import HTTPException
 
     from app.routers.environments import create_environment
     from app.schemas import EnvironmentCreate
@@ -178,7 +178,6 @@ async def test_environment_create_validates_dedicated_pool_assignment(
             with pytest.raises(HTTPException) as exc:
                 await create_environment(
                     EnvironmentCreate(name="bad", runner_pool_id=own_agent.id),
-                    BackgroundTasks(),
                     session,
                     actor=None,
                 )
@@ -186,7 +185,6 @@ async def test_environment_create_validates_dedicated_pool_assignment(
 
             created = await create_environment(
                 EnvironmentCreate(name="ok", runner_pool_id=own_docker.id),
-                BackgroundTasks(),
                 session,
                 actor=None,
             )

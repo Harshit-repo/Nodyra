@@ -683,6 +683,356 @@
 .noodle-license-key-control button:hover { background: var(--surface-2); color: var(--ink); }
 .noodle-license-key-control button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+.noodle-mcp-access {
+  display: grid;
+  gap: 18px;
+}
+
+.noodle-mcp-endpoint {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 0.34fr);
+  gap: 14px;
+  align-items: end;
+}
+
+.noodle-mcp-copy-row,
+.noodle-mcp-secret-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.noodle-mcp-copy-row input,
+.noodle-mcp-secret-row input {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.noodle-mcp-workspace {
+  min-height: 72px;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  background: var(--bg);
+}
+
+.noodle-mcp-workspace span {
+  color: var(--ink-3);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.noodle-mcp-workspace strong,
+.noodle-mcp-workspace code {
+  overflow-wrap: anywhere;
+}
+
+.noodle-mcp-workspace strong {
+  font-size: 12px;
+}
+
+.noodle-mcp-workspace code {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.noodle-mcp-client-snippets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.noodle-mcp-snippet {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  background: var(--bg);
+}
+
+.noodle-mcp-snippet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.noodle-mcp-snippet-head strong {
+  font-size: 12px;
+}
+
+.noodle-mcp-snippet pre {
+  max-height: 180px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.noodle-mcp-created-token {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.78fr) minmax(0, 1.22fr);
+  gap: 14px;
+  align-items: center;
+  padding: 13px;
+  border: 1px solid color-mix(in srgb, var(--color-success) 30%, var(--line));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--color-success-bg) 70%, var(--surface));
+}
+
+.noodle-mcp-created-token strong,
+.noodle-mcp-created-token span {
+  display: block;
+}
+
+.noodle-mcp-created-token strong {
+  font-size: 12px;
+}
+
+.noodle-mcp-created-token span {
+  margin-top: 3px;
+  color: var(--ink-3);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.noodle-mcp-secret-row {
+  grid-template-columns: minmax(0, 1fr) 42px auto;
+}
+
+.noodle-mcp-secret-row > button:not(.btn) {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink-3);
+}
+
+.noodle-mcp-secret-row > button:not(.btn):hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.noodle-mcp-token-form {
+  display: grid;
+  gap: 16px;
+}
+
+.noodle-mcp-scopes {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.noodle-mcp-scopes legend {
+  margin-bottom: 10px;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.noodle-mcp-scope-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.noodle-mcp-scope {
+  position: relative;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 11px;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  background: var(--bg);
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.noodle-mcp-scope:hover {
+  border-color: var(--accent-deep);
+  background: var(--surface-2);
+}
+
+.noodle-mcp-scope.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.noodle-mcp-scope.is-disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
+.noodle-mcp-scope input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.noodle-mcp-scope:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.noodle-mcp-scope span {
+  min-width: 0;
+}
+
+.noodle-mcp-scope strong,
+.noodle-mcp-scope small,
+.noodle-mcp-scope code {
+  display: block;
+}
+
+.noodle-mcp-scope strong {
+  font-size: 12px;
+}
+
+.noodle-mcp-scope small {
+  margin-top: 4px;
+  color: var(--ink-3);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.noodle-mcp-scope code {
+  margin-top: 7px;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  overflow-wrap: anywhere;
+}
+
+.noodle-mcp-scope em {
+  padding: 3px 6px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  color: var(--ink-3);
+  background: var(--surface);
+  font-size: 9px;
+  font-style: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.noodle-mcp-token-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 2px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line-2);
+}
+
+.noodle-mcp-token-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.noodle-mcp-token-list-head strong {
+  font-size: 12px;
+}
+
+.noodle-mcp-token-table {
+  overflow-x: auto;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+}
+
+.noodle-mcp-token-row {
+  min-width: 900px;
+  display: grid;
+  grid-template-columns: minmax(160px, 1.1fr) 120px minmax(220px, 1.5fr) 130px 90px 104px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line-2);
+  font-size: 11px;
+}
+
+.noodle-mcp-token-row:first-child {
+  border-top: 0;
+}
+
+.noodle-mcp-token-row.is-head {
+  color: var(--ink-3);
+  background: var(--surface-2);
+  font-size: 10px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.noodle-mcp-token-row strong,
+.noodle-mcp-token-row small {
+  display: block;
+  min-width: 0;
+}
+
+.noodle-mcp-token-row strong,
+.noodle-mcp-token-row span {
+  overflow-wrap: anywhere;
+}
+
+.noodle-mcp-token-row small {
+  margin-top: 3px;
+  color: var(--ink-3);
+  font-size: 10px;
+}
+
+.noodle-mcp-token-row code {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.noodle-mcp-token-status {
+  justify-self: start;
+  padding: 4px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.noodle-mcp-token-status.is-active {
+  color: var(--color-success);
+  background: var(--color-success-bg);
+}
+
+.noodle-mcp-token-status.is-expired,
+.noodle-mcp-token-status.is-revoked {
+  color: var(--ink-3);
+  background: var(--surface-2);
+}
+
 .noodle-management-links {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -741,7 +1091,14 @@
   .noodle-font-grid,
   .noodle-settings-form-grid,
   .noodle-license-summary,
+  .noodle-mcp-endpoint,
+  .noodle-mcp-client-snippets,
+  .noodle-mcp-created-token,
+  .noodle-mcp-scope-grid,
   .noodle-management-links { grid-template-columns: 1fr; }
+  .noodle-mcp-copy-row,
+  .noodle-mcp-secret-row { grid-template-columns: 1fr; }
+  .noodle-mcp-secret-row > button:not(.btn) { width: 100%; }
   .noodle-license-summary dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .noodle-settings-field-wide { grid-column: auto; }
 }

@@ -160,6 +160,16 @@ class Settings(BaseSettings):
     # When true, the dispatch loop stops leasing new entries; in-flight
     # leased runs continue. Set this before shutdown to drain gracefully.
     queue_drain: bool = False
+    # Durable environment-build queue tuning. These jobs rebuild Python
+    # environments after create/package/backend changes. Keep leases much
+    # longer than run leases because package resolution can legitimately take
+    # minutes; a heartbeat extends active leases while the build process lives.
+    environment_build_queue_poll_seconds: float = 1.0
+    environment_build_queue_lease_seconds: int = 1800
+    environment_build_queue_default_max_attempts: int = 3
+    environment_build_queue_retry_backoff_base_seconds: int = 10
+    environment_build_queue_retry_backoff_max_seconds: int = 600
+    environment_build_queue_max_concurrent_jobs: int = 2
     # Local durable queue: when a LOCAL run (in-process / subprocess pool,
     # no remote runner pool) can't get an admission slot immediately, leave
     # it as a durable ``queued`` ``RunQueueEntry`` instead of blocking a

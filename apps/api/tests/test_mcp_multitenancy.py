@@ -106,9 +106,23 @@ async def test_mcp_isolates_tools_resources_and_tokens_by_org(
     )
     assert token_response.status_code == 201, token_response.text
     token_body = token_response.json()
+    assert token_body["org_id"] == org_a
     pat = token_body["token"]
     token_id = token_body["id"]
     pat_headers = {"Authorization": f"Bearer {pat}"}
+
+    scope_catalog = await client.get("/auth/api-token-scopes", headers=headers_a)
+    assert scope_catalog.status_code == 200, scope_catalog.text
+    by_scope = {item["scope"]: item for item in scope_catalog.json()}
+    assert by_scope["workflow:run"]["grantable"] is True
+    assert by_scope["workflow:run"]["minimum_role"] == "editor"
+
+    blank_name = await client.post(
+        "/auth/api-tokens",
+        headers=headers_a,
+        json={"name": "   ", "scopes": ["workflow:run"], "expires_in_days": 30},
+    )
+    assert blank_name.status_code == 422
 
     # No X-Org-Id is needed: the token is permanently bound to org A.
     pat_list = await tool(client, pat_headers, "list_workflows", {})
@@ -169,7 +183,11 @@ async def test_mcp_isolates_tools_resources_and_tokens_by_org(
 
     token_list = await client.get("/auth/api-tokens", headers=headers_a)
     assert token_list.status_code == 200
+    assert token_list.json()[0]["org_id"] == org_a
     assert "token" not in token_list.json()[0]
+    token_list_b = await client.get("/auth/api-tokens", headers=headers_b)
+    assert token_list_b.status_code == 200
+    assert all(row["id"] != token_id for row in token_list_b.json())
     revoked = await client.delete(f"/auth/api-tokens/{token_id}", headers=headers_a)
     assert revoked.status_code == 204
     rejected = await client.post("/mcp", headers=pat_headers, json=rpc("ping"))

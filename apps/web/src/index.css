@@ -4762,6 +4762,34 @@ kbd {
   flex-direction: column;
   gap: 2px;
 }
+.history-tabs {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.history-tab {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+.history-tab:hover {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+.history-tab.is-active {
+  color: var(--accent-2);
+  background: var(--accent-glow);
+}
 .history-item {
   display: flex;
   align-items: center;
@@ -4777,6 +4805,11 @@ kbd {
 .history-item--selected {
   background: var(--surface-2);
   border-color: var(--line-2);
+}
+.history-item--revision {
+  display: grid;
+  align-items: stretch;
+  cursor: default;
 }
 .history-version {
   font-family: var(--font-mono);
@@ -4821,10 +4854,44 @@ kbd {
   flex: 1;
   min-width: 0;
 }
+.history-item-meta--revision {
+  flex-wrap: wrap;
+}
 .history-item-actions {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
+}
+.history-revision-summary {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.history-revision-patch {
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.history-revision-patch summary {
+  padding: 7px 9px;
+  color: var(--ink-2);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 650;
+}
+.history-revision-patch pre {
+  max-height: 220px;
+  margin: 0;
+  padding: 9px;
+  overflow: auto;
+  border-top: 1px solid var(--line-2);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .history-preview {
   margin-top: 12px;

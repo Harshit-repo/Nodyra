@@ -221,6 +221,64 @@ class Environment(Base):
     )
 
 
+class EnvironmentBuildJob(Base):
+    """Durable queue row for environment create/rebuild/package operations."""
+
+    __tablename__ = "environment_build_jobs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
+    environment_id: Mapped[str] = mapped_column(
+        ForeignKey("environments.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    reason: Mapped[str] = mapped_column(String(40), nullable=False, default="rebuild")
+    packages_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    package_snapshot: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    python_version: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    backend: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    backend_config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempts_log: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    requested_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    requested_by_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_environment_build_jobs_status_available", "status", "available_at"),
+        Index("ix_environment_build_jobs_status_lease", "status", "lease_expires_at"),
+        Index("ix_environment_build_jobs_env_status", "environment_id", "status"),
+        Index("ix_environment_build_jobs_org_status", "org_id", "status"),
+    )
+
+
 class RunnerPool(Base):
     """A named pool of remote execution targets.
 
@@ -464,6 +522,9 @@ class Workflow(Base):
         ForeignKey("runner_pools.id", ondelete="SET NULL"), nullable=True, index=True
     )
     draft_graph: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    graph_revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     published_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     error_workflow_id: Mapped[str | None] = mapped_column(
         ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True, index=True
@@ -517,6 +578,11 @@ class Workflow(Base):
         back_populates="workflow",
         cascade="all, delete-orphan",
         order_by="WorkflowVersion.version",
+    )
+    revisions: Mapped[list["WorkflowRevision"]] = relationship(
+        back_populates="workflow",
+        cascade="all, delete-orphan",
+        order_by="WorkflowRevision.graph_revision",
     )
 
 
@@ -1112,6 +1178,48 @@ class WorkflowVersion(Base):
     )
 
     workflow: Mapped[Workflow] = relationship(back_populates="versions")
+
+
+class WorkflowRevision(Base):
+    """A durable timeline entry for one draft graph revision."""
+
+    __tablename__ = "workflow_revisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "workflow_id",
+            "graph_revision",
+            name="uq_workflow_revisions_workflow_revision",
+        ),
+        Index(
+            "ix_workflow_revisions_org_workflow_created",
+            "org_id",
+            "workflow_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+        server_default="default",
+    )
+    workflow_id: Mapped[str] = mapped_column(
+        ForeignKey("workflows.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    graph_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    origin: Mapped[str] = mapped_column(String(20), nullable=False)
+    operation: Mapped[str] = mapped_column(String(40), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    patch: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    actor_id: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
+    actor_email: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    workflow: Mapped[Workflow] = relationship(back_populates="revisions")
 
 
 class SystemSetting(Base):

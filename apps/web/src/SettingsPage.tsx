@@ -2,17 +2,20 @@ import {
   ArrowCounterClockwise,
   Buildings,
   Check,
+  Copy,
   CreditCard,
   Eye,
   EyeSlash,
   GearSix,
   IdentificationCard,
   Info,
+  Key,
   Monitor,
   Moon,
   Palette,
   ShieldCheck,
   Sun,
+  Trash,
   UsersThree,
   WarningCircle,
 } from "@phosphor-icons/react";
@@ -37,7 +40,13 @@ import {
   type FontPreference,
   type ThemePreference,
 } from "./theme";
-import type { LicenseInfo, SystemSettings } from "./types";
+import type {
+  ApiTokenCreated,
+  ApiTokenInfo,
+  ApiTokenScopeInfo,
+  LicenseInfo,
+  SystemSettings,
+} from "./types";
 
 import "./settings.css";
 
@@ -133,10 +142,75 @@ const NUMERIC_KEYS: SettingsKey[] = [
 const SETTINGS_NAV = [
   { id: "account", label: "Account", icon: IdentificationCard },
   { id: "appearance", label: "Appearance", icon: Palette },
+  { id: "mcp-access", label: "MCP access", icon: Key },
   { id: "instance", label: "Instance", icon: GearSix },
   { id: "license", label: "Plan & license", icon: CreditCard },
   { id: "management", label: "Management", icon: ShieldCheck },
 ];
+
+const MCP_ACCESS_SCOPE_ORDER = [
+  "workflow:read",
+  "workflow:write",
+  "workflow:run",
+  "workflow:publish",
+  "credential:read",
+  "deployment:write",
+  "environment:write",
+  "mcp_connection:manage",
+];
+
+const RECOMMENDED_MCP_SCOPES = ["workflow:read", "workflow:write", "workflow:run"];
+
+const TOKEN_SCOPE_COPY: Record<string, { label: string; description: string }> = {
+  "workflow:read": {
+    label: "Read workflows",
+    description: "List workflows and inspect graph structure.",
+  },
+  "workflow:write": {
+    label: "Edit workflows",
+    description: "Create workflows and change nodes, edges, and settings.",
+  },
+  "workflow:run": {
+    label: "Run workflows",
+    description: "Start workflow runs and invoke published workflow tools.",
+  },
+  "workflow:publish": {
+    label: "Publish workflows",
+    description: "Publish draft workflow versions for deployments and tools.",
+  },
+  "deployment:write": {
+    label: "Manage deployments",
+    description: "Create or update schedules and deployment settings.",
+  },
+  "credential:read": {
+    label: "Read credential metadata",
+    description: "List credential names and IDs without exposing secret values.",
+  },
+  "credential:read_values": {
+    label: "Read credential secrets",
+    description: "Decrypt stored credential values. Grant only to trusted automation.",
+  },
+  "credential:write": {
+    label: "Manage credentials",
+    description: "Create, update, or delete stored credentials.",
+  },
+  "environment:write": {
+    label: "Manage environments",
+    description: "Change execution environments and packages.",
+  },
+  "runner_pool:write": {
+    label: "Manage runner pools",
+    description: "Change remote execution pool settings.",
+  },
+  "mcp_connection:manage": {
+    label: "Manage MCP connections",
+    description: "Create and change outbound MCP server connections.",
+  },
+  "audit:read": {
+    label: "Read audit log",
+    description: "Inspect administrative and security audit events.",
+  },
+};
 
 function toDraft(settings: SystemSettings): DraftSettings {
   return Object.fromEntries(
@@ -731,6 +805,468 @@ function LicensePanel() {
   );
 }
 
+function formatTokenDate(value: string | null): string {
+  if (!value) return "Never";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+  return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+function tokenStatus(token: ApiTokenInfo): { label: string; className: string } {
+  if (token.revoked_at) return { label: "Revoked", className: "is-revoked" };
+  if (token.expires_at && new Date(token.expires_at).getTime() <= Date.now()) {
+    return { label: "Expired", className: "is-expired" };
+  }
+  return { label: "Active", className: "is-active" };
+}
+
+function scopeCopy(scope: string): { label: string; description: string } {
+  return TOKEN_SCOPE_COPY[scope] ?? {
+    label: scope.replace(/[_:]/g, " "),
+    description: "Allows this permission when the caller's workspace role can grant it.",
+  };
+}
+
+function McpAccessPanel() {
+  const workspace = useWorkspaceAccessContext();
+  const confirm = useConfirm();
+  const [tokens, setTokens] = useState<ApiTokenInfo[]>([]);
+  const [scopes, setScopes] = useState<ApiTokenScopeInfo[]>([]);
+  const [selectedScopes, setSelectedScopes] = useState<string[]>(RECOMMENDED_MCP_SCOPES);
+  const [name, setName] = useState("LLM workflow builder");
+  const [expiresInDays, setExpiresInDays] = useState("90");
+  const [createdToken, setCreatedToken] = useState<ApiTokenCreated | null>(null);
+  const [revealCreatedToken, setRevealCreatedToken] = useState(false);
+  const [copied, setCopied] = useState<"endpoint" | "token" | "headers" | "config" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const mcpEndpoint = `${window.location.origin}/api/mcp`;
+  const mcpHeaderSnippet = `Authorization: Bearer <paste-token-here>`;
+  const mcpJsonConfig = JSON.stringify(
+    {
+      mcpServers: {
+        noodle: {
+          url: mcpEndpoint,
+          headers: {
+            Authorization: "Bearer <paste-token-here>",
+          },
+        },
+      },
+    },
+    null,
+    2,
+  );
+  const workspaceLabel = workspace.multiTenancyEnabled
+    ? workspace.current?.name ?? "No workspace selected"
+    : "Single-tenant installation";
+  const canLoad = Boolean(workspace.user) && workspace.hasActiveWorkspace;
+
+  const orderedScopes = useMemo(() => {
+    const rank = (scope: string) => {
+      const accessIndex = MCP_ACCESS_SCOPE_ORDER.indexOf(scope);
+      return accessIndex >= 0 ? accessIndex : MCP_ACCESS_SCOPE_ORDER.length;
+    };
+    return scopes
+      .filter((scope) => MCP_ACCESS_SCOPE_ORDER.includes(scope.scope))
+      .sort((a, b) => rank(a.scope) - rank(b.scope) || a.scope.localeCompare(b.scope));
+  }, [scopes]);
+
+  async function load(): Promise<void> {
+    if (!canLoad) return;
+    setLoading(true);
+    setError("");
+    try {
+      const [tokenRows, scopeRows] = await Promise.all([
+        api.listApiTokens(),
+        api.listApiTokenScopes(),
+      ]);
+      setTokens(tokenRows);
+      setScopes(scopeRows);
+      const grantable = new Set(
+        scopeRows
+          .filter((scope) => scope.grantable && MCP_ACCESS_SCOPE_ORDER.includes(scope.scope))
+          .map((scope) => scope.scope),
+      );
+      setSelectedScopes((current) => {
+        const filtered = current.filter((scope) => grantable.has(scope));
+        if (filtered.length) return filtered;
+        return RECOMMENDED_MCP_SCOPES.filter((scope) => grantable.has(scope));
+      });
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    setCreatedToken(null);
+    void load();
+  }, [workspace.user?.id, workspace.current?.id, workspace.hasActiveWorkspace]);
+
+  function toggleScope(scope: string): void {
+    setSelectedScopes((current) =>
+      current.includes(scope)
+        ? current.filter((item) => item !== scope)
+        : [...current, scope],
+    );
+    setCreatedToken(null);
+  }
+
+  async function copyValue(
+    kind: "endpoint" | "token" | "headers" | "config",
+    value: string,
+  ): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(kind);
+      window.setTimeout(() => setCopied(null), 1800);
+    } catch {
+      setError("Clipboard access is unavailable in this browser.");
+    }
+  }
+
+  async function createToken(): Promise<void> {
+    if (busy) return;
+    const cleanedName = name.trim();
+    const days = Number(expiresInDays);
+    if (!cleanedName) {
+      setError("Enter a token name.");
+      return;
+    }
+    if (!Number.isInteger(days) || days < 1 || days > 365) {
+      setError("Token expiry must be a whole number from 1 to 365 days.");
+      return;
+    }
+    if (!orderedScopes.length) {
+      setError("Token scopes are still loading. Refresh and try again.");
+      return;
+    }
+    if (!selectedScopes.length) {
+      setError("Select at least one scope.");
+      return;
+    }
+    const grantable = new Set(
+      orderedScopes.filter((scope) => scope.grantable).map((scope) => scope.scope),
+    );
+    const notGrantable = selectedScopes.filter((scope) => !grantable.has(scope));
+    if (notGrantable.length) {
+      setError(`Your current workspace role cannot grant: ${notGrantable.join(", ")}`);
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    try {
+      const token = await api.createApiToken({
+        name: cleanedName,
+        scopes: selectedScopes,
+        expires_in_days: days,
+      });
+      setCreatedToken(token);
+      setRevealCreatedToken(false);
+      await load();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revokeToken(token: ApiTokenInfo): Promise<void> {
+    if (busy || token.revoked_at) return;
+    const ok = await confirm({
+      title: "Revoke this MCP token?",
+      body: `LLM clients using "${token.name}" will lose MCP access immediately.`,
+      confirmLabel: "Revoke token",
+    });
+    if (!ok) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api.revokeApiToken(token.id);
+      await load();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!workspace.user) {
+    return (
+      <SettingsCard
+        id="mcp-access"
+        title="MCP access"
+        description="Mint organization-scoped tokens for LLM clients that connect to Noodle's MCP server."
+        icon={Key}
+      >
+        <div className="noodle-settings-inline-warning">
+          <Info size={17} aria-hidden="true" />
+          Sign in with a user account to create MCP automation tokens.
+        </div>
+      </SettingsCard>
+    );
+  }
+
+  if (workspace.multiTenancyEnabled && !workspace.hasActiveWorkspace) {
+    return (
+      <SettingsCard
+        id="mcp-access"
+        title="MCP access"
+        description="Mint organization-scoped tokens for LLM clients that connect to Noodle's MCP server."
+        icon={Key}
+      >
+        <div className="noodle-settings-inline-warning">
+          <Info size={17} aria-hidden="true" />
+          Select a workspace before creating MCP automation tokens.
+        </div>
+      </SettingsCard>
+    );
+  }
+
+  return (
+    <SettingsCard
+      id="mcp-access"
+      title="MCP access"
+      description="Create scoped bearer tokens for LLM clients. Tokens are bound to the current workspace and are shown only once."
+      icon={Key}
+    >
+      <div className="noodle-mcp-access">
+        <div className="noodle-mcp-endpoint">
+          <label className="noodle-settings-field noodle-settings-field-wide">
+            <span className="noodle-settings-label">MCP endpoint</span>
+            <span className="noodle-mcp-copy-row">
+              <input className="field-input" value={mcpEndpoint} readOnly spellCheck={false} />
+              <button
+                className="btn btn-sm"
+                type="button"
+                onClick={() => void copyValue("endpoint", mcpEndpoint)}
+              >
+                <Copy size={15} aria-hidden="true" />
+                {copied === "endpoint" ? "Copied" : "Copy"}
+              </button>
+            </span>
+            <small>Use this URL with an Authorization header: Bearer &lt;token&gt;.</small>
+          </label>
+          <div className="noodle-mcp-workspace">
+            <span>Current workspace</span>
+            <strong>{workspaceLabel}</strong>
+            {workspace.current?.id && <code>{workspace.current.id}</code>}
+          </div>
+        </div>
+
+        <div className="noodle-mcp-client-snippets">
+          <div className="noodle-mcp-snippet">
+            <div className="noodle-mcp-snippet-head">
+              <strong>Headers</strong>
+              <button
+                className="btn btn-sm"
+                type="button"
+                onClick={() => void copyValue("headers", mcpHeaderSnippet)}
+              >
+                <Copy size={15} aria-hidden="true" />
+                {copied === "headers" ? "Copied" : "Copy"}
+              </button>
+            </div>
+            <pre>{mcpHeaderSnippet}</pre>
+          </div>
+          <div className="noodle-mcp-snippet">
+            <div className="noodle-mcp-snippet-head">
+              <strong>Generic MCP JSON</strong>
+              <button
+                className="btn btn-sm"
+                type="button"
+                onClick={() => void copyValue("config", mcpJsonConfig)}
+              >
+                <Copy size={15} aria-hidden="true" />
+                {copied === "config" ? "Copied" : "Copy"}
+              </button>
+            </div>
+            <pre>{mcpJsonConfig}</pre>
+          </div>
+        </div>
+
+        {error && (
+          <div className="noodle-settings-inline-error" role="alert">
+            <WarningCircle size={18} aria-hidden="true" />
+            <span>{error}</span>
+            <button className="btn btn-sm" type="button" onClick={() => void load()}>
+              Retry
+            </button>
+          </div>
+        )}
+
+        {createdToken && (
+          <div className="noodle-mcp-created-token" role="status">
+            <div>
+              <strong>Copy this token now</strong>
+              <span>Noodle stores only a hash, so this secret cannot be shown again.</span>
+            </div>
+            <span className="noodle-mcp-secret-row">
+              <input
+                className="field-input"
+                type={revealCreatedToken ? "text" : "password"}
+                value={createdToken.token}
+                readOnly
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                aria-label={revealCreatedToken ? "Hide token" : "Show token"}
+                aria-pressed={revealCreatedToken}
+                onClick={() => setRevealCreatedToken((value) => !value)}
+              >
+                {revealCreatedToken ? <EyeSlash size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
+              </button>
+              <button
+                className="btn btn-sm"
+                type="button"
+                onClick={() => void copyValue("token", createdToken.token)}
+              >
+                <Copy size={15} aria-hidden="true" />
+                {copied === "token" ? "Copied" : "Copy"}
+              </button>
+            </span>
+          </div>
+        )}
+
+        {loading && !scopes.length ? (
+          <div className="noodle-settings-skeleton" aria-label="Loading MCP access settings">
+            <span /><span /><span />
+          </div>
+        ) : (
+          <>
+            <form
+              className="noodle-mcp-token-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void createToken();
+              }}
+            >
+              <div className="noodle-settings-form-grid">
+                <label className="noodle-settings-field">
+                  <span className="noodle-settings-label">Token name</span>
+                  <input
+                    className="field-input"
+                    value={name}
+                    maxLength={120}
+                    onChange={(event) => setName(event.target.value)}
+                  />
+                  <small>Use a name that identifies the LLM client or automation owner.</small>
+                </label>
+                <label className="noodle-settings-field">
+                  <span className="noodle-settings-label">Expires in</span>
+                  <span className="noodle-settings-input-wrap">
+                    <input
+                      className="field-input"
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={365}
+                      step={1}
+                      value={expiresInDays}
+                      onChange={(event) => setExpiresInDays(event.target.value)}
+                    />
+                    <span className="noodle-settings-unit">days</span>
+                  </span>
+                  <small>Shorter expiries reduce exposure if a client is compromised.</small>
+                </label>
+              </div>
+
+              <fieldset className="noodle-mcp-scopes" disabled={busy || loading}>
+                <legend>Scopes</legend>
+                <div className="noodle-mcp-scope-grid">
+                  {orderedScopes.map((scope) => {
+                    const copy = scopeCopy(scope.scope);
+                    const selected = selectedScopes.includes(scope.scope);
+                    return (
+                      <label
+                        key={scope.scope}
+                        className={`noodle-mcp-scope${selected ? " is-selected" : ""}${!scope.grantable ? " is-disabled" : ""}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          disabled={!scope.grantable}
+                          onChange={() => toggleScope(scope.scope)}
+                        />
+                        <span>
+                          <strong>{copy.label}</strong>
+                          <small>{copy.description}</small>
+                          <code>{scope.scope}</code>
+                        </span>
+                        <em>{scope.minimum_role}</em>
+                      </label>
+                    );
+                  })}
+                </div>
+              </fieldset>
+
+              <div className="settings-actions">
+                <button
+                  className="btn btn-primary"
+                  type="submit"
+                  disabled={busy || loading || !selectedScopes.length || !orderedScopes.length}
+                >
+                  {busy ? "Creating…" : "Create MCP token"}
+                </button>
+              </div>
+            </form>
+
+            <div className="noodle-mcp-token-list">
+              <div className="noodle-mcp-token-list-head">
+                <strong>Existing tokens</strong>
+                <button className="btn btn-sm" type="button" onClick={() => void load()} disabled={busy || loading}>
+                  Refresh
+                </button>
+              </div>
+              {tokens.length ? (
+                <div className="noodle-mcp-token-table" role="table" aria-label="MCP tokens">
+                  <div className="noodle-mcp-token-row is-head" role="row">
+                    <span>Name</span>
+                    <span>Prefix</span>
+                    <span>Scopes</span>
+                    <span>Last used</span>
+                    <span>Status</span>
+                    <span aria-label="Actions" />
+                  </div>
+                  {tokens.map((token) => {
+                    const status = tokenStatus(token);
+                    return (
+                      <div className="noodle-mcp-token-row" role="row" key={token.id}>
+                        <span><strong>{token.name}</strong><small>Expires {formatTokenDate(token.expires_at)}</small></span>
+                        <code>{token.token_prefix}</code>
+                        <span>{token.scopes.join(", ")}</span>
+                        <span>{formatTokenDate(token.last_used_at)}</span>
+                        <span className={`noodle-mcp-token-status ${status.className}`}>{status.label}</span>
+                        <button
+                          className="btn btn-sm"
+                          type="button"
+                          aria-label={`Revoke ${token.name}`}
+                          disabled={busy || Boolean(token.revoked_at)}
+                          onClick={() => void revokeToken(token)}
+                        >
+                          <Trash size={15} aria-hidden="true" />
+                          Revoke
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="muted">No MCP tokens have been created for this workspace yet.</p>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </SettingsCard>
+  );
+}
+
 function ManagementPanel({
   canAdmin,
   canWorkspaceManage,
@@ -868,6 +1404,7 @@ export function SettingsPage() {
           <div className="noodle-settings-content">
             <ProfilePanel workspaceRole={workspaceRole} />
             <AppearancePanel />
+            <McpAccessPanel />
             {canAdmin && <WorkspaceSettingsPanel />}
             {canAdmin && <LicensePanel />}
             <ManagementPanel canAdmin={canAdmin} canWorkspaceManage={canWorkspaceManage} canAudit={canAudit} />

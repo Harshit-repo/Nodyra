@@ -1,14 +1,15 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
 from app.db import get_session
-from app.models import Environment, RunnerPool, User, Workflow
+from app.models import Environment, EnvironmentBuildJob, RunnerPool, User, Workflow
 from app.schemas import (
     SUPPORTED_PYTHON_VERSIONS,
     EnvironmentCreate,
+    EnvironmentBuildJobInfo,
     EnvironmentInfo,
     EnvironmentUpdate,
     PackageListRequest,
@@ -20,7 +21,10 @@ from app.schemas import (
 )
 from app.security import optional_current_user, require_permission
 from app.services.audit import log_audit
-from app.services.backends import build_environment
+from app.services.environment_builds import (
+    enqueue_environment_build,
+    notify_environment_build_workers,
+)
 from app.tenancy import active_org_id
 from noodle.packages import canonical_package_name
 from noodle.sdk import registry as node_registry
@@ -43,7 +47,15 @@ def _effective_pool_max(env: Environment) -> int:
     return 1
 
 
-def _to_info(env: Environment, pool_name: str | None = None) -> EnvironmentInfo:
+def _to_build_job_info(job: EnvironmentBuildJob) -> EnvironmentBuildJobInfo:
+    return EnvironmentBuildJobInfo.model_validate(job)
+
+
+def _to_info(
+    env: Environment,
+    pool_name: str | None = None,
+    build_job: EnvironmentBuildJob | None = None,
+) -> EnvironmentInfo:
     return EnvironmentInfo(
         id=env.id,
         name=env.name,
@@ -61,6 +73,8 @@ def _to_info(env: Environment, pool_name: str | None = None) -> EnvironmentInfo:
         worker_rss_estimate_bytes=env.worker_rss_estimate_bytes,
         backend=env.backend,
         backend_config=dict(env.backend_config or {}),
+        build_job_id=build_job.id if build_job else None,
+        build_job_status=build_job.status if build_job else None,
         created_at=env.created_at,
         updated_at=env.updated_at,
     )
@@ -136,7 +150,6 @@ async def list_environments(
 )
 async def create_environment(
     body: EnvironmentCreate,
-    background: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
     actor: User | None = Depends(optional_current_user),
 ):
@@ -170,10 +183,18 @@ async def create_environment(
     await log_audit(session, "create", "environment", detail=body.name,
                     actor_id=actor.id if actor else None,
                     actor_email=actor.email if actor else None)
+    await session.flush()
+    build_job = await enqueue_environment_build(
+        session,
+        env,
+        reason="create_environment",
+        requested_by=actor,
+    )
     await session.commit()
     await session.refresh(env)
-    background.add_task(build_environment, env.id)
-    return _to_info(env, await _pool_name(session, env.runner_pool_id))
+    await session.refresh(build_job)
+    await notify_environment_build_workers()
+    return _to_info(env, await _pool_name(session, env.runner_pool_id), build_job)
 
 
 @router.patch(
@@ -184,7 +205,6 @@ async def create_environment(
 async def update_environment(
     env_id: str,
     body: EnvironmentUpdate,
-    background: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
     actor: User | None = Depends(optional_current_user),
 ):
@@ -218,13 +238,20 @@ async def update_environment(
     await log_audit(session, "update", "environment", env.id, env.name,
                     actor_id=actor.id if actor else None,
                     actor_email=actor.email if actor else None)
+    build_job: EnvironmentBuildJob | None = None
+    if needs_rebuild:
+        build_job = await enqueue_environment_build(
+            session,
+            env,
+            reason="update_environment",
+            requested_by=actor,
+        )
     await session.commit()
     await session.refresh(env)
-    if needs_rebuild:
-        env.status = "pending"
-        await session.commit()
-        background.add_task(build_environment, env.id)
-    return _to_info(env, await _pool_name(session, env.runner_pool_id))
+    if build_job is not None:
+        await session.refresh(build_job)
+        await notify_environment_build_workers()
+    return _to_info(env, await _pool_name(session, env.runner_pool_id), build_job)
 
 
 @router.get("/backends")
@@ -305,19 +332,26 @@ async def get_environment(
 async def add_package(
     env_id: str,
     body: PackageRequest,
-    background: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     env = await _load(session, env_id)
     packages = list(env.packages)
+    build_job: EnvironmentBuildJob | None = None
     if body.package not in packages:
         packages.append(body.package)
         env.packages = packages
-        env.status = "pending"
+        build_job = await enqueue_environment_build(
+            session,
+            env,
+            reason="add_package",
+            requested_by=actor,
+        )
         await session.commit()
         await session.refresh(env)
-        background.add_task(build_environment, env.id)
-    return _to_info(env, await _pool_name(session, env.runner_pool_id))
+        await session.refresh(build_job)
+        await notify_environment_build_workers()
+    return _to_info(env, await _pool_name(session, env.runner_pool_id), build_job)
 
 
 def _node_requirements_by_type() -> dict[str, list[str]]:
@@ -386,8 +420,8 @@ async def package_usage(
 async def set_packages(
     env_id: str,
     body: PackageListRequest,
-    background: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     """Replace the env's full package list (dedup by canonical name, last wins).
 
@@ -401,13 +435,20 @@ async def set_packages(
         if spec:
             deduped[canonical_package_name(spec)] = spec
     packages = list(deduped.values())
+    build_job: EnvironmentBuildJob | None = None
     if packages != list(env.packages):
         env.packages = packages
-        env.status = "pending"
+        build_job = await enqueue_environment_build(
+            session,
+            env,
+            reason="set_packages",
+            requested_by=actor,
+        )
         await session.commit()
         await session.refresh(env)
-        background.add_task(build_environment, env.id)
-    return _to_info(env, await _pool_name(session, env.runner_pool_id))
+        await session.refresh(build_job)
+        await notify_environment_build_workers()
+    return _to_info(env, await _pool_name(session, env.runner_pool_id), build_job)
 
 
 @router.delete(
@@ -418,18 +459,25 @@ async def set_packages(
 async def remove_package(
     env_id: str,
     package: str,
-    background: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     env = await _load(session, env_id)
     remaining = [p for p in env.packages if p != package]
+    build_job: EnvironmentBuildJob | None = None
     if remaining != list(env.packages):
         env.packages = remaining
-        env.status = "pending"
+        build_job = await enqueue_environment_build(
+            session,
+            env,
+            reason="remove_package",
+            requested_by=actor,
+        )
         await session.commit()
         await session.refresh(env)
-        background.add_task(build_environment, env.id)
-    return _to_info(env, await _pool_name(session, env.runner_pool_id))
+        await session.refresh(build_job)
+        await notify_environment_build_workers()
+    return _to_info(env, await _pool_name(session, env.runner_pool_id), build_job)
 
 
 @router.post(
@@ -439,15 +487,71 @@ async def remove_package(
 )
 async def rebuild_environment(
     env_id: str,
-    background: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     env = await _load(session, env_id)
-    env.status = "pending"
+    build_job = await enqueue_environment_build(
+        session,
+        env,
+        reason="manual_rebuild",
+        requested_by=actor,
+    )
     await session.commit()
     await session.refresh(env)
-    background.add_task(build_environment, env.id)
-    return _to_info(env, await _pool_name(session, env.runner_pool_id))
+    await session.refresh(build_job)
+    await notify_environment_build_workers()
+    return _to_info(env, await _pool_name(session, env.runner_pool_id), build_job)
+
+
+@router.get("/{env_id}/build-jobs", response_model=PageResponse[EnvironmentBuildJobInfo])
+async def list_environment_build_jobs(
+    env_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    _user: User | None = Depends(optional_current_user),
+):
+    await _load(session, env_id)
+    total = await session.scalar(
+        select(func.count())
+        .select_from(EnvironmentBuildJob)
+        .where(EnvironmentBuildJob.environment_id == env_id)
+    )
+    rows = (
+        await session.scalars(
+            select(EnvironmentBuildJob)
+            .where(EnvironmentBuildJob.environment_id == env_id)
+            .order_by(EnvironmentBuildJob.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+    ).all()
+    return PageResponse(
+        items=[_to_build_job_info(job) for job in rows],
+        total=total or 0,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/{env_id}/build-jobs/{job_id}", response_model=EnvironmentBuildJobInfo)
+async def get_environment_build_job(
+    env_id: str,
+    job_id: str,
+    session: AsyncSession = Depends(get_session),
+    _user: User | None = Depends(optional_current_user),
+):
+    await _load(session, env_id)
+    job = await session.scalar(
+        select(EnvironmentBuildJob).where(
+            EnvironmentBuildJob.id == job_id,
+            EnvironmentBuildJob.environment_id == env_id,
+        )
+    )
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Environment build job not found")
+    return _to_build_job_info(job)
 
 
 @router.delete(

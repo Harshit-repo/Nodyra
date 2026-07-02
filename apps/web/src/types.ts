@@ -35,6 +35,34 @@ export interface MCPToolInfo {
   input_schema: Record<string, unknown>;
 }
 
+export interface ApiTokenCreate {
+  name: string;
+  scopes: string[];
+  expires_in_days: number;
+}
+
+export interface ApiTokenScopeInfo {
+  scope: string;
+  minimum_role: string;
+  grantable: boolean;
+}
+
+export interface ApiTokenInfo {
+  id: string;
+  org_id: string;
+  name: string;
+  token_prefix: string;
+  scopes: string[];
+  expires_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+export interface ApiTokenCreated extends ApiTokenInfo {
+  token: string;
+}
+
 export interface SSOConfig {
   id?: string;
   org_id?: string;
@@ -307,6 +335,7 @@ export interface WorkflowSummary {
   active: boolean;
   version: number;
   published_version: number;
+  graph_revision: number;
   has_unpublished_changes: boolean;
   node_count: number;
   environment_id: string | null;
@@ -328,6 +357,7 @@ export interface WorkflowDetail {
   active: boolean;
   version: number;
   published_version: number;
+  graph_revision: number;
   has_unpublished_changes: boolean;
   environment_id: string | null;
   default_runner_pool_id?: string | null;
@@ -343,6 +373,37 @@ export interface WorkflowDetail {
   created_at: string;
   updated_at: string;
   github_sync_status?: GithubSyncStatus;
+}
+
+export interface WorkflowEvent {
+  type: string;
+  workflow_id: string;
+  org_id?: string;
+  workflow_name?: string;
+  graph_revision?: number;
+  published_version?: number;
+  origin?: string;
+  operation?: string;
+  patch?: Record<string, unknown> | null;
+  ts?: string;
+  node_count?: number;
+  edge_count?: number;
+  node_id?: string;
+  source?: string;
+  target?: string;
+}
+
+export interface WorkflowRevisionInfo {
+  id: string;
+  workflow_id: string;
+  graph_revision: number;
+  origin: string;
+  operation: string;
+  summary: string;
+  patch?: Record<string, unknown> | null;
+  actor_id?: string | null;
+  actor_email?: string | null;
+  created_at: string;
 }
 
 export interface WorkflowPublishResponse {
@@ -369,6 +430,30 @@ export interface Environment {
   worker_rss_estimate_bytes: number | null;
   backend: string;
   backend_config: Record<string, unknown>;
+  build_job_id?: string | null;
+  build_job_status?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EnvironmentBuildJob {
+  id: string;
+  environment_id: string;
+  reason: string;
+  status: string;
+  attempts: number;
+  max_attempts: number;
+  package_snapshot: string[];
+  packages_hash: string;
+  python_version: string;
+  backend: string;
+  last_error: string | null;
+  requested_by_email: string | null;
+  lease_owner: string | null;
+  lease_expires_at: string | null;
+  available_at: string;
+  started_at: string | null;
+  finished_at: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -54,6 +54,81 @@ async def test_saving_a_graph_updates_draft_until_publish(client: AsyncClient) -
     assert versions[-1]["notes"] == "first publish"
 
 
+async def test_saving_graph_rejects_stale_graph_revision(client: AsyncClient) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "Stale Flow"})).json()["id"]
+    first_graph = {
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 10, "y": 20},
+            }
+        ],
+        "edges": [],
+    }
+    saved = (
+        await client.put(
+            f"/workflows/{workflow_id}",
+            json={"graph": first_graph, "expected_graph_revision": 0},
+        )
+    ).json()
+    assert saved["graph_revision"] == 1
+
+    stale_graph = {
+        "nodes": [
+            {
+                "id": "n2",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 30, "y": 40},
+            }
+        ],
+        "edges": [],
+    }
+    stale = await client.put(
+        f"/workflows/{workflow_id}",
+        json={"graph": stale_graph, "expected_graph_revision": 0},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["current_graph_revision"] == 1
+
+    fetched = (await client.get(f"/workflows/{workflow_id}")).json()
+    assert fetched["graph_revision"] == 1
+    assert fetched["graph"]["nodes"][0]["id"] == "n1"
+
+
+async def test_saving_graph_records_revision_history(client: AsyncClient) -> None:
+    workflow_id = (await client.post("/workflows", json={"name": "History Flow"})).json()["id"]
+    graph = {
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "manual_trigger",
+                "params": {},
+                "position": {"x": 10, "y": 20},
+            }
+        ],
+        "edges": [],
+    }
+    await client.put(
+        f"/workflows/{workflow_id}",
+        json={"graph": graph, "expected_graph_revision": 0},
+    )
+
+    revisions = (await client.get(f"/workflows/{workflow_id}/revisions")).json()
+    assert len(revisions) == 1
+    assert revisions[0]["workflow_id"] == workflow_id
+    assert revisions[0]["graph_revision"] == 1
+    assert revisions[0]["origin"] == "ui"
+    assert revisions[0]["operation"] == "set_graph"
+    assert revisions[0]["patch"] == {
+        "type": "graph_replaced",
+        "node_count": 1,
+        "edge_count": 0,
+    }
+
+
 async def test_update_name_and_active_without_new_version(client: AsyncClient) -> None:
     workflow_id = (await client.post("/workflows", json={"name": "Flow"})).json()["id"]
 

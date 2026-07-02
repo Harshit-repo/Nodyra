@@ -24,15 +24,41 @@ from sqlalchemy.orm import selectinload
 
 import noodle_nodes  # noqa: F401 - registers built-in nodes
 from app.db import SessionLocal
-from app.models import Deployment, NodeRun, Run, RunEvent, User, Workflow, WorkflowVersion
+from app.models import (
+    Deployment,
+    Environment,
+    EnvironmentBuildJob,
+    NodeRun,
+    Run,
+    RunEvent,
+    User,
+    Workflow,
+    WorkflowRevision,
+    WorkflowVersion,
+)
 from app.routers.workflows import STRUCTURAL_NODE_TYPES
 from app.services.audit import log_audit
+from app.services.environment_builds import (
+    enqueue_environment_build,
+    notify_environment_build_workers,
+)
 from app.services.github_sync import enqueue_github_push
 from app.services.github_sync_jobs import notify_sync_workers
 from app.services.graph_utils import first_trigger_node
 from app.services.runner import cancel_run as _runner_cancel_run
 from app.services.runner import start_run
 from app.services.triggers import _await_run_terminal, _last_node_output
+from app.services.workflow_events import (
+    WORKFLOW_CREATED,
+    WORKFLOW_DELETED,
+    WORKFLOW_UPDATED,
+    bump_graph_revision,
+    edge_patch_snapshot,
+    node_patch_snapshot,
+    record_workflow_revision,
+    publish_workflow_event,
+    publish_workflow_graph_changed,
+)
 from noodle.engine.scheduler import _topo_order
 from noodle.engine.types import GraphError
 from noodle.engine.validation import _validate_connection_kinds
@@ -46,10 +72,73 @@ EMPTY_GRAPH: dict = {"nodes": [], "edges": []}
 MAX_WAIT_SECONDS = 300.0
 DEFAULT_WAIT_SECONDS = 60.0
 OUTPUT_TRUNCATE_BYTES = 8000
+EXPECTED_GRAPH_REVISION_SCHEMA = {
+    "type": "integer",
+    "minimum": 0,
+    "description": (
+        "Optional optimistic concurrency guard. Pass the graph_revision returned "
+        "by get_workflow/list_workflows so stale agent edits fail instead of "
+        "overwriting canvas changes."
+    ),
+}
 
 
 class McpToolError(Exception):
     """Tool-level failure whose message goes back to the calling model."""
+
+
+DESTRUCTIVE_TOOL_HINTS = {
+    "apply_workflow_patch",
+    "create_schedule",
+    "delete_schedule",
+    "delete_workflow",
+    "publish_workflow",
+    "remove_node",
+    "remove_edge",
+    "rollback_workflow",
+    "set_workflow_graph",
+    "toggle_schedule",
+    "update_schedule",
+    "set_environment_packages",
+    "remove_environment_package",
+}
+
+OPEN_WORLD_TOOL_HINTS = {
+    "run_workflow",
+    "retry_run",
+    "create_environment",
+    "add_environment_package",
+    "set_environment_packages",
+    "remove_environment_package",
+    "rebuild_environment",
+}
+
+APPROVAL_REQUIRED_TOOL_NAMES = {
+    "add_environment_package",
+    "apply_workflow_patch",
+    "create_environment",
+    "create_schedule",
+    "delete_schedule",
+    "delete_workflow",
+    "publish_workflow",
+    "rebuild_environment",
+    "remove_edge",
+    "remove_environment_package",
+    "remove_node",
+    "rollback_workflow",
+    "set_environment_packages",
+    "set_workflow_graph",
+    "toggle_schedule",
+    "update_schedule",
+}
+
+MCP_HUMAN_APPROVAL_PROPERTY = {
+    "type": "boolean",
+    "description": (
+        "Required for this production-impacting operation. Set to true only "
+        "after an explicit human approval in the client conversation."
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -62,17 +151,30 @@ class McpTool:
 
     def descriptor(self) -> dict:
         read_only = self.permission is None or self.name.startswith(("get_", "list_"))
-        destructive = self.name.startswith(("delete_", "remove_", "cancel_"))
+        destructive = (
+            self.name in DESTRUCTIVE_TOOL_HINTS
+            or self.name.startswith(("delete_", "remove_", "cancel_"))
+        )
+        input_schema = self.input_schema
+        if self.name in APPROVAL_REQUIRED_TOOL_NAMES:
+            input_schema = {
+                **self.input_schema,
+                "properties": {
+                    **self.input_schema.get("properties", {}),
+                    "approved_by_user": MCP_HUMAN_APPROVAL_PROPERTY,
+                },
+            }
         return {
             "name": self.name,
             "description": self.description,
-            "inputSchema": self.input_schema,
+            "inputSchema": input_schema,
             "outputSchema": {"type": "object", "additionalProperties": True},
             "annotations": {
                 "readOnlyHint": read_only,
                 "destructiveHint": destructive,
                 "idempotentHint": read_only or self.name.startswith(("set_", "toggle_", "update_", "rename_", "move_")),
-                "openWorldHint": self.name in {"run_workflow", "retry_run"},
+                "openWorldHint": self.name in OPEN_WORLD_TOOL_HINTS,
+                "requiresHumanApprovalHint": self.name in APPROVAL_REQUIRED_TOOL_NAMES,
             },
             "execution": {"taskSupport": "forbidden"},
         }
@@ -119,6 +221,69 @@ def _draft_graph(workflow: Workflow) -> dict:
     return EMPTY_GRAPH
 
 
+def _publish_mcp_graph_change(
+    workflow: Workflow,
+    operation: str,
+    user: User | None,
+    **extra: Any,
+) -> None:
+    graph = _draft_graph(workflow)
+    publish_workflow_graph_changed(
+        workflow,
+        origin="mcp",
+        operation=operation,
+        actor=user,
+        node_count=len(graph.get("nodes", [])),
+        edge_count=len(graph.get("edges", [])),
+        **extra,
+    )
+
+
+def _record_mcp_graph_revision(
+    session: AsyncSession,
+    workflow: Workflow,
+    operation: str,
+    user: User | None,
+    patch: dict[str, Any] | None = None,
+    *,
+    summary: str | None = None,
+) -> None:
+    record_workflow_revision(
+        session,
+        workflow,
+        origin="mcp",
+        operation=operation,
+        actor=user,
+        patch=patch,
+        summary=summary,
+    )
+
+
+def _check_expected_graph_revision(workflow: Workflow, args: dict) -> None:
+    expected = args.get("expected_graph_revision")
+    if expected is None:
+        return
+    try:
+        expected_int = int(expected)
+    except (TypeError, ValueError) as exc:
+        raise McpToolError("expected_graph_revision must be an integer.") from exc
+    if expected_int != int(workflow.graph_revision or 0):
+        raise McpToolError(
+            "Workflow draft changed before this edit completed "
+            f"(expected graph_revision {expected_int}, current "
+            f"{workflow.graph_revision}). Reload the workflow and retry."
+        )
+
+
+def _require_explicit_mcp_approval(args: dict, tool_name: str, action: str) -> None:
+    if args.get("approved_by_user") is True:
+        return
+    raise McpToolError(
+        f"{tool_name} requires explicit human approval before it can {action}. "
+        "Ask the user to confirm, then retry with approved_by_user=true."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Read-only tools
 # ---------------------------------------------------------------------------
@@ -158,6 +323,7 @@ async def _list_workflows(session: AsyncSession, user: User | None, args: dict) 
                 "name": wf.name,
                 "active": wf.active,
                 "published_version": wf.published_version,
+                "graph_revision": wf.graph_revision,
                 "node_count": len(graph.get("nodes", [])),
                 "mcp_enabled": bool(wf.mcp_enabled),
             }
@@ -172,6 +338,7 @@ async def _get_workflow(session: AsyncSession, user: User | None, args: dict) ->
         "name": workflow.name,
         "active": workflow.active,
         "published_version": workflow.published_version,
+        "graph_revision": workflow.graph_revision,
         "graph": _draft_graph(workflow),
     }
 
@@ -204,6 +371,137 @@ async def _get_node_type(session: AsyncSession, user: User | None, args: dict) -
         if manifest.id == node_type:
             return manifest.model_dump(mode="json")
     raise McpToolError(f"Unknown node type: {node_type!r}. Use list_node_types to discover ids.")
+
+
+async def _search_node_catalog(session: AsyncSession, user: User | None, args: dict) -> Any:
+    query = str(args.get("query") or args.get("search") or "").strip().lower()
+    category = str(args.get("category") or "").strip().lower()
+    package = str(args.get("package") or "").strip().lower()
+    include_ports = bool(args.get("include_ports", True))
+    include_params = bool(args.get("include_params", False))
+    include_deprecated = bool(args.get("include_deprecated", False))
+    limit = max(1, min(int(args.get("limit") or 30), 100))
+
+    from noodle.packages import canonical_package_name
+
+    package_key = canonical_package_name(package) if package else ""
+    results: list[tuple[int, dict[str, Any]]] = []
+    for manifest in node_registry.manifests():
+        if manifest.hidden:
+            continue
+        if manifest.deprecated and not include_deprecated:
+            continue
+        if category and manifest.category.lower() != category:
+            continue
+        requirements = list(manifest.requirements or [])
+        if package_key and package_key not in {canonical_package_name(req) for req in requirements}:
+            continue
+        haystack = " ".join(
+            [
+                manifest.id,
+                manifest.name,
+                manifest.category,
+                manifest.description,
+                " ".join(requirements),
+            ]
+        ).lower()
+        if query and query not in haystack:
+            continue
+        score = 0
+        if query:
+            if query == manifest.id.lower():
+                score += 100
+            if query in manifest.name.lower():
+                score += 40
+            if query in manifest.id.lower():
+                score += 30
+            if query in manifest.description.lower():
+                score += 10
+        item: dict[str, Any] = {
+            "id": manifest.id,
+            "name": manifest.name,
+            "category": manifest.category,
+            "description": manifest.description,
+            "requirements": requirements,
+            "deprecated": bool(manifest.deprecated),
+        }
+        if include_ports:
+            item["inputs"] = [port.model_dump(mode="json") for port in manifest.inputs]
+            item["outputs"] = [port.model_dump(mode="json") for port in manifest.outputs]
+        if include_params:
+            item["params"] = [
+                {
+                    "name": param.name,
+                    "type": param.type,
+                    "required": param.required,
+                    "default": param.default,
+                    "description": param.description,
+                    "choices": param.choices,
+                }
+                for param in manifest.params
+            ]
+        results.append((score, item))
+    results.sort(key=lambda row: (-row[0], row[1]["category"], row[1]["name"]))
+    return {"nodes": [item for _, item in results[:limit]], "total": len(results)}
+
+
+async def _get_node_schema(session: AsyncSession, user: User | None, args: dict) -> Any:
+    return await _get_node_type(session, user, {"node_type": args.get("node_type")})
+
+
+def _placeholder_for_param(param: Any) -> Any:
+    if param.default is not None:
+        return param.default
+    if param.choices:
+        return param.choices[0]
+    kind = str(param.type or "").lower()
+    if kind in {"int", "integer", "number", "float"}:
+        return 0
+    if kind in {"bool", "boolean"}:
+        return False
+    if kind in {"dict", "object", "json"}:
+        return {}
+    if kind in {"list", "array"}:
+        return []
+    return ""
+
+
+async def _suggest_node_config(session: AsyncSession, user: User | None, args: dict) -> Any:
+    node_type = str(args.get("node_type") or "").strip()
+    node_id = str(args.get("node_id") or node_type or "").strip()
+    if not node_type:
+        raise McpToolError("node_type is required.")
+    for manifest in node_registry.manifests():
+        if manifest.id != node_type:
+            continue
+        params: dict[str, Any] = {}
+        required_missing: list[str] = []
+        include_optional_defaults = bool(args.get("include_optional_defaults", False))
+        for param in manifest.params:
+            if param.required:
+                params[param.name] = _placeholder_for_param(param)
+                if param.default is None and not param.choices:
+                    required_missing.append(param.name)
+            elif include_optional_defaults and param.default is not None:
+                params[param.name] = param.default
+        node = {
+            "id": node_id,
+            "type": node_type,
+            "params": params,
+            "position": {
+                "x": float(args.get("x") or 0),
+                "y": float(args.get("y") or 0),
+            },
+        }
+        return {
+            "node": node,
+            "required_missing": required_missing,
+            "inputs": [port.model_dump(mode="json") for port in manifest.inputs],
+            "outputs": [port.model_dump(mode="json") for port in manifest.outputs],
+            "requirements": list(manifest.requirements or []),
+            "hint": "Replace placeholder values before applying the node to a workflow.",
+        }
+    raise McpToolError(f"Unknown node type: {node_type!r}. Use search_node_catalog first.")
 
 
 async def _get_run(session: AsyncSession, user: User | None, args: dict) -> Any:
@@ -453,7 +751,7 @@ async def _cancel_run(session: AsyncSession, user: User | None, args: dict) -> A
 # ---------------------------------------------------------------------------
 
 
-def _validate_graph_payload(graph: Any) -> WorkflowGraph:
+def _validate_graph_payload(graph: Any, *, require_trigger: bool = True) -> WorkflowGraph:
     if not isinstance(graph, dict):
         raise McpToolError('graph must be an object: {"nodes": [...], "edges": [...]}')
     try:
@@ -523,9 +821,289 @@ def _validate_graph_payload(graph: Any) -> WorkflowGraph:
         _validate_connection_kinds(parsed, node_registry)
     except (GraphError, ValueError) as exc:
         raise McpToolError(f"Invalid graph: {exc}") from exc
-    if parsed.nodes and first_trigger_node(parsed.model_dump()) is None:
+    if require_trigger and parsed.nodes and first_trigger_node(parsed.model_dump()) is None:
         raise McpToolError("Workflow graph has no trigger node.")
     return parsed
+
+
+NODE_PATCH_FIELDS = {
+    "label",
+    "position",
+    "disabled",
+    "outputs_override",
+    "on_error",
+    "retry_on_fail",
+    "retries",
+    "retry_wait_seconds",
+    "retry_backoff",
+    "always_output_data",
+    "timeout_seconds",
+    "hooks",
+    "tool_mode",
+    "tool_name",
+    "tool_description",
+}
+
+
+def _graph_copy(graph: dict | None) -> dict:
+    source = graph or EMPTY_GRAPH
+    return json.loads(json.dumps(source))
+
+
+def _edge_key(edge: dict) -> tuple[str, str, str, str]:
+    return (
+        str(edge.get("source") or ""),
+        str(edge.get("source_output") or "main"),
+        str(edge.get("target") or ""),
+        str(edge.get("target_input") or "input"),
+    )
+
+
+def _edge_matches(edge: dict, selector: dict) -> bool:
+    edge_id = str(selector.get("edge_id") or selector.get("id") or "").strip()
+    if edge_id:
+        return str(edge.get("id") or "") == edge_id
+    source = str(selector.get("source") or "").strip()
+    target = str(selector.get("target") or "").strip()
+    if not source or not target:
+        raise McpToolError("remove_edge requires edge_id or source and target.")
+    if str(edge.get("source") or "") != source or str(edge.get("target") or "") != target:
+        return False
+    if "source_output" in selector and str(edge.get("source_output") or "main") != str(selector.get("source_output") or "main"):
+        return False
+    if "target_input" in selector and str(edge.get("target_input") or "input") != str(selector.get("target_input") or "input"):
+        return False
+    return True
+
+
+def _operation_name(operation: dict) -> str:
+    return str(operation.get("op") or operation.get("action") or "").strip()
+
+
+def _apply_graph_operations(graph: dict, operations: Any) -> tuple[dict, list[dict[str, Any]]]:
+    if not isinstance(operations, list) or not operations:
+        raise McpToolError("operations must be a non-empty array.")
+    if len(operations) > 100:
+        raise McpToolError("operations is limited to 100 entries per patch.")
+
+    draft = _graph_copy(graph)
+    nodes = list(draft.get("nodes") or [])
+    edges = list(draft.get("edges") or [])
+    draft["nodes"] = nodes
+    draft["edges"] = edges
+    changes: list[dict[str, Any]] = []
+
+    for index, operation in enumerate(operations):
+        if not isinstance(operation, dict):
+            raise McpToolError(f"operations[{index}] must be an object.")
+        op = _operation_name(operation)
+        if not op:
+            raise McpToolError(f"operations[{index}].op is required.")
+
+        if op == "add_node":
+            node = operation.get("node")
+            if not isinstance(node, dict):
+                raise McpToolError("add_node requires a node object.")
+            node_id = str(node.get("id") or "").strip()
+            node_type = str(node.get("type") or "").strip()
+            if not node_id or not node_type:
+                raise McpToolError("add_node requires node.id and node.type.")
+            if any(existing.get("id") == node_id for existing in nodes):
+                raise McpToolError(f"Node id already exists in draft graph: {node_id!r}")
+            nodes.append(node)
+            changes.append({"op": "add_node", "node": node_patch_snapshot(node)})
+            continue
+
+        if op in {"update_node", "patch_node"}:
+            node_id = str(operation.get("node_id") or "").strip()
+            if not node_id:
+                raise McpToolError(f"{op} requires node_id.")
+            for node_index, node in enumerate(nodes):
+                if node.get("id") != node_id:
+                    continue
+                updated = dict(node)
+                changed_fields: list[str] = []
+                if "params" in operation:
+                    params = operation.get("params")
+                    if not isinstance(params, dict):
+                        raise McpToolError(f"{op}.params must be an object.")
+                    if operation.get("replace_params"):
+                        updated["params"] = dict(params)
+                    else:
+                        updated["params"] = {**dict(updated.get("params") or {}), **params}
+                    changed_fields.append("params")
+                for field in NODE_PATCH_FIELDS:
+                    if field in operation:
+                        updated[field] = operation[field]
+                        changed_fields.append(field)
+                if not changed_fields:
+                    raise McpToolError(f"{op} must include params or node fields to update.")
+                nodes[node_index] = updated
+                changes.append(
+                    {
+                        "op": "update_node",
+                        "node_id": node_id,
+                        "fields": sorted(set(changed_fields)),
+                    }
+                )
+                break
+            else:
+                raise McpToolError(f"Node not found in draft graph: {node_id!r}")
+            continue
+
+        if op == "move_node":
+            node_id = str(operation.get("node_id") or "").strip()
+            if not node_id:
+                raise McpToolError("move_node requires node_id.")
+            position = operation.get("position")
+            if isinstance(position, dict):
+                x = position.get("x")
+                y = position.get("y")
+            else:
+                x = operation.get("x")
+                y = operation.get("y")
+            try:
+                next_position = {"x": float(x), "y": float(y)}
+            except (TypeError, ValueError) as exc:
+                raise McpToolError("move_node requires numeric x and y.") from exc
+            for node_index, node in enumerate(nodes):
+                if node.get("id") == node_id:
+                    nodes[node_index] = {**node, "position": next_position}
+                    changes.append({"op": "move_node", "node_id": node_id, "position": next_position})
+                    break
+            else:
+                raise McpToolError(f"Node not found in draft graph: {node_id!r}")
+            continue
+
+        if op == "rename_node":
+            node_id = str(operation.get("node_id") or "").strip()
+            label = str(operation.get("label") or "").strip()
+            if not node_id or not label:
+                raise McpToolError("rename_node requires node_id and label.")
+            for node_index, node in enumerate(nodes):
+                if node.get("id") == node_id:
+                    nodes[node_index] = {**node, "label": label}
+                    changes.append({"op": "rename_node", "node_id": node_id, "label": label})
+                    break
+            else:
+                raise McpToolError(f"Node not found in draft graph: {node_id!r}")
+            continue
+
+        if op == "remove_node":
+            node_id = str(operation.get("node_id") or "").strip()
+            if not node_id:
+                raise McpToolError("remove_node requires node_id.")
+            original_node_count = len(nodes)
+            original_edge_count = len(edges)
+            nodes[:] = [node for node in nodes if node.get("id") != node_id]
+            if len(nodes) == original_node_count:
+                raise McpToolError(f"Node not found in draft graph: {node_id!r}")
+            edges[:] = [
+                edge
+                for edge in edges
+                if edge.get("source") != node_id and edge.get("target") != node_id
+            ]
+            changes.append(
+                {
+                    "op": "remove_node",
+                    "node_id": node_id,
+                    "removed_edge_count": original_edge_count - len(edges),
+                }
+            )
+            continue
+
+        if op == "add_edge":
+            edge = operation.get("edge")
+            if not isinstance(edge, dict):
+                raise McpToolError("add_edge requires an edge object.")
+            if not str(edge.get("source") or "").strip() or not str(edge.get("target") or "").strip():
+                raise McpToolError("add_edge requires edge.source and edge.target.")
+            key = _edge_key(edge)
+            if any(_edge_key(existing) == key for existing in edges):
+                raise McpToolError(
+                    f"Edge already exists: {key[0]}.{key[1]} -> {key[2]}.{key[3]}"
+                )
+            edges.append(edge)
+            changes.append({"op": "add_edge", "edge": edge_patch_snapshot(edge)})
+            continue
+
+        if op == "remove_edge":
+            original_edge_count = len(edges)
+            edges[:] = [edge for edge in edges if not _edge_matches(edge, operation)]
+            removed = original_edge_count - len(edges)
+            if removed == 0:
+                raise McpToolError("No matching edge found to remove.")
+            changes.append({"op": "remove_edge", "removed_edge_count": removed})
+            continue
+
+        raise McpToolError(
+            f"Unsupported graph patch op {op!r}. Expected one of: "
+            "add_node, update_node, move_node, rename_node, remove_node, add_edge, remove_edge."
+        )
+
+    return draft, changes
+
+
+def _graph_requirements(parsed: WorkflowGraph) -> list[str]:
+    manifests = {manifest.id: manifest for manifest in node_registry.manifests()}
+    seen: dict[str, str] = {}
+    from noodle.packages import canonical_package_name
+
+    for node in parsed.nodes:
+        manifest = manifests.get(node.type)
+        if manifest is None:
+            continue
+        for requirement in manifest.requirements or []:
+            seen[canonical_package_name(requirement)] = requirement
+    return [seen[key] for key in sorted(seen)]
+
+
+async def _graph_validation_summary(
+    session: AsyncSession,
+    graph: dict,
+    *,
+    workflow: Workflow | None = None,
+    require_trigger: bool = True,
+) -> dict[str, Any]:
+    try:
+        parsed = _validate_graph_payload(graph, require_trigger=require_trigger)
+    except McpToolError as exc:
+        return {"valid": False, "error": str(exc)}
+
+    required_packages = _graph_requirements(parsed)
+    missing_packages: list[str] = []
+    environment: dict[str, Any] | None = None
+    if workflow:
+        env: Environment | None = None
+        if workflow.environment_id:
+            env = await session.get(Environment, workflow.environment_id)
+        else:
+            env = await session.scalar(
+                select(Environment).where(Environment.is_global.is_(True)).limit(1)
+            )
+        if env is not None:
+            from noodle.packages import canonical_package_name
+
+            installed = {canonical_package_name(package) for package in env.packages or []}
+            missing_packages = [
+                requirement
+                for requirement in required_packages
+                if canonical_package_name(requirement) not in installed
+            ]
+            environment = {
+                "id": env.id,
+                "name": env.name,
+                "status": env.status,
+                "packages": list(env.packages or []),
+            }
+    return {
+        "valid": True,
+        "node_count": len(parsed.nodes),
+        "edge_count": len(parsed.edges),
+        "required_packages": required_packages,
+        "missing_packages": missing_packages,
+        "environment": environment,
+    }
 
 
 def _validate_mcp_parameters_schema(schema: Any) -> dict | None:
@@ -578,13 +1156,29 @@ async def _create_workflow(session: AsyncSession, user: User | None, args: dict)
     await enqueue_github_push(session, workflow, "mcp")
     await session.commit()
     notify_sync_workers()
-    return {"workflow_id": workflow.id, "name": name}
+    publish_workflow_event(
+        workflow,
+        WORKFLOW_CREATED,
+        origin="mcp",
+        operation="create",
+        actor=user,
+    )
+    return {"workflow_id": workflow.id, "name": name, "graph_revision": workflow.graph_revision}
 
 
 async def _set_workflow_graph(session: AsyncSession, user: User | None, args: dict) -> Any:
+    _require_explicit_mcp_approval(args, "set_workflow_graph", "replace a workflow draft graph")
     workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    _check_expected_graph_revision(workflow, args)
     parsed = _validate_graph_payload(args.get("graph"))
     workflow.draft_graph = parsed.model_dump()
+    bump_graph_revision(workflow)
+    patch = {
+        "type": "graph_replaced",
+        "node_count": len(parsed.nodes),
+        "edge_count": len(parsed.edges),
+    }
+    _record_mcp_graph_revision(session, workflow, "set_graph", user, patch)
     await log_audit(
         session,
         "mcp_set_graph",
@@ -597,8 +1191,10 @@ async def _set_workflow_graph(session: AsyncSession, user: User | None, args: di
     await enqueue_github_push(session, workflow, "mcp")
     await session.commit()
     notify_sync_workers()
+    _publish_mcp_graph_change(workflow, "set_graph", user, patch=patch)
     return {
         "workflow_id": workflow.id,
+        "graph_revision": workflow.graph_revision,
         "node_count": len(parsed.nodes),
         "edge_count": len(parsed.edges),
         "hint": "Draft saved. Use run_workflow (use_draft=true) to test, then publish_workflow.",
@@ -606,11 +1202,121 @@ async def _set_workflow_graph(session: AsyncSession, user: User | None, args: di
 
 
 async def _validate_graph(session: AsyncSession, user: User | None, args: dict) -> Any:
-    parsed = _validate_graph_payload(args.get("graph"))
+    parsed = _validate_graph_payload(
+        args.get("graph"),
+        require_trigger=bool(args.get("require_trigger", True)),
+    )
     return {"valid": True, "node_count": len(parsed.nodes), "edge_count": len(parsed.edges)}
 
 
+async def _validate_workflow_graph(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow: Workflow | None = None
+    workflow_id = str(args.get("workflow_id") or "").strip()
+    if workflow_id:
+        workflow = await _load_workflow(session, workflow_id)
+    graph = args.get("graph")
+    if graph is None:
+        if workflow is None:
+            raise McpToolError("workflow_id or graph is required.")
+        graph = _draft_graph(workflow)
+    require_trigger = bool(args.get("require_trigger", True))
+    summary = await _graph_validation_summary(
+        session,
+        graph,
+        workflow=workflow,
+        require_trigger=require_trigger,
+    )
+    if workflow is not None:
+        summary["workflow_id"] = workflow.id
+        summary["graph_revision"] = workflow.graph_revision
+    return summary
+
+
+async def _preview_workflow_patch(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    _check_expected_graph_revision(workflow, args)
+    next_graph, changes = _apply_graph_operations(
+        _draft_graph(workflow),
+        args.get("operations"),
+    )
+    require_trigger = bool(args.get("require_trigger", True))
+    summary = await _graph_validation_summary(
+        session,
+        next_graph,
+        workflow=workflow,
+        require_trigger=require_trigger,
+    )
+    summary.update(
+        {
+            "workflow_id": workflow.id,
+            "current_graph_revision": workflow.graph_revision,
+            "changes": changes,
+            "change_count": len(changes),
+        }
+    )
+    if args.get("include_graph"):
+        summary["graph"] = next_graph
+    return summary
+
+
+async def _apply_workflow_patch(session: AsyncSession, user: User | None, args: dict) -> Any:
+    _require_explicit_mcp_approval(args, "apply_workflow_patch", "modify a workflow draft graph")
+    workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    _check_expected_graph_revision(workflow, args)
+    next_graph, changes = _apply_graph_operations(
+        _draft_graph(workflow),
+        args.get("operations"),
+    )
+    require_trigger = bool(args.get("require_trigger", True))
+    summary = await _graph_validation_summary(
+        session,
+        next_graph,
+        workflow=workflow,
+        require_trigger=require_trigger,
+    )
+    if not summary.get("valid"):
+        raise McpToolError(f"Patch produced invalid graph: {summary.get('error')}")
+    parsed = _validate_graph_payload(next_graph, require_trigger=require_trigger)
+    workflow.draft_graph = parsed.model_dump()
+    bump_graph_revision(workflow)
+    patch = {"type": "graph_patch", "changes": changes, "change_count": len(changes)}
+    _record_mcp_graph_revision(
+        session,
+        workflow,
+        "apply_workflow_patch",
+        user,
+        patch,
+        summary=f"Applied {len(changes)} graph patch operation(s).",
+    )
+    await log_audit(
+        session,
+        "mcp_apply_workflow_patch",
+        "workflow",
+        workflow.id,
+        f"{workflow.name}: {len(changes)} operation(s)",
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
+    )
+    await enqueue_github_push(session, workflow, "mcp")
+    await session.commit()
+    notify_sync_workers()
+    _publish_mcp_graph_change(workflow, "apply_workflow_patch", user, patch=patch)
+    result = {
+        "workflow_id": workflow.id,
+        "graph_revision": workflow.graph_revision,
+        "node_count": len(parsed.nodes),
+        "edge_count": len(parsed.edges),
+        "changes": changes,
+        "missing_packages": summary.get("missing_packages", []),
+        "hint": "Draft saved atomically. Use run_workflow (use_draft=true) to test.",
+    }
+    if args.get("include_graph"):
+        result["graph"] = parsed.model_dump()
+    return result
+
+
 async def _publish_workflow(session: AsyncSession, user: User | None, args: dict) -> Any:
+    _require_explicit_mcp_approval(args, "publish_workflow", "publish a workflow version")
     from app.routers.workflows import publish_workflow as publish_route
     from app.schemas import WorkflowPublishRequest
 
@@ -631,6 +1337,7 @@ async def _publish_workflow(session: AsyncSession, user: User | None, args: dict
 
 async def _patch_node(session: AsyncSession, user: User | None, args: dict) -> Any:
     workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    _check_expected_graph_revision(workflow, args)
     node_id = str(args.get("node_id") or "").strip()
     if not node_id:
         raise McpToolError("node_id is required.")
@@ -645,6 +1352,13 @@ async def _patch_node(session: AsyncSession, user: User | None, args: dict) -> A
             merged = {**node.get("params", {}), **params}
             nodes[i] = {**node, "params": merged}
             workflow.draft_graph = {**graph, "nodes": nodes}
+            bump_graph_revision(workflow)
+            patch = {
+                "type": "node_updated",
+                "node_id": node_id,
+                "param_keys": sorted(str(key) for key in params),
+            }
+            _record_mcp_graph_revision(session, workflow, "patch_node", user, patch)
             await log_audit(
                 session,
                 "mcp_patch_node",
@@ -657,12 +1371,25 @@ async def _patch_node(session: AsyncSession, user: User | None, args: dict) -> A
             await enqueue_github_push(session, workflow, "mcp")
             await session.commit()
             notify_sync_workers()
-            return {"workflow_id": workflow.id, "node_id": node_id, "params": merged}
+            _publish_mcp_graph_change(
+                workflow,
+                "patch_node",
+                user,
+                node_id=node_id,
+                patch=patch,
+            )
+            return {
+                "workflow_id": workflow.id,
+                "graph_revision": workflow.graph_revision,
+                "node_id": node_id,
+                "params": merged,
+            }
     raise McpToolError(f"Node not found in draft graph: {node_id}")
 
 
 async def _add_node(session: AsyncSession, user: User | None, args: dict) -> Any:
     workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    _check_expected_graph_revision(workflow, args)
     node = args.get("node")
     if not isinstance(node, dict):
         raise McpToolError("node must be a JSON object with id, type, params.")
@@ -688,6 +1415,9 @@ async def _add_node(session: AsyncSession, user: User | None, args: dict) -> Any
 
     nodes.append(node)
     workflow.draft_graph = {**graph, "nodes": nodes}
+    bump_graph_revision(workflow)
+    patch = {"type": "node_added", "node": node_patch_snapshot(node)}
+    _record_mcp_graph_revision(session, workflow, "add_node", user, patch)
     await log_audit(
         session, "mcp_add_node", "workflow", workflow.id, workflow.name,
         actor_id=user.id if user else None,
@@ -696,17 +1426,32 @@ async def _add_node(session: AsyncSession, user: User | None, args: dict) -> Any
     await enqueue_github_push(session, workflow, "mcp")
     await session.commit()
     notify_sync_workers()
-    return {"workflow_id": workflow.id, "node_id": node_id, "node_count": len(nodes)}
+    _publish_mcp_graph_change(
+        workflow,
+        "add_node",
+        user,
+        node_id=node_id,
+        patch=patch,
+    )
+    return {
+        "workflow_id": workflow.id,
+        "graph_revision": workflow.graph_revision,
+        "node_id": node_id,
+        "node_count": len(nodes),
+    }
 
 
 async def _remove_node(session: AsyncSession, user: User | None, args: dict) -> Any:
+    _require_explicit_mcp_approval(args, "remove_node", "remove a node from the workflow draft")
     workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    _check_expected_graph_revision(workflow, args)
     node_id = str(args.get("node_id") or "").strip()
     if not node_id:
         raise McpToolError("node_id is required.")
 
     graph = _draft_graph(workflow)
     original_count = len(graph.get("nodes", []))
+    original_edge_count = len(graph.get("edges", []))
     nodes = [n for n in graph.get("nodes", []) if n.get("id") != node_id]
     if len(nodes) == original_count:
         raise McpToolError(f"Node not found in draft graph: {node_id!r}")
@@ -716,6 +1461,13 @@ async def _remove_node(session: AsyncSession, user: User | None, args: dict) -> 
         if e.get("source") != node_id and e.get("target") != node_id
     ]
     workflow.draft_graph = {**graph, "nodes": nodes, "edges": edges}
+    bump_graph_revision(workflow)
+    patch = {
+        "type": "node_removed",
+        "node_id": node_id,
+        "removed_edge_count": original_edge_count - len(edges),
+    }
+    _record_mcp_graph_revision(session, workflow, "remove_node", user, patch)
     await log_audit(
         session, "mcp_remove_node", "workflow", workflow.id, workflow.name,
         actor_id=user.id if user else None,
@@ -724,11 +1476,24 @@ async def _remove_node(session: AsyncSession, user: User | None, args: dict) -> 
     await enqueue_github_push(session, workflow, "mcp")
     await session.commit()
     notify_sync_workers()
-    return {"workflow_id": workflow.id, "node_id": node_id, "removed": True}
+    _publish_mcp_graph_change(
+        workflow,
+        "remove_node",
+        user,
+        node_id=node_id,
+        patch=patch,
+    )
+    return {
+        "workflow_id": workflow.id,
+        "graph_revision": workflow.graph_revision,
+        "node_id": node_id,
+        "removed": True,
+    }
 
 
 async def _add_edge(session: AsyncSession, user: User | None, args: dict) -> Any:
     workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    _check_expected_graph_revision(workflow, args)
     edge = args.get("edge")
     if not isinstance(edge, dict):
         raise McpToolError("edge must be a JSON object with source and target.")
@@ -747,6 +1512,9 @@ async def _add_edge(session: AsyncSession, user: User | None, args: dict) -> Any
     edges = list(graph.get("edges", []))
     edges.append(edge)
     workflow.draft_graph = {**graph, "edges": edges}
+    bump_graph_revision(workflow)
+    patch = {"type": "edge_added", "edge": edge_patch_snapshot(edge)}
+    _record_mcp_graph_revision(session, workflow, "add_edge", user, patch)
     await log_audit(
         session, "mcp_add_edge", "workflow", workflow.id, workflow.name,
         actor_id=user.id if user else None,
@@ -755,11 +1523,25 @@ async def _add_edge(session: AsyncSession, user: User | None, args: dict) -> Any
     await enqueue_github_push(session, workflow, "mcp")
     await session.commit()
     notify_sync_workers()
-    return {"workflow_id": workflow.id, "edge_count": len(edges)}
+    _publish_mcp_graph_change(
+        workflow,
+        "add_edge",
+        user,
+        source=source,
+        target=target,
+        patch=patch,
+    )
+    return {
+        "workflow_id": workflow.id,
+        "graph_revision": workflow.graph_revision,
+        "edge_count": len(edges),
+    }
 
 
 async def _remove_edge(session: AsyncSession, user: User | None, args: dict) -> Any:
+    _require_explicit_mcp_approval(args, "remove_edge", "remove an edge from the workflow draft")
     workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    _check_expected_graph_revision(workflow, args)
     source = str(args.get("source") or "").strip()
     target = str(args.get("target") or "").strip()
     if not source or not target:
@@ -785,6 +1567,20 @@ async def _remove_edge(session: AsyncSession, user: User | None, args: dict) -> 
         raise McpToolError(f"No matching edge found: {source!r} → {target!r}")
 
     workflow.draft_graph = {**graph, "edges": remaining}
+    bump_graph_revision(workflow)
+    patch = {
+        key: value
+        for key, value in {
+            "type": "edge_removed",
+            "source": source,
+            "target": target,
+            "source_output": source_output,
+            "target_input": target_input,
+            "removed_count": removed_count,
+        }.items()
+        if value is not None
+    }
+    _record_mcp_graph_revision(session, workflow, "remove_edge", user, patch)
     await log_audit(
         session, "mcp_remove_edge", "workflow", workflow.id, workflow.name,
         actor_id=user.id if user else None,
@@ -793,7 +1589,19 @@ async def _remove_edge(session: AsyncSession, user: User | None, args: dict) -> 
     await enqueue_github_push(session, workflow, "mcp")
     await session.commit()
     notify_sync_workers()
-    return {"workflow_id": workflow.id, "removed_count": removed_count}
+    _publish_mcp_graph_change(
+        workflow,
+        "remove_edge",
+        user,
+        source=source,
+        target=target,
+        patch=patch,
+    )
+    return {
+        "workflow_id": workflow.id,
+        "graph_revision": workflow.graph_revision,
+        "removed_count": removed_count,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -821,6 +1629,13 @@ async def _toggle_workflow(session: AsyncSession, user: User | None, args: dict)
         actor_email=user.email if user else None,
     )
     await session.commit()
+    publish_workflow_event(
+        workflow,
+        WORKFLOW_UPDATED,
+        origin="mcp",
+        operation="toggle_active",
+        actor=user,
+    )
     return {"workflow_id": workflow.id, "active": workflow.active}
 
 
@@ -849,8 +1664,43 @@ async def _list_workflow_versions(session: AsyncSession, user: User | None, args
     }
 
 
+async def _list_workflow_revisions(session: AsyncSession, user: User | None, args: dict) -> Any:
+    workflow_id = str(args.get("workflow_id") or "").strip()
+    if not workflow_id:
+        raise McpToolError("workflow_id is required.")
+    workflow = await _load_workflow(session, workflow_id)
+    limit = max(1, min(int(args.get("limit") or 50), 200))
+    revisions = (
+        await session.scalars(
+            select(WorkflowRevision)
+            .where(WorkflowRevision.workflow_id == workflow_id)
+            .order_by(WorkflowRevision.graph_revision.desc())
+            .limit(limit)
+        )
+    ).all()
+    return {
+        "workflow_id": workflow_id,
+        "current_graph_revision": workflow.graph_revision,
+        "revisions": [
+            {
+                "id": revision.id,
+                "graph_revision": revision.graph_revision,
+                "origin": revision.origin,
+                "operation": revision.operation,
+                "summary": revision.summary,
+                "patch": revision.patch,
+                "actor_email": revision.actor_email,
+                "created_at": str(revision.created_at),
+            }
+            for revision in revisions
+        ],
+    }
+
+
 async def _rollback_workflow(session: AsyncSession, user: User | None, args: dict) -> Any:
+    _require_explicit_mcp_approval(args, "rollback_workflow", "restore an older graph into the draft")
     workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    _check_expected_graph_revision(workflow, args)
     version_num = args.get("version")
     if not isinstance(version_num, int):
         raise McpToolError("version must be an integer.")
@@ -865,6 +1715,12 @@ async def _rollback_workflow(session: AsyncSession, user: User | None, args: dic
         raise McpToolError(f"Version {version_num} not found for workflow {workflow.id!r}.")
 
     workflow.draft_graph = dict(target.graph or EMPTY_GRAPH)
+    bump_graph_revision(workflow)
+    patch = {
+        "type": "rollback",
+        "draft_restored_from_version": version_num,
+    }
+    _record_mcp_graph_revision(session, workflow, "rollback", user, patch)
     await log_audit(
         session, "rollback", "workflow", workflow.id, workflow.name,
         actor_id=user.id if user else None,
@@ -873,14 +1729,23 @@ async def _rollback_workflow(session: AsyncSession, user: User | None, args: dic
     await enqueue_github_push(session, workflow, "mcp")
     await session.commit()
     notify_sync_workers()
+    _publish_mcp_graph_change(
+        workflow,
+        "rollback",
+        user,
+        draft_restored_from_version=version_num,
+        patch=patch,
+    )
     return {
         "workflow_id": workflow.id,
+        "graph_revision": workflow.graph_revision,
         "draft_restored_from_version": version_num,
         "hint": "Draft replaced. Use run_workflow (use_draft=true) to test, then publish_workflow.",
     }
 
 
 async def _delete_workflow(session: AsyncSession, user: User | None, args: dict) -> Any:
+    _require_explicit_mcp_approval(args, "delete_workflow", "permanently delete a workflow")
     workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
     await log_audit(
         session, "delete", "workflow", workflow.id, workflow.name,
@@ -889,6 +1754,13 @@ async def _delete_workflow(session: AsyncSession, user: User | None, args: dict)
     )
     await session.delete(workflow)
     await session.commit()
+    publish_workflow_event(
+        workflow,
+        WORKFLOW_DELETED,
+        origin="mcp",
+        operation="delete",
+        actor=user,
+    )
     return {"deleted": True, "workflow_id": workflow.id}
 
 
@@ -915,8 +1787,17 @@ async def _duplicate_workflow(session: AsyncSession, user: User | None, args: di
     await enqueue_github_push(session, new_wf, "mcp")
     await session.commit()
     notify_sync_workers()
+    publish_workflow_event(
+        new_wf,
+        WORKFLOW_CREATED,
+        origin="mcp",
+        operation="duplicate",
+        actor=user,
+        source_workflow_id=source.id,
+    )
     return {
         "workflow_id": new_wf.id,
+        "graph_revision": new_wf.graph_revision,
         "name": new_name,
         "source_workflow_id": source.id,
     }
@@ -958,6 +1839,7 @@ async def _list_schedules(session: AsyncSession, user: User | None, args: dict) 
 
 
 async def _create_schedule(session: AsyncSession, user: User | None, args: dict) -> Any:
+    _require_explicit_mcp_approval(args, "create_schedule", "create an active schedule")
     from app.routers.deployments import create_deployment
     from app.schemas import DeploymentCreate
 
@@ -980,6 +1862,7 @@ async def _create_schedule(session: AsyncSession, user: User | None, args: dict)
 
 
 async def _delete_schedule(session: AsyncSession, user: User | None, args: dict) -> Any:
+    _require_explicit_mcp_approval(args, "delete_schedule", "permanently delete a schedule")
     schedule_id = str(args.get("schedule_id") or "").strip()
     if not schedule_id:
         raise McpToolError("schedule_id is required.")
@@ -997,6 +1880,7 @@ async def _delete_schedule(session: AsyncSession, user: User | None, args: dict)
 
 
 async def _toggle_schedule(session: AsyncSession, user: User | None, args: dict) -> Any:
+    _require_explicit_mcp_approval(args, "toggle_schedule", "change whether a schedule runs")
     schedule_id = str(args.get("schedule_id") or "").strip()
     if not schedule_id:
         raise McpToolError("schedule_id is required.")
@@ -1019,6 +1903,7 @@ async def _toggle_schedule(session: AsyncSession, user: User | None, args: dict)
 
 
 async def _update_schedule(session: AsyncSession, user: User | None, args: dict) -> Any:
+    _require_explicit_mcp_approval(args, "update_schedule", "change schedule behavior")
     from app.routers.deployments import update_deployment
     from app.schemas import DeploymentUpdate
 
@@ -1059,6 +1944,13 @@ async def _rename_workflow(session: AsyncSession, user: User | None, args: dict)
     await enqueue_github_push(session, workflow, "mcp")
     await session.commit()
     notify_sync_workers()
+    publish_workflow_event(
+        workflow,
+        WORKFLOW_UPDATED,
+        origin="mcp",
+        operation="rename_workflow",
+        actor=user,
+    )
     return {"workflow_id": workflow.id, "name": name}
 
 
@@ -1076,6 +1968,7 @@ async def _get_node(session: AsyncSession, user: User | None, args: dict) -> Any
 
 async def _rename_node(session: AsyncSession, user: User | None, args: dict) -> Any:
     workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    _check_expected_graph_revision(workflow, args)
     node_id = str(args.get("node_id") or "").strip()
     label = str(args.get("label") or "").strip()
     if not node_id:
@@ -1088,6 +1981,13 @@ async def _rename_node(session: AsyncSession, user: User | None, args: dict) -> 
         if node.get("id") == node_id:
             nodes[i] = {**node, "label": label}
             workflow.draft_graph = {**graph, "nodes": nodes}
+            bump_graph_revision(workflow)
+            patch = {
+                "type": "node_updated",
+                "node_id": node_id,
+                "label": label,
+            }
+            _record_mcp_graph_revision(session, workflow, "rename_node", user, patch)
             await log_audit(
                 session, "mcp_rename_node", "workflow", workflow.id, workflow.name,
                 actor_id=user.id if user else None,
@@ -1096,12 +1996,25 @@ async def _rename_node(session: AsyncSession, user: User | None, args: dict) -> 
             await enqueue_github_push(session, workflow, "mcp")
             await session.commit()
             notify_sync_workers()
-            return {"workflow_id": workflow.id, "node_id": node_id, "label": label}
+            _publish_mcp_graph_change(
+                workflow,
+                "rename_node",
+                user,
+                node_id=node_id,
+                patch=patch,
+            )
+            return {
+                "workflow_id": workflow.id,
+                "graph_revision": workflow.graph_revision,
+                "node_id": node_id,
+                "label": label,
+            }
     raise McpToolError(f"Node not found in draft graph: {node_id!r}")
 
 
 async def _move_node(session: AsyncSession, user: User | None, args: dict) -> Any:
     workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    _check_expected_graph_revision(workflow, args)
     node_id = str(args.get("node_id") or "").strip()
     if not node_id:
         raise McpToolError("node_id is required.")
@@ -1120,6 +2033,13 @@ async def _move_node(session: AsyncSession, user: User | None, args: dict) -> An
             pos = {**node.get("position", {}), "x": x, "y": y}
             nodes[i] = {**node, "position": pos}
             workflow.draft_graph = {**graph, "nodes": nodes}
+            bump_graph_revision(workflow)
+            patch = {
+                "type": "node_moved",
+                "node_id": node_id,
+                "position": pos,
+            }
+            _record_mcp_graph_revision(session, workflow, "move_node", user, patch)
             await log_audit(
                 session, "mcp_move_node", "workflow", workflow.id, workflow.name,
                 actor_id=user.id if user else None,
@@ -1128,12 +2048,25 @@ async def _move_node(session: AsyncSession, user: User | None, args: dict) -> An
             await enqueue_github_push(session, workflow, "mcp")
             await session.commit()
             notify_sync_workers()
-            return {"workflow_id": workflow.id, "node_id": node_id, "position": pos}
+            _publish_mcp_graph_change(
+                workflow,
+                "move_node",
+                user,
+                node_id=node_id,
+                patch=patch,
+            )
+            return {
+                "workflow_id": workflow.id,
+                "graph_revision": workflow.graph_revision,
+                "node_id": node_id,
+                "position": pos,
+            }
     raise McpToolError(f"Node not found in draft graph: {node_id!r}")
 
 
 async def _create_code_node(session: AsyncSession, user: User | None, args: dict) -> Any:
     workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    _check_expected_graph_revision(workflow, args)
     node_id = str(args.get("node_id") or "").strip()
     code = str(args.get("code") or "output = input")
     label = str(args.get("label") or "").strip() or None
@@ -1150,6 +2083,9 @@ async def _create_code_node(session: AsyncSession, user: User | None, args: dict
         entry["label"] = label
     nodes.append(entry)
     workflow.draft_graph = {**graph, "nodes": nodes}
+    bump_graph_revision(workflow)
+    patch = {"type": "node_added", "node": node_patch_snapshot(entry)}
+    _record_mcp_graph_revision(session, workflow, "create_code_node", user, patch)
     await log_audit(
         session, "mcp_create_code_node", "workflow", workflow.id, workflow.name,
         actor_id=user.id if user else None,
@@ -1158,11 +2094,24 @@ async def _create_code_node(session: AsyncSession, user: User | None, args: dict
     await enqueue_github_push(session, workflow, "mcp")
     await session.commit()
     notify_sync_workers()
-    return {"workflow_id": workflow.id, "node_id": node_id, "node_count": len(nodes)}
+    _publish_mcp_graph_change(
+        workflow,
+        "create_code_node",
+        user,
+        node_id=node_id,
+        patch=patch,
+    )
+    return {
+        "workflow_id": workflow.id,
+        "graph_revision": workflow.graph_revision,
+        "node_id": node_id,
+        "node_count": len(nodes),
+    }
 
 
 async def _update_code(session: AsyncSession, user: User | None, args: dict) -> Any:
     workflow = await _load_workflow(session, str(args.get("workflow_id") or ""))
+    _check_expected_graph_revision(workflow, args)
     node_id = str(args.get("node_id") or "").strip()
     code = args.get("code")
     if not node_id:
@@ -1177,6 +2126,13 @@ async def _update_code(session: AsyncSession, user: User | None, args: dict) -> 
                 raise McpToolError(f"Node {node_id!r} is type {node.get('type')!r}, not 'code'.")
             nodes[i] = {**node, "params": {**node.get("params", {}), "code": code}}
             workflow.draft_graph = {**graph, "nodes": nodes}
+            bump_graph_revision(workflow)
+            patch = {
+                "type": "node_updated",
+                "node_id": node_id,
+                "param_keys": ["code"],
+            }
+            _record_mcp_graph_revision(session, workflow, "update_code", user, patch)
             await log_audit(
                 session, "mcp_update_code", "workflow", workflow.id, workflow.name,
                 actor_id=user.id if user else None,
@@ -1185,7 +2141,18 @@ async def _update_code(session: AsyncSession, user: User | None, args: dict) -> 
             await enqueue_github_push(session, workflow, "mcp")
             await session.commit()
             notify_sync_workers()
-            return {"workflow_id": workflow.id, "node_id": node_id}
+            _publish_mcp_graph_change(
+                workflow,
+                "update_code",
+                user,
+                node_id=node_id,
+                patch=patch,
+            )
+            return {
+                "workflow_id": workflow.id,
+                "graph_revision": workflow.graph_revision,
+                "node_id": node_id,
+            }
     raise McpToolError(f"Node not found in draft graph: {node_id!r}")
 
 
@@ -1203,8 +2170,6 @@ async def _retry_run(session: AsyncSession, user: User | None, args: dict) -> An
 
 
 async def _list_environments(session: AsyncSession, user: User | None, args: dict) -> Any:
-    from app.models import Environment
-
     rows = (
         await session.scalars(
             select(Environment).order_by(Environment.is_global.desc(), Environment.name)
@@ -1224,6 +2189,300 @@ async def _list_environments(session: AsyncSession, user: User | None, args: dic
             for e in rows
         ]
     }
+
+
+def _dedupe_packages(packages: list[str]) -> list[str]:
+    from noodle.packages import canonical_package_name
+
+    deduped: dict[str, str] = {}
+    for raw in packages:
+        spec = str(raw or "").strip()
+        if spec:
+            deduped[canonical_package_name(spec)] = spec
+    return list(deduped.values())
+
+
+def _bounded_int_arg(
+    args: dict,
+    name: str,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    raw = args.get(name, default)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise McpToolError(f"{name} must be an integer.") from exc
+    return max(minimum, min(value, maximum))
+
+
+async def _environment_info(
+    session: AsyncSession,
+    env: Environment,
+    build_job: EnvironmentBuildJob | None = None,
+) -> dict[str, Any]:
+    from app.routers.environments import _pool_name, _to_info
+
+    return _to_info(
+        env,
+        await _pool_name(session, env.runner_pool_id),
+        build_job,
+    ).model_dump(mode="json")
+
+
+async def _create_environment(session: AsyncSession, user: User | None, args: dict) -> Any:
+    _require_explicit_mcp_approval(args, "create_environment", "create and build an execution environment")
+    from fastapi import HTTPException
+
+    from app.routers.environments import _validate_pool, _validate_pool_ref
+    from app.schemas import EnvironmentCreate
+    from app.services.isolation import validate_pool_assignment
+    from app.services.licensing import enforce_resource_cap
+    from app.tenancy import active_org_id
+
+    try:
+        body = EnvironmentCreate(
+            name=str(args.get("name") or "").strip(),
+            python_version=str(args.get("python_version") or "3.12"),
+            packages=_dedupe_packages(list(args.get("packages") or [])),
+            description=str(args.get("description") or ""),
+            runner_pool_size=int(args.get("runner_pool_size") or 1),
+            runner_pool_max=args.get("runner_pool_max"),
+            runner_pool_id=args.get("runner_pool_id"),
+            backend=str(args.get("backend") or "venv"),
+            backend_config=args.get("backend_config") or {},
+        )
+        if body.backend not in {"venv", "conda", "pixi"}:
+            raise McpToolError("backend must be one of: venv, conda, pixi")
+        _validate_pool(body.runner_pool_size, body.runner_pool_max)
+        await _validate_pool_ref(session, body.runner_pool_id)
+        await validate_pool_assignment(session, active_org_id(), body.runner_pool_id)
+        await enforce_resource_cap(session, "environments")
+    except HTTPException as exc:
+        raise McpToolError(str(exc.detail)) from exc
+    except ValidationError as exc:
+        raise McpToolError(f"Invalid environment request: {exc.errors()[:5]}") from exc
+    except ValueError as exc:
+        raise McpToolError(str(exc)) from exc
+
+    env = Environment(
+        name=body.name,
+        python_version=body.python_version,
+        packages=body.packages,
+        description=body.description,
+        runner_pool_size=body.runner_pool_size,
+        runner_pool_max=body.runner_pool_max,
+        runner_pool_id=body.runner_pool_id,
+        backend=body.backend,
+        backend_config=body.backend_config,
+        status="pending",
+    )
+    session.add(env)
+    await log_audit(
+        session,
+        "mcp_create_environment",
+        "environment",
+        detail=body.name,
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
+    )
+    await session.flush()
+    build_job = await enqueue_environment_build(
+        session,
+        env,
+        reason="mcp_create_environment",
+        requested_by=user,
+    )
+    await session.commit()
+    await session.refresh(env)
+    await session.refresh(build_job)
+    await notify_environment_build_workers()
+    payload = await _environment_info(session, env, build_job)
+    payload["build_started"] = True
+    return payload
+
+
+async def _load_environment(session: AsyncSession, env_id: str) -> Environment:
+    if not env_id:
+        raise McpToolError("environment_id is required.")
+    env = await session.get(Environment, env_id)
+    if env is None:
+        raise McpToolError(f"Environment not found: {env_id}")
+    return env
+
+
+async def _set_environment_packages(
+    session: AsyncSession,
+    user: User | None,
+    args: dict,
+) -> Any:
+    _require_explicit_mcp_approval(args, "set_environment_packages", "replace an environment package set")
+    env = await _load_environment(session, str(args.get("environment_id") or ""))
+    packages = args.get("packages")
+    if not isinstance(packages, list):
+        raise McpToolError("packages must be an array of package specs.")
+    next_packages = _dedupe_packages(packages)
+    changed = next_packages != list(env.packages or [])
+    build_job: EnvironmentBuildJob | None = None
+    if changed:
+        env.packages = next_packages
+        await log_audit(
+            session,
+            "mcp_set_environment_packages",
+            "environment",
+            env.id,
+            env.name,
+            actor_id=user.id if user else None,
+            actor_email=user.email if user else None,
+        )
+        build_job = await enqueue_environment_build(
+            session,
+            env,
+            reason="mcp_set_environment_packages",
+            requested_by=user,
+        )
+        await session.commit()
+        await session.refresh(env)
+        await session.refresh(build_job)
+        await notify_environment_build_workers()
+    payload = await _environment_info(session, env, build_job)
+    payload["build_started"] = changed
+    return payload
+
+
+async def _add_environment_package(session: AsyncSession, user: User | None, args: dict) -> Any:
+    _require_explicit_mcp_approval(args, "add_environment_package", "install a package and rebuild an environment")
+    env = await _load_environment(session, str(args.get("environment_id") or ""))
+    package = str(args.get("package") or "").strip()
+    if not package:
+        raise McpToolError("package is required.")
+    next_packages = _dedupe_packages([*(env.packages or []), package])
+    return await _set_environment_packages(
+        session,
+        user,
+        {
+            "environment_id": env.id,
+            "packages": next_packages,
+            "approved_by_user": args.get("approved_by_user"),
+        },
+    )
+
+
+async def _remove_environment_package(session: AsyncSession, user: User | None, args: dict) -> Any:
+    _require_explicit_mcp_approval(args, "remove_environment_package", "remove a package and rebuild an environment")
+    env = await _load_environment(session, str(args.get("environment_id") or ""))
+    package = str(args.get("package") or "").strip()
+    if not package:
+        raise McpToolError("package is required.")
+    from noodle.packages import canonical_package_name
+
+    target = canonical_package_name(package)
+    next_packages = [
+        existing
+        for existing in env.packages or []
+        if canonical_package_name(existing) != target
+    ]
+    return await _set_environment_packages(
+        session,
+        user,
+        {
+            "environment_id": env.id,
+            "packages": next_packages,
+            "approved_by_user": args.get("approved_by_user"),
+        },
+    )
+
+
+async def _rebuild_environment(session: AsyncSession, user: User | None, args: dict) -> Any:
+    _require_explicit_mcp_approval(args, "rebuild_environment", "rebuild an execution environment")
+    env = await _load_environment(session, str(args.get("environment_id") or ""))
+    await log_audit(
+        session,
+        "mcp_rebuild_environment",
+        "environment",
+        env.id,
+        env.name,
+        actor_id=user.id if user else None,
+        actor_email=user.email if user else None,
+    )
+    build_job = await enqueue_environment_build(
+        session,
+        env,
+        reason="mcp_rebuild_environment",
+        requested_by=user,
+    )
+    await session.commit()
+    await session.refresh(env)
+    await session.refresh(build_job)
+    await notify_environment_build_workers()
+    payload = await _environment_info(session, env, build_job)
+    payload["build_started"] = True
+    return payload
+
+
+def _environment_build_job_payload(job: EnvironmentBuildJob) -> dict[str, Any]:
+    return {
+        "id": job.id,
+        "environment_id": job.environment_id,
+        "reason": job.reason,
+        "status": job.status,
+        "attempts": job.attempts,
+        "max_attempts": job.max_attempts,
+        "package_snapshot": list(job.package_snapshot or []),
+        "packages_hash": job.packages_hash,
+        "python_version": job.python_version,
+        "backend": job.backend,
+        "last_error": job.last_error,
+        "requested_by_email": job.requested_by_email,
+        "lease_owner": job.lease_owner,
+        "lease_expires_at": str(job.lease_expires_at) if job.lease_expires_at else None,
+        "available_at": str(job.available_at),
+        "started_at": str(job.started_at) if job.started_at else None,
+        "finished_at": str(job.finished_at) if job.finished_at else None,
+        "created_at": str(job.created_at),
+        "updated_at": str(job.updated_at),
+    }
+
+
+async def _list_environment_build_jobs(
+    session: AsyncSession,
+    user: User | None,
+    args: dict,
+) -> Any:
+    env = await _load_environment(session, str(args.get("environment_id") or ""))
+    limit = _bounded_int_arg(args, "limit", default=20, minimum=1, maximum=100)
+    rows = (
+        await session.scalars(
+            select(EnvironmentBuildJob)
+            .where(EnvironmentBuildJob.environment_id == env.id)
+            .order_by(EnvironmentBuildJob.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    return {
+        "environment_id": env.id,
+        "build_jobs": [_environment_build_job_payload(job) for job in rows],
+    }
+
+
+async def _get_environment_build_job(
+    session: AsyncSession,
+    user: User | None,
+    args: dict,
+) -> Any:
+    job_id = str(args.get("build_job_id") or "").strip()
+    if not job_id:
+        raise McpToolError("build_job_id is required.")
+    stmt = select(EnvironmentBuildJob).where(EnvironmentBuildJob.id == job_id)
+    environment_id = str(args.get("environment_id") or "").strip()
+    if environment_id:
+        stmt = stmt.where(EnvironmentBuildJob.environment_id == environment_id)
+    job = await session.scalar(stmt)
+    if job is None:
+        raise McpToolError(f"Environment build job not found: {job_id}")
+    return _environment_build_job_payload(job)
 
 
 async def _list_credentials(session: AsyncSession, user: User | None, args: dict) -> Any:
@@ -1264,6 +2523,13 @@ async def _set_error_handler(session: AsyncSession, user: User | None, args: dic
         actor_email=user.email if user else None,
     )
     await session.commit()
+    publish_workflow_event(
+        workflow,
+        WORKFLOW_UPDATED,
+        origin="mcp",
+        operation="set_error_handler",
+        actor=user,
+    )
     return {"workflow_id": workflow.id, "error_workflow_id": error_workflow_id}
 
 
@@ -1302,6 +2568,13 @@ async def _enable_mcp_tool(session: AsyncSession, user: User | None, args: dict)
         await session.rollback()
         raise McpToolError("Tool name is already used in this organization.") from exc
     notify_sync_workers()
+    publish_workflow_event(
+        workflow,
+        WORKFLOW_UPDATED,
+        origin="mcp",
+        operation="enable_mcp_tool",
+        actor=user,
+    )
     return {
         "workflow_id": workflow.id,
         "mcp_enabled": True,
@@ -1321,6 +2594,13 @@ async def _disable_mcp_tool(session: AsyncSession, user: User | None, args: dict
     )
     await session.commit()
     notify_sync_workers()
+    publish_workflow_event(
+        workflow,
+        WORKFLOW_UPDATED,
+        origin="mcp",
+        operation="disable_mcp_tool",
+        actor=user,
+    )
     return {"workflow_id": workflow.id, "mcp_enabled": False}
 
 
@@ -1472,7 +2752,7 @@ async def _list_run_approvals(
 
     run_id = str(args.get("run_id") or "").strip()
     status_filter = str(args.get("status") or "").strip()
-    limit = max(1, min(int(args.get("limit") or 50), 200))
+    limit = _bounded_int_arg(args, "limit", default=50, minimum=1, maximum=200)
     stmt = (
         select(RunApproval)
         .join(Run, Run.id == RunApproval.run_id)
@@ -1588,6 +2868,60 @@ STATIC_TOOLS: list[McpTool] = [
         },
         permission=None,
         handler=_get_node_type,
+    ),
+    McpTool(
+        name="search_node_catalog",
+        description=(
+            "Search node types by query, category, or required package. Returns node "
+            "ports and package requirements so agents can choose built-ins before "
+            "creating custom code."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "category": {"type": "string"},
+                "package": {"type": "string", "description": "Filter to nodes requiring this Python package."},
+                "include_ports": {"type": "boolean", "default": True},
+                "include_params": {"type": "boolean", "default": False},
+                "include_deprecated": {"type": "boolean", "default": False},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+            },
+        },
+        permission=None,
+        handler=_search_node_catalog,
+    ),
+    McpTool(
+        name="get_node_schema",
+        description="Alias for get_node_type. Returns the full manifest/schema for one node type.",
+        input_schema={
+            "type": "object",
+            "properties": {"node_type": {"type": "string"}},
+            "required": ["node_type"],
+        },
+        permission=None,
+        handler=_get_node_schema,
+    ),
+    McpTool(
+        name="suggest_node_config",
+        description=(
+            "Generate a starter node object for a node type, including placeholder "
+            "required params, ports, and package requirements. Replace placeholders "
+            "before applying it to a workflow."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "node_type": {"type": "string"},
+                "node_id": {"type": "string"},
+                "x": {"type": "number"},
+                "y": {"type": "number"},
+                "include_optional_defaults": {"type": "boolean"},
+            },
+            "required": ["node_type"],
+        },
+        permission=None,
+        handler=_suggest_node_config,
     ),
     McpTool(
         name="get_run",
@@ -1712,6 +3046,7 @@ STATIC_TOOLS: list[McpTool] = [
             "properties": {
                 "workflow_id": {"type": "string"},
                 "graph": {"type": "object"},
+                "expected_graph_revision": EXPECTED_GRAPH_REVISION_SCHEMA,
             },
             "required": ["workflow_id", "graph"],
         },
@@ -1723,11 +3058,74 @@ STATIC_TOOLS: list[McpTool] = [
         description="Validate a graph payload without saving it (shape + node types).",
         input_schema={
             "type": "object",
-            "properties": {"graph": {"type": "object"}},
+            "properties": {
+                "graph": {"type": "object"},
+                "require_trigger": {"type": "boolean", "default": True},
+            },
             "required": ["graph"],
         },
         permission=None,
         handler=_validate_graph,
+    ),
+    McpTool(
+        name="validate_workflow_graph",
+        description=(
+            "Validate a workflow's draft graph, or a provided graph, without saving. "
+            "Also returns node package requirements and packages missing from the "
+            "workflow's current environment."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "graph": {"type": "object"},
+                "require_trigger": {"type": "boolean", "default": True},
+            },
+        },
+        permission=None,
+        handler=_validate_workflow_graph,
+    ),
+    McpTool(
+        name="preview_workflow_patch",
+        description=(
+            "Preview an atomic workflow graph patch without saving. Operations support "
+            "add_node, update_node, move_node, rename_node, remove_node, add_edge, "
+            "and remove_edge. Returns validation and package gaps."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "operations": {"type": "array", "items": {"type": "object"}},
+                "expected_graph_revision": EXPECTED_GRAPH_REVISION_SCHEMA,
+                "require_trigger": {"type": "boolean", "default": True},
+                "include_graph": {"type": "boolean", "default": False},
+            },
+            "required": ["workflow_id", "operations"],
+        },
+        permission=None,
+        handler=_preview_workflow_patch,
+    ),
+    McpTool(
+        name="apply_workflow_patch",
+        description=(
+            "Apply an atomic workflow graph patch to the draft. The final graph is "
+            "validated once, graph_revision increments once, live canvas subscribers "
+            "receive one graph_changed event, and one revision/audit entry is written."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "operations": {"type": "array", "items": {"type": "object"}},
+                "expected_graph_revision": EXPECTED_GRAPH_REVISION_SCHEMA,
+                "require_trigger": {"type": "boolean", "default": True},
+                "include_graph": {"type": "boolean", "default": False},
+            },
+            "required": ["workflow_id", "operations"],
+        },
+        permission="workflow:write",
+        handler=_apply_workflow_patch,
     ),
     McpTool(
         name="publish_workflow",
@@ -1755,6 +3153,7 @@ STATIC_TOOLS: list[McpTool] = [
                 "workflow_id": {"type": "string"},
                 "node_id": {"type": "string"},
                 "params": {"type": "object", "description": "Partial params to merge into the node."},
+                "expected_graph_revision": EXPECTED_GRAPH_REVISION_SCHEMA,
             },
             "required": ["workflow_id", "node_id", "params"],
         },
@@ -1781,6 +3180,7 @@ STATIC_TOOLS: list[McpTool] = [
                     },
                     "required": ["id", "type"],
                 },
+                "expected_graph_revision": EXPECTED_GRAPH_REVISION_SCHEMA,
             },
             "required": ["workflow_id", "node"],
         },
@@ -1795,6 +3195,7 @@ STATIC_TOOLS: list[McpTool] = [
             "properties": {
                 "workflow_id": {"type": "string"},
                 "node_id": {"type": "string"},
+                "expected_graph_revision": EXPECTED_GRAPH_REVISION_SCHEMA,
             },
             "required": ["workflow_id", "node_id"],
         },
@@ -1822,6 +3223,7 @@ STATIC_TOOLS: list[McpTool] = [
                     },
                     "required": ["source", "target"],
                 },
+                "expected_graph_revision": EXPECTED_GRAPH_REVISION_SCHEMA,
             },
             "required": ["workflow_id", "edge"],
         },
@@ -1842,6 +3244,7 @@ STATIC_TOOLS: list[McpTool] = [
                 "target": {"type": "string"},
                 "source_output": {"type": "string"},
                 "target_input": {"type": "string"},
+                "expected_graph_revision": EXPECTED_GRAPH_REVISION_SCHEMA,
             },
             "required": ["workflow_id", "source", "target"],
         },
@@ -1874,6 +3277,24 @@ STATIC_TOOLS: list[McpTool] = [
         handler=_list_workflow_versions,
     ),
     McpTool(
+        name="list_workflow_revisions",
+        description=(
+            "List recent draft graph revisions for a workflow, newest first. "
+            "Use this to understand what changed and which graph_revision to pass "
+            "as expected_graph_revision before editing."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+            },
+            "required": ["workflow_id"],
+        },
+        permission=None,
+        handler=_list_workflow_revisions,
+    ),
+    McpTool(
         name="rollback_workflow",
         description=(
             "Restore a published version's graph to the draft. Does not publish — "
@@ -1884,6 +3305,7 @@ STATIC_TOOLS: list[McpTool] = [
             "properties": {
                 "workflow_id": {"type": "string"},
                 "version": {"type": "integer", "description": "Version number from list_workflow_versions."},
+                "expected_graph_revision": EXPECTED_GRAPH_REVISION_SCHEMA,
             },
             "required": ["workflow_id", "version"],
         },
@@ -2043,6 +3465,7 @@ STATIC_TOOLS: list[McpTool] = [
                 "workflow_id": {"type": "string"},
                 "node_id": {"type": "string"},
                 "label": {"type": "string", "description": "Human-readable display name for the node."},
+                "expected_graph_revision": EXPECTED_GRAPH_REVISION_SCHEMA,
             },
             "required": ["workflow_id", "node_id", "label"],
         },
@@ -2059,6 +3482,7 @@ STATIC_TOOLS: list[McpTool] = [
                 "node_id": {"type": "string"},
                 "x": {"type": "number"},
                 "y": {"type": "number"},
+                "expected_graph_revision": EXPECTED_GRAPH_REVISION_SCHEMA,
             },
             "required": ["workflow_id", "node_id", "x", "y"],
         },
@@ -2081,6 +3505,7 @@ STATIC_TOOLS: list[McpTool] = [
                 "label": {"type": "string", "description": "Display name shown on the canvas."},
                 "x": {"type": "number", "description": "Canvas x position (default 0)."},
                 "y": {"type": "number", "description": "Canvas y position (default 0)."},
+                "expected_graph_revision": EXPECTED_GRAPH_REVISION_SCHEMA,
             },
             "required": ["workflow_id", "node_id", "code"],
         },
@@ -2096,6 +3521,7 @@ STATIC_TOOLS: list[McpTool] = [
                 "workflow_id": {"type": "string"},
                 "node_id": {"type": "string"},
                 "code": {"type": "string", "description": "New Python body. Assign result to `output`."},
+                "expected_graph_revision": EXPECTED_GRAPH_REVISION_SCHEMA,
             },
             "required": ["workflow_id", "node_id", "code"],
         },
@@ -2122,6 +3548,114 @@ STATIC_TOOLS: list[McpTool] = [
         input_schema={"type": "object", "properties": {}},
         permission=None,
         handler=_list_environments,
+    ),
+    McpTool(
+        name="create_environment",
+        description=(
+            "Create a Python execution environment and start building it. Use when a "
+            "workflow needs packages that are not appropriate for the current env."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "python_version": {"type": "string", "description": "Supported versions include 3.12, 3.13, 3.14."},
+                "packages": {"type": "array", "items": {"type": "string"}},
+                "description": {"type": "string"},
+                "backend": {"type": "string", "enum": ["venv", "conda", "pixi"]},
+                "backend_config": {"type": "object"},
+                "runner_pool_size": {"type": "integer", "minimum": 0},
+                "runner_pool_max": {"type": ["integer", "null"], "minimum": 1},
+                "runner_pool_id": {"type": ["string", "null"]},
+            },
+            "required": ["name"],
+        },
+        permission="environment:write",
+        handler=_create_environment,
+    ),
+    McpTool(
+        name="add_environment_package",
+        description=(
+            "Add one Python package spec to an environment and start a rebuild. "
+            "Package specs may include version pins, e.g. pandas==2.2.2."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "environment_id": {"type": "string"},
+                "package": {"type": "string"},
+            },
+            "required": ["environment_id", "package"],
+        },
+        permission="environment:write",
+        handler=_add_environment_package,
+    ),
+    McpTool(
+        name="set_environment_packages",
+        description="Replace an environment's package list and start a rebuild if it changed.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "environment_id": {"type": "string"},
+                "packages": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["environment_id", "packages"],
+        },
+        permission="environment:write",
+        handler=_set_environment_packages,
+    ),
+    McpTool(
+        name="remove_environment_package",
+        description="Remove one package from an environment by canonical package name and start a rebuild.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "environment_id": {"type": "string"},
+                "package": {"type": "string"},
+            },
+            "required": ["environment_id", "package"],
+        },
+        permission="environment:write",
+        handler=_remove_environment_package,
+    ),
+    McpTool(
+        name="rebuild_environment",
+        description="Mark an environment pending and start a rebuild with its current packages.",
+        input_schema={
+            "type": "object",
+            "properties": {"environment_id": {"type": "string"}},
+            "required": ["environment_id"],
+        },
+        permission="environment:write",
+        handler=_rebuild_environment,
+    ),
+    McpTool(
+        name="list_environment_build_jobs",
+        description="List recent durable build jobs for an environment, newest first.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "environment_id": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+            },
+            "required": ["environment_id"],
+        },
+        permission=None,
+        handler=_list_environment_build_jobs,
+    ),
+    McpTool(
+        name="get_environment_build_job",
+        description="Get durable build status, attempts, lease, and error details for one environment build job.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "build_job_id": {"type": "string"},
+                "environment_id": {"type": "string"},
+            },
+            "required": ["build_job_id"],
+        },
+        permission=None,
+        handler=_get_environment_build_job,
     ),
     McpTool(
         name="list_credentials",

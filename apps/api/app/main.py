@@ -60,6 +60,7 @@ from app.routers import (
 from app.security import get_client_ip
 from app.services import expr_preview
 from app.services.events import broker_reaper_loop
+from app.services.environment_builds import run_environment_build_dispatch_loop
 from app.services.ghost_cleanup import ghost_cleanup_loop
 from app.services.github_sync_jobs import github_sync_dispatch_loop
 from app.services.queue import run_queue_dispatch_loop
@@ -359,8 +360,10 @@ async def lifespan(app: FastAPI):
     # startup — rather than probing Redis on every publish/subscribe — is what
     # stops publish() and subscribe() from ever choosing different transports.
     from app.services.events import broker as event_broker
+    from app.services.events import workflow_broker
 
     await event_broker.connect()
+    await workflow_broker.connect()
     # Broker reaper: every replica owns its own pub/sub buffer, so it
     # always runs (independent of the scheduler flag).
     broker_reaper = asyncio.create_task(broker_reaper_loop())
@@ -371,6 +374,11 @@ async def lifespan(app: FastAPI):
     # stay on the API regardless — agent connections terminate here.
     queue_loop = (
         asyncio.create_task(_as_system(run_queue_dispatch_loop)()) if run_dispatch_loop else None
+    )
+    environment_builds = (
+        asyncio.create_task(_as_system(run_environment_build_dispatch_loop)())
+        if settings.dispatch_role in ("inline", "control")
+        else None
     )
     cloud_idle = asyncio.create_task(_as_system(cloud_idle_terminate_loop)())
     heartbeat = asyncio.create_task(_as_system(runner_heartbeat_loop)())
@@ -393,7 +401,7 @@ async def lifespan(app: FastAPI):
     # (matters for tests that reuse the process).
     _prior_drain = settings.queue_drain
     settings.queue_drain = True
-    for task in (scheduler, retention, reaper, autoscaler, broker_reaper, queue_loop, cloud_idle, heartbeat, github_sync, ghost_cleanup, replica_heartbeat, stuck_detector):
+    for task in (scheduler, retention, reaper, autoscaler, broker_reaper, queue_loop, environment_builds, cloud_idle, heartbeat, github_sync, ghost_cleanup, replica_heartbeat, stuck_detector):
         if task is None:
             continue
         task.cancel()
@@ -816,6 +824,7 @@ if settings.webhook_role != "disabled":
     app.include_router(provider_webhooks.router)
 app.include_router(folders.router)
 app.include_router(workflows.router)
+app.include_router(workflows.ws_router)
 app.include_router(agentic_build.router)
 app.include_router(runs.router)
 app.include_router(chat.router)

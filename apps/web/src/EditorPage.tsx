@@ -1,9 +1,18 @@
 import { ReactFlowProvider } from "@xyflow/react";
 import { Keyboard } from "@phosphor-icons/react";
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link, useBlocker, useParams } from "react-router-dom";
 
-import { api, getOrgId, getToken, type RunStreamHandle, subscribeToRunEvents, userFriendlyError } from "./api";
+import {
+  api,
+  getOrgId,
+  getToken,
+  type RunStreamHandle,
+  subscribeToRunEvents,
+  subscribeToWorkflowEvents,
+  userFriendlyError,
+} from "./api";
 import { AiDraftModal } from "./AiDraftModal";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { RunnerPoolSelect } from "./RunnerPoolSelect";
@@ -36,6 +45,7 @@ import {
   useWorkflow,
   useWorkflowCustomNodeManifests,
 } from "./queries";
+import { queryKeys } from "./queries/keys";
 import { GitHubSyncBadge } from "./editor/GitHubSyncBadge";
 import { GitHubConflictModal } from "./editor/GitHubConflictModal";
 import { RunApprovalsPanel } from "./RunApprovalsPanel";
@@ -57,6 +67,7 @@ import type {
   GraphNode,
   RunEvent,
   RunnerPoolInfo,
+  WorkflowEvent,
   WorkflowDetail,
   WorkflowGraph,
   WorkflowVersionInfo,
@@ -326,6 +337,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [publishNotes, setPublishNotes] = useState("");
   const [saveError, setSaveError] = useState(false);
+  const [externalWorkflow, setExternalWorkflow] = useState<WorkflowDetail | null>(null);
   const [togglingActive, setTogglingActive] = useState(false);
   // Run id of a run paused awaiting tool approval (UX-6). Drives a persistent
   // banner with inline approve/reject instead of relying on a transient toast.
@@ -338,13 +350,17 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   const closeChat = useEditor((s) => s.closeChat);
   const { notify } = useToast();
   const confirm = useConfirm();
+  const queryClient = useQueryClient();
   const wsRef = useRef<RunStreamHandle | null>(null);
+  const workflowWsRef = useRef<RunStreamHandle | null>(null);
   const webhookTimerRef = useRef<number | null>(null);
   const listenPathRef = useRef<string | null>(null);
-const aiAbortRef = useRef<AbortController | null>(null);
+  const aiAbortRef = useRef<AbortController | null>(null);
   const saveInProgressRef = useRef(false);
   const loadedWorkflowIdRef = useRef<string | null>(null);
   const creatingChildIdsRef = useRef<Set<string>>(new Set());
+  const dirtyRef = useRef(false);
+  const workflowRef = useRef<WorkflowDetail | null>(null);
 
   const setManifests = useEditor((s) => s.setManifests);
   const setEnvContext = useEditor((s) => s.setEnvContext);
@@ -381,7 +397,7 @@ const aiAbortRef = useRef<AbortController | null>(null);
         : "saved";
 
   useAutosave({
-    enabled: Boolean(canWrite && id),
+    enabled: Boolean(canWrite && id && !externalWorkflow),
     dirty: dirty || childDirty,
     delayMs: 1500,
     onSave: () => { void save({ notifySuccess: false }); },
@@ -421,15 +437,133 @@ const aiAbortRef = useRef<AbortController | null>(null);
     [editorNodes],
   );
 
+  const applyWorkflowDetail = useCallback(
+    (detail: WorkflowDetail, options: { loadCanvas?: boolean } = {}) => {
+      if (options.loadCanvas ?? true) loadGraph(detail.graph);
+      setWorkflow(detail);
+      setName(detail.name);
+      setActive(detail.active);
+      setEnvironmentId(detail.environment_id);
+      setDefaultRunnerPoolId(detail.default_runner_pool_id ?? null);
+      setRunTimeout(
+        detail.run_timeout_seconds != null ? String(detail.run_timeout_seconds) : "",
+      );
+      setMcpEnabled(detail.mcp_enabled ?? false);
+      setMcpToolName(detail.mcp_tool_name ?? "");
+      setMcpDescription(detail.mcp_description ?? "");
+      workflowRef.current = detail;
+    },
+    [loadGraph],
+  );
+
+  useEffect(() => {
+    dirtyRef.current = dirty || childDirty;
+  }, [childDirty, dirty]);
+
+  useEffect(() => {
+    workflowRef.current = workflow;
+  }, [workflow]);
+
+  const reloadExternalWorkflow = useCallback(() => {
+    if (!externalWorkflow) return;
+    applyWorkflowDetail(externalWorkflow);
+    setExternalWorkflow(null);
+    setMessage("Loaded the latest workflow draft.");
+  }, [applyWorkflowDetail, externalWorkflow]);
+
+  const keepLocalWorkflow = useCallback(() => {
+    if (externalWorkflow) {
+      setWorkflow((current) => {
+        if (!current) return current;
+        const next = {
+          ...current,
+          graph_revision: externalWorkflow.graph_revision,
+          updated_at: externalWorkflow.updated_at,
+          has_unpublished_changes: externalWorkflow.has_unpublished_changes,
+        };
+        workflowRef.current = next;
+        return next;
+      });
+    }
+    setExternalWorkflow(null);
+    setMessage("Keeping local edits. The next save will overwrite the external draft.");
+  }, [externalWorkflow]);
+
   useEffect(() => {
     if (!id) return;
     loadedWorkflowIdRef.current = null;
     setStatus("loading");
     setMessage("");
+    setExternalWorkflow(null);
     clearRun();
     closeNdv();
     setWorkflowId(id);
   }, [clearRun, closeNdv, id, setWorkflowId]);
+
+  useEffect(() => {
+    if (!id) return;
+    workflowWsRef.current?.close();
+    workflowWsRef.current = subscribeToWorkflowEvents(id, {
+      onMessage: (event: WorkflowEvent) => {
+        if (event.type === "ping") return;
+        if (event.workflow_id !== id) return;
+        void queryClient.invalidateQueries({ queryKey: queryKeys.workflows });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.workflow(id) });
+        if (event.type === "workflow_deleted") {
+          setStatus("error");
+          setMessage("This workflow was deleted outside this canvas.");
+          return;
+        }
+        if (
+          event.type !== "workflow_graph_changed" &&
+          event.type !== "workflow_updated" &&
+          event.type !== "workflow_published"
+        ) {
+          return;
+        }
+        const currentRevision = workflowRef.current?.graph_revision ?? 0;
+        if (
+          event.type === "workflow_graph_changed" &&
+          event.graph_revision !== undefined &&
+          event.graph_revision <= currentRevision
+        ) {
+          return;
+        }
+        if (saveInProgressRef.current) return;
+        void (async () => {
+          try {
+            const detail = await api.getWorkflow(id);
+            queryClient.setQueryData(queryKeys.workflow(id), detail);
+            if (event.type === "workflow_graph_changed") {
+              if (dirtyRef.current) {
+                setExternalWorkflow(detail);
+                setMessage(
+                  "This workflow changed outside the canvas. Reload latest or keep local edits.",
+                );
+                notify("Workflow changed outside this canvas.", "info");
+                return;
+              }
+              applyWorkflowDetail(detail);
+              setExternalWorkflow(null);
+              setMessage(
+                event.origin === "mcp"
+                  ? "Canvas updated from MCP workflow edits."
+                  : "Canvas updated from the latest workflow draft.",
+              );
+              return;
+            }
+            applyWorkflowDetail(detail, { loadCanvas: false });
+          } catch (err) {
+            setMessage(`Could not load external workflow update: ${userFriendlyError(err)}`);
+          }
+        })();
+      },
+    });
+    return () => {
+      workflowWsRef.current?.close();
+      workflowWsRef.current = null;
+    };
+  }, [applyWorkflowDetail, id, notify, queryClient]);
 
   useEffect(() => {
     if (!id || loadedWorkflowIdRef.current === id) return;
@@ -460,18 +594,8 @@ const aiAbortRef = useRef<AbortController | null>(null);
 
     let cancelled = false;
     setManifests([...nodesQuery.data, ...customNodesQuery.data]);
-    loadGraph(detail.graph);
-    setWorkflow(detail);
-    setName(detail.name);
-    setActive(detail.active);
-    setEnvironmentId(detail.environment_id);
-    setDefaultRunnerPoolId(detail.default_runner_pool_id ?? null);
-    setRunTimeout(
-      detail.run_timeout_seconds != null ? String(detail.run_timeout_seconds) : "",
-    );
-    setMcpEnabled(detail.mcp_enabled ?? false);
-    setMcpToolName(detail.mcp_tool_name ?? "");
-    setMcpDescription(detail.mcp_description ?? "");
+    applyWorkflowDetail(detail);
+    setExternalWorkflow(null);
     const pinnedMap: Record<string, PinnedOutput> = {};
     for (const p of pinnedQuery.data) {
       pinnedMap[p.node_id] = { payload: p.payload, updatedAt: p.updated_at };
@@ -508,11 +632,11 @@ const aiAbortRef = useRef<AbortController | null>(null);
     customNodesQuery.data,
     customNodesQuery.error,
     customNodesQuery.isLoading,
+    applyWorkflowDetail,
     environmentsQuery.error,
     environmentsQuery.isLoading,
     id,
     loadChildGraph,
-    loadGraph,
     nodesQuery.data,
     nodesQuery.error,
     nodesQuery.isLoading,
@@ -755,8 +879,11 @@ const aiAbortRef = useRef<AbortController | null>(null);
         mcp_tool_name: mcpToolName || null,
         mcp_description: mcpDescription || null,
         graph: toGraph(),
+        expected_graph_revision: workflow?.graph_revision ?? null,
       });
       setWorkflow(updated);
+      workflowRef.current = updated;
+      setExternalWorkflow(null);
       markClean();
 
       // Save dirty child workflows concurrently.
@@ -943,7 +1070,10 @@ const aiAbortRef = useRef<AbortController | null>(null);
       if (rejectedAiNodeIds.size > 0) {
         graph = applyWithFilters(toGraph(), graph, rejectedAiNodeIds);
       }
-      await api.updateWorkflow(id, { graph });
+      await api.updateWorkflow(id, {
+        graph,
+        expected_graph_revision: workflow?.graph_revision ?? null,
+      });
       loadGraph(graph);
       markClean();
       const detail = await api.getWorkflow(id);
@@ -1536,6 +1666,19 @@ const aiAbortRef = useRef<AbortController | null>(null);
         />
       )}
 
+      {externalWorkflow && (
+        <div className="toolbar-message toolbar-message-conflict">
+          <span>Workflow changed outside this canvas.</span>
+          <div className="toolbar-message-actions">
+            <button className="btn btn-sm" onClick={reloadExternalWorkflow}>
+              Reload latest
+            </button>
+            <button className="btn btn-sm btn-ghost" onClick={keepLocalWorkflow}>
+              Keep local edits
+            </button>
+          </div>
+        </div>
+      )}
       {message && <div className="toolbar-message">{message}</div>}
       {active && (dirty || workflow?.has_unpublished_changes) && (
         <div className="production-warning">

@@ -1,7 +1,9 @@
+import asyncio
+import contextlib
 import logging
 import re
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, WebSocket, status
 from jsonschema.exceptions import SchemaError
 from jsonschema.validators import validator_for
 from pydantic import BaseModel
@@ -10,10 +12,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 from sqlalchemy.orm.attributes import set_committed_value
+from starlette.websockets import WebSocketDisconnect
 
 import noodle_nodes  # noqa: F401 - registers built-in nodes
 from app.config import settings
-from app.db import get_session
+from app.db import SessionLocal, get_session
 from app.models import (
     Environment,
     Folder,
@@ -22,6 +25,7 @@ from app.models import (
     RunnerPool,
     User,
     Workflow,
+    WorkflowRevision,
     WorkflowVersion,
 )
 from app.schemas import (
@@ -36,20 +40,39 @@ from app.schemas import (
     WorkflowPublishResponse,
     WorkflowSummary,
     WorkflowUpdate,
+    WorkflowRevisionInfo,
     WorkflowVersionInfo,
 )
-from app.security import optional_current_user, require_permission
+from app.security import (
+    _user_from_session_token,
+    optional_current_user,
+    require_permission,
+    resolve_org_for,
+)
 from app.services.ai_builder import build_workflow_draft
 from app.services.audit import log_audit
+from app.services.events import workflow_broker
 from app.services.github_sync import enqueue_github_push
 from app.services.github_sync_jobs import notify_sync_workers
 from app.services.provider_triggers import sync_workflow_provider_triggers
+from app.services.workflow_events import (
+    WORKFLOW_CREATED,
+    WORKFLOW_DELETED,
+    WORKFLOW_PUBLISHED,
+    WORKFLOW_UPDATED,
+    bump_graph_revision,
+    record_workflow_revision,
+    publish_workflow_event,
+    publish_workflow_graph_changed,
+)
+from app.tenancy import current_org_id, run_as_org
 from noodle.models import WorkflowGraph
 from noodle.sdk import registry as node_registry
 
 logger = logging.getLogger("noodle")
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
+ws_router = APIRouter(tags=["workflows"])
 
 EMPTY_GRAPH: dict = {"nodes": [], "edges": []}
 
@@ -220,6 +243,7 @@ def _summary_from(
         active=workflow.active,
         version=workflow.published_version,
         published_version=workflow.published_version,
+        graph_revision=workflow.graph_revision,
         has_unpublished_changes=_has_unpublished_changes(workflow),
         node_count=len(graph.get("nodes", [])),
         environment_id=workflow.environment_id,
@@ -252,6 +276,7 @@ async def _detail(session: AsyncSession, workflow: Workflow) -> WorkflowDetail:
         active=workflow.active,
         version=workflow.published_version,
         published_version=workflow.published_version,
+        graph_revision=workflow.graph_revision,
         has_unpublished_changes=_has_unpublished_changes(workflow),
         environment_id=workflow.environment_id,
         default_runner_pool_id=workflow.default_runner_pool_id,
@@ -272,6 +297,21 @@ async def _detail(session: AsyncSession, workflow: Workflow) -> WorkflowDetail:
         created_at=workflow.created_at,
         updated_at=workflow.updated_at,
         github_sync_status=workflow.github_sync_status,
+    )
+
+
+def _revision_info(revision: WorkflowRevision) -> WorkflowRevisionInfo:
+    return WorkflowRevisionInfo(
+        id=revision.id,
+        workflow_id=revision.workflow_id,
+        graph_revision=revision.graph_revision,
+        origin=revision.origin,
+        operation=revision.operation,
+        summary=revision.summary,
+        patch=revision.patch,
+        actor_id=revision.actor_id,
+        actor_email=revision.actor_email,
+        created_at=revision.created_at,
     )
 
 
@@ -366,6 +406,13 @@ async def create_workflow(
             "Workflow conflicts with an existing tenant-scoped value.",
         ) from exc
     notify_sync_workers()
+    publish_workflow_event(
+        workflow,
+        WORKFLOW_CREATED,
+        origin="ui",
+        operation="create",
+        actor=actor,
+    )
     return await _detail(session, await _load(session, workflow.id))
 
 
@@ -376,6 +423,165 @@ async def get_workflow(
     _user: User | None = Depends(optional_current_user),
 ):
     return await _detail(session, await _load(session, workflow_id))
+
+
+@router.get(
+    "/{workflow_id}/revisions",
+    response_model=list[WorkflowRevisionInfo],
+    dependencies=[Depends(require_permission("workflow:read"))],
+)
+async def list_workflow_revisions(
+    workflow_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+):
+    await _load(session, workflow_id)
+    rows = (
+        await session.scalars(
+            select(WorkflowRevision)
+            .where(WorkflowRevision.workflow_id == workflow_id)
+            .order_by(WorkflowRevision.graph_revision.desc())
+            .limit(limit)
+        )
+    ).all()
+    return [_revision_info(row) for row in rows]
+
+
+async def _workflow_ws_principal(websocket: WebSocket) -> tuple[User | None, str | None] | None:
+    user: User | None = None
+    token: str | None = None
+    ticket = websocket.query_params.get("ticket", "")
+    async with SessionLocal() as session:
+        if ticket:
+            from app.services.ws_ticket import consume_ticket
+
+            user_id = await consume_ticket(ticket)
+            if user_id is None:
+                await websocket.close(code=1008)
+                return None
+            user = await session.get(User, user_id)
+            if user is None:
+                await websocket.close(code=1008)
+                return None
+        token = websocket.query_params.get("token", "")
+        if not token:
+            auth_header = websocket.headers.get("authorization", "")
+            if auth_header.lower().startswith("bearer "):
+                token = auth_header[7:].strip()
+        if not token:
+            token = websocket.cookies.get(settings.session_cookie_name, "")
+        if user is None and token:
+            user = await _user_from_session_token(token, session)
+            if user is None:
+                await websocket.close(code=1008)
+                return None
+        if settings.auth_required and user is None:
+            await websocket.close(code=1008)
+            return None
+
+        org_token = current_org_id.set(None)
+        try:
+            try:
+                org_id = await resolve_org_for(
+                    websocket.query_params.get("org_id"),
+                    user,
+                    session,
+                )
+            except HTTPException:
+                await websocket.close(code=1008)
+                return None
+        finally:
+            current_org_id.reset(org_token)
+    return user, org_id
+
+
+@ws_router.websocket("/ws/workflows/{workflow_id}")
+async def workflow_events(websocket: WebSocket, workflow_id: str) -> None:
+    principal = await _workflow_ws_principal(websocket)
+    if principal is None:
+        return
+    _user, org_id = principal
+    with run_as_org(org_id):
+        async with SessionLocal() as session:
+            exists = await session.scalar(
+                select(Workflow.id).where(Workflow.id == workflow_id)
+            )
+            if exists is None:
+                await websocket.close(code=1008)
+                return
+    await websocket.accept()
+    stop_event = asyncio.Event()
+    event_stream = workflow_broker.subscribe(workflow_id)
+    event_task: asyncio.Task | None = None
+    try:
+        org_scope = run_as_org(org_id)
+        org_scope.__enter__()
+
+        async def _heartbeat() -> None:
+            while not stop_event.is_set():
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=30)
+                    break
+                except asyncio.TimeoutError:
+                    pass
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception:
+                    stop_event.set()
+                    break
+
+        async def _watch_disconnect() -> None:
+            while not stop_event.is_set():
+                try:
+                    message = await websocket.receive()
+                    if message.get("type") == "websocket.disconnect":
+                        stop_event.set()
+                        break
+                except WebSocketDisconnect:
+                    stop_event.set()
+                    break
+                except Exception:
+                    stop_event.set()
+                    break
+
+        hb_task = asyncio.create_task(_heartbeat())
+        disconnect_task = asyncio.create_task(_watch_disconnect())
+        stop_task = asyncio.create_task(stop_event.wait())
+        try:
+            event_task = asyncio.create_task(anext(event_stream))
+            while not stop_event.is_set():
+                done, _pending = await asyncio.wait(
+                    {event_task, stop_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if stop_task in done:
+                    break
+                try:
+                    event = event_task.result()
+                except StopAsyncIteration:
+                    break
+                event_task = asyncio.create_task(anext(event_stream))
+                try:
+                    await websocket.send_json(event)
+                except (RuntimeError, WebSocketDisconnect):
+                    stop_event.set()
+                    break
+        finally:
+            stop_event.set()
+            for task in (event_task, stop_task, hb_task, disconnect_task):
+                if task is not None:
+                    task.cancel()
+            for task in (event_task, stop_task, hb_task, disconnect_task):
+                if task is not None:
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+            with contextlib.suppress(Exception):
+                await event_stream.aclose()
+    finally:
+        with contextlib.suppress(Exception):
+            org_scope.__exit__(None, None, None)
+        with contextlib.suppress(RuntimeError, WebSocketDisconnect):
+            await websocket.close()
 
 
 @router.get(
@@ -565,8 +771,34 @@ async def update_workflow(
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Folder not found")
         workflow.folder_id = body.folder_id
     if body.graph is not None:
+        if (
+            body.expected_graph_revision is not None
+            and body.expected_graph_revision != workflow.graph_revision
+        ):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "Workflow draft changed before this save completed.",
+                    "expected_graph_revision": body.expected_graph_revision,
+                    "current_graph_revision": workflow.graph_revision,
+                },
+        )
         _validate_node_types(body.graph)
         workflow.draft_graph = body.graph.model_dump()
+        bump_graph_revision(workflow)
+        graph_patch = {
+            "type": "graph_replaced",
+            "node_count": len(workflow.draft_graph.get("nodes", [])),
+            "edge_count": len(workflow.draft_graph.get("edges", [])),
+        }
+        record_workflow_revision(
+            session,
+            workflow,
+            origin="ui",
+            operation="set_graph",
+            actor=actor,
+            patch=graph_patch,
+        )
     if body.active is not None:
         await sync_workflow_provider_triggers(
             session,
@@ -586,6 +818,23 @@ async def update_workflow(
         ) from exc
     if body.graph is not None:
         notify_sync_workers()
+        publish_workflow_graph_changed(
+            workflow,
+            origin="ui",
+            operation="set_graph",
+            actor=actor,
+            node_count=len(workflow.draft_graph.get("nodes", [])),
+            edge_count=len(workflow.draft_graph.get("edges", [])),
+            patch=graph_patch,
+        )
+    else:
+        publish_workflow_event(
+            workflow,
+            WORKFLOW_UPDATED,
+            origin="ui",
+            operation="update",
+            actor=actor,
+        )
     return await _detail(session, await _load(session, workflow_id))
 
 
@@ -814,6 +1063,16 @@ async def publish_workflow(
     await enqueue_github_push(session, workflow, "publish")
     await session.commit()
     notify_sync_workers()
+    publish_workflow_event(
+        workflow,
+        WORKFLOW_PUBLISHED,
+        origin="ui",
+        operation="publish",
+        actor=actor,
+        workflow_version_id=version.id,
+        version=next_version,
+        updated_deployments=updated_deployments,
+    )
     return WorkflowPublishResponse(
         workflow_id=workflow.id,
         workflow_version_id=version.id,
@@ -831,19 +1090,45 @@ async def create_ai_workflow_draft(
     workflow_id: str,
     body: AiWorkflowDraftRequest,
     session: AsyncSession = Depends(get_session),
+    actor: User | None = Depends(optional_current_user),
 ):
     workflow = await _load(session, workflow_id)
     draft = await build_workflow_draft(session, workflow_id, body)
     if body.apply:
         workflow.draft_graph = draft.graph.model_dump()
+        bump_graph_revision(workflow)
+        graph_patch = {
+            "type": "graph_replaced",
+            "node_count": len(workflow.draft_graph.get("nodes", [])),
+            "edge_count": len(workflow.draft_graph.get("edges", [])),
+        }
+        record_workflow_revision(
+            session,
+            workflow,
+            origin="ai",
+            operation="ai_draft",
+            actor=actor,
+            patch=graph_patch,
+            summary="AI workflow draft applied",
+        )
         await log_audit(
             session,
             "ai_draft",
             "workflow",
             workflow.id,
             "AI workflow draft applied",
+            actor_id=actor.id if actor else None,
+            actor_email=actor.email if actor else None,
         )
         await session.commit()
+        publish_workflow_graph_changed(
+            workflow,
+            origin="ai",
+            operation="ai_draft",
+            node_count=len(workflow.draft_graph.get("nodes", [])),
+            edge_count=len(workflow.draft_graph.get("edges", [])),
+            patch=graph_patch,
+        )
     return draft
 
 
@@ -863,6 +1148,13 @@ async def delete_workflow(
                     actor_email=actor.email if actor else None)
     await session.delete(workflow)
     await session.commit()
+    publish_workflow_event(
+        workflow,
+        WORKFLOW_DELETED,
+        origin="ui",
+        operation="delete",
+        actor=actor,
+    )
 
 
 @router.post(

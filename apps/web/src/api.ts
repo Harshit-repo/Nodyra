@@ -3,6 +3,10 @@ import type {
   AuditEvent,
   AuditEventInfo,
   AuditLogQuery,
+  ApiTokenCreate,
+  ApiTokenCreated,
+  ApiTokenInfo,
+  ApiTokenScopeInfo,
   AuthState,
   ArtifactInfo,
   AgenticBuildEvent,
@@ -15,6 +19,7 @@ import type {
   CredentialTestResponse,
   CredentialTypeInfo,
   Environment,
+  EnvironmentBuildJob,
   FolderInfo,
   GithubSyncConfig,
   GithubRepoValidation,
@@ -60,8 +65,10 @@ import type {
   UserAdminInfo,
   UserInfo,
   WorkflowDetail,
+  WorkflowEvent,
   WorkflowGraph,
   WorkflowPublishResponse,
+  WorkflowRevisionInfo,
   WorkflowSummary,
   WorkflowVersionInfo,
   RegistryPackage,
@@ -323,6 +330,7 @@ export interface WorkflowPatch {
   environment_id?: string | null;
   default_runner_pool_id?: string | null;
   graph?: WorkflowGraph;
+  expected_graph_revision?: number | null;
   error_workflow_id?: string | null;
   error_alerts?: Record<string, unknown>;
   run_timeout_seconds?: number | null;
@@ -435,6 +443,10 @@ export const api = {
 
   listWorkflowVersions: (workflowId: string) =>
     request<WorkflowVersionInfo[]>(`/workflows/${workflowId}/versions`),
+  listWorkflowRevisions: (workflowId: string, limit = 50) =>
+    request<WorkflowRevisionInfo[]>(
+      `/workflows/${workflowId}/revisions?limit=${encodeURIComponent(String(limit))}`,
+    ),
   getVersionGraph: (workflowId: string, versionId: string) =>
     request<{ graph: WorkflowGraph }>(`/workflows/${workflowId}/versions/${versionId}/graph`),
   listWorkflowProviderTriggers: (workflowId: string, includeDeleted = true) =>
@@ -449,6 +461,19 @@ export const api = {
 
   listEnvironments: () => requestAllPages<Environment>("/environments"),
   getEnvironment: (id: string) => request<Environment>(`/environments/${id}`),
+  listEnvironmentBuildJobs: (id: string, limit = 50, offset = 0) =>
+    request<{
+      items: EnvironmentBuildJob[];
+      total: number;
+      limit: number;
+      offset: number;
+    }>(
+      `/environments/${id}/build-jobs?limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`,
+    ),
+  getEnvironmentBuildJob: (environmentId: string, buildJobId: string) =>
+    request<EnvironmentBuildJob>(
+      `/environments/${environmentId}/build-jobs/${buildJobId}`,
+    ),
   listBackends: () =>
     request<{
       platform: string;
@@ -811,6 +836,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  listApiTokens: () => request<ApiTokenInfo[]>("/auth/api-tokens"),
+  listApiTokenScopes: () => request<ApiTokenScopeInfo[]>("/auth/api-token-scopes"),
+  createApiToken: (body: ApiTokenCreate) =>
+    request<ApiTokenCreated>("/auth/api-tokens", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  revokeApiToken: (tokenId: string) =>
+    request<void>(`/auth/api-tokens/${tokenId}`, { method: "DELETE" }),
   listMyOrgs: () => request<OrgInfo[]>("/me/orgs"),
   createOrg: (body: { name: string; slug?: string }) =>
     request<OrgInfo>("/orgs", { method: "POST", body: JSON.stringify(body) }),
@@ -1243,6 +1277,11 @@ function _runEventsBaseUrl(runId: string): string {
   return `${proto}//${window.location.host}/ws/runs/${runId}`;
 }
 
+function _workflowEventsBaseUrl(workflowId: string): string {
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}/ws/workflows/${workflowId}`;
+}
+
 /** @deprecated Use subscribeToRunEvents — it handles ticket-based auth. */
 export function runEventsUrl(runId: string): string {
   const token = getToken();
@@ -1327,6 +1366,80 @@ export function subscribeToRunEvents(
         // 1008 means the session expired/was rejected mid-stream — route the
         // user back to login instead of leaving the rest of the UI in a stale
         // signed-in state until the next REST call 401s (FE-4).
+        if (event.code === 1008) handleUnauthorized();
+        handlers.onClosed?.();
+        return;
+      }
+      if (attempt >= RUN_STREAM_BACKOFF_MS.length) {
+        handlers.onClosed?.();
+        return;
+      }
+      const delay = RUN_STREAM_BACKOFF_MS[attempt];
+      attempt += 1;
+      handlers.onReconnecting?.(attempt);
+      window.setTimeout(open, delay);
+    };
+  }
+
+  open();
+
+  return {
+    close() {
+      closedByCaller = true;
+      if (socket && socket.readyState === WebSocket.OPEN) socket.close(1000);
+      else if (socket) socket.close();
+    },
+  };
+}
+
+export function subscribeToWorkflowEvents(
+  workflowId: string,
+  handlers: {
+    onMessage: (data: WorkflowEvent) => void;
+    onReconnecting?: (attempt: number) => void;
+    onClosed?: () => void;
+  },
+): RunStreamHandle {
+  let socket: WebSocket | null = null;
+  let attempt = 0;
+  let closedByCaller = false;
+
+  async function open(): Promise<void> {
+    if (closedByCaller) return;
+    let wsUrl = _workflowEventsBaseUrl(workflowId);
+    const params = new URLSearchParams();
+    const orgId = getOrgId();
+    if (orgId) params.set("org_id", orgId);
+    const bearerToken = getToken();
+    const hasSession = Boolean(bearerToken) || getUser() !== null;
+    if (hasSession) {
+      try {
+        const { ticket } = await request<{ ticket: string }>("/auth/ws-ticket", {
+          method: "POST",
+        });
+        params.set("ticket", ticket);
+      } catch {
+        if (bearerToken) params.set("token", bearerToken);
+      }
+    }
+    const query = params.toString();
+    if (query) wsUrl += `?${query}`;
+    socket = new WebSocket(wsUrl);
+    socket.onmessage = (event) => {
+      attempt = 0;
+      try {
+        handlers.onMessage(JSON.parse(event.data as string) as WorkflowEvent);
+      } catch {
+        /* malformed event — drop */
+      }
+    };
+    socket.onclose = (event) => {
+      socket = null;
+      if (closedByCaller) {
+        handlers.onClosed?.();
+        return;
+      }
+      if (event.code === 1000 || event.code === 1008) {
         if (event.code === 1008) handleUnauthorized();
         handlers.onClosed?.();
         return;

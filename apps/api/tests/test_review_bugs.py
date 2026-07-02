@@ -226,11 +226,11 @@ async def test_mcp_publish_workflow_without_notes_succeeds(client: AsyncClient):
     await client.put(f"/workflows/{wf_id}", json={"graph": TRIGGER_GRAPH})
 
     async with retention.SessionLocal() as session:
-        # Simulate an MCP call with NO 'notes' key in args
+        # Simulate an approved MCP call with NO 'notes' key in args.
         result = await mcp_tools._publish_workflow(
             session,
             user=None,
-            args={"workflow_id": wf_id},  # notes intentionally omitted
+            args={"workflow_id": wf_id, "approved_by_user": True},  # notes intentionally omitted
         )
 
     assert "workflow_version_id" in result, (

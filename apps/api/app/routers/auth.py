@@ -18,6 +18,7 @@ from app.schemas import (
     ApiTokenCreate,
     ApiTokenCreated,
     ApiTokenInfo,
+    ApiTokenScopeInfo,
     AuthRequiredResponse,
     LoginRequest,
     PageResponse,
@@ -90,6 +91,23 @@ async def list_api_tokens(
     )
 
 
+@router.get("/api-token-scopes", response_model=list[ApiTokenScopeInfo])
+async def list_api_token_scopes(
+    user: User = Depends(current_user),
+    org_id: str | None = Depends(resolve_org),
+    session: AsyncSession = Depends(get_session),
+) -> list[ApiTokenScopeInfo]:
+    role = await _role_for(session, user, org_id)
+    return [
+        ApiTokenScopeInfo(
+            scope=scope,
+            minimum_role=minimum_role,
+            grantable=role_allows(role, minimum_role),
+        )
+        for scope, minimum_role in sorted(_PERMISSION_MIN_ROLE.items())
+    ]
+
+
 @router.post("/api-tokens", response_model=ApiTokenCreated, status_code=201)
 async def create_api_token(
     body: ApiTokenCreate,
@@ -119,7 +137,7 @@ async def create_api_token(
     row = ApiToken(
         org_id=org_id or DEFAULT_ORG_ID,
         user_id=user.id,
-        name=body.name.strip(),
+        name=body.name,
         token_hash=hashlib.sha256(secret.encode()).hexdigest(),
         token_prefix=secret[:16],
         scopes=normalized_scopes,
@@ -127,6 +145,16 @@ async def create_api_token(
     )
     session.add(row)
     try:
+        await session.flush()
+        await log_audit(
+            session,
+            "create",
+            "api_token",
+            row.id,
+            f"{row.name} scopes={','.join(normalized_scopes)} prefix={row.token_prefix}",
+            actor_id=user.id,
+            actor_email=user.email,
+        )
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
@@ -154,6 +182,15 @@ async def revoke_api_token(
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "API token not found")
     row.revoked_at = datetime.now(UTC)
+    await log_audit(
+        session,
+        "revoke",
+        "api_token",
+        row.id,
+        f"{row.name} prefix={row.token_prefix}",
+        actor_id=user.id,
+        actor_email=user.email,
+    )
     await session.commit()
     return Response(status_code=204)
 
