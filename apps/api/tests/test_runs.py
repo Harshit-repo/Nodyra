@@ -35,6 +35,17 @@ GRAPH = {
 }
 
 
+async def _poll_until(fetch, predicate, *, timeout: float = 8.0, interval: float = 0.05):
+    deadline = asyncio.get_running_loop().time() + timeout
+    value = await fetch()
+    while not predicate(value):
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError(f"timed out waiting; last value: {value!r}")
+        await asyncio.sleep(interval)
+        value = await fetch()
+    return value
+
+
 async def _workflow_with_graph(client: AsyncClient) -> str:
     workflow_id = (await client.post("/workflows", json={"name": "Run"})).json()["id"]
     await client.put(f"/workflows/{workflow_id}", json={"graph": GRAPH})
@@ -561,16 +572,19 @@ async def test_running_run_can_be_cancelled(client: AsyncClient) -> None:
         await client.put(f"/workflows/{workflow_id}", json={"graph": slow_graph})
 
         run_id = (await client.post(f"/workflows/{workflow_id}/run", json={})).json()["run_id"]
+        await _poll_until(
+            lambda: client.get(f"/runs/{run_id}"),
+            lambda response: response.json()["status"] == "running",
+        )
         cancel = await client.post(f"/runs/{run_id}/cancel")
         assert cancel.status_code == 200
         assert cancel.json()["status"] in {"cancelling", "cancelled"}
 
-        for _ in range(60):
-            run = (await client.get(f"/runs/{run_id}")).json()
-            if run["status"] == "cancelled":
-                break
-            await asyncio.sleep(0.05)
-
+        run_response = await _poll_until(
+            lambda: client.get(f"/runs/{run_id}"),
+            lambda response: response.json()["status"] == "cancelled",
+        )
+        run = run_response.json()
         assert run["status"] == "cancelled"
     finally:
         settings.run_synchronously = previous

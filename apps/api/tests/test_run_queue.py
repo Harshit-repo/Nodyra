@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import pytest_asyncio
 from sqlalchemy import select
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -398,6 +399,14 @@ async def test_requeue_expired_leases(session) -> None:
     )
     assert entry.status == "queued"
     assert entry.leased_by is None
+
+
+def test_requeue_expired_leases_locks_rows_on_postgres() -> None:
+    from app.services.queue import _expired_lease_stmt
+
+    stmt = _expired_lease_stmt(datetime.now(UTC))
+    sql = str(stmt.compile(dialect=postgresql.dialect()))
+    assert "FOR UPDATE SKIP LOCKED" in sql
 
 
 @pytest.mark.asyncio

@@ -65,3 +65,8 @@ apps/web/playwright-report/
 
 # Playwright MCP session artifacts
 .playwright-mcp/
+
+# Session artifacts — screenshots and scratch dirs dropped at repo root
+/*.png
+.tmp/
+.fable5-tmp/

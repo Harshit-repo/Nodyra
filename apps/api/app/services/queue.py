@@ -558,20 +558,24 @@ async def cancel(session: AsyncSession, *, run_id: str) -> bool:
     return True
 
 
+def _expired_lease_stmt(moment: datetime):
+    return (
+        select(RunQueueEntry)
+        .where(
+            RunQueueEntry.status == "leased",
+            RunQueueEntry.lease_expires_at.is_not(None),
+            RunQueueEntry.lease_expires_at <= moment,
+        )
+        .with_for_update(skip_locked=True)
+    )
+
+
 async def requeue_expired_leases(session: AsyncSession, *, now: datetime | None = None) -> int:
     """Find leased entries whose lease has expired (worker presumed lost) and
     requeue them if attempts remain, otherwise fail them. Returns the number of
     entries acted on."""
     moment = _now(now)
-    leased = (
-        await session.scalars(
-            select(RunQueueEntry).where(
-                RunQueueEntry.status == "leased",
-                RunQueueEntry.lease_expires_at.is_not(None),
-                RunQueueEntry.lease_expires_at <= moment,
-            )
-        )
-    ).all()
+    leased = (await session.scalars(_expired_lease_stmt(moment))).all()
 
     acted = 0
     for entry in leased:

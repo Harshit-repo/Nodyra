@@ -90,15 +90,17 @@ async def discover_tools(
     conn: MCPConnection, *, decrypted_secret: str | None
 ) -> list[dict]:
     """Call tools/list on the remote MCP server. Returns raw tool manifests."""
-    from noodle_nodes.http_security import assert_public_http_url
+    from noodle_nodes.httpx_security import pinned_request_kwargs, resolve_pinned
 
-    assert_public_http_url(conn.url, context="MCP connection")
+    pinned = resolve_pinned(conn.url, context="MCP connection")
+    extra = pinned_request_kwargs(pinned)
     headers = _build_auth_headers(conn, decrypted_secret)
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
-            conn.url,
+            pinned.url,
             json={"jsonrpc": "2.0", "id": next(_rpc_id), "method": "tools/list", "params": {}},
-            headers={"Content-Type": "application/json", **headers},
+            headers={"Content-Type": "application/json", **headers, **extra["headers"]},
+            extensions=extra["extensions"],
         )
         resp.raise_for_status()
         data = resp.json()
@@ -116,20 +118,22 @@ async def call_tool(
     timeout_seconds: int = 30,
 ) -> Any:
     """Execute a single MCP tool call and return its result."""
-    from noodle_nodes.http_security import assert_public_http_url
+    from noodle_nodes.httpx_security import pinned_request_kwargs, resolve_pinned
 
-    assert_public_http_url(conn.url, context="MCP connection")
+    pinned = resolve_pinned(conn.url, context="MCP connection")
+    extra = pinned_request_kwargs(pinned)
     headers = _build_auth_headers(conn, decrypted_secret)
     async with httpx.AsyncClient(timeout=timeout_seconds) as client:
         resp = await client.post(
-            conn.url,
+            pinned.url,
             json={
                 "jsonrpc": "2.0",
                 "id": next(_rpc_id),
                 "method": "tools/call",
                 "params": {"name": tool_name, "arguments": arguments},
             },
-            headers={"Content-Type": "application/json", **headers},
+            headers={"Content-Type": "application/json", **headers, **extra["headers"]},
+            extensions=extra["extensions"],
         )
         resp.raise_for_status()
         data = resp.json()

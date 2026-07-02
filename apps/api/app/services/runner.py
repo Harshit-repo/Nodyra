@@ -156,6 +156,27 @@ _extract_webhook_response = run_persistence._extract_webhook_response
 _MAX_CHECKPOINT_BYTES: int = 1_048_576  # 1 MiB per-run cap
 
 
+class _CheckpointDebouncer:
+    """Coalesce per-node checkpoint commits while preserving a final flush."""
+
+    def __init__(self, interval: float = 0.25, *, clock=None) -> None:
+        self._interval = interval
+        self._clock = clock or time.monotonic
+        self._last_persist: float | None = None
+        self.has_deferred = False
+
+    def should_persist(self) -> bool:
+        now = self._clock()
+        if self._last_persist is None or now - self._last_persist >= self._interval:
+            return True
+        self.has_deferred = True
+        return False
+
+    def mark_persisted(self) -> None:
+        self._last_persist = self._clock()
+        self.has_deferred = False
+
+
 def _serialize_checkpoint_outputs(
     node_outputs: dict[str, dict],
 ) -> dict[str, dict]:
@@ -1087,6 +1108,8 @@ async def _execute_run_impl(
     # each save (O(1) per node instead of O(n²)) but always persist the
     # FULL dict so crash recovery works from a single column read.
     _accumulated_checkpoint: dict[str, dict] = {}
+    checkpoint_debouncer = _CheckpointDebouncer()
+    last_checkpoint_node_id: str | None = None
     artifact_refs: list[dict] = []
     secret_values: list[str] = []
     # A3: sub-workflow context (draft preference, depth/chain seed) travels
@@ -1112,7 +1135,7 @@ async def _execute_run_impl(
     )
 
     async def on_event(event: dict) -> None:
-        nonlocal run_event_sequence
+        nonlocal last_checkpoint_node_id, run_event_sequence
         clean = dict(event)
         if "outputs" in clean:
             clean["outputs"] = serialize_value(clean["outputs"])
@@ -1157,16 +1180,19 @@ async def _execute_run_impl(
         # Track successful node completions for durable execution checkpoints.
         if clean.get("type") == "node_finished" and clean.get("status") == "success":
             completed_node_ids.add(clean["node_id"])
-            # Save checkpoint after every completed node.
+            last_checkpoint_node_id = clean["node_id"]
             try:
-                await _save_checkpoint(
-                    run_id,
-                    {nid: ev.get("outputs", {}) for nid, ev in node_events.items()},
-                    completed_node_ids,
-                    last_node_id=clean["node_id"],
-                    _accumulated=_accumulated_checkpoint,
-                )
+                if checkpoint_debouncer.should_persist():
+                    await _save_checkpoint(
+                        run_id,
+                        {nid: ev.get("outputs", {}) for nid, ev in node_events.items()},
+                        completed_node_ids,
+                        last_node_id=clean["node_id"],
+                        _accumulated=_accumulated_checkpoint,
+                    )
+                    checkpoint_debouncer.mark_persisted()
             except Exception:  # noqa: BLE001
+                checkpoint_debouncer.has_deferred = True
                 logger.exception("run_id=%s checkpoint save failed", run_id)
         if clean.get("type") in AGENT_EVENT_TYPES:
             run_event_sequence += 1
@@ -1447,6 +1473,19 @@ async def _execute_run_impl(
                 "event": _cap_output(error_payload, output_cap),
             }
         )
+
+    if checkpoint_debouncer.has_deferred and last_checkpoint_node_id is not None:
+        try:
+            await _save_checkpoint(
+                run_id,
+                {nid: ev.get("outputs", {}) for nid, ev in node_events.items()},
+                completed_node_ids,
+                last_node_id=last_checkpoint_node_id,
+                _accumulated=_accumulated_checkpoint,
+            )
+            checkpoint_debouncer.mark_persisted()
+        except Exception:  # noqa: BLE001
+            logger.exception("run_id=%s final checkpoint flush failed", run_id)
 
     # Publish the terminal event BEFORE the DB session so that a DB failure
     # (e.g. a connection reset during the persist below) never leaves the
