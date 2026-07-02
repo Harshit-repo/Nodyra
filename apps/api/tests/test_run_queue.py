@@ -660,3 +660,62 @@ async def test_reenqueue_replaces_trace_context(session) -> None:
     )
     await session.commit()
     assert revived.trace_context == {"traceparent": "00-new-new-01"}
+
+
+@pytest.mark.asyncio
+async def test_lease_exclude_local_skips_local_head_of_queue(session) -> None:
+    """Regression: a saturated local pool must not head-of-line block remote
+    dispatches. With ``exclude_local=True`` the lease skips local entries —
+    even older, otherwise-first ones — and returns the remote-pool entry."""
+    from app.models import RunnerPool
+    from app.services import queue as q
+
+    docker_pool = RunnerPool(name="dockers", provider="docker")
+    session.add(docker_pool)
+    await session.flush()
+
+    older = datetime.now(UTC) - timedelta(seconds=60)
+    await q.enqueue(
+        session, run_id="r-local-first", workflow_id="w1", available_at=older
+    )
+    await q.enqueue(
+        session,
+        run_id="r-docker-second",
+        workflow_id="w1",
+        runner_pool_id=docker_pool.id,
+    )
+    await session.commit()
+
+    entry = await q.lease(session, worker_id="w", exclude_local=True)
+    assert entry is not None and entry.run_id == "r-docker-second"
+
+    # The local entry is untouched and still leaseable normally.
+    entry = await q.lease(session, worker_id="w")
+    assert entry is not None and entry.run_id == "r-local-first"
+
+
+@pytest.mark.asyncio
+async def test_lease_exclude_local_composes_with_provider_filter(session) -> None:
+    """exclude_local + a provider capability set (worker role: local+docker)
+    still leases the docker entry while dropping local rows."""
+    from app.models import RunnerPool
+    from app.services import queue as q
+
+    docker_pool = RunnerPool(name="dockers", provider="docker")
+    session.add(docker_pool)
+    await session.flush()
+
+    older = datetime.now(UTC) - timedelta(seconds=60)
+    await q.enqueue(session, run_id="r-local", workflow_id="w1", available_at=older)
+    await q.enqueue(
+        session, run_id="r-docker", workflow_id="w1", runner_pool_id=docker_pool.id
+    )
+    await session.commit()
+
+    entry = await q.lease(
+        session,
+        worker_id="w",
+        providers=frozenset({"local", "docker"}),
+        exclude_local=True,
+    )
+    assert entry is not None and entry.run_id == "r-docker"

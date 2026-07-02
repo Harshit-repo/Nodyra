@@ -958,6 +958,10 @@ class _PreparedRunContext:
     workflow_modules: list[dict]
     secret_values: list[str]
     output_cap: int
+    # Live-settings artifact caps; None falls back to boot settings inside
+    # make_artifact_store.
+    max_artifact_bytes: int | None = None
+    max_artifacts_per_run: int | None = None
 
 
 async def _prepare_run_context(
@@ -971,11 +975,15 @@ async def _prepare_run_context(
 
     Extracted from ``_execute_run_impl`` to keep the hot path readable.
     """
-    # Live settings for output cap (best-effort).
+    # Live settings for output/artifact caps (best-effort).
     output_cap = settings.max_output_bytes
+    max_artifact_bytes: int | None = None
+    max_artifacts_per_run: int | None = None
     try:
         live = await get_live_settings()
         output_cap = live.max_output_bytes
+        max_artifact_bytes = live.max_artifact_bytes
+        max_artifacts_per_run = live.max_artifacts_per_run
     except Exception:  # noqa: BLE001
         pass
 
@@ -1047,6 +1055,8 @@ async def _prepare_run_context(
         workflow_modules=workflow_modules,
         secret_values=secret_values,
         output_cap=output_cap,
+        max_artifact_bytes=max_artifact_bytes,
+        max_artifacts_per_run=max_artifacts_per_run,
     )
 
 
@@ -1175,12 +1185,12 @@ async def _execute_run_impl(
 
     broker.publish(run_id, {"type": "run_started", "run_id": run_id})
     status = "success"
-    # ``live`` is read inside the cancellation try-block below so a cancel
-    # arriving during the DB read still routes through the outer except and
-    # the run row reaches its terminal status. Boot defaults are kept for the
-    # output cap as a safety fallback.
+    # Boot defaults are kept for the output cap as a safety fallback; the
+    # live-settings overlay is loaded inside the try-block below (via
+    # _prepare_run_context) so a cancel arriving during the DB read still
+    # routes through the outer except and the run reaches a terminal status.
     output_cap = settings.max_output_bytes
-    live: Any = None
+    prep: _PreparedRunContext | None = None
 
     workflow_modules: list[dict] = []
     try:
@@ -1334,8 +1344,8 @@ async def _execute_run_impl(
                 make_artifact_store(
                     run_id,
                     org_id=_run_org,
-                    max_bytes=live.max_artifact_bytes if live is not None else None,
-                    max_count=live.max_artifacts_per_run if live is not None else None,
+                    max_bytes=prep.max_artifact_bytes if prep is not None else None,
+                    max_count=prep.max_artifacts_per_run if prep is not None else None,
                 )
             )
             try:
@@ -1361,6 +1371,8 @@ async def _execute_run_impl(
                     from app.db import SessionLocal as _SessionLocal
                     from app.services.mcp_client import (
                         _load_conn_with_secret as _load_conn,
+                    )
+                    from app.services.mcp_client import (
                         call_tool as _call_tool,
                     )
 

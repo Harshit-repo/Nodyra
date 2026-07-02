@@ -117,6 +117,20 @@ async def test_drain_status_default_false(client: AsyncClient) -> None:
     assert resp.json() == {'draining': False}
 
 
+async def test_ops_monitoring_requires_auth_when_auth_enabled(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """Regression: the ops monitoring surface must stay guarded on
+    auth-enabled instances (81c0e690's intent) while remaining reachable
+    anonymously when auth is off (covered by the tests above)."""
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "auth_required", True)
+    for path in ("/system/status", "/ops/runtime-mode", "/ops/queue", "/ops/drain"):
+        response = await client.get(path)
+        assert response.status_code == 401, path
+
+
 async def test_drain_toggle_round_trips(client: AsyncClient) -> None:
     from app.config import settings as app_settings
     try:

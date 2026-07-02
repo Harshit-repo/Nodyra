@@ -285,6 +285,7 @@ async def lease(
     lease_seconds: int | None = None,
     now: datetime | None = None,
     providers: frozenset[str] | None = None,
+    exclude_local: bool = False,
 ) -> RunQueueEntry | None:
     """Claim the next eligible queued entry for ``worker_id``.
 
@@ -329,6 +330,13 @@ async def lease(
                 )
                 clauses.append(RunQueueEntry.runner_pool_id.in_(pool_ids))
             stmt = stmt.where(or_(*clauses))
+        # ``exclude_local`` narrows a tick to remote-pool entries once the
+        # local pool is saturated, so a local run at the head of the queue
+        # can't head-of-line block runner-pool dispatches (see the dispatch
+        # loop). ANDed after the provider filter: local rows drop out, the
+        # remote clauses keep matching.
+        if exclude_local:
+            stmt = stmt.where(RunQueueEntry.runner_pool_id.is_not(None))
         # Postgres: lock the candidate row and skip ones already locked by a
         # peer worker so concurrent leases don't hand the same entry out
         # twice. SQLite has no row locking, so only request it where
@@ -817,9 +825,15 @@ async def run_queue_dispatch_loop() -> None:
                 # semaphore. Remote runs aren't subject to this (their
                 # capacity is enforced by the remote pool / _QueuedError).
                 local_budget = runtime_pool.available_global_slots()
+                exclude_local = False
                 for _ in range(settings.queue_max_dispatches_per_tick):
                     async with SessionLocal() as session:
-                        entry = await lease(session, worker_id=worker, providers=providers)
+                        entry = await lease(
+                            session,
+                            worker_id=worker,
+                            providers=providers,
+                            exclude_local=exclude_local,
+                        )
                         if entry is None:
                             await session.rollback()
                             break
@@ -827,9 +841,15 @@ async def run_queue_dispatch_loop() -> None:
                         if is_local and local_budget <= 0:
                             # No local capacity — drop the lease (rollback
                             # leaves it ``queued`` with attempts unchanged) and
-                            # try again on a later tick when a slot frees.
+                            # keep leasing REMOTE entries only for the rest of
+                            # this tick. Breaking here instead would let one
+                            # saturated local pool head-of-line block every
+                            # runner-pool dispatch behind it (the lease order
+                            # is stable, so each tick would re-hit the same
+                            # local entry and starve remote runs).
                             await session.rollback()
-                            break
+                            exclude_local = True
+                            continue
                         run_id = entry.run_id
                         await session.commit()
                     if is_local:

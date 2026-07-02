@@ -22,9 +22,15 @@ from app.schemas import (
     QueueStats,
     RuntimeModeStatus,
 )
-from app.security import current_user, require_permission
-from app.models import User
+from app.security import require_permission, require_role
 from app.services import queue as run_queue
+
+# require_role (not bare current_user): 401s without a token when
+# auth_required is on, but keeps anonymous access on open (auth-off)
+# instances — same convention as every other read endpoint. A strict
+# current_user dependency here broke the SPA's ops surface (which only
+# attaches a Bearer token after login) on no-auth self-hosted installs.
+_viewer_dep = Depends(require_role("viewer"))
 
 router = APIRouter(tags=["ops"])
 
@@ -161,10 +167,9 @@ async def ops_health(
     return health
 
 
-@router.get("/system/status")
+@router.get("/system/status", dependencies=[_viewer_dep])
 async def system_status(
     session: AsyncSession = Depends(get_session),
-    _user: User = Depends(current_user),
 ) -> dict:
     counts = await _counts(session)
     return {
@@ -177,10 +182,11 @@ async def system_status(
     }
 
 
-@router.get("/ops/runtime-mode", response_model=RuntimeModeStatus)
+@router.get(
+    "/ops/runtime-mode", response_model=RuntimeModeStatus, dependencies=[_viewer_dep]
+)
 async def runtime_mode(
     session: AsyncSession = Depends(get_session),
-    _user: User = Depends(current_user),
 ) -> RuntimeModeStatus:
     """Report the active runtime topology and any production misconfigurations."""
     try:
@@ -205,10 +211,9 @@ async def runtime_mode(
     )
 
 
-@router.get("/ops/queue", response_model=QueueStats)
+@router.get("/ops/queue", response_model=QueueStats, dependencies=[_viewer_dep])
 async def queue_stats(
     session: AsyncSession = Depends(get_session),
-    _user: User = Depends(current_user),
 ) -> QueueStats:
     """Aggregate run-queue health for the ops/backpressure surface.
 
@@ -219,10 +224,8 @@ async def queue_stats(
     return QueueStats(**data)
 
 
-@router.get("/ops/drain")
-async def drain_status(
-    _user: User = Depends(current_user),
-) -> dict:
+@router.get("/ops/drain", dependencies=[_viewer_dep])
+async def drain_status() -> dict:
     """Whether the dispatch loop is currently draining (no new leases)."""
     return {"draining": settings.queue_drain}
 
