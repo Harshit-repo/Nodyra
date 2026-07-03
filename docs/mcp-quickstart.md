@@ -9,15 +9,15 @@ workflows you can watch live on the canvas.
 ## 1. Create an API token
 
 Settings -> API tokens -> New token. Scopes: `workflow:read`, `workflow:write`,
-`workflow:run` (add `deployment:manage` if the agent should publish). Copy the
-`ndpat_...` value.
+`workflow:run` (add `workflow:publish` and `deployment:write` if the agent
+should publish or manage deployments). Copy the `ndpat_...` value.
 
 ## 2. Connect your agent
 
 **Claude Code:**
 
 ```bash
-claude mcp add nodyra --transport http http://localhost:8000/mcp \
+claude mcp add --transport http nodyra http://localhost:8000/mcp \
   --header "Authorization: Bearer ndpat_YOUR_TOKEN"
 ```
 
@@ -45,10 +45,14 @@ node, and runs it". Useful tool names: `list_workflows`, `create_workflow`,
 ## 4. Safety model
 
 - Tokens are org-scoped; tools honour the token's scopes.
+- All tool calls hit the audit log like any API call.
+- `/mcp` is rate-limited at 120 requests per minute per principal.
 - Destructive tools (`delete_workflow`, rollbacks) require an explicit
   `approve: true` argument.
 - Graph edits accept `expected_graph_revision` for optimistic concurrency, so
   agents editing alongside humans get a conflict error instead of clobbering.
+- If `auth_required=false`, read-only MCP tools are anonymous by design. Put
+  `/mcp` behind an authenticating proxy before exposing it publicly.
 
 ## Expose a workflow AS an MCP tool
 

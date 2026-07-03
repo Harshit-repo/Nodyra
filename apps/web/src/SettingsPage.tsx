@@ -1322,6 +1322,49 @@ function McpServerPanel() {
   );
 }
 
+function McpAgentQuickstart() {
+  const [copied, setCopied] = useState(false);
+  const snippet = `{
+  "mcpServers": {
+    "nodyra": {
+      "type": "http",
+      "url": "${window.location.origin}/mcp",
+      "headers": { "Authorization": "Bearer <your-api-token>" }
+    }
+  }
+}`;
+
+  async function copyConfig(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(snippet);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <SettingsCard
+      id="mcp-agent-quickstart"
+      title="Connect an AI agent"
+      description="Claude, Cursor, or any MCP client can build and run workflows on this instance."
+      icon={Plug}
+    >
+      <div className="nodyra-mcp-snippet">
+        <div className="nodyra-mcp-snippet-head">
+          <strong>Generic MCP JSON</strong>
+          <button className="btn btn-sm" type="button" onClick={() => void copyConfig()}>
+            <Copy size={15} aria-hidden="true" />
+            {copied ? "Copied" : "Copy config"}
+          </button>
+        </div>
+        <pre>{snippet}</pre>
+      </div>
+    </SettingsCard>
+  );
+}
+
 function sandboxStatusCopy(status: SandboxStatus | undefined): {
   label: string;
   tone: "active" | "warn" | "off";
@@ -1527,6 +1570,7 @@ export function SettingsPage() {
           <div className="nodyra-settings-content">
             <ProfilePanel workspaceRole={workspaceRole} />
             <AppearancePanel />
+            <McpAgentQuickstart />
             <McpAccessPanel />
             <McpServerPanel />
             {canAdmin && <WorkspaceSettingsPanel />}

@@ -160,4 +160,18 @@ describe("SettingsPage", () => {
     expect(await screen.findByText("Sandboxed execution is off")).toBeTruthy();
     expect(await screen.findByRole("heading", { name: "Plan & license" })).toBeTruthy();
   });
+
+  it("shows the MCP agent quickstart with the instance URL", async () => {
+    setUser(viewer);
+    vi.spyOn(api, "authRequired").mockResolvedValue(authFor(viewer));
+    vi.spyOn(api, "listMyOrgs").mockResolvedValue([
+      { id: "default", name: "Acme", slug: "acme", status: "active", role: "admin" },
+    ]);
+
+    renderSettings();
+
+    expect(await screen.findByText("Connect an AI agent")).toBeTruthy();
+    expect(screen.getAllByText(/mcpServers/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Bearer <your-api-token>/)).toBeTruthy();
+  });
 });

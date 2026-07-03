@@ -11,6 +11,18 @@ build workflows on a React Flow canvas, run them in isolated Python
 environments, inspect every node input/output, persist artifacts outside the
 database, and publish versioned workflow releases for production execution.
 
+## Let Claude build your workflows
+
+Nodyra has a first-class MCP server. Connect Claude Code in one line:
+
+```bash
+claude mcp add --transport http nodyra https://your-instance/mcp \
+  --header "Authorization: Bearer <api-token>"
+```
+
+Then ask for the workflow you want and watch it appear on the canvas: editable,
+testable, and deployable. See the [full guide](docs/mcp-quickstart.md).
+
 ## Security model
 
 Nodyra supports three execution postures. Pick one per deployment:
