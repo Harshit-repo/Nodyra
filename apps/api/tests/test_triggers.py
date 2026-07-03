@@ -923,6 +923,74 @@ async def test_webhook_hmac_verification_checks_signature(
     assert len(ok.json()["runs"]) == 1
 
 
+def _signed_headers(body: bytes, secret: str) -> dict[str, str]:
+    return {
+        "x-signature": hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    }
+
+
+def test_hmac_rejects_stale_timestamp() -> None:
+    import time
+
+    body = b'{"order": 42}'
+    secret = "whsec_test"
+    node_params = {
+        "hmac_verification": "on",
+        "hmac_header": "X-Signature",
+        "hmac_timestamp_header": "X-Timestamp",
+        "hmac_max_age_seconds": 300,
+    }
+    headers = _signed_headers(body, secret)
+    headers["x-timestamp"] = str(int(time.time()) - 3600)
+    assert (
+        triggers._webhook_hmac_passes(
+            node_params, {"hmac_secret": secret}, headers, body
+        )
+        is False
+    )
+
+
+def test_hmac_accepts_fresh_timestamp() -> None:
+    import time
+
+    body = b'{"order": 42}'
+    secret = "whsec_test"
+    node_params = {
+        "hmac_verification": "on",
+        "hmac_header": "X-Signature",
+        "hmac_timestamp_header": "X-Timestamp",
+        "hmac_max_age_seconds": 300,
+    }
+    headers = _signed_headers(body, secret)
+    headers["x-timestamp"] = str(int(time.time()))
+    assert (
+        triggers._webhook_hmac_passes(
+            node_params, {"hmac_secret": secret}, headers, body
+        )
+        is True
+    )
+
+
+def test_hmac_missing_timestamp_header_rejected_when_configured() -> None:
+    body = b'{"order": 42}'
+    secret = "whsec_test"
+    node_params = {
+        "hmac_verification": "on",
+        "hmac_header": "X-Signature",
+        "hmac_timestamp_header": "X-Timestamp",
+        "hmac_max_age_seconds": 300,
+    }
+    assert (
+        triggers._webhook_hmac_passes(
+            node_params,
+            {"hmac_secret": secret},
+            _signed_headers(body, secret),
+            body,
+        )
+        is False
+    )
+
+
 async def test_webhook_ip_allowlist_rejects_outside_caller(
     client: AsyncClient,
 ) -> None:

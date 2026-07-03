@@ -672,12 +672,12 @@ def test_stream_large_file_auto_format_json_extension(store_ctx) -> None:
 # read_parquet_file / write_parquet_file
 # ---------------------------------------------------------------------------
 
-import pathlib as _pathlib
+import pathlib as _pathlib  # noqa: E402 — section-local import, kept with its tests
 
-import pyarrow as _pa
-import pyarrow.parquet as _pq
+import pyarrow as _pa  # noqa: E402
+import pyarrow.parquet as _pq  # noqa: E402
 
-from noodle_nodes.file_nodes import read_parquet_file, write_parquet_file
+from noodle_nodes.file_nodes import read_parquet_file, write_parquet_file  # noqa: E402
 
 
 def _write_test_parquet(path: _pathlib.Path) -> None:
@@ -749,9 +749,9 @@ def test_write_parquet_rejects_none_input(store_ctx) -> None:
 # read_excel_file / write_excel_file
 # ---------------------------------------------------------------------------
 
-import openpyxl as _openpyxl
+import openpyxl as _openpyxl  # noqa: E402 — section-local import, kept with its tests
 
-from noodle_nodes.file_nodes import read_excel_file, write_excel_file
+from noodle_nodes.file_nodes import read_excel_file, write_excel_file  # noqa: E402
 
 
 def _write_test_excel(path: _pathlib.Path) -> None:

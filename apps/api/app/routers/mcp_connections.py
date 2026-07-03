@@ -36,6 +36,25 @@ def _org() -> str:
     return oid
 
 
+def _validated_allowed_tools(value: Any) -> list[str] | None:
+    """422 unless ``allowed_tools`` is null or a list of non-empty strings.
+
+    A non-list value must never reach ``ensure_tool_allowed`` — Python's
+    ``in`` operator on a stored string would silently turn the allowlist
+    into substring matching.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, list) or not all(
+        isinstance(t, str) and t.strip() for t in value
+    ):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "allowed_tools must be null or a list of non-empty tool-name strings",
+        )
+    return [t.strip() for t in value]
+
+
 @router.get("")
 async def list_mcp_connections(
     session: AsyncSession = Depends(get_session),
@@ -91,6 +110,8 @@ async def create_mcp_connection(
         auth_type=auth_type,
         auth_secret=encrypted_secret,
         headers=body.get("headers") or {},
+        enabled=bool(body.get("enabled", True)),
+        allowed_tools=_validated_allowed_tools(body.get("allowed_tools")),
     )
     session.add(conn)
     await session.commit()
@@ -157,6 +178,10 @@ async def update_mcp_connection(
         )
     if "headers" in body:
         conn.headers = body["headers"] or {}
+    if "enabled" in body:
+        conn.enabled = bool(body["enabled"])
+    if "allowed_tools" in body:
+        conn.allowed_tools = _validated_allowed_tools(body["allowed_tools"])
 
     await session.commit()
     await session.refresh(conn)
@@ -236,6 +261,8 @@ def _row_to_dict(conn: MCPConnection) -> dict:
         "auth_type": conn.auth_type,
         "auth_secret": "***redacted***" if conn.auth_secret else None,
         "headers": conn.headers or {},
+        "enabled": conn.enabled,
+        "allowed_tools": conn.allowed_tools,
         "tool_cache": conn.tool_cache,
         "last_synced_at": (
             conn.last_synced_at.isoformat() if conn.last_synced_at else None

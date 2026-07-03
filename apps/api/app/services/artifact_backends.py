@@ -13,6 +13,7 @@ specific backend's internals. ``get_backend(name)`` is the single factory.
 from __future__ import annotations
 
 import shutil
+import time
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -160,6 +161,7 @@ class LocalBackend:
                         break
             except OSError:
                 pass
+        invalidate_stats_cache()
 
     def open_download(self, artifact: Artifact) -> ArtifactDownload:
         path = self._path(artifact)
@@ -176,6 +178,15 @@ class LocalBackend:
         return None
 
     def stats(self) -> dict[str, Any]:
+        global _stats_cache
+        now = time.monotonic()
+        if _stats_cache is not None and now - _stats_cache[0] < _STATS_TTL_SECONDS:
+            return dict(_stats_cache[1])
+        result = self._stats_uncached()
+        _stats_cache = (now, dict(result))
+        return result
+
+    def _stats_uncached(self) -> dict[str, Any]:
         base = _artifact_base_dir()
         if not base.exists():
             return {"backend": self.name, "base_dir": str(base), "file_count": 0, "bytes": 0}
@@ -207,6 +218,7 @@ class LocalBackend:
                 pass
             except OSError:
                 pass
+        invalidate_stats_cache()
 
     def upload_from_local(self, artifact: Artifact, local_path: Path) -> None:
         # Bytes are already on the local FS; nothing to do.
@@ -214,6 +226,21 @@ class LocalBackend:
 
 
 # --- Registry ----------------------------------------------------------------
+
+_STATS_TTL_SECONDS = 60.0
+_stats_cache: tuple[float, dict[str, Any]] | None = None
+
+
+def invalidate_stats_cache() -> None:
+    """Drop the cached stats() snapshot.
+
+    Called after backend mutations (delete / delete_run) so ops surfaces see
+    deletions promptly. Writers outside this module (LocalArtifactStore in the
+    engine) don't invalidate — new files may take up to the TTL to appear.
+    """
+    global _stats_cache
+    _stats_cache = None
+
 
 _BACKENDS: dict[str, ArtifactBackend] = {}
 
@@ -248,6 +275,8 @@ def get_backend(name: str | None = None) -> ArtifactBackend:
 
 def reset_backends_for_tests() -> None:
     """Drop the cached singletons. Tests that monkeypatch settings call this."""
+    global _stats_cache
+    _stats_cache = None
     _BACKENDS.clear()
 
 

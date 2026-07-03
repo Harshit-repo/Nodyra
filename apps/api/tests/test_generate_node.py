@@ -4,7 +4,6 @@ import pytest
 from httpx import AsyncClient
 
 # ---- Pure unit tests for ai_builder functions (no DB/HTTP needed) ----
-
 from app.services.ai_builder import (
     _BLOCKED_BUILTINS,
     _BLOCKED_IMPORTS,

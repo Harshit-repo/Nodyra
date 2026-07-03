@@ -302,6 +302,12 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
   const [defaultRunnerPoolId, setDefaultRunnerPoolId] = useState<string | null>(null);
   const [chipSaving, setChipSaving] = useState(false);
   const [runTimeout, setRunTimeout] = useState<string>("");
+  const [executionMode, setExecutionMode] = useState<"inherit" | "sandboxed" | "standard">("inherit");
+  const [sandboxResources, setSandboxResources] = useState<{
+    memory_mb?: number;
+    cpu?: number;
+    tmpfs_mb?: number;
+  }>({});
   const [mcpEnabled, setMcpEnabled] = useState(false);
   const [mcpToolName, setMcpToolName] = useState("");
   const [mcpDescription, setMcpDescription] = useState("");
@@ -448,6 +454,8 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
       setRunTimeout(
         detail.run_timeout_seconds != null ? String(detail.run_timeout_seconds) : "",
       );
+      setExecutionMode(detail.execution_mode ?? "inherit");
+      setSandboxResources(detail.sandbox_resources ?? {});
       setMcpEnabled(detail.mcp_enabled ?? false);
       setMcpToolName(detail.mcp_tool_name ?? "");
       setMcpDescription(detail.mcp_description ?? "");
@@ -869,12 +877,20 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
     setMessage("");
     try {
       setSaveError(false);
+      const cleanedSandboxResources = Object.fromEntries(
+        Object.entries(sandboxResources).filter(([, value]) => value != null),
+      ) as typeof sandboxResources;
       const updated = await api.updateWorkflow(id, {
         name: name.trim() || "Untitled workflow",
         active,
         environment_id: environmentId ?? undefined,
         default_runner_pool_id: defaultRunnerPoolId,
         run_timeout_seconds: runTimeout === "" ? null : Math.max(0, parseFloat(runTimeout) || 0),
+        execution_mode: executionMode,
+        sandbox_resources:
+          Object.keys(cleanedSandboxResources).length > 0
+            ? cleanedSandboxResources
+            : null,
         mcp_enabled: mcpEnabled,
         mcp_tool_name: mcpToolName || null,
         mcp_description: mcpDescription || null,
@@ -1609,6 +1625,15 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
             />
           )}
 
+          {workflow?.execution_mode === "sandboxed" && (
+            <span
+              className="sandboxed-pill"
+              title="Runs in a disposable hardened container"
+            >
+              Sandboxed
+            </span>
+          )}
+
           {canWrite && barStatus.kind !== "unpublished" && (
             <label
               className="active-toggle"
@@ -1979,6 +2004,10 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
         <WorkflowSettingsModal
           runTimeout={runTimeout}
           onRunTimeoutChange={setRunTimeout}
+          executionMode={executionMode}
+          onExecutionModeChange={setExecutionMode}
+          sandboxResources={sandboxResources}
+          onSandboxResourcesChange={setSandboxResources}
           mcpEnabled={mcpEnabled}
           onMcpEnabledChange={setMcpEnabled}
           mcpToolName={mcpToolName}

@@ -123,6 +123,7 @@ async def run_workflow(
             cache=run_cache or None,
             parameters=body.parameters or body.data,
             trigger_node_id=body.trigger_node_id,
+            execution_mode=("sandboxed" if body.sandbox else None),
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc

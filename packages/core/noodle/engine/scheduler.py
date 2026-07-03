@@ -12,6 +12,7 @@ The same engine runs inside env runners and inside exported scripts.
 """
 
 import asyncio
+import logging
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable
@@ -20,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from noodle.ai_runtime import AgentActionRequest
 from noodle.context import iteration_path
+from noodle.context import run_deadline as run_deadline_var
 from noodle.engine.node_exec import (
     DEFAULT_NODE_TIMEOUTS,
     _install_capture,
@@ -30,7 +32,6 @@ from noodle.engine.validation import _validate_connection_kinds
 from noodle.models import NodeRunResult, NodeStatus, RunResult, RunStatus, WorkflowGraph
 from noodle.sdk import NodeRegistry
 
-import logging
 LOG = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -616,27 +617,31 @@ async def _execute_impl(
     # Dependency-counting execution: each node starts as soon as its in-set
     # predecessors complete. Loop Start nodes are intercepted by
     # _execute_nodes and driven over their body sub-DAG.
-    run_status = await _execute_nodes(
-        plan=plan,
-        graph=graph,
-        registry=registry,
-        nodes_by_id=nodes_by_id,
-        incoming=incoming,
-        node_outputs=node_outputs,
-        cache=cache,
-        emit=emit,
-        finish=finish,
-        default_timeouts=default_timeouts,
-        max_node_output_bytes=max_node_output_bytes,
-        pause_on_approval=pause_on_approval,
-        agent_action_resume=agent_action_resume,
-        loop_regions=loop_regions,
-        owned=owned,
-        node_sem=node_sem,
-        type_sems=type_sems,
-        run_deadline=run_deadline,
-        process_isolator=process_isolator,
-    )
+    deadline_token = run_deadline_var.set(run_deadline)
+    try:
+        run_status = await _execute_nodes(
+            plan=plan,
+            graph=graph,
+            registry=registry,
+            nodes_by_id=nodes_by_id,
+            incoming=incoming,
+            node_outputs=node_outputs,
+            cache=cache,
+            emit=emit,
+            finish=finish,
+            default_timeouts=default_timeouts,
+            max_node_output_bytes=max_node_output_bytes,
+            pause_on_approval=pause_on_approval,
+            agent_action_resume=agent_action_resume,
+            loop_regions=loop_regions,
+            owned=owned,
+            node_sem=node_sem,
+            type_sems=type_sems,
+            run_deadline=run_deadline,
+            process_isolator=process_isolator,
+        )
+    finally:
+        run_deadline_var.reset(deadline_token)
 
     return RunResult(status=run_status, nodes=results)
 

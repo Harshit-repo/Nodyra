@@ -152,6 +152,14 @@ jobs:
       # --skip-editable excludes local workspace packages that have no PyPI record.
       - name: pip-audit — dependency CVEs (blocking)
         run: uvx pip-audit --skip-editable
+      - name: bandit — security-critical modules (blocking)
+        run: >-
+          uvx bandit -ll
+          apps/api/app/security.py
+          apps/api/app/tenancy.py
+          apps/api/app/services/crypto.py
+          apps/api/app/services/mcp_client.py
+          apps/api/app/services/redaction.py
       - name: bandit — static security lint (advisory)
         continue-on-error: true
         run: >-
@@ -159,14 +167,34 @@ jobs:
           apps/api/app
           packages/core/noodle
           packages/nodes/noodle_nodes
-      - name: mypy — security-critical modules (advisory)
-        continue-on-error: true
+      - name: mypy — security-critical modules (blocking)
         run: >-
           uvx mypy --ignore-missing-imports --follow-imports=skip
           apps/api/app/services/crypto.py
           apps/api/app/services/rate_limit.py
           apps/api/app/logging.py
           apps/api/app/security.py
+
+  deploy-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: compose config — base
+        run: docker compose -f deploy/docker-compose.yml config -q
+        env:
+          MINIO_ROOT_PASSWORD: ci-placeholder
+          INTERNAL_API_TOKEN: ci-placeholder
+          NOODLE_SECRET_KEY: ci-placeholder
+      - name: compose config — sandbox overlay
+        run: >-
+          docker compose -f deploy/docker-compose.yml
+          -f deploy/docker-compose.sandbox.yml config -q
+        env:
+          MINIO_ROOT_PASSWORD: ci-placeholder
+          INTERNAL_API_TOKEN: ci-placeholder
+          NOODLE_SECRET_KEY: ci-placeholder
+      - name: helm lint
+        run: helm lint deploy/helm/noodle
 
   web:
     runs-on: ubuntu-latest

@@ -25,6 +25,7 @@ import app.services.queue as queue_module
 import app.services.redaction as redaction_module
 import app.services.remote_dispatch as remote_dispatch_module
 import app.services.retention as retention_module
+import app.services.run_checkpoints as run_checkpoints_module
 import app.services.runner as runner_module
 import app.services.runtime_pool as runtime_pool_module
 import app.services.subworkflows as subworkflows_module
@@ -358,6 +359,7 @@ async def client() -> AsyncIterator[AsyncClient]:
         backends_module: backends_module.SessionLocal,
         artifacts_module: artifacts_module.SessionLocal,
         chat_service_module: chat_service_module.SessionLocal,
+        run_checkpoints_module: run_checkpoints_module.SessionLocal,
         runner_module: runner_module.SessionLocal,
         triggers_module: triggers_module.SessionLocal,
         queue_module: queue_module.SessionLocal,
@@ -378,6 +380,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     backends_module.SessionLocal = test_session
     artifacts_module.SessionLocal = test_session
     chat_service_module.SessionLocal = test_session
+    run_checkpoints_module.SessionLocal = test_session
     runner_module.SessionLocal = test_session
     triggers_module.SessionLocal = test_session
     queue_module.SessionLocal = test_session

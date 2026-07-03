@@ -5,6 +5,8 @@ export interface MCPConnection {
   transport: string;
   auth_type: string;
   auth_secret: string;
+  enabled: boolean;
+  allowed_tools: string[] | null;
   tool_cache: Record<string, unknown> | null;
   last_synced_at: string | null;
   created_at: string;
@@ -18,6 +20,8 @@ export interface MCPConnectionCreate {
   auth_type: string;
   auth_secret?: string;
   auth_header_name?: string;
+  enabled?: boolean;
+  allowed_tools?: string[] | null;
 }
 
 export interface MCPConnectionUpdate {
@@ -27,6 +31,8 @@ export interface MCPConnectionUpdate {
   auth_type?: string;
   auth_secret?: string;
   auth_header_name?: string;
+  enabled?: boolean;
+  allowed_tools?: string[] | null;
 }
 
 export interface MCPToolInfo {
@@ -364,6 +370,8 @@ export interface WorkflowDetail {
   error_workflow_id?: string | null;
   error_alerts?: Record<string, unknown>;
   run_timeout_seconds?: number | null;
+  execution_mode?: "inherit" | "sandboxed" | "standard";
+  sandbox_resources?: { memory_mb?: number; cpu?: number; tmpfs_mb?: number } | null;
   mcp_enabled?: boolean;
   mcp_tool_name?: string | null;
   mcp_description?: string | null;
@@ -515,12 +523,13 @@ export interface RunInfo {
 
 export interface ArtifactInfo {
   id: string;
-  run_id: string;
-  node_id: string;
+  run_id: string | null;
+  node_id: string | null;
   name: string;
   kind: string;
   content_type: string;
   size_bytes: number;
+  checksum_sha256?: string | null;
   metadata: Record<string, unknown>;
   preview: unknown;
   created_at: string;

@@ -1,11 +1,12 @@
 ﻿import { CaretDown, CaretLeft, CaretRight, MagnifyingGlass, Sparkle, Star, X } from "@phosphor-icons/react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { api } from "../api";
+import { api, errorMessage } from "../api";
 import { CATEGORY_ORDER, categoryColor } from "../categories";
 import { isBrandIconName, NodeIcon } from "../NodeIcon";
 import { safeGetItem, safeSetItem } from "../safeStorage";
 import type { MCPConnection, NodeManifest } from "../types";
+import { cachedMcpTools, McpToolsSection } from "./McpToolsSection";
 import { isTriggerManifest, useEditor } from "./store";
 
 const FAVORITES_KEY = "noodle_palette_favorites";
@@ -140,23 +141,14 @@ function isMemoryRelatedNode(node: NodeManifest): boolean {
 function buildMcpToolManifests(connections: MCPConnection[]): NodeManifest[] {
   const manifests: NodeManifest[] = [];
   for (const conn of connections) {
-    if (!conn.tool_cache) continue;
-    const tools: unknown[] = Array.isArray(conn.tool_cache)
-      ? conn.tool_cache
-      : (conn.tool_cache as Record<string, unknown>).tools as unknown[] ?? [];
-    if (!Array.isArray(tools)) continue;
-    for (const tool of tools) {
-      if (!tool || typeof tool !== "object") continue;
-      const t = tool as Record<string, unknown>;
-      const toolName = String(t.name ?? "");
-      if (!toolName) continue;
-      const safeId = toolName.replace(/[^a-zA-Z0-9_-]/g, "_").toLowerCase();
+    if (conn.enabled === false) continue;
+    for (const tool of cachedMcpTools(conn)) {
       manifests.push({
-        id: `mcp_tool__${conn.id}__${safeId}`,
-        name: toolName,
+        id: tool.manifestId,
+        name: tool.name,
         category: "MCP",
         version: "1.0",
-        description: String(t.description ?? ""),
+        description: tool.description,
         icon: "plug",
         inputs: [{ name: "input", description: "Input data" }],
         params: [
@@ -176,7 +168,7 @@ function buildMcpToolManifests(connections: MCPConnection[]): NodeManifest[] {
             name: "tool_name",
             type: "string",
             required: true,
-            default: toolName,
+            default: tool.name,
             description: "MCP tool name",
             placeholder: "",
             choices: null,
@@ -351,8 +343,20 @@ export function NodePalette() {
       return new Set(Array.isArray(stored) ? stored.filter((x): x is string => typeof x === "string") : []);
     } catch { return new Set(); }
   });
+  const [mcpConnections, setMcpConnections] = useState<MCPConnection[]>([]);
+  const [mcpLoading, setMcpLoading] = useState(false);
+  const [mcpError, setMcpError] = useState("");
+  const [mcpSyncingId, setMcpSyncingId] = useState<string | null>(null);
+  const mcpMountedRef = useRef(true);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const chipsRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    mcpMountedRef.current = true;
+    return () => {
+      mcpMountedRef.current = false;
+    };
+  }, []);
 
   function toggleCollapsed(): void {
     setCollapsed((v) => {
@@ -427,27 +431,39 @@ export function NodePalette() {
       window.removeEventListener("noodle:toggle-node-palette", toggleNodePalette);
   }, []);
 
-  // Fetch MCP connections with tool_cache and inject synthetic MCP tool
-  // manifests into the editor store. These appear as draggable nodes under a
-  // dedicated "MCP" category in the palette.
+  const installMcpManifests = useCallback(
+    (connections: MCPConnection[]) => {
+      const current = useEditor.getState().manifests;
+      const withoutMcpTools = current.filter(
+        (manifest) => !manifest.id.startsWith("mcp_tool__"),
+      );
+      const mcpTools = buildMcpToolManifests(connections);
+      setManifests([...withoutMcpTools, ...mcpTools]);
+    },
+    [setManifests],
+  );
+
+  const loadMcpConnections = useCallback(async () => {
+    setMcpLoading(true);
+    setMcpError("");
+    try {
+      const connections = await api.listMcpConnections();
+      if (!mcpMountedRef.current) return;
+      setMcpConnections(connections);
+      installMcpManifests(connections);
+    } catch (err) {
+      if (!mcpMountedRef.current) return;
+      setMcpConnections([]);
+      installMcpManifests([]);
+      setMcpError(errorMessage(err));
+    } finally {
+      if (mcpMountedRef.current) setMcpLoading(false);
+    }
+  }, [installMcpManifests]);
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const connections = await api.listMcpConnections();
-        if (cancelled) return;
-        const mcpTools = buildMcpToolManifests(connections);
-        if (mcpTools.length === 0) return;
-        const current = useEditor.getState().manifests;
-        setManifests([...current, ...mcpTools]);
-      } catch {
-        // MCP connections may not be available (e.g. backend without MCP support).
-        // Silently skip — the MCP category simply won't appear.
-      }
-    })();
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setManifests]);
+    void loadMcpConnections();
+  }, [loadMcpConnections]);
 
   useEffect(() => {
     const el = chipsRef.current;
@@ -577,6 +593,30 @@ export function NodePalette() {
     setRecent((items) => [id, ...items.filter((item) => item !== id)].slice(0, MAX_RECENTS));
   }, []);
 
+  const handleUseMcpTool = useCallback(
+    (manifestId: string): void => {
+      addNode(manifestId, { x: 424, y: 224 });
+      recordRecent(manifestId);
+    },
+    [addNode, recordRecent],
+  );
+
+  const handleSyncMcpConnection = useCallback(
+    async (connection: MCPConnection): Promise<void> => {
+      setMcpSyncingId(connection.id);
+      setMcpError("");
+      try {
+        await api.syncMcpConnection(connection.id);
+        await loadMcpConnections();
+      } catch (err) {
+        setMcpError(errorMessage(err));
+      } finally {
+        setMcpSyncingId(null);
+      }
+    },
+    [loadMcpConnections],
+  );
+
   if (collapsed) {
     return (
       <aside className="palette palette--collapsed" aria-label="Node picker">
@@ -675,6 +715,17 @@ export function NodePalette() {
         ))}
       </div>
       <div className="palette-scroll">
+        {showQuickSections && (
+          <McpToolsSection
+            connections={mcpConnections}
+            loading={mcpLoading}
+            error={mcpError}
+            syncingId={mcpSyncingId}
+            onRefresh={() => void loadMcpConnections()}
+            onSync={(connection) => void handleSyncMcpConnection(connection)}
+            onUseTool={handleUseMcpTool}
+          />
+        )}
         {showQuickSections &&
           [
             { title: "Recommended next", nodes: recommendedNodes },

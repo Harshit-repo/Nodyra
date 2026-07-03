@@ -8,6 +8,7 @@ flow through normal node outputs, pins, and retry caches.
 from __future__ import annotations
 
 import builtins
+import hashlib
 import io
 import json
 import re
@@ -144,6 +145,7 @@ class LocalArtifactStore:
             "kind": kind,
             "content_type": content_type,
             "size_bytes": len(payload),
+            "checksum_sha256": hashlib.sha256(payload).hexdigest(),
             "storage_backend": "local",
             "storage_key": storage_key,
         }

@@ -4,15 +4,20 @@ import logging
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_session
 from app.models import Artifact, Run
-from app.schemas import ArtifactInfo, DatasetQueryRequest, DatasetQueryResult
+from app.schemas import (
+    ArtifactInfo,
+    ArtifactListResponse,
+    DatasetQueryRequest,
+    DatasetQueryResult,
+)
 from app.security import require_permission
 from app.services.artifact_backends import (
     _resolve_local_path,
@@ -48,6 +53,7 @@ def _info(row: Artifact) -> ArtifactInfo:
         kind=row.kind,
         content_type=row.content_type,
         size_bytes=row.size_bytes,
+        checksum_sha256=row.checksum_sha256,
         metadata=row.artifact_metadata or {},
         preview=row.preview,
         created_at=row.created_at,
@@ -97,6 +103,45 @@ async def list_run_artifacts(
             unique.append(row)
     unique.sort(key=lambda r: r.name)
     return [_info(row) for row in unique]
+
+
+@router.get("/artifacts", response_model=ArtifactListResponse)
+async def list_artifacts(
+    workflow_id: str | None = None,
+    run_id: str | None = None,
+    kind: str | None = None,
+    q: str | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+) -> ArtifactListResponse:
+    """Workspace-wide artifact browser with run/workflow/kind/name filters."""
+    stmt = select(Artifact)
+    count_stmt = select(func.count()).select_from(Artifact)
+    if workflow_id:
+        stmt = stmt.join(Run, Artifact.run_id == Run.id).where(
+            Run.workflow_id == workflow_id
+        )
+        count_stmt = count_stmt.join(Run, Artifact.run_id == Run.id).where(
+            Run.workflow_id == workflow_id
+        )
+    if run_id:
+        stmt = stmt.where(Artifact.run_id == run_id)
+        count_stmt = count_stmt.where(Artifact.run_id == run_id)
+    if kind:
+        stmt = stmt.where(Artifact.kind == kind)
+        count_stmt = count_stmt.where(Artifact.kind == kind)
+    if q:
+        pattern = f"%{q}%"
+        stmt = stmt.where(Artifact.name.ilike(pattern))
+        count_stmt = count_stmt.where(Artifact.name.ilike(pattern))
+    total = int(await session.scalar(count_stmt) or 0)
+    rows = (
+        await session.scalars(
+            stmt.order_by(Artifact.created_at.desc()).limit(limit).offset(offset)
+        )
+    ).all()
+    return ArtifactListResponse(items=[_info(row) for row in rows], total=total)
 
 
 @router.get("/artifacts/{artifact_id}", response_model=ArtifactInfo)

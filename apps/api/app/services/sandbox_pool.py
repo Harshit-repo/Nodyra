@@ -3,8 +3,8 @@
 SandboxWorker wraps one hardened container running ``noodle_runtime`` plus
 its attach socket. SandboxPool hands a worker to at most one run at a time
 and returns clean workers to a bounded warm list keyed by
-``(org_id, environment_id)`` — reuse is strictly within one key, so
-cross-tenant container reuse is impossible by construction.
+``(org_id, environment_id, spawn_overrides)`` — reuse is strictly within one
+key, so cross-tenant container reuse is impossible by construction.
 
 The wire protocol is the same newline-framed JSON ``noodle_runtime`` speaks
 to the subprocess pool (see packages/runtime/noodle_runtime/server.py),
@@ -52,6 +52,13 @@ _FORWARDED_EVENTS = frozenset(
 )
 
 
+def overrides_key(overrides: dict | None) -> str:
+    """Stable fingerprint for sandbox spawn overrides in the warm-pool key."""
+    if not overrides:
+        return ""
+    return json.dumps(overrides, sort_keys=True)
+
+
 class SandboxWorker:
     """One container + attach socket; drives one run at a time."""
 
@@ -61,7 +68,7 @@ class SandboxWorker:
         container: Any,
         sock: Any,
         *,
-        key: tuple[str | None, str | None],
+        key: tuple[str | None, str | None, str],
         image_tag: str,
     ) -> None:
         self.client = client
@@ -81,16 +88,19 @@ class SandboxWorker:
         cls,
         client: Any,
         *,
-        key: tuple[str | None, str | None],
+        key: tuple[str | None, str | None, str],
         env_payload: dict,
         runtime: str,
         network: str,
+        overrides: dict | None = None,
     ) -> SandboxWorker:
         loop = asyncio.get_running_loop()
         tag = image_tag_for(env_payload)
         await loop.run_in_executor(None, ensure_docker_image, client, tag, env_payload)
         name = f"noodle-sbx-{uuid.uuid4().hex[:12]}"
-        spawn_kwargs = hardening_kwargs(runtime=runtime, network=network)
+        spawn_kwargs = hardening_kwargs(
+            runtime=runtime, network=network, overrides=overrides
+        )
         container = await loop.run_in_executor(
             None,
             lambda: client.containers.run(
@@ -321,13 +331,13 @@ class SandboxWorker:
 
 
 class SandboxPool:
-    """Bounded warm pool of SandboxWorkers keyed by (org_id, environment_id)."""
+    """Bounded warm pool keyed by (org_id, environment_id, spawn overrides)."""
 
     def __init__(self) -> None:
         self._client: Any | None = None
         self._runtime: str = "runc"
         self._network: str = ""
-        self._idle: dict[tuple[str | None, str | None], list[SandboxWorker]] = {}
+        self._idle: dict[tuple[str | None, str | None, str], list[SandboxWorker]] = {}
         self._active: dict[str, SandboxWorker] = {}  # run_id -> worker
         self._lock = asyncio.Lock()
         self._reaper: asyncio.Task | None = None
@@ -347,6 +357,16 @@ class SandboxPool:
         idle = sum(len(v) for v in self._idle.values())
         return f"runtime={self._runtime} idle={idle} active={len(self._active)}"
 
+    def status(self) -> dict:
+        """Structured status for the ops endpoint and settings card."""
+        return {
+            "active": self.enabled,
+            "runtime": self._runtime if self.enabled else None,
+            "network": self._network if self.enabled else None,
+            "idle": sum(len(v) for v in self._idle.values()),
+            "active_runs": len(self._active),
+        }
+
     async def dispatch(
         self,
         run_id: str,
@@ -364,12 +384,13 @@ class SandboxPool:
         run_timeout: float | None = None,
         pause_on_approval: bool = False,
         agent_action_resume: dict | None = None,
+        spawn_overrides: dict | None = None,
     ) -> str:
         if self._client is None:
             raise RuntimeError("sandbox pool is not configured")
         self._ensure_reaper()
-        key = (org_id, env_id)
-        worker = await self._acquire(key, env_payload)
+        key = (org_id, env_id, overrides_key(spawn_overrides))
+        worker = await self._acquire(key, env_payload, overrides=spawn_overrides)
         self._active[run_id] = worker
         try:
             status = await worker.run(
@@ -412,7 +433,11 @@ class SandboxPool:
             await w.close()
 
     async def _acquire(
-        self, key: tuple[str | None, str | None], env_payload: dict
+        self,
+        key: tuple[str | None, str | None, str],
+        env_payload: dict,
+        *,
+        overrides: dict | None = None,
     ) -> SandboxWorker:
         wanted_tag = image_tag_for(env_payload)
         stale: list[SandboxWorker] = []
@@ -438,6 +463,7 @@ class SandboxPool:
             env_payload=env_payload,
             runtime=self._runtime,
             network=self._network,
+            overrides=overrides,
         )
 
     async def _release(self, worker: SandboxWorker) -> None:

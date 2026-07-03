@@ -47,6 +47,10 @@ from app.services.github_sync_jobs import notify_sync_workers
 from app.services.graph_utils import first_trigger_node
 from app.services.runner import cancel_run as _runner_cancel_run
 from app.services.runner import start_run
+from app.services.sandbox_policy import (
+    VALID_EXECUTION_MODES,
+    validate_sandbox_resources,
+)
 from app.services.triggers import _await_run_terminal, _last_node_output
 from app.services.workflow_events import (
     WORKFLOW_CREATED,
@@ -55,9 +59,9 @@ from app.services.workflow_events import (
     bump_graph_revision,
     edge_patch_snapshot,
     node_patch_snapshot,
-    record_workflow_revision,
     publish_workflow_event,
     publish_workflow_graph_changed,
+    record_workflow_revision,
 )
 from noodle.engine.scheduler import _topo_order
 from noodle.engine.types import GraphError
@@ -683,6 +687,7 @@ async def run_workflow_by_id(
     parameters: dict | None,
     wait_seconds: float,
     use_draft: bool,
+    sandbox: bool = False,
 ) -> dict:
     """Shared by the static run_workflow tool and dynamic per-workflow tools."""
     workflow = await _load_workflow(session, workflow_id)
@@ -704,6 +709,7 @@ async def run_workflow_by_id(
             mode="manual",
             trigger_type="mcp",
             parameters=parameters or None,
+            execution_mode=("sandboxed" if sandbox else None),
         )
     except ValueError as exc:
         raise McpToolError(str(exc)) from exc
@@ -726,12 +732,14 @@ async def _run_workflow(session: AsyncSession, user: User | None, args: dict) ->
         wait_seconds = DEFAULT_WAIT_SECONDS
     wait_seconds = max(0.0, min(wait_seconds, MAX_WAIT_SECONDS))
     use_draft = bool(args.get("use_draft", True))
+    sandbox = bool(args.get("sandbox", False))
     return await run_workflow_by_id(
         session,
         str(args.get("workflow_id") or ""),
         parameters=parameters,
         wait_seconds=wait_seconds,
         use_draft=use_draft,
+        sandbox=sandbox,
     )
 
 
@@ -1135,6 +1143,15 @@ async def _create_workflow(session: AsyncSession, user: User | None, args: dict)
     name = str(args.get("name") or "").strip()
     if not name:
         raise McpToolError("name is required.")
+    execution_mode = str(args.get("execution_mode") or "inherit")
+    if execution_mode not in VALID_EXECUTION_MODES:
+        raise McpToolError(f"execution_mode must be one of {VALID_EXECUTION_MODES}.")
+    sandbox_resources = None
+    if "sandbox_resources" in args and args["sandbox_resources"] is not None:
+        try:
+            sandbox_resources = validate_sandbox_resources(args["sandbox_resources"])
+        except ValueError as exc:
+            raise McpToolError(str(exc)) from exc
     from app.routers.workflows import _global_env_id
 
     workflow = Workflow(
@@ -1142,6 +1159,8 @@ async def _create_workflow(session: AsyncSession, user: User | None, args: dict)
         environment_id=await _global_env_id(session),
         draft_graph=dict(EMPTY_GRAPH),
         published_version=1,
+        execution_mode=execution_mode,
+        sandbox_resources=sandbox_resources,
     )
     workflow.versions.append(WorkflowVersion(version=1, graph=dict(EMPTY_GRAPH)))
     session.add(workflow)
@@ -2615,10 +2634,21 @@ async def _update_workflow_settings(
         raise McpToolError("workflow_id is required.")
     allowed = {
         "environment_id", "default_runner_pool_id", "error_workflow_id",
-        "error_alerts", "allow_concurrent", "run_timeout_seconds", "folder_id",
+        "error_alerts", "allow_concurrent", "execution_mode",
+        "sandbox_resources",
+        "run_timeout_seconds", "folder_id",
         "mcp_description", "mcp_parameters_schema",
     }
     values = {key: value for key, value in args.items() if key in allowed}
+    if "execution_mode" in values and values["execution_mode"] not in VALID_EXECUTION_MODES:
+        raise McpToolError(f"execution_mode must be one of {VALID_EXECUTION_MODES}.")
+    if "sandbox_resources" in values and values["sandbox_resources"] is not None:
+        try:
+            values["sandbox_resources"] = validate_sandbox_resources(
+                values["sandbox_resources"]
+            )
+        except ValueError as exc:
+            raise McpToolError(str(exc)) from exc
     if "mcp_parameters_schema" in values:
         values["mcp_parameters_schema"] = _validate_mcp_parameters_schema(
             values["mcp_parameters_schema"]
@@ -2993,6 +3023,13 @@ STATIC_TOOLS: list[McpTool] = [
                     "type": "boolean",
                     "description": "Run the draft graph (default true) or the published version.",
                 },
+                "sandbox": {
+                    "type": "boolean",
+                    "description": (
+                        "Run in a disposable hardened container regardless of "
+                        "the workflow's execution mode."
+                    ),
+                },
             },
             "required": ["workflow_id"],
         },
@@ -3026,7 +3063,21 @@ STATIC_TOOLS: list[McpTool] = [
         description="Create a new empty workflow and return its id.",
         input_schema={
             "type": "object",
-            "properties": {"name": {"type": "string"}},
+            "properties": {
+                "name": {"type": "string"},
+                "execution_mode": {
+                    "type": "string",
+                    "enum": list(VALID_EXECUTION_MODES),
+                    "description": "Workflow isolation mode: inherit, sandboxed, or standard.",
+                },
+                "sandbox_resources": {
+                    "type": "object",
+                    "description": (
+                        "Sandbox resource requests: memory_mb, cpu, tmpfs_mb; "
+                        "clamped to deployment ceilings."
+                    ),
+                },
+            },
             "required": ["name"],
         },
         permission="workflow:write",
@@ -3736,6 +3787,17 @@ STATIC_TOOLS: list[McpTool] = [
                 "error_workflow_id": {"type": ["string", "null"]},
                 "error_alerts": {"type": "object"},
                 "allow_concurrent": {"type": "boolean"},
+                "execution_mode": {
+                    "type": "string",
+                    "enum": list(VALID_EXECUTION_MODES),
+                },
+                "sandbox_resources": {
+                    "type": ["object", "null"],
+                    "description": (
+                        "Sandbox resource requests: memory_mb, cpu, tmpfs_mb; "
+                        "clamped to deployment ceilings."
+                    ),
+                },
                 "run_timeout_seconds": {"type": ["number", "null"], "minimum": 0},
                 "folder_id": {"type": ["string", "null"]},
                 "mcp_description": {"type": ["string", "null"]},

@@ -1,0 +1,16 @@
+# Overlay enabling sandboxed (container-per-run) execution on the worker.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d
+#
+# The worker gains the host Docker socket so it can spawn hardened sibling
+# run containers (Docker-out-of-Docker). The worker itself never executes
+# untrusted code; runs execute in the disposable containers it creates.
+services:
+  worker:
+    environment:
+      EXECUTION_SANDBOX: ${EXECUTION_SANDBOX:-auto}
+      SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-auto}
+    volumes:
+      - envdata:/app/envs
+      - artifactdata:/app/artifacts
+      - /var/run/docker.sock:/var/run/docker.sock

@@ -879,8 +879,8 @@ def read_parquet_file(
     except ImportError:
         raise RuntimeError("pyarrow is required: pip install pyarrow")
 
-    from noodle_nodes.datasets import _finalize_parquet
     from noodle.datasets import reserve_artifact_path
+    from noodle_nodes.datasets import _finalize_parquet
 
     raw: bytes | None = None
     if file:
@@ -943,8 +943,8 @@ def write_parquet_file(
     except ImportError:
         raise RuntimeError("pyarrow is required: pip install pyarrow")
 
-    from noodle_nodes.datasets import _finalize_parquet
     from noodle.datasets import reserve_artifact_path
+    from noodle_nodes.datasets import _finalize_parquet
 
     if input is None:
         raise ValueError("write_parquet_file requires input data (list of records or dataset ref)")
@@ -959,8 +959,9 @@ def write_parquet_file(
 
     if isinstance(input, dict) and input.get("__noodle_dataset__"):
         # DatasetRef — copy the backing parquet file
-        from noodle.datasets import dataset_path_for_ref
         import shutil
+
+        from noodle.datasets import dataset_path_for_ref
         src = dataset_path_for_ref(input)
         shutil.copy2(src, out_path)
     elif isinstance(input, list):
@@ -1044,10 +1045,10 @@ def read_excel_file(
     except ImportError:
         raise RuntimeError("openpyxl and pyarrow are required: pip install openpyxl pyarrow")
 
-    from noodle_nodes.datasets import _finalize_parquet
-    from noodle.datasets import reserve_artifact_path
-
     import io
+
+    from noodle.datasets import reserve_artifact_path
+    from noodle_nodes.datasets import _finalize_parquet
 
     if file:
         raw, _ = _read_upload_bytes(file)
@@ -1120,7 +1121,7 @@ def write_excel_file(
     except ImportError:
         raise RuntimeError("openpyxl is required: pip install openpyxl")
 
-    from noodle.datasets import reserve_artifact_path, finalize_artifact_ref
+    from noodle.datasets import finalize_artifact_ref, reserve_artifact_path
 
     if input is None:
         raise ValueError("write_excel_file requires input data (list of records or dataset ref)")

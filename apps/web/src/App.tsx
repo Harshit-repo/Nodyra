@@ -35,6 +35,7 @@ function named<T extends Record<string, unknown>, K extends keyof T>(
 }
 
 const ActivityPage = lazy(named(() => import("./ActivityPage"), "ActivityPage"));
+const ArtifactsPage = lazy(named(() => import("./ArtifactsPage"), "ArtifactsPage"));
 const ChatPublicPage = lazy(named(() => import("./ChatPublicPage"), "ChatPublicPage"));
 const CodeLibraryPage = lazy(named(() => import("./CodeLibraryPage"), "CodeLibraryPage"));
 const CredentialsPage = lazy(named(() => import("./CredentialsPage"), "CredentialsPage"));
@@ -219,6 +220,7 @@ export default function App() {
               <Route path="/code-library" element={<PageErrorBoundary><CodeLibraryPage /></PageErrorBoundary>} />
               <Route path="/deployments" element={<PageErrorBoundary><DeploymentsPage /></PageErrorBoundary>} />
               <Route path="/executions" element={<PageErrorBoundary><ExecutionsPage /></PageErrorBoundary>} />
+              <Route path="/artifacts" element={<PageErrorBoundary><ArtifactsPage /></PageErrorBoundary>} />
               <Route path="/credentials" element={<PageErrorBoundary><CredentialsPage /></PageErrorBoundary>} />
               <Route path="/activity" element={<PageErrorBoundary><ActivityPage /></PageErrorBoundary>} />
               <Route path="/runner-pools" element={<PageErrorBoundary><RunnerPoolsPage /></PageErrorBoundary>} />

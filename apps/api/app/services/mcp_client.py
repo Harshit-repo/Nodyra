@@ -10,6 +10,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models import MCPConnection
 from app.services.org_keys import get_org_kek
 
@@ -43,6 +44,25 @@ def _is_dangerous_header(name: str) -> bool:
 
 class MCPError(Exception):
     """Raised when an MCP server returns a JSON-RPC error response."""
+
+
+def ensure_tool_allowed(conn: MCPConnection, tool_name: str) -> None:
+    """Raise ValueError when this connection's call policy forbids the tool."""
+    if getattr(conn, "enabled", True) is False:
+        raise ValueError(f"MCP connection {conn.name!r} is disabled")
+    allowed = getattr(conn, "allowed_tools", None)
+    if allowed is None:
+        return
+    # Fail closed on a malformed policy: `in` on a stored string would be a
+    # substring match, silently allowing tools the user never listed.
+    if not isinstance(allowed, (list, tuple)):
+        raise ValueError(
+            f"MCP connection {conn.name!r} has a malformed allowed_tools policy"
+        )
+    if tool_name not in allowed:
+        raise ValueError(
+            f"MCP tool {tool_name!r} is not in this connection's allowed tools"
+        )
 
 
 def _build_auth_headers(
@@ -103,6 +123,11 @@ async def discover_tools(
             extensions=extra["extensions"],
         )
         resp.raise_for_status()
+        if len(resp.content) > settings.mcp_max_response_bytes:
+            raise MCPError(
+                f"MCP response too large ({len(resp.content)} bytes; "
+                f"cap {settings.mcp_max_response_bytes})"
+            )
         data = resp.json()
     if "error" in data:
         raise MCPError(data["error"].get("message", "MCP tools/list error"))
@@ -115,11 +140,12 @@ async def call_tool(
     arguments: dict[str, Any],
     *,
     decrypted_secret: str | None,
-    timeout_seconds: int = 30,
+    timeout_seconds: float | None = None,
 ) -> Any:
     """Execute a single MCP tool call and return its result."""
     from noodle_nodes.httpx_security import pinned_request_kwargs, resolve_pinned
 
+    timeout_seconds = timeout_seconds or settings.mcp_tool_timeout_seconds
     pinned = resolve_pinned(conn.url, context="MCP connection")
     extra = pinned_request_kwargs(pinned)
     headers = _build_auth_headers(conn, decrypted_secret)
@@ -136,6 +162,11 @@ async def call_tool(
             extensions=extra["extensions"],
         )
         resp.raise_for_status()
+        if len(resp.content) > settings.mcp_max_response_bytes:
+            raise MCPError(
+                f"MCP response too large ({len(resp.content)} bytes; "
+                f"cap {settings.mcp_max_response_bytes})"
+            )
         data = resp.json()
     if "error" in data:
         raise MCPError(data["error"].get("message", "MCP tools/call error"))

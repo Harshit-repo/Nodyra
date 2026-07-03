@@ -7,7 +7,6 @@ from typing import Any
 from noodle.sdk import node
 from noodle_nodes._creds import cred_multi
 
-
 # ---------------------------------------------------------------------------
 # Snowflake
 # ---------------------------------------------------------------------------
@@ -128,6 +127,7 @@ def bigquery_query(
 
     try:
         import json as _json
+
         from google.cloud import bigquery as _bq
         from google.oauth2 import service_account as _sa
     except ImportError:

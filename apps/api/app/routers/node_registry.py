@@ -8,8 +8,6 @@ import logging
 import uuid
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +17,8 @@ from app.db import SessionLocal, get_session
 from app.models import Environment, User
 from app.security import optional_current_user, require_permission
 from app.services.backends import build_environment
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/node-registry", tags=["node-registry"])
 

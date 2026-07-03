@@ -59,8 +59,8 @@ from app.routers import (
 )
 from app.security import get_client_ip
 from app.services import expr_preview
-from app.services.events import broker_reaper_loop
 from app.services.environment_builds import run_environment_build_dispatch_loop
+from app.services.events import broker_reaper_loop
 from app.services.ghost_cleanup import ghost_cleanup_loop
 from app.services.github_sync_jobs import github_sync_dispatch_loop
 from app.services.queue import run_queue_dispatch_loop

@@ -1,5 +1,6 @@
 import type { Icon } from "@phosphor-icons/react";
 import {
+  Archive,
   Buildings,
   ClockCounterClockwise,
   Code,
@@ -29,6 +30,7 @@ export interface AppRouteDefinition {
     | "workflows"
     | "deployments"
     | "executions"
+    | "artifacts"
     | "environments"
     | "runners"
     | "credentials"
@@ -92,6 +94,16 @@ export const APP_ROUTES: readonly AppRouteDefinition[] = [
     access: "all",
     mobilePrimary: true,
     matches: routePrefix("/executions"),
+  },
+  {
+    id: "artifacts",
+    label: "Artifacts",
+    href: "/artifacts",
+    icon: Archive,
+    group: "primary",
+    scope: "workspace",
+    access: "all",
+    matches: routePrefix("/artifacts"),
   },
   {
     id: "environments",

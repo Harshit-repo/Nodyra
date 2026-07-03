@@ -360,12 +360,41 @@ gVisor install (Linux/WSL2): follow
 `/etc/docker/daemon.json` runtimes, restart dockerd. `docker info` should
 list `runsc` under Runtimes.
 
-docker-compose: uncomment the `EXECUTION_SANDBOX`/`SANDBOX_RUNTIME` env vars
-and the `/var/run/docker.sock` volume on the **worker** service. The socket
-grants the worker root-equivalent control of the host daemon — acceptable
-precisely because tenant code no longer executes inside the worker; runs
-execute in the hardened sibling containers it spawns on the host daemon
-(images stay host-local, no registry needed).
+docker-compose: enable sandboxing with the shipped overlay:
+
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.sandbox.yml up -d
+```
+
+The overlay sets `EXECUTION_SANDBOX=auto` by default; set
+`EXECUTION_SANDBOX=required` to refuse worker startup unless Docker and the
+selected runtime are available. It also mounts `/var/run/docker.sock` on the
+**worker** service. The socket grants the worker root-equivalent control of
+the host daemon — acceptable precisely because tenant code no longer executes
+inside the worker; runs execute in the hardened sibling containers it spawns
+on the host daemon (images stay host-local, no registry needed).
+
+### Without Docker: rootless Podman
+
+The sandbox talks to any Docker-API-compatible daemon. On a host without
+Docker, rootless Podman works daemonlessly and without root:
+
+```bash
+systemctl --user enable --now podman.socket
+export SANDBOX_DOCKER_HOST=unix:///run/user/$(id -u)/podman/podman.sock
+export EXECUTION_SANDBOX=auto
+```
+
+Notes: rootless Podman ignores the `runtime` selection for gVisor/Kata (it
+runs crun/runc-equivalent containers); resource limits (memory/cpu/pids)
+require cgroups v2 delegation, which is enabled on most modern distros.
+Verify with Settings -> the sandbox status card, or `GET /ops/sandbox`.
+
+Python-level sandboxing libraries (pysandbox, RestrictedPython, PyPy's
+sandbox) are not supported as isolation modes: in-process Python jails are
+escapable by design and would be a false security boundary. The supported
+tiers are subprocess pool (trusted), containers via Docker/Podman (untrusted
+code), and remote runner pools.
 
 Resource ceilings (per run container, overridable per deployment):
 `SANDBOX_MEM_LIMIT` (default `1g`), `SANDBOX_CPU_LIMIT` (`1.0`),

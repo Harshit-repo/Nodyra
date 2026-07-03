@@ -2,34 +2,28 @@
 
 ## Trust model (read this first)
 
-Noodle is designed for **single-tenant, self-hosted deployments with trusted
-workflow authors**. Code nodes and uploaded code modules execute **arbitrary
-Python** inside warm, long-lived worker processes on the Noodle host. Anyone who
-can add or edit a workflow can therefore run code with the privileges of the
-worker process: read host files, open outbound network connections, and use any
-installed package.
-
-This is deliberate — it is what makes Noodle a fast, Python-native automation
-platform — and it is the correct model for a team running its own instance. It
-is **not** safe to expose Noodle as a multi-tenant service to untrusted users.
+Noodle supports three execution postures. In the default trusted single-tenant
+posture, workflow authors are trusted and Code nodes run in warm worker
+subprocesses on the host at native speed. In the sandboxed posture
+(`EXECUTION_SANDBOX=auto|required`), each run executes in a disposable hardened
+container. In the multi-tenant posture, `MULTI_TENANCY_ENABLED=true` requires
+`EXECUTION_SANDBOX=required` and combines row-level security, org-scoped keys,
+quotas/fairness, and per-org sandbox pools.
 
 **Operator responsibilities**
 
 - Require authentication (`AUTH_REQUIRED=true`) and restrict edit/deploy access
   to trusted users via roles (`viewer` / `editor` / `admin` / `owner`).
-- Run Noodle on hosts you treat as running your team's own code.
+- Run trusted single-tenant deployments on hosts you treat as running your
+  team's own code.
+- Enable `EXECUTION_SANDBOX=auto|required` whenever workflows execute
+  AI-generated or otherwise untrusted code.
 - Use the unsafe-node policy (`UNSAFE_NODE_POLICY=warn|require_approval|block`)
   to gate risky nodes (Code, Execute Command, SSH, SQL-with-expressions, HTTP to
   private IPs) on deployment activation.
 - Set a strong `SECRET_KEY` and a non-empty `INTERNAL_API_TOKEN` whenever the
   API is reachable by anything other than your own machine.
 - Keep credentials in the encrypted vault; never paste secrets into Code nodes.
-
-**Out of scope for v1:** untrusted / multi-tenant execution. Per-run disposable
-isolation (containers, gVisor, Firecracker) is the intended role of the
-remote-runner seam (`packages/runner` + `app/services/remote_dispatch.py`), so a
-runner pool can later execute in its own sandbox without giving up the warm-pool
-performance model for trusted local runs.
 
 ## What Noodle already does
 

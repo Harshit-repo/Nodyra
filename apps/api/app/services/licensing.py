@@ -26,7 +26,7 @@ from fastapi import status as _http_status
 from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
-from app.config import KMS_PROVIDERS, settings as boot_settings
+from app.config import settings as boot_settings
 from app.db import SessionLocal
 
 # Production public key. Verifies license keys signed offline with the matching

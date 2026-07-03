@@ -14,7 +14,6 @@ from noodle.engine.node_exec import (
 )
 from noodle.engine.types import NodeValidationError
 
-
 # ---------------------------------------------------------------------------
 # Input schema validation
 # ---------------------------------------------------------------------------

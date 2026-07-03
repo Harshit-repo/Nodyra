@@ -9,30 +9,28 @@ build workflows on a React Flow canvas, run them in isolated Python
 environments, inspect every node input/output, persist artifacts outside the
 database, and publish versioned workflow releases for production execution.
 
-## ⚠️ Security model: single-tenant, trusted authors
+## Security model
 
-> **Noodle runs workflow authors' Python in your server's trust boundary. It is
-> built for single-tenant, self-hosted deployments where everyone who can edit a
-> workflow is already trusted to run code on the host. Do not expose Noodle as a
-> multi-tenant service to untrusted users.**
+Noodle supports three execution postures. Pick one per deployment:
 
-Code nodes and uploaded code modules execute **arbitrary Python** inside warm,
-long-lived worker processes on the Noodle host — by design, so workflows can use
-`pandas`, `boto3`, internal libraries, and the full interpreter at native speed.
-That means an author who can add a Code node can read host files, open network
-connections, and use any installed package, with the privileges of the worker
-process. This is the standard, correct model for a team running its own
-instance; it is **not** safe for letting strangers build workflows on a shared
-deployment.
+1. **Trusted single-tenant (default):** workflow authors are trusted; code
+   nodes run in warm, per-environment worker subprocesses on the host at
+   native speed. Correct for a team running its own instance.
+2. **Sandboxed:** set `EXECUTION_SANDBOX=auto|required` and each run executes
+   in a disposable hardened container: capabilities dropped, read-only root
+   filesystem, CPU/memory/pids limits, a dedicated egress-isolated network,
+   and gVisor/Kata when installed. Recommended whenever workflows execute
+   AI-generated or otherwise untrusted code. One-command enable:
+   `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.sandbox.yml up`.
+3. **Multi-tenant:** `MULTI_TENANCY_ENABLED=true` **requires** the sandbox
+   (`EXECUTION_SANDBOX=required`); the server refuses to boot otherwise.
+   Tenant isolation combines per-org row-level security, org-scoped
+   encryption keys, per-org quotas/fairness, and per-(org, environment)
+   container pools.
 
-Untrusted / multi-tenant execution would require per-run disposable isolation
-(containers, gVisor, or Firecracker), which trades away the warm-pool
-performance model. That isolation is **out of scope for v1** and is the intended
-purpose of the remote-runner seam (`packages/runner` + `remote_dispatch`), where
-each pool can later run in its own sandbox. Until then: keep Noodle behind your
-authentication, give edit access only to trusted users, and treat the host like
-any machine that runs your team's code. See [SECURITY.md](SECURITY.md) and
-[docs/architecture.md](docs/architecture.md#security) for details.
+Startup is fail-closed: unsafe combinations (default `SECRET_KEY` with auth
+enabled, missing internal token in a split topology, a requested-but-bypassed
+sandbox) abort boot rather than degrade silently. See [SECURITY.md](SECURITY.md).
 
 ## Why Noodle
 
@@ -51,6 +49,12 @@ Noodle is designed for teams that need more than point-and-click integrations:
 - Self-hostable architecture: FastAPI, PostgreSQL, Redis, React/Vite, a
   durable run queue with standalone dispatch workers, and optional
   Kubernetes packaging.
+
+## Build workflows with an AI agent (MCP)
+
+Noodle is an MCP server. Claude, Cursor, or any MCP client can create, edit,
+validate, run, and publish workflows through 61 tools. See
+[docs/mcp-quickstart.md](docs/mcp-quickstart.md) for a one-paste setup.
 
 ## Current Status
 
@@ -571,6 +575,7 @@ Planned or designed areas:
 
 - `docs/architecture.md` contains a deeper architecture walkthrough.
 - `docs/deployment.md` covers local, Docker Compose, and Helm deployment.
+- [Backup, restore & upgrades](docs/backup-restore.md).
 - `docs/nodes.md` covers built-in nodes, uploaded code modules, artifacts, and
   DatasetRef patterns.
 - `docs/integration-development.md` covers spec-driven v2 provider operations,

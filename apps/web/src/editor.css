@@ -986,6 +986,10 @@
 .palette-group {
   margin-bottom: 10px;
 }
+.palette-mcp-tools {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-2);
+}
 .palette-quick {
   padding-bottom: 8px;
   border-bottom: 1px solid var(--line-2);
@@ -1036,6 +1040,115 @@
   border: 1px solid var(--line-2);
   border-radius: var(--editor-radius-tight);
   padding: 1px 5px;
+}
+.palette-mini-icon {
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line-2);
+  border-radius: var(--editor-radius-tight);
+  background: var(--bg);
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.palette-mini-icon:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--ink);
+  border-color: var(--accent-deep);
+}
+.palette-mini-icon:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+.palette-mcp-note {
+  margin: 0 6px 7px;
+  color: var(--ink-3);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.palette-mcp-note-error {
+  color: var(--color-error);
+}
+.palette-mcp-connection-list {
+  display: grid;
+  gap: 8px;
+  padding: 0 2px;
+}
+.palette-mcp-connection {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--editor-radius-control);
+  background: var(--bg);
+}
+.palette-mcp-connection-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.palette-mcp-connection-head span {
+  min-width: 0;
+}
+.palette-mcp-connection-head strong,
+.palette-mcp-connection-head small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette-mcp-connection-head strong {
+  font-size: 11.5px;
+}
+.palette-mcp-connection-head small {
+  margin-top: 2px;
+  color: var(--ink-3);
+  font-size: 10px;
+}
+.palette-mcp-tool-list {
+  display: grid;
+  gap: 4px;
+}
+.palette-mcp-tool {
+  min-width: 0;
+  min-height: 28px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 5px 4px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--editor-radius-tight);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.palette-mcp-tool:hover:not(:disabled) {
+  border-color: var(--line);
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.palette-mcp-tool:disabled {
+  cursor: not-allowed;
+  opacity: 0.54;
+}
+.palette-mcp-tool span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette-mcp-tool svg {
+  justify-self: end;
+  color: var(--accent);
+}
+.palette-mcp-more {
+  color: var(--ink-3);
+  font-size: 10px;
 }
 .palette-group-caret {
   color: var(--ink-3);
@@ -8113,6 +8226,7 @@ select.field-input:hover {
   text-transform: lowercase;
 }
 .ws-field input,
+.ws-field select,
 .ws-field textarea {
   width: 100%;
   box-sizing: border-box;
@@ -8126,6 +8240,7 @@ select.field-input:hover {
 }
 .ws-field textarea { resize: vertical; min-height: 38px; line-height: 1.5; }
 .ws-field input:focus,
+.ws-field select:focus,
 .ws-field textarea:focus {
   outline: none;
   border-color: var(--accent);
@@ -8147,6 +8262,35 @@ select.field-input:hover {
   margin-top: 14px;
   padding-left: 14px;
   border-left: 2px solid var(--line);
+}
+
+.settings-row-3col {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-row-note {
+  grid-column: 1 / -1;
+}
+
+.sandboxed-pill {
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid rgba(88, 166, 255, 0.35);
+  border-radius: var(--editor-radius-tight);
+  background: rgba(88, 166, 255, 0.12);
+  color: #a7d2ff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+@media (max-width: 720px) {
+  .settings-row-3col {
+    grid-template-columns: 1fr;
+  }
 }
 
 .workflow-settings-body .modal-actions {

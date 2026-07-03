@@ -540,6 +540,13 @@ class Workflow(Base):
         # — matches migration 0023's ``server_default=sa.text("true")``.
         Boolean, default=True, nullable=False, server_default=true()
     )
+    # inherit | sandboxed | standard — see sandbox_policy.resolve_execution_mode.
+    execution_mode: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="inherit", server_default="inherit"
+    )
+    # Optional per-workflow sandbox resource requests: {"memory_mb", "cpu",
+    # "tmpfs_mb"}. Validated at write time and clamped at container spawn.
+    sandbox_resources: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Per-workflow wall-clock cap (seconds) for a single run. NULL falls back
     # to ``settings.workflow_run_timeout_seconds``; 0 means no cap.
     run_timeout_seconds: Mapped[float | None] = mapped_column(
@@ -780,6 +787,8 @@ class Run(Base):
     runner_pool_id: Mapped[str | None] = mapped_column(
         ForeignKey("runner_pools.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Per-run escalation stamped at start_run; only "sandboxed" is honoured.
+    execution_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
     runner_id: Mapped[str | None] = mapped_column(
         ForeignKey("runners.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -945,6 +954,7 @@ class Artifact(Base):
         String(160), default="application/octet-stream", nullable=False
     )
     size_bytes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    checksum_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     storage_backend: Mapped[str] = mapped_column(
         String(40), default="local", nullable=False
     )
@@ -1390,6 +1400,12 @@ class MCPConnection(Base):
     headers: Mapped[dict] = mapped_column(
         JSON, nullable=False, default=dict
     )
+    # Call-time policy: a disabled connection rejects every call; a non-null
+    # allowed_tools list restricts calls to exactly those tool names.
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
+    allowed_tools: Mapped[list | None] = mapped_column(JSON, nullable=True)
     tool_cache: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

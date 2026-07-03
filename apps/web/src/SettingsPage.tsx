@@ -10,19 +10,22 @@ import {
   IdentificationCard,
   Info,
   Key,
+  LockKey,
   Monitor,
   Moon,
   Palette,
+  Plug,
   ShieldCheck,
   Sun,
   Trash,
   UsersThree,
   WarningCircle,
 } from "@phosphor-icons/react";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useBlocker } from "react-router-dom";
 
-import { api, errorMessage } from "./api";
+import { api, errorMessage, type SandboxStatus } from "./api";
 import { useConfirm } from "./ConfirmProvider";
 import { useWorkspaceAccessContext } from "./WorkspaceAccess";
 import {
@@ -144,6 +147,7 @@ const SETTINGS_NAV = [
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "mcp-access", label: "MCP access", icon: Key },
   { id: "instance", label: "Instance", icon: GearSix },
+  { id: "sandbox", label: "Sandbox", icon: LockKey },
   { id: "license", label: "Plan & license", icon: CreditCard },
   { id: "management", label: "Management", icon: ShieldCheck },
 ];
@@ -1267,6 +1271,125 @@ function McpAccessPanel() {
   );
 }
 
+function McpServerPanel() {
+  const [copied, setCopied] = useState(false);
+  const endpoint = `${window.location.origin}/api/mcp`;
+
+  async function copyEndpoint(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(endpoint);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <SettingsCard
+      id="mcp-server"
+      title="MCP server"
+      description="Connect LLM clients to this Noodle installation and manage outbound MCP server connections."
+      icon={Plug}
+    >
+      <div className="noodle-mcp-server-card">
+        <label className="noodle-settings-field noodle-settings-field-wide">
+          <span className="noodle-settings-label">Server URL</span>
+          <span className="noodle-mcp-copy-row">
+            <input className="field-input" value={endpoint} readOnly spellCheck={false} />
+            <button className="btn btn-sm" type="button" onClick={() => void copyEndpoint()}>
+              <Copy size={15} aria-hidden="true" />
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </span>
+        </label>
+        <div className="noodle-mcp-server-actions">
+          <Link className="btn" to="/settings/mcp-connections">
+            <Plug size={15} aria-hidden="true" />
+            Manage MCP connections
+          </Link>
+          <a
+            className="btn btn-ghost"
+            href="https://github.com/Harshit-repo/noodle/blob/main/docs/mcp-quickstart.md"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Open quickstart
+          </a>
+        </div>
+      </div>
+    </SettingsCard>
+  );
+}
+
+function sandboxStatusCopy(status: SandboxStatus | undefined): {
+  label: string;
+  tone: "active" | "warn" | "off";
+} {
+  if (!status) return { label: "Checking", tone: "warn" };
+  if (status.mode === "off") return { label: "Sandboxed execution is off", tone: "off" };
+  if (!status.active) return { label: "Sandbox pool is not active", tone: "warn" };
+  return { label: "Sandboxed execution is active", tone: "active" };
+}
+
+function SandboxStatusPanel() {
+  const sandboxQuery = useQuery({
+    queryKey: ["ops", "sandbox"],
+    queryFn: api.sandboxStatus,
+    retry: false,
+    refetchInterval: 15000,
+  });
+
+  if (sandboxQuery.isError) return null;
+
+  const status = sandboxQuery.data;
+  const copy = sandboxStatusCopy(status);
+
+  return (
+    <SettingsCard
+      id="sandbox"
+      title="Sandbox"
+      description="Execution isolation status for code, command, and sandbox-required workflows."
+      icon={LockKey}
+    >
+      {!status ? (
+        <div className="noodle-settings-skeleton" aria-label="Loading sandbox status">
+          <span /><span />
+        </div>
+      ) : (
+        <div className={`noodle-sandbox-status is-${copy.tone}`}>
+          <div>
+            <span>Status</span>
+            <strong>{copy.label}</strong>
+          </div>
+          <dl>
+            <div>
+              <dt>Mode</dt>
+              <dd>{status.mode}</dd>
+            </div>
+            <div>
+              <dt>Runtime</dt>
+              <dd>{status.runtime ?? "-"}</dd>
+            </div>
+            <div>
+              <dt>Network</dt>
+              <dd>{status.network ?? "-"}</dd>
+            </div>
+            <div>
+              <dt>Idle</dt>
+              <dd>{status.idle}</dd>
+            </div>
+            <div>
+              <dt>Active runs</dt>
+              <dd>{status.active_runs}</dd>
+            </div>
+          </dl>
+        </div>
+      )}
+    </SettingsCard>
+  );
+}
+
 function ManagementPanel({
   canAdmin,
   canWorkspaceManage,
@@ -1306,7 +1429,7 @@ export function SettingsPage() {
   const canWorkspaceManage = workspace.multiTenancyEnabled && (workspaceRole === "admin" || workspaceRole === "owner");
   const canAudit = workspace.multiTenancyEnabled ? canWorkspaceManage : canAdmin;
   const visibleNavigation = SETTINGS_NAV.filter(
-    (item) => canAdmin || !["instance", "license"].includes(item.id),
+    (item) => canAdmin || !["instance", "sandbox", "license"].includes(item.id),
   );
   const [activeSection, setActiveSection] = useState(() => {
     const hash = window.location.hash.slice(1);
@@ -1405,7 +1528,9 @@ export function SettingsPage() {
             <ProfilePanel workspaceRole={workspaceRole} />
             <AppearancePanel />
             <McpAccessPanel />
+            <McpServerPanel />
             {canAdmin && <WorkspaceSettingsPanel />}
+            {canAdmin && <SandboxStatusPanel />}
             {canAdmin && <LicensePanel />}
             <ManagementPanel canAdmin={canAdmin} canWorkspaceManage={canWorkspaceManage} canAudit={canAudit} />
           </div>

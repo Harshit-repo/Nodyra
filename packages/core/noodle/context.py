@@ -92,6 +92,12 @@ cancel_event: ContextVar[threading.Event] = ContextVar(
     "noodle_cancel_event", default=_DEFAULT_CANCEL_EVENT
 )
 
+# Monotonic timestamp after which no node may keep running. Set by the engine
+# for the duration of a run with run_timeout_seconds.
+run_deadline: ContextVar[float | None] = ContextVar(
+    "noodle_run_deadline", default=None
+)
+
 # Per-organization amplification caps for the current run (multi-tenancy C5).
 # Keys: "max_map_width" (rows a map node may fan out into child workflows)
 # and "max_loop_iterations" (units a single loop may drive). 0/absent =

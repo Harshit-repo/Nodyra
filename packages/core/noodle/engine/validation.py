@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from noodle.engine.types import GraphError, NodeValidationError, ValidationWarning
+from noodle.engine.types import GraphError, ValidationWarning
 from noodle.models import GraphNode, PortSpec, WorkflowGraph
 from noodle.node_tool import TOOL_MODE_OUTPUT
 from noodle.sdk import NodeRegistry

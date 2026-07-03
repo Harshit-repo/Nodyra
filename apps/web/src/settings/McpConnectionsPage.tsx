@@ -15,6 +15,14 @@ import type { MCPConnection } from "../types";
 
 type AuthType = "none" | "bearer" | "header";
 
+function parseAllowedTools(value: string): string[] | null {
+  const tools = value
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return tools.length ? Array.from(new Set(tools)) : null;
+}
+
 function CreateConnectionModal({
   edit,
   onClose,
@@ -33,6 +41,8 @@ function CreateConnectionModal({
   );
   const [authSecret, setAuthSecret] = useState("");
   const [authHeaderName, setAuthHeaderName] = useState("");
+  const [enabled, setEnabled] = useState(edit?.enabled ?? true);
+  const [allowedTools, setAllowedTools] = useState((edit?.allowed_tools ?? []).join("\n"));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const dialogRef = useRef<HTMLDivElement | null>(null);
@@ -61,6 +71,8 @@ function CreateConnectionModal({
           url: url.trim(),
           transport,
           auth_type: authType,
+          enabled,
+          allowed_tools: parseAllowedTools(allowedTools),
         };
         if (authSecret.trim()) {
           body.auth_secret = authSecret.trim();
@@ -79,6 +91,8 @@ function CreateConnectionModal({
           auth_secret: authSecret.trim() || undefined,
           auth_header_name:
             authType === "header" ? authHeaderName.trim() || undefined : undefined,
+          enabled,
+          allowed_tools: parseAllowedTools(allowedTools),
         });
         notify("MCP connection created.", "success");
       }
@@ -197,6 +211,29 @@ function CreateConnectionModal({
               />
             </label>
           )}
+
+          <label className="credential-form-field checkbox-inline">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+            />
+            <span>Enable this connection</span>
+          </label>
+
+          <label className="credential-form-field">
+            <span>Allowed tools</span>
+            <textarea
+              className="field-input"
+              rows={5}
+              placeholder="Leave blank to allow every discovered tool"
+              value={allowedTools}
+              onChange={(e) => setAllowedTools(e.target.value)}
+            />
+            <small className="muted">
+              Enter one tool name per line, or comma-separated. Matching is exact.
+            </small>
+          </label>
         </div>
 
         {error && <p className="error-text">{error}</p>}
@@ -259,6 +296,7 @@ function ConnectionCard({
 
       <div className="env-meta">
         Auth: <strong>{conn.auth_type}</strong>
+        {" "}· Policy: <strong>{conn.enabled === false ? "disabled" : "enabled"}</strong>
         {conn.last_synced_at && (
           <>
             {" "}· Synced:{" "}
@@ -267,11 +305,14 @@ function ConnectionCard({
         )}
       </div>
 
-      {toolCount > 0 && (
-        <div className="env-packages">
-          <span className="pkg-chip">{toolCount} tools cached</span>
-        </div>
-      )}
+      <div className="env-packages">
+        {toolCount > 0 && <span className="pkg-chip">{toolCount} tools cached</span>}
+        {conn.allowed_tools?.length ? (
+          <span className="pkg-chip">{conn.allowed_tools.length} allowed</span>
+        ) : (
+          <span className="pkg-chip">all tools allowed</span>
+        )}
+      </div>
 
       <div className="env-actions">
         <button

@@ -43,8 +43,6 @@ from app.security import (
     role_allows,
 )
 from app.services import rate_limit
-from app.services.licensing import Feature as _Feature
-from app.services.licensing import require_feature
 from app.services.audit import log_audit
 from app.services.crypto import (
     create_payload_token,
@@ -53,6 +51,8 @@ from app.services.crypto import (
     hash_password,
     verify_password,
 )
+from app.services.licensing import Feature as _Feature
+from app.services.licensing import require_feature
 from app.services.sso import (
     _saml_acs_url,
     _saml_entity_id,

@@ -120,9 +120,10 @@ async def _migrate(
     batch_size: int = 100,
 ) -> int:
     """Migrate all org KEKs.  Returns the number of rows updated."""
+    from sqlalchemy import select, update
+
     from app.db import SessionLocal
     from app.models import Organization
-    from sqlalchemy import select, update
 
     src_provider = _build_provider(source)
     tgt_provider = _build_provider(target)

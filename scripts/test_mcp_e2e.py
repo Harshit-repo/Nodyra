@@ -1,9 +1,11 @@
 """E2E test for MS3 MCP Client flow."""
+
+import os
+
 import httpx
-import json
 
 API = "http://localhost:8000"
-import os
+
 TOKEN = os.environ.get("NOODLE_TOKEN", "REPLACE_WITH_YOUR_TOKEN")
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 

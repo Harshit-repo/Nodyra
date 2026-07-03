@@ -8,9 +8,12 @@ secret decryption.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
+from noodle.context import node_debug
 from noodle.engine.types import RuntimeContext
+from noodle.expr import build_context, evaluate
 from noodle.sdk import node
 
 
@@ -43,4 +46,19 @@ async def mcp_tool(input: Any = None, *, ctx: RuntimeContext) -> Any:  # noqa: A
     resolved_args = evaluate(arguments, expr_context)
 
     # Dispatch through the platform hook (implemented in runner's RuntimeContext).
-    return await ctx.call_mcp_tool(conn_id, tool_name, resolved_args)
+    debug = node_debug.get()
+    trace: dict[str, Any] = {"connection_id": conn_id, "tool": tool_name}
+    started = time.monotonic()
+    try:
+        result = await ctx.call_mcp_tool(conn_id, tool_name, resolved_args)
+    except Exception as exc:
+        trace["status"] = "error"
+        trace["error"] = f"{type(exc).__name__}: {exc}"
+        raise
+    else:
+        trace["status"] = "success"
+        return result
+    finally:
+        trace["duration_ms"] = int((time.monotonic() - started) * 1000)
+        if isinstance(debug, dict):
+            debug.setdefault("mcp_calls", []).append(trace)

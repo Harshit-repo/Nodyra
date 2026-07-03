@@ -30,6 +30,8 @@ class WorkflowUpdate(BaseModel):
     error_workflow_id: str | None = None
     error_alerts: dict[str, Any] | None = None
     allow_concurrent: bool | None = None
+    execution_mode: str | None = None
+    sandbox_resources: dict[str, Any] | None = None
     # Per-workflow wall-clock cap (seconds) for a run. None leaves it unset
     # (falls back to the server default); 0 disables the cap for this workflow.
     run_timeout_seconds: float | None = Field(default=None, ge=0)
@@ -142,6 +144,8 @@ class WorkflowDetail(BaseModel):
     error_workflow_id: str | None = None
     error_alerts: dict[str, Any] = Field(default_factory=dict)
     allow_concurrent: bool = True
+    execution_mode: Literal["inherit", "sandboxed", "standard"] = "inherit"
+    sandbox_resources: dict[str, Any] | None = None
     run_timeout_seconds: float | None = None
     mcp_enabled: bool = False
     mcp_tool_name: str | None = None
@@ -336,6 +340,7 @@ class RunRequest(BaseModel):
     cache: dict[str, dict[str, Any]] | None = None
     parameters: dict[str, Any] | None = None
     trigger_node_id: str | None = None
+    sandbox: bool = False
     # Convenience alias for manual triggers — when the caller posts
     # ``{"data": {...}}`` we treat it as ``parameters`` so the manual_trigger
     # node's output mirrors the request body without forcing clients to
@@ -460,9 +465,15 @@ class ArtifactInfo(BaseModel):
     kind: str
     content_type: str
     size_bytes: int
+    checksum_sha256: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     preview: Any = None
     created_at: datetime
+
+
+class ArtifactListResponse(BaseModel):
+    items: list[ArtifactInfo]
+    total: int
 
 
 class DatasetQueryRequest(BaseModel):

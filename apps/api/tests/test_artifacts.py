@@ -48,6 +48,7 @@ from app.services.artifact_backends import (  # noqa: E402
     ArtifactDownload,
     LocalBackend,
     get_backend,
+    invalidate_stats_cache,
     register_backend,
     reset_backends_for_tests,
 )
@@ -63,9 +64,11 @@ def test_local_backend_is_default_and_stats_reports_files(tmp_path, monkeypatch)
     assert stats["backend"] == "local"
     assert stats["file_count"] == 0
     assert stats["bytes"] == 0
-    # And reports real content.
+    # And reports real content. stats() is TTL-cached; files written outside
+    # the backend's own mutation methods need an explicit invalidation.
     (tmp_path / "runs" / "r1" / "n1").mkdir(parents=True)
     (tmp_path / "runs" / "r1" / "n1" / "a-x.bin").write_bytes(b"abcd")
+    invalidate_stats_cache()
     stats = backend.stats()
     assert stats["file_count"] == 1
     assert stats["bytes"] == 4

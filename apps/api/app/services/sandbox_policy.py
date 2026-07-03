@@ -13,6 +13,82 @@ configured to bypass it.
 from app.config import settings
 
 _VALID_MODES = ("off", "auto", "required")
+VALID_EXECUTION_MODES = ("inherit", "sandboxed", "standard")
+_RESOURCE_KEYS = ("memory_mb", "cpu", "tmpfs_mb")
+
+
+def resolve_execution_mode(
+    *, run_override: str | None, workflow_mode: str | None
+) -> str:
+    """Resolve the effective run isolation mode.
+
+    Per-run overrides are escalate-only: only ``sandboxed`` is honoured, so a
+    caller cannot use a run flag to downgrade a sandboxed workflow.
+    """
+    if settings.multi_tenancy_enabled and settings.sandbox_policy_strict:
+        return "sandboxed"
+    if settings.execution_sandbox == "required":
+        return "sandboxed"
+    mode = workflow_mode if workflow_mode in ("sandboxed", "standard") else "inherit"
+    if mode == "inherit":
+        mode = (
+            settings.sandbox_workflow_default
+            if settings.execution_sandbox != "off"
+            else "standard"
+        )
+    if run_override == "sandboxed":
+        return "sandboxed"
+    return mode
+
+
+def validate_sandbox_resources(payload: dict) -> dict:
+    """Validate user-supplied per-workflow sandbox resource requests."""
+    if not isinstance(payload, dict):
+        raise ValueError("sandbox_resources must be an object")
+    unknown = sorted(set(payload) - set(_RESOURCE_KEYS))
+    if unknown:
+        raise ValueError(f"sandbox_resources: unknown key(s) {unknown}")
+    ceilings = {
+        "memory_mb": settings.sandbox_max_memory_mb,
+        "cpu": settings.sandbox_max_cpu,
+        "tmpfs_mb": settings.sandbox_max_tmpfs_mb,
+    }
+    clean: dict = {}
+    for key, value in payload.items():
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+            raise ValueError(f"sandbox_resources: {key} must be a positive number")
+        if value > ceilings[key]:
+            raise ValueError(
+                f"sandbox_resources: {key}={value} exceeds this deployment's "
+                f"ceiling of {ceilings[key]}"
+            )
+        clean[key] = value
+    return clean
+
+
+def resolve_sandbox_overrides(requested: dict | None) -> dict:
+    """Translate workflow sandbox resources into Docker spawn overrides.
+
+    Unknown keys are ignored and values are clamped at spawn time so rows
+    written under older ceilings still run under stricter deployments.
+    """
+    if not isinstance(requested, dict) or not requested:
+        return {}
+    overrides: dict = {}
+    mem = requested.get("memory_mb")
+    if isinstance(mem, (int, float)) and not isinstance(mem, bool) and mem > 0:
+        overrides["mem_limit"] = f"{int(min(mem, settings.sandbox_max_memory_mb))}m"
+    cpu = requested.get("cpu")
+    if isinstance(cpu, (int, float)) and not isinstance(cpu, bool) and cpu > 0:
+        overrides["nano_cpus"] = int(
+            min(float(cpu), settings.sandbox_max_cpu) * 1_000_000_000
+        )
+    tmpfs = requested.get("tmpfs_mb")
+    if isinstance(tmpfs, (int, float)) and not isinstance(tmpfs, bool) and tmpfs > 0:
+        overrides["tmpfs"] = {
+            "/tmp": f"size={int(min(tmpfs, settings.sandbox_max_tmpfs_mb))}m"
+        }
+    return overrides
 
 
 def enforce_sandbox_policy() -> None:

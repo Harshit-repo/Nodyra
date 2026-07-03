@@ -20,8 +20,8 @@ from app import tracing
 from app.config import settings
 from app.db import engine
 from app.redis_client import redis_client
-from app.services.events import broker, broker_reaper_loop
 from app.services.environment_builds import run_environment_build_dispatch_loop
+from app.services.events import broker, broker_reaper_loop
 from app.services.queue import run_queue_dispatch_loop
 from app.services.runner import (
     drain_active_runs,
@@ -61,6 +61,37 @@ def _as_system(loop_fn):
     return system_loop
 
 
+async def _serve_metrics(port: int) -> asyncio.Server:
+    """Minimal HTTP responder for GET /metrics. Anything else gets 404."""
+    from app.services.metrics import get_metrics_text
+
+    async def _handle(
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        try:
+            request_line = await asyncio.wait_for(reader.readline(), timeout=5.0)
+            while (await asyncio.wait_for(reader.readline(), timeout=5.0)).strip():
+                pass
+            if request_line.startswith(b"GET /metrics"):
+                body = get_metrics_text().encode()
+                writer.write(
+                    b"HTTP/1.1 200 OK\r\n"
+                    b"Content-Type: text/plain; version=0.0.4\r\n"
+                    + f"Content-Length: {len(body)}\r\n\r\n".encode()
+                    + body
+                )
+            else:
+                writer.write(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+            await writer.drain()
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            writer.close()
+
+    return await asyncio.start_server(_handle, "0.0.0.0", port)
+
+
 async def _amain() -> None:
     _validate()
     from app.services.licensing import reconcile_capabilities
@@ -87,6 +118,10 @@ async def _amain() -> None:
     # probe always apply here (no dispatch_inline gate like main.py).
     enforce_sandbox_policy()
     await init_sandbox()
+    metrics_server: asyncio.Server | None = None
+    if settings.worker_metrics_port > 0:
+        metrics_server = await _serve_metrics(settings.worker_metrics_port)
+        logger.info("worker metrics on :%d/metrics", settings.worker_metrics_port)
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -129,6 +164,10 @@ async def _amain() -> None:
             await runtime_pool.shutdown()
         with contextlib.suppress(Exception):
             await sandbox_pool.flush()
+        if metrics_server is not None:
+            metrics_server.close()
+            with contextlib.suppress(Exception):
+                await metrics_server.wait_closed()
         process_isolator.shutdown()
         with contextlib.suppress(Exception):
             tracing.flush()

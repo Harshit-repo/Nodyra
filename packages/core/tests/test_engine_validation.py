@@ -8,13 +8,12 @@ from noodle.engine.node_exec import (
     _validate_node_input_schema,
     _validate_node_output_schema,
 )
-from noodle.engine.types import NodeValidationError, ValidationWarning
+from noodle.engine.types import GraphError, NodeValidationError, ValidationWarning
 from noodle.engine.validation import (
     _infer_schema_port_kinds,
     validate_graph,
 )
 from noodle.models import Edge, GraphNode, WorkflowGraph
-
 
 # ---------------------------------------------------------------------------
 # Schema sanitization
@@ -320,7 +319,7 @@ class TestInferSchemaPortKinds:
 class TestValidateGraphWarnings:
     def test_empty_graph_raises(self):
         graph = WorkflowGraph(nodes=[], edges=[])
-        with pytest.raises(Exception):
+        with pytest.raises(GraphError):
             validate_graph(graph)
 
     def test_validate_graph_with_code_node(self):

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
 import noodle_nodes  # noqa: F401 - importing registers the built-in nodes
@@ -28,7 +28,7 @@ from app.exceptions import (
     DedicatedPoolRequired,
     PackageNotInstalled,
     QuotaExceeded,
-    ServiceError,
+    SandboxRequired,
     SingleFlightConflict,
     StepNeedsUpstreamTrigger,
     WorkflowNeedsTrigger,
@@ -44,7 +44,13 @@ from app.models import (
     WorkflowVersion,
 )
 from app.services import queue as run_queue
-from app.services import run_alerts, run_persistence, run_resume, sandbox_pool
+from app.services import (
+    run_alerts,
+    run_checkpoints,
+    run_persistence,
+    run_resume,
+    sandbox_pool,
+)
 from app.services.artifacts import (
     collect_artifact_refs,
     make_artifact_store,
@@ -75,6 +81,7 @@ from app.services.remote_dispatch import (
 )
 from app.services.runtime_pool import _org_run_limits_for, _resolve_run_org
 from app.services.runtime_pool import pool as runtime_pool
+from app.services.sandbox_policy import resolve_execution_mode, resolve_sandbox_overrides
 from app.services.subworkflows import meta_for_root_run, resolve_subworkflow
 from noodle.ai_runtime import AgentActionRequest
 from noodle.context import artifact_store, org_run_limits
@@ -95,10 +102,8 @@ from noodle.sdk import (
     registry as node_registry,
 )
 from noodle.serialization import (
-    _approx_json_length,
     deserialize_value,
     serialize_value,
-    truncate_serialized_value,
 )
 
 # ContextVar that carries the current run_id into every log record emitted
@@ -135,6 +140,18 @@ _active_runs: dict[str, asyncio.Task[None]] = {}
 # Postgres uses row-level ``with_for_update``; this dict provides equivalent
 # in-process serialisation for SQLite's single-writer model.
 _workflow_single_flight_locks: dict[str, asyncio.Lock] = {}
+_SINGLE_FLIGHT_LOCKS_MAX = 1024
+
+
+def _prune_single_flight_locks() -> None:
+    if len(_workflow_single_flight_locks) <= _SINGLE_FLIGHT_LOCKS_MAX:
+        return
+    for wf_id in [
+        key for key, lock in _workflow_single_flight_locks.items() if not lock.locked()
+    ]:
+        del _workflow_single_flight_locks[wf_id]
+        if len(_workflow_single_flight_locks) <= _SINGLE_FLIGHT_LOCKS_MAX:
+            break
 
 # Back-compat aliases — these moved to run_persistence (A2 split) but are part
 # of this module's established surface (on_event closure, resume path, lazy
@@ -151,118 +168,14 @@ _contains_unrestorable_object = run_persistence._contains_unrestorable_object
 _graph_node_types = run_persistence._graph_node_types
 _extract_webhook_response = run_persistence._extract_webhook_response
 
-# -- durable execution checkpoint helpers --------------------------------------
-
-_MAX_CHECKPOINT_BYTES: int = 1_048_576  # 1 MiB per-run cap
-
-
-class _CheckpointDebouncer:
-    """Coalesce per-node checkpoint commits while preserving a final flush."""
-
-    def __init__(self, interval: float = 0.25, *, clock=None) -> None:
-        self._interval = interval
-        self._clock = clock or time.monotonic
-        self._last_persist: float | None = None
-        self.has_deferred = False
-
-    def should_persist(self) -> bool:
-        now = self._clock()
-        if self._last_persist is None or now - self._last_persist >= self._interval:
-            return True
-        self.has_deferred = True
-        return False
-
-    def mark_persisted(self) -> None:
-        self._last_persist = self._clock()
-        self.has_deferred = False
-
-
-def _serialize_checkpoint_outputs(
-    node_outputs: dict[str, dict],
-) -> dict[str, dict]:
-    """Serialize node outputs for checkpoint storage.
-
-    Uses ``serialize_value`` with ``dataframe_max_rows=100``.  Values that
-    cannot be serialised are skipped with a warning so a single bad output
-    never blocks the checkpoint.
-    """
-    result: dict[str, dict] = {}
-    for node_id, outputs in node_outputs.items():
-        if not isinstance(outputs, dict):
-            continue
-        try:
-            serialized = serialize_value(outputs, dataframe_max_rows=100)
-            if isinstance(serialized, dict):
-                result[node_id] = serialized
-        except Exception:  # noqa: BLE001
-            logger.warning(
-                "checkpoint skip node_id=%s: serialization failed", node_id
-            )
-    return result
-
-
-async def _save_checkpoint(
-    run_id: str,
-    node_outputs: dict[str, dict],
-    completed: set[str],
-    last_node_id: str,
-    *,
-    _accumulated: dict[str, dict] | None = None,
-) -> None:
-    """Persist execution state to ``Run.checkpoint`` after a node completes.
-
-    When *_accumulated* is provided, only newly-seen nodes are serialised
-    and added to it; the FULL dict is then persisted.  This avoids O(n²)
-    re-serialisation of already-checkpointed outputs.
-
-    Bounded to ``_MAX_CHECKPOINT_BYTES``.  Failures are logged but never
-    propagated — a checkpoint save must not interrupt the run.
-    """
-    # Serialise only new node outputs; re-use previously serialised entries.
-    if _accumulated is not None:
-        for nid, outputs in node_outputs.items():
-            if nid in _accumulated or not isinstance(outputs, dict):
-                continue
-            try:
-                s = serialize_value(outputs, dataframe_max_rows=100)
-                if isinstance(s, dict):
-                    _accumulated[nid] = s
-            except Exception:  # noqa: BLE001
-                logger.warning("checkpoint skip node_id=%s: serialization failed", nid)
-        checkpoint_data = dict(_accumulated)
-    else:
-        checkpoint_data = _serialize_checkpoint_outputs(node_outputs)
-
-    payload: dict = {
-        "node_outputs": checkpoint_data,
-        "completed_nodes": sorted(completed),
-        "last_node_id": last_node_id,
-        "timestamp": datetime.now(UTC).isoformat(),
-    }
-    try:
-        approx = _approx_json_length(payload)
-    except (TypeError, ValueError):
-        logger.warning("run_id=%s checkpoint size estimate failed, skipping", run_id)
-        return
-    if approx > _MAX_CHECKPOINT_BYTES:
-        truncated = truncate_serialized_value(payload, _MAX_CHECKPOINT_BYTES)
-        logger.warning(
-            "run_id=%s checkpoint %d bytes exceeds %d byte limit, truncating",
-            run_id, approx, _MAX_CHECKPOINT_BYTES,
-        )
-        if not isinstance(truncated, dict):
-            logger.warning("run_id=%s checkpoint truncated to non-dict, skipping", run_id)
-            return
-        payload = truncated
-
-    try:
-        async with SessionLocal() as session:
-            await session.execute(
-                update(Run).where(Run.id == run_id).values(checkpoint=payload)
-            )
-            await session.commit()
-    except Exception:  # noqa: BLE001
-        logger.exception("run_id=%s failed to save checkpoint", run_id)
+# A2 follow-up: checkpointing moved to run_checkpoints. Aliases keep this
+# module's established import surface; patch app.services.run_checkpoints to
+# alter checkpoint behaviour in tests (conftest swaps its SessionLocal
+# alongside every other service module).
+_MAX_CHECKPOINT_BYTES = run_checkpoints._MAX_CHECKPOINT_BYTES
+_CheckpointDebouncer = run_checkpoints._CheckpointDebouncer
+_serialize_checkpoint_outputs = run_checkpoints._serialize_checkpoint_outputs
+_save_checkpoint = run_checkpoints._save_checkpoint
 
 
 def _build_ctx(
@@ -278,6 +191,7 @@ def _build_ctx(
     workflow_modules: list[dict],
     run_timeout: float | None,
     agent_action_resume: dict[str, AgentActionRequest] | None,
+    sandbox_spawn_overrides: dict | None = None,
     subworkflow_meta: dict | None = None,
     org_id: str | None = None,
 ) -> RunExecutionContext:
@@ -293,6 +207,7 @@ def _build_ctx(
         "env_payload": env_payload,
         "workflow_modules": workflow_modules,
         "run_timeout": run_timeout,
+        "sandbox_spawn_overrides": sandbox_spawn_overrides,
         "default_timeouts": _engine_default_timeouts(),
         "pause_on_approval": True,
         "agent_action_resume": (
@@ -403,6 +318,7 @@ async def start_run(
     run_id: str | None = None,
     batch_id: str | None = None,
     runner_pool_id: str | None = None,
+    execution_mode: str | None = None,
 ) -> str:
     """Public run launcher that restores any caller tenant context.
 
@@ -442,6 +358,7 @@ async def start_run(
             pre_run_id=run_id,
             batch_id=batch_id,
             runner_pool_id=runner_pool_id,
+            execution_mode=execution_mode,
         )
     finally:
         if org_token is not None:
@@ -483,6 +400,7 @@ async def _start_run_impl(
     pre_run_id: str | None = None,
     batch_id: str | None = None,
     runner_pool_id: str | None = None,
+    execution_mode: str | None = None,
 ) -> str:
     """Create a run record and launch execution in the background.
 
@@ -523,10 +441,9 @@ async def _start_run_impl(
         limit=_wf_rate_limit,
         window_seconds=60,
     ):
-        raise ServiceError(
-            http_status=429,
-            detail="Rate limit exceeded for this workflow. "
-            f"Maximum {_wf_rate_limit} runs per minute.",
+        raise QuotaExceeded(
+            "Rate limit exceeded for this workflow. "
+            f"Maximum {_wf_rate_limit} runs per minute."
         )
 
     logger.info(
@@ -600,6 +517,37 @@ async def _start_run_impl(
                             "to the workflow, environment, or deployment."
                         )
 
+        wf_mode = getattr(wf_obj, "execution_mode", "inherit") if wf_obj else "inherit"
+        effective_mode = resolve_execution_mode(
+            run_override=execution_mode,
+            workflow_mode=wf_mode,
+        )
+        if effective_mode == "sandboxed":
+            if runner_pool_id:
+                # A run bound to a runner pool executes THERE, never in the
+                # container sandbox — so the pool itself must be a container
+                # provider. Checked regardless of execution_sandbox: with the
+                # sandbox on, an agent-pool run would otherwise silently
+                # bypass isolation via the remote dispatch path.
+                from app.models import RunnerPool as _RunnerPool
+
+                pool = await session.get(_RunnerPool, runner_pool_id)
+                if pool is None or pool.provider not in ("docker", "kubernetes"):
+                    raise SandboxRequired(
+                        "This run requires sandboxed execution, but its "
+                        f"runner pool (provider="
+                        f"{getattr(pool, 'provider', None)!r}) is not a "
+                        "container provider. Assign a docker/kubernetes pool, "
+                        "or clear the pool so the container sandbox runs it."
+                    )
+            elif settings.execution_sandbox == "off":
+                raise SandboxRequired(
+                    "This run requires sandboxed execution. Enable "
+                    "EXECUTION_SANDBOX=auto|required on the worker (see "
+                    "deploy/docker-compose.sandbox.yml), or assign a "
+                    "docker/kubernetes runner pool."
+                )
+
         # C3: executions/day quota — checked and counted at ADMISSION so the
         # ceiling is hard (a burst of starts can't outrun completion-time
         # accounting). Day boundary is UTC.
@@ -645,6 +593,7 @@ async def _start_run_impl(
             # write barrier is correct for single-replica deployments.
             _lock: asyncio.Lock | None = None
             if not settings.database_url.startswith("postgresql"):
+                _prune_single_flight_locks()
                 _lock = _workflow_single_flight_locks.setdefault(
                     workflow_id, asyncio.Lock()
                 )
@@ -678,6 +627,7 @@ async def _start_run_impl(
             trigger_type=trigger_type,
             status="running",
             runner_pool_id=runner_pool_id,
+            execution_mode=("sandboxed" if execution_mode == "sandboxed" else None),
             deduplication_key=deduplication_key,
             batch_id=batch_id,
         )
@@ -793,6 +743,7 @@ async def _start_run_impl(
                 cache,
                 prefer_draft=prefer_draft,
                 runner_pool_id=runner_pool_id,
+                run_execution_mode=run.execution_mode,
                 trace_carrier=trace_carrier,
             )
         finally:
@@ -807,6 +758,7 @@ async def _start_run_impl(
                 cache,
                 prefer_draft=prefer_draft,
                 runner_pool_id=runner_pool_id,
+                run_execution_mode=run.execution_mode,
                 trace_carrier=trace_carrier,
             )
         )
@@ -919,6 +871,7 @@ async def _execute_run(
     *,
     prefer_draft: bool = False,
     runner_pool_id: str | None = None,
+    run_execution_mode: str | None = None,
     agent_action_resume: dict[str, AgentActionRequest] | None = None,
     trace_carrier: dict | None = None,
 ) -> None:
@@ -941,6 +894,7 @@ async def _execute_run(
                 cache,
                 prefer_draft=prefer_draft,
                 runner_pool_id=runner_pool_id,
+                run_execution_mode=run_execution_mode,
                 agent_action_resume=agent_action_resume,
                 trace_org=org_id,
                 run_org_id=org_id,
@@ -958,6 +912,7 @@ async def _execute_run(
                 cache,
                 prefer_draft=prefer_draft,
                 runner_pool_id=runner_pool_id,
+                run_execution_mode=run_execution_mode,
                 agent_action_resume=agent_action_resume,
                 trace_org=org_id,
                 run_org_id=org_id,
@@ -979,6 +934,8 @@ class _PreparedRunContext:
     workflow_modules: list[dict]
     secret_values: list[str]
     output_cap: int
+    execution_mode: str = "inherit"
+    sandbox_resources: dict | None = None
     # Live-settings artifact caps; None falls back to boot settings inside
     # make_artifact_store.
     max_artifact_bytes: int | None = None
@@ -1011,6 +968,8 @@ async def _prepare_run_context(
     # Single DB session for secrets, credentials, modules.
     env_id: str | None = None
     run_timeout: float | None = None
+    execution_mode = "inherit"
+    sandbox_resources: dict | None = None
     secret_values: list[str] = []
     workflow_modules: list[dict] = []
 
@@ -1041,6 +1000,8 @@ async def _prepare_run_context(
             workflow = await session.get(Workflow, workflow_id)
             env_id = workflow.environment_id if workflow else None
             run_timeout = workflow.run_timeout_seconds if workflow else None
+            execution_mode = workflow.execution_mode if workflow else "inherit"
+            sandbox_resources = workflow.sandbox_resources if workflow else None
             stmt = select(CodeModule).where(
                 or_(
                     CodeModule.scope == "global",
@@ -1067,6 +1028,8 @@ async def _prepare_run_context(
             workflow_modules = []
             env_id = None
             run_timeout = None
+            execution_mode = "inherit"
+            sandbox_resources = None
 
     return _PreparedRunContext(
         graph_dict=graph_dict,
@@ -1076,6 +1039,8 @@ async def _prepare_run_context(
         workflow_modules=workflow_modules,
         secret_values=secret_values,
         output_cap=output_cap,
+        execution_mode=execution_mode,
+        sandbox_resources=sandbox_resources,
         max_artifact_bytes=max_artifact_bytes,
         max_artifacts_per_run=max_artifacts_per_run,
     )
@@ -1090,6 +1055,7 @@ async def _execute_run_impl(
     *,
     prefer_draft: bool = False,
     runner_pool_id: str | None = None,
+    run_execution_mode: str | None = None,
     agent_action_resume: dict[str, AgentActionRequest] | None = None,
     trace_org: str | None = None,
     run_org_id: str | None = None,
@@ -1110,6 +1076,7 @@ async def _execute_run_impl(
     _accumulated_checkpoint: dict[str, dict] = {}
     checkpoint_debouncer = _CheckpointDebouncer()
     last_checkpoint_node_id: str | None = None
+    checkpoint_truncated_warned = False
     artifact_refs: list[dict] = []
     secret_values: list[str] = []
     # A3: sub-workflow context (draft preference, depth/chain seed) travels
@@ -1135,7 +1102,7 @@ async def _execute_run_impl(
     )
 
     async def on_event(event: dict) -> None:
-        nonlocal last_checkpoint_node_id, run_event_sequence
+        nonlocal checkpoint_truncated_warned, last_checkpoint_node_id, run_event_sequence
         clean = dict(event)
         if "outputs" in clean:
             clean["outputs"] = serialize_value(clean["outputs"])
@@ -1183,7 +1150,7 @@ async def _execute_run_impl(
             last_checkpoint_node_id = clean["node_id"]
             try:
                 if checkpoint_debouncer.should_persist():
-                    await _save_checkpoint(
+                    was_truncated = await _save_checkpoint(
                         run_id,
                         {nid: ev.get("outputs", {}) for nid, ev in node_events.items()},
                         completed_node_ids,
@@ -1191,6 +1158,19 @@ async def _execute_run_impl(
                         _accumulated=_accumulated_checkpoint,
                     )
                     checkpoint_debouncer.mark_persisted()
+                    if was_truncated and not checkpoint_truncated_warned:
+                        checkpoint_truncated_warned = True
+                        broker.publish(
+                            run_id,
+                            {
+                                "type": "checkpoint_truncated",
+                                "run_id": run_id,
+                                "detail": (
+                                    "run state exceeds the 1 MiB checkpoint cap; "
+                                    "crash-resume may recompute some nodes"
+                                ),
+                            },
+                        )
             except Exception:  # noqa: BLE001
                 checkpoint_debouncer.has_deferred = True
                 logger.exception("run_id=%s checkpoint save failed", run_id)
@@ -1243,9 +1223,28 @@ async def _execute_run_impl(
         workflow_modules = prep.workflow_modules
         secret_values = prep.secret_values
         output_cap = prep.output_cap
+        effective_execution_mode = resolve_execution_mode(
+            run_override=run_execution_mode,
+            workflow_mode=prep.execution_mode,
+        )
 
         if settings.use_subprocess_runner:
             if runner_pool_id:
+                # Fail-closed twin of the admission gate: replayed/requeued
+                # runs never re-pass admission, so a sandboxed run must be
+                # re-verified against its pool's provider before remote
+                # dispatch (an agent pool would execute it unsandboxed).
+                if effective_execution_mode == "sandboxed":
+                    from app.models import RunnerPool as _RunnerPool
+
+                    async with SessionLocal() as _pool_session:
+                        _pool = await _pool_session.get(_RunnerPool, runner_pool_id)
+                    if _pool is None or _pool.provider not in ("docker", "kubernetes"):
+                        raise SandboxRequired(
+                            "run requires sandboxed execution but its runner "
+                            f"pool (provider={getattr(_pool, 'provider', None)!r}) "
+                            "is not a container provider"
+                        )
                 # Remote runner path — build env descriptor and dispatch.
                 env_payload = await _build_env_payload_for_run(env_id)
                 try:
@@ -1292,11 +1291,20 @@ async def _execute_run_impl(
                         await session.commit()
                     _log_run_id.reset(run_id_token)
                     return "queued"
-            elif sandbox_executor.active:
+            elif effective_execution_mode == "sandboxed":
+                if not sandbox_executor.active:
+                    raise SandboxRequired(
+                        "run requires sandboxed execution but this worker has "
+                        "no active sandbox (EXECUTION_SANDBOX=off or Docker "
+                        "unreachable)"
+                    )
                 # Sandbox path: same prepared inputs as local, but the run
                 # executes in a disposable hardened container keyed by
                 # (org, env). env_payload drives the per-env image.
                 env_payload = await _build_env_payload_for_run(env_id)
+                sandbox_spawn_overrides = resolve_sandbox_overrides(
+                    prep.sandbox_resources
+                )
                 outcome = await sandbox_executor.execute(
                     _build_ctx(
                         run_id=run_id,
@@ -1311,6 +1319,7 @@ async def _execute_run_impl(
                         workflow_modules=workflow_modules,
                         run_timeout=run_timeout,
                         agent_action_resume=agent_action_resume,
+                        sandbox_spawn_overrides=sandbox_spawn_overrides,
                         subworkflow_meta=sub_meta.to_payload(),
                     ),
                     on_event,
@@ -1401,11 +1410,13 @@ async def _execute_run_impl(
                     from app.services.mcp_client import (
                         call_tool as _call_tool,
                     )
+                    from app.services.mcp_client import ensure_tool_allowed
 
                     async with _SessionLocal() as _session:
                         conn, secret = await _load_conn(
                             connection_id, _run_org, _session
                         )
+                        ensure_tool_allowed(conn, tool_name)
                         return await _call_tool(
                             conn,
                             tool_name,
@@ -1476,7 +1487,7 @@ async def _execute_run_impl(
 
     if checkpoint_debouncer.has_deferred and last_checkpoint_node_id is not None:
         try:
-            await _save_checkpoint(
+            was_truncated = await _save_checkpoint(
                 run_id,
                 {nid: ev.get("outputs", {}) for nid, ev in node_events.items()},
                 completed_node_ids,
@@ -1484,6 +1495,19 @@ async def _execute_run_impl(
                 _accumulated=_accumulated_checkpoint,
             )
             checkpoint_debouncer.mark_persisted()
+            if was_truncated and not checkpoint_truncated_warned:
+                checkpoint_truncated_warned = True
+                broker.publish(
+                    run_id,
+                    {
+                        "type": "checkpoint_truncated",
+                        "run_id": run_id,
+                        "detail": (
+                            "run state exceeds the 1 MiB checkpoint cap; "
+                            "crash-resume may recompute some nodes"
+                        ),
+                    },
+                )
         except Exception:  # noqa: BLE001
             logger.exception("run_id=%s final checkpoint flush failed", run_id)
 
@@ -1543,6 +1567,7 @@ async def _execute_queued_entry(run_id: str) -> None:
         if run is None or run.status != "queued":
             return
         runner_pool_id = run.runner_pool_id
+        run_execution_mode = run.execution_mode
         workflow_id = run.workflow_id
         mode = run.mode
         wf_version_id = run.workflow_version_id
@@ -1706,6 +1731,7 @@ async def _execute_queued_entry(run_id: str) -> None:
         cache,
         prefer_draft=ran_draft,
         runner_pool_id=runner_pool_id,
+        run_execution_mode=run_execution_mode,
         agent_action_resume=agent_action_resume,
         trace_carrier=lease_carrier,
     )

@@ -60,6 +60,7 @@ describe("SettingsPage", () => {
     expect(screen.getByText("Viewer Person")).toBeTruthy();
     expect(screen.getByText("Instance role")).toBeTruthy();
     expect(await screen.findByText("Current workspace role")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "MCP server" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Save profile/i })).toBeNull();
     expect(screen.queryByText("Instance settings")).toBeNull();
 
@@ -100,10 +101,19 @@ describe("SettingsPage", () => {
     ]);
     vi.spyOn(api, "getSystemSettings").mockResolvedValue(settings);
     vi.spyOn(api, "getLicense").mockResolvedValue(license);
+    vi.spyOn(api, "sandboxStatus").mockResolvedValue({
+      mode: "off",
+      active: false,
+      runtime: null,
+      network: null,
+      idle: 0,
+      active_runs: 0,
+    });
 
     renderSettings();
 
     expect(await screen.findByText("Worker memory soft budget")).toBeTruthy();
+    expect(await screen.findByText("Sandboxed execution is off")).toBeTruthy();
     expect(await screen.findByRole("heading", { name: "Plan & license" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Save instance settings" })).toBeDisabled();
 
@@ -135,10 +145,19 @@ describe("SettingsPage", () => {
       limits: {},
       notice: null,
     });
+    vi.spyOn(api, "sandboxStatus").mockResolvedValue({
+      mode: "off",
+      active: false,
+      runtime: null,
+      network: null,
+      idle: 0,
+      active_runs: 0,
+    });
 
     renderSettings();
 
     expect(await screen.findByRole("heading", { name: "Instance settings" })).toBeTruthy();
+    expect(await screen.findByText("Sandboxed execution is off")).toBeTruthy();
     expect(await screen.findByRole("heading", { name: "Plan & license" })).toBeTruthy();
   });
 });

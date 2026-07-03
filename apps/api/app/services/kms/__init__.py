@@ -52,6 +52,7 @@ def _build() -> KMSProvider:
 # Cache of exactly one — LRU size-1 so tests can invalidate with .cache_clear().
 # Not lru_cache on _build directly because Settings is mutable at startup.
 import functools  # noqa: E402
+
 get_kms_provider = functools.lru_cache(maxsize=1)(_build)
 """Return the singleton KMS provider for the current ``settings.kms_provider``.
 

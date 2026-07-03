@@ -1,6 +1,6 @@
 """Minimal MCP test server using stdlib only. Two tools for MS3 3C E2E verification."""
 import json
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 TOOLS = [
     {

@@ -52,6 +52,11 @@ class DedicatedPoolRequired(ServiceError):
     http_status = _http_status.HTTP_400_BAD_REQUEST
 
 
+class SandboxRequired(ServiceError):
+    """Workflow demands sandboxed execution but none is available."""
+    http_status = _http_status.HTTP_409_CONFLICT
+
+
 class AuthError(ServiceError):
     """Authentication failure (invalid credentials, expired token, etc.)."""
     http_status = _http_status.HTTP_401_UNAUTHORIZED

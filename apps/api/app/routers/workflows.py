@@ -38,9 +38,9 @@ from app.schemas import (
     WorkflowDetail,
     WorkflowPublishRequest,
     WorkflowPublishResponse,
+    WorkflowRevisionInfo,
     WorkflowSummary,
     WorkflowUpdate,
-    WorkflowRevisionInfo,
     WorkflowVersionInfo,
 )
 from app.security import (
@@ -55,15 +55,19 @@ from app.services.events import workflow_broker
 from app.services.github_sync import enqueue_github_push
 from app.services.github_sync_jobs import notify_sync_workers
 from app.services.provider_triggers import sync_workflow_provider_triggers
+from app.services.sandbox_policy import (
+    VALID_EXECUTION_MODES,
+    validate_sandbox_resources,
+)
 from app.services.workflow_events import (
     WORKFLOW_CREATED,
     WORKFLOW_DELETED,
     WORKFLOW_PUBLISHED,
     WORKFLOW_UPDATED,
     bump_graph_revision,
-    record_workflow_revision,
     publish_workflow_event,
     publish_workflow_graph_changed,
+    record_workflow_revision,
 )
 from app.tenancy import current_org_id, run_as_org
 from noodle.models import WorkflowGraph
@@ -284,6 +288,8 @@ async def _detail(session: AsyncSession, workflow: Workflow) -> WorkflowDetail:
         error_workflow_id=workflow.error_workflow_id,
         error_alerts=workflow.error_alerts or {},
         allow_concurrent=workflow.allow_concurrent,
+        execution_mode=workflow.execution_mode,
+        sandbox_resources=workflow.sandbox_resources,
         run_timeout_seconds=workflow.run_timeout_seconds,
         mcp_enabled=workflow.mcp_enabled,
         mcp_tool_name=workflow.mcp_tool_name,
@@ -522,7 +528,7 @@ async def workflow_events(websocket: WebSocket, workflow_id: str) -> None:
                 try:
                     await asyncio.wait_for(stop_event.wait(), timeout=30)
                     break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
                 try:
                     await websocket.send_json({"type": "ping"})
@@ -685,6 +691,25 @@ async def update_workflow(
         workflow.error_alerts = body.error_alerts
     if body.allow_concurrent is not None:
         workflow.allow_concurrent = body.allow_concurrent
+    if body.execution_mode is not None:
+        if body.execution_mode not in VALID_EXECUTION_MODES:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                f"execution_mode must be one of {VALID_EXECUTION_MODES}",
+            )
+        workflow.execution_mode = body.execution_mode
+    if "sandbox_resources" in sent:
+        if body.sandbox_resources is None:
+            workflow.sandbox_resources = None
+        else:
+            try:
+                workflow.sandbox_resources = validate_sandbox_resources(
+                    body.sandbox_resources
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)
+                ) from exc
     if "run_timeout_seconds" in sent:
         workflow.run_timeout_seconds = body.run_timeout_seconds
     if body.mcp_enabled is not None:

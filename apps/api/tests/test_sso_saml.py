@@ -106,7 +106,6 @@ async def test_saml_acs_with_valid_response_creates_user(
     ACS flow creates a user with the correct membership.
     """
     import base64
-    import zlib
     from datetime import UTC, datetime, timedelta
 
     from cryptography.hazmat.primitives import hashes, serialization

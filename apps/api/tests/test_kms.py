@@ -10,7 +10,6 @@ import pytest
 from app.config import settings
 from app.services.kms import get_kms_provider, invalidate_kms_cache
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -353,8 +352,8 @@ class TestOrgKeysIntegration:
     async def test_get_org_kek_uses_kms_provider(self):
         """get_org_kek should delegate to get_kms_provider for encryption
         and decryption (smoke test via env provider)."""
-        from app.services.org_keys import get_org_kek
         from app.services.kms import get_kms_provider
+        from app.services.org_keys import get_org_kek
 
         provider = get_kms_provider()
         # The env provider should be healthy

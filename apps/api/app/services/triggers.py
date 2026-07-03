@@ -338,6 +338,19 @@ def _webhook_hmac_passes(
 
     if str(node_params.get("hmac_verification") or "off").lower() != "on":
         return True
+    lower_headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+    ts_header = str(node_params.get("hmac_timestamp_header") or "").lower()
+    if ts_header:
+        import time as _time
+
+        max_age = float(node_params.get("hmac_max_age_seconds") or 300)
+        raw_ts = lower_headers.get(ts_header) or ""
+        try:
+            ts = float(raw_ts)
+        except (TypeError, ValueError):
+            return False
+        if abs(_time.time() - ts) > max_age:
+            return False
     creds = resolved.get("auth_credentials")
     creds = creds if isinstance(creds, dict) else None
     secret = str((creds or {}).get("hmac_secret") or resolved.get("hmac_secret") or "")
@@ -349,7 +362,6 @@ def _webhook_hmac_passes(
     if digestmod is None:
         return False
     prefix = str(node_params.get("hmac_prefix") or "")
-    lower_headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
     provided = lower_headers.get(header_name, "")
     if prefix and provided.startswith(prefix):
         provided = provided[len(prefix) :]

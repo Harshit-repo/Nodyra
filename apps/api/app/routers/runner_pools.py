@@ -29,7 +29,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import SessionLocal, get_session
-from app.services.licensing import Feature, require_feature
 from app.models import (
     Artifact,
     Run,
@@ -66,6 +65,7 @@ from app.services.crypto import (
     encrypt_data,
 )
 from app.services.graph_utils import first_trigger_node
+from app.services.licensing import Feature, require_feature
 from app.services.remote_dispatch import dispatcher
 from app.services.runner import cancel_run, start_run
 from app.services.ssh_onboard import onboard_machine

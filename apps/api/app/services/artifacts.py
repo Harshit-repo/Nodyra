@@ -127,6 +127,9 @@ def _row_from_ref(
         kind=str(ref.get("kind") or "binary"),
         content_type=str(ref.get("content_type") or "application/octet-stream"),
         size_bytes=int(ref.get("size_bytes") or 0),
+        checksum_sha256=(
+            str(ref["checksum_sha256"]) if ref.get("checksum_sha256") else None
+        ),
         storage_backend=str(ref.get("storage_backend") or "local"),
         storage_key=storage_key,
         artifact_metadata=redact_value(

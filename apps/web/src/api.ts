@@ -334,6 +334,8 @@ export interface WorkflowPatch {
   error_workflow_id?: string | null;
   error_alerts?: Record<string, unknown>;
   run_timeout_seconds?: number | null;
+  execution_mode?: "inherit" | "sandboxed" | "standard";
+  sandbox_resources?: { memory_mb?: number; cpu?: number; tmpfs_mb?: number } | null;
   mcp_enabled?: boolean;
   mcp_tool_name?: string | null;
   mcp_description?: string | null;
@@ -556,6 +558,7 @@ export const api = {
       targets?: string[];
       cache?: Record<string, Record<string, unknown>>;
       trigger_node_id?: string;
+      sandbox?: boolean;
     },
   ) =>
     request<{ run_id: string }>(`/workflows/${id}/run`, {
@@ -600,6 +603,24 @@ export const api = {
   getRun: (runId: string) => request<RunInfo>(`/runs/${runId}`),
   listRunArtifacts: (runId: string, nodeId?: string) =>
     request<ArtifactInfo[]>(`/runs/${runId}/artifacts${nodeId ? `?node_id=${encodeURIComponent(nodeId)}` : ""}`),
+  listArtifacts: (params: {
+    workflow_id?: string;
+    run_id?: string;
+    kind?: string;
+    q?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.workflow_id) qs.set("workflow_id", params.workflow_id);
+    if (params.run_id) qs.set("run_id", params.run_id);
+    if (params.kind) qs.set("kind", params.kind);
+    if (params.q) qs.set("q", params.q);
+    if (params.limit !== undefined) qs.set("limit", String(params.limit));
+    if (params.offset !== undefined) qs.set("offset", String(params.offset));
+    const query = qs.toString();
+    return request<ArtifactListResponse>(`/artifacts${query ? `?${query}` : ""}`);
+  },
   getArtifact: (artifactId: string) =>
     request<ArtifactInfo>(`/artifacts/${artifactId}`),
   deleteArtifact: (artifactId: string) =>
@@ -974,6 +995,9 @@ export const api = {
   getMcpTools: (id: string) =>
     request<MCPToolInfo[]>(`/mcp-connections/${id}/tools`),
 
+  listMcpConnectionTools: (id: string) =>
+    request<MCPToolInfo[]>(`/mcp-connections/${id}/tools`),
+
   // --- SSO ------------------------------------------------------------------
   getSSOConfig: () => request<SSOConfig | null>("/admin/sso"),
 
@@ -1001,6 +1025,7 @@ export const api = {
   // --- Ops dashboard --------------------------------------------------------
   runtimeMode: () => request<RuntimeModeStatus>("/ops/runtime-mode"),
   queueStats: () => request<QueueStats>("/ops/queue"),
+  sandboxStatus: () => request<SandboxStatus>("/ops/sandbox"),
   runTimeline: (runId: string) => request<RunTimeline>(`/runs/${runId}/timeline`),
   runApprovals: (runId: string) =>
     request<RunApprovalInfo[]>(`/runs/${runId}/approvals`),
@@ -1210,6 +1235,20 @@ export interface RuntimeModeStatus {
   runner_providers: string[];
   allow_insecure: boolean;
   warnings: string[];
+}
+
+export interface SandboxStatus {
+  mode: string;
+  active: boolean;
+  runtime: string | null;
+  network: string | null;
+  idle: number;
+  active_runs: number;
+}
+
+export interface ArtifactListResponse {
+  items: ArtifactInfo[];
+  total: number;
 }
 
 export interface QueueStats {

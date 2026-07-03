@@ -1033,6 +1033,84 @@
   background: var(--surface-2);
 }
 
+.noodle-mcp-server-card {
+  display: grid;
+  gap: 14px;
+}
+
+.noodle-mcp-server-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.noodle-sandbox-status {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.6fr) minmax(0, 1.4fr);
+  gap: 14px;
+  align-items: stretch;
+  padding: 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.noodle-sandbox-status.is-active {
+  border-color: color-mix(in srgb, var(--color-success) 34%, var(--line));
+  background: color-mix(in srgb, var(--color-success-bg) 40%, var(--bg));
+}
+
+.noodle-sandbox-status.is-warn {
+  border-color: color-mix(in srgb, var(--color-warning) 34%, var(--line));
+  background: color-mix(in srgb, var(--color-warning-bg) 44%, var(--bg));
+}
+
+.noodle-sandbox-status.is-off {
+  border-color: color-mix(in srgb, var(--color-error) 26%, var(--line));
+  background: color-mix(in srgb, var(--color-error-bg) 34%, var(--bg));
+}
+
+.noodle-sandbox-status > div {
+  display: grid;
+  align-content: center;
+  gap: 6px;
+}
+
+.noodle-sandbox-status > div span,
+.noodle-sandbox-status dt {
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.noodle-sandbox-status > div strong {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.noodle-sandbox-status dl {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.noodle-sandbox-status dl > div {
+  min-width: 0;
+  padding-left: 10px;
+  border-left: 1px solid var(--line-2);
+}
+
+.noodle-sandbox-status dd {
+  margin: 5px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
 .noodle-management-links {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1095,7 +1173,9 @@
   .noodle-mcp-client-snippets,
   .noodle-mcp-created-token,
   .noodle-mcp-scope-grid,
+  .noodle-sandbox-status,
   .noodle-management-links { grid-template-columns: 1fr; }
+  .noodle-sandbox-status dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .noodle-mcp-copy-row,
   .noodle-mcp-secret-row { grid-template-columns: 1fr; }
   .noodle-mcp-secret-row > button:not(.btn) { width: 100%; }

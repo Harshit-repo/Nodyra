@@ -26,9 +26,9 @@ from noodle_nodes import geospatial as geospatial
 from noodle_nodes import image_nodes as image_nodes
 from noodle_nodes import integrations as integrations
 from noodle_nodes import llm as llm
-from noodle_nodes import mcp_tool as mcp_tool
 from noodle_nodes import llm_evals as llm_evals
 from noodle_nodes import llm_training as llm_training
+from noodle_nodes import mcp_tool as mcp_tool
 from noodle_nodes import ml as ml
 from noodle_nodes import model_monitoring as model_monitoring
 from noodle_nodes import model_serving as model_serving

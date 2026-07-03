@@ -252,6 +252,7 @@ async def set_drain(payload: DrainRequest) -> dict:
 async def pool_status() -> dict:
     """Current pool capacity and autoscaling state."""
     from app.services.runtime_pool import pool as _rt_pool
+
     return {
         "max_slots": _rt_pool.current_max_slots(),
         "available": _rt_pool.available_global_slots(),
@@ -260,6 +261,17 @@ async def pool_status() -> dict:
         "autoscale_max": settings.pool_autoscale_max,
         "autoscale_threshold": settings.pool_autoscale_threshold,
     }
+
+
+@router.get(
+    "/ops/sandbox",
+    dependencies=[Depends(require_permission("ops:pool:read"))],
+)
+async def sandbox_status() -> dict:
+    """Sandbox mode, probe result, and warm-pool occupancy."""
+    from app.services.sandbox_pool import pool as _sbx_pool
+
+    return {"mode": settings.execution_sandbox, **_sbx_pool.status()}
 
 
 @router.post(

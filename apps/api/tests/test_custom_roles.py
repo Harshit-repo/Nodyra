@@ -8,13 +8,13 @@
 
 import pytest
 import pytest_asyncio
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app import models
-from app.config import settings
 from app.db import Base
 from app.security import (
     CUSTOM_ROLE_PERMISSION_REGISTRY,
@@ -146,7 +146,6 @@ async def test_delete_custom_role_falls_back_to_builtin(session, fixtures):
     assert membership.custom_role_id == role.id
 
     # Verify the FK is defined as ON DELETE SET NULL by inspecting the model
-    from sqlalchemy import ForeignKey
     custom_role_col = models.Membership.__table__.c.get("custom_role_id")
     assert custom_role_col is not None
     # Verify it has a foreign key with SET NULL rule
@@ -181,7 +180,7 @@ async def test_custom_role_unique_name_per_org(session, fixtures):
         permissions=["workflow:write"],
     )
     session.add(role2)
-    with pytest.raises(Exception):  # IntegrityError
+    with pytest.raises(IntegrityError):
         await session.commit()
     await session.rollback()
 

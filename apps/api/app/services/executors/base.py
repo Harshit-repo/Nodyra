@@ -29,6 +29,7 @@ class RunExecutionContext(TypedDict):
     env_payload: dict | None         # remote runs only; built by the host
     workflow_modules: list[dict]
     run_timeout: float | None
+    sandbox_spawn_overrides: dict | None
     default_timeouts: dict[str, float]
     pause_on_approval: bool
     agent_action_resume: dict[str, Any] | None  # node_id -> serialized request

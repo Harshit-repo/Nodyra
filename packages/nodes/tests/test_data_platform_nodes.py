@@ -8,8 +8,8 @@ from pathlib import Path
 from types import ModuleType
 from unittest.mock import MagicMock, patch
 
-import pytest
 import pyarrow.dataset  # ensure loaded before any sys.modules patching  # noqa: F401
+import pytest
 
 import noodle_nodes  # noqa: F401 - registers nodes
 from noodle.artifacts import LocalArtifactStore
@@ -291,9 +291,10 @@ def test_mlflow_log_artifact_with_file(tmp_path: Path) -> None:
 
 
 def test_mlflow_log_artifact_with_dataset_ref(tmp_path: Path, store_ctx) -> None:
-    from noodle_nodes.file_nodes import read_parquet_file
     import pyarrow as pa
     import pyarrow.parquet as pq
+
+    from noodle_nodes.file_nodes import read_parquet_file
 
     p = tmp_path / "data.parquet"
     pq.write_table(pa.table({"x": [1, 2]}), str(p))

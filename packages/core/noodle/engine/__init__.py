@@ -48,7 +48,13 @@ from noodle.engine.subworkflows import (
     extract_leaf_value,
     make_workflow_caller,
 )
-from noodle.engine.types import EventCallback, GraphError, NodeError, NodeValidationError, ValidationWarning
+from noodle.engine.types import (
+    EventCallback,
+    GraphError,
+    NodeError,
+    NodeValidationError,
+    ValidationWarning,
+)
 from noodle.engine.validation import (
     AI_PORT_KINDS,
     _validate_connection_kinds,

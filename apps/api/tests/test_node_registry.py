@@ -1,6 +1,5 @@
 """Tests for the Community Node Registry router (MS4 Slice 4E)."""
 
-import pytest
 from httpx import AsyncClient
 
 # Sample registry index used by mock responses.

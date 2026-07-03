@@ -160,6 +160,9 @@ class Settings(BaseSettings):
     # When true, the dispatch loop stops leasing new entries; in-flight
     # leased runs continue. Set this before shutdown to drain gracefully.
     queue_drain: bool = False
+    # Worker-only: serve GET /metrics on this port (OpenMetrics text) so
+    # Prometheus can scrape the execution plane directly. 0 = disabled.
+    worker_metrics_port: int = 0
     # Durable environment-build queue tuning. These jobs rebuild Python
     # environments after create/package/backend changes. Keep leases much
     # longer than run leases because package resolution can legitimately take
@@ -218,11 +221,11 @@ class Settings(BaseSettings):
     # override) to fail runaway runs fast.
     workflow_run_timeout_seconds: float = 0.0
     # Default per-node timeout (seconds) for ``code`` nodes when the node
-    # doesn't set its own ``timeout_seconds``. 0 means *no* per-node cap so a
-    # long-running Python node isn't cancelled mid-flight — it's then bounded
-    # only by ``workflow_run_timeout_seconds``. Set a positive value to guard
-    # against runaway user code.
-    code_node_timeout_seconds: float = 0.0
+    # doesn't set its own ``timeout_seconds``. Defaults to 600 so a hung code
+    # node can't wedge a run for the stuck-run grace period. Set 0 to remove
+    # the cap for long-running data jobs (bounded then only by
+    # ``workflow_run_timeout_seconds`` / the run deadline).
+    code_node_timeout_seconds: float = 600.0
     # Multi-tenancy master switch. Off (default): single-tenant behaviour,
     # zero filtering, the existing suite must pass unchanged. On: every
     # request resolves an organization (X-Org-Id header validated against
@@ -267,6 +270,15 @@ class Settings(BaseSettings):
     # execution_sandbox=required at startup. Setting False acknowledges
     # shared-kernel execution for trusted-tenant deployments.
     sandbox_policy_strict: bool = True
+    # What execution_mode="inherit" workflows get when sandboxing can be active.
+    # "sandboxed" preserves the existing EXECUTION_SANDBOX=auto|required
+    # behaviour; "standard" makes container isolation opt-in per workflow/run.
+    sandbox_workflow_default: Literal["sandboxed", "standard"] = "sandboxed"
+    # Ceilings for per-workflow sandbox resource requests. Requests above these
+    # are rejected on write and clamped again at container spawn.
+    sandbox_max_memory_mb: int = 8192
+    sandbox_max_cpu: float = 4.0
+    sandbox_max_tmpfs_mb: int = 2048
     # A5: OpenTelemetry tracing. Off by default — when disabled no SDK objects
     # are created and every tracing hook is a single boolean check (zero
     # overhead). Endpoint is the OTLP/HTTP collector traces URL, e.g.
@@ -366,6 +378,10 @@ class Settings(BaseSettings):
     mcp_oauth_introspection_url: str = ""
     mcp_oauth_client_id: str = ""
     mcp_oauth_client_secret: str = ""
+    # MCP client (external servers): per-call timeout and a hard cap on the
+    # JSON-RPC response body so a hostile server can't balloon worker memory.
+    mcp_tool_timeout_seconds: float = 30.0
+    mcp_max_response_bytes: int = 5 * 1024 * 1024
     # C3: Session hardening — httpOnly cookie auth + CSRF + WS tickets.
     # When auth_required=True, the SPA can authenticate via either:
     #   1. Bearer token in Authorization header (existing, unchanged)

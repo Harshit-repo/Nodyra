@@ -1,8 +1,20 @@
 import { A11yModal } from "./A11yModal";
 
+export type WorkflowExecutionMode = "inherit" | "sandboxed" | "standard";
+
+export interface SandboxResources {
+  memory_mb?: number;
+  cpu?: number;
+  tmpfs_mb?: number;
+}
+
 export interface WorkflowSettingsModalProps {
   runTimeout: string;
   onRunTimeoutChange: (v: string) => void;
+  executionMode: WorkflowExecutionMode;
+  onExecutionModeChange: (v: WorkflowExecutionMode) => void;
+  sandboxResources: SandboxResources;
+  onSandboxResourcesChange: (v: SandboxResources) => void;
   mcpEnabled: boolean;
   onMcpEnabledChange: (v: boolean) => void;
   mcpToolName: string;
@@ -15,11 +27,23 @@ export interface WorkflowSettingsModalProps {
 export function WorkflowSettingsModal(props: WorkflowSettingsModalProps) {
   const {
     runTimeout, onRunTimeoutChange,
+    executionMode, onExecutionModeChange,
+    sandboxResources, onSandboxResourcesChange,
     mcpEnabled, onMcpEnabledChange,
     mcpToolName, onMcpToolNameChange,
     mcpDescription, onMcpDescriptionChange,
     onClose,
   } = props;
+
+  const setResource = (key: keyof SandboxResources, value: string) => {
+    const next = { ...sandboxResources };
+    if (value === "") {
+      delete next[key];
+    } else {
+      next[key] = Number(value);
+    }
+    onSandboxResourcesChange(next);
+  };
 
   return (
     <A11yModal
@@ -52,6 +76,74 @@ export function WorkflowSettingsModal(props: WorkflowSettingsModalProps) {
               Leave empty for no limit. Runs that exceed this are cancelled.
             </span>
           </label>
+
+          <label className="field ws-field">
+            <span className="ws-field-label">Execution isolation</span>
+            <select
+              value={executionMode}
+              aria-label="Execution isolation"
+              onChange={(e) => onExecutionModeChange(e.target.value as WorkflowExecutionMode)}
+            >
+              <option value="inherit">Deployment default</option>
+              <option value="sandboxed">Always sandboxed (hardened container)</option>
+              <option value="standard">Standard pool (trusted, fastest)</option>
+            </select>
+            {executionMode === "sandboxed" && (
+              <span className="ws-field-hint">
+                Runs execute in a disposable container. If no sandbox is
+                available on the worker, runs are refused rather than downgraded.
+              </span>
+            )}
+          </label>
+
+          {executionMode === "sandboxed" && (
+            <div className="settings-row-3col">
+              <label className="field ws-field">
+                <span className="ws-field-label">
+                  Memory
+                  <span className="ws-field-unit">MB</span>
+                </span>
+                <input
+                  type="number"
+                  min={128}
+                  value={sandboxResources.memory_mb ?? ""}
+                  placeholder="1024"
+                  aria-label="Sandbox memory (MB)"
+                  onChange={(e) => setResource("memory_mb", e.target.value)}
+                />
+              </label>
+              <label className="field ws-field">
+                <span className="ws-field-label">CPU cores</span>
+                <input
+                  type="number"
+                  min={0.25}
+                  step={0.25}
+                  value={sandboxResources.cpu ?? ""}
+                  placeholder="1"
+                  aria-label="Sandbox CPU cores"
+                  onChange={(e) => setResource("cpu", e.target.value)}
+                />
+              </label>
+              <label className="field ws-field">
+                <span className="ws-field-label">
+                  Scratch /tmp
+                  <span className="ws-field-unit">MB</span>
+                </span>
+                <input
+                  type="number"
+                  min={64}
+                  value={sandboxResources.tmpfs_mb ?? ""}
+                  placeholder="256"
+                  aria-label="Sandbox /tmp (MB)"
+                  onChange={(e) => setResource("tmpfs_mb", e.target.value)}
+                />
+              </label>
+              <p className="ws-field-hint settings-row-note">
+                Blank uses the deployment default. Requests above the deployment
+                ceiling are rejected.
+              </p>
+            </div>
+          )}
         </section>
 
         <section className="ws-section">
