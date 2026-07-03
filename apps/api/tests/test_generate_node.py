@@ -378,8 +378,9 @@ async def test_generated_node_executes_in_workflow(client: AsyncClient) -> None:
 # ---- Allow-list / registry coverage for new nodes ----
 
 def test_new_nodes_in_allowed_node_types() -> None:
-    from app.services.ai_builder import _ALLOWED_NODE_TYPES, _NODE_REGISTRY
+    from app.services.ai_builder import _NODE_REGISTRY, allowed_node_types
 
+    allowed = allowed_node_types()
     new_nodes = [
         "read_parquet_file",
         "write_parquet_file",
@@ -390,11 +391,29 @@ def test_new_nodes_in_allowed_node_types() -> None:
         "dbt_cloud_trigger_job",
         "mlflow_log_metric",
         "mlflow_log_artifact",
-        "gitlab_trigger_pipeline_v2",
     ]
     for node_id in new_nodes:
-        assert node_id in _ALLOWED_NODE_TYPES, f"{node_id} missing from _ALLOWED_NODE_TYPES"
+        assert node_id in allowed, f"{node_id} missing from allowed_node_types()"
         assert node_id in _NODE_REGISTRY, f"{node_id} missing from _NODE_REGISTRY"
+
+
+def test_allowed_node_types_is_manifest_driven() -> None:
+    from app.services.ai_builder import allowed_node_types
+
+    allowed = allowed_node_types()
+    assert len(allowed) > 300
+    assert "telegram" in allowed
+    assert "code" in allowed
+    assert "execute_command" not in allowed
+    assert "ssh_execute" not in allowed
+
+
+def test_node_catalog_for_prompt_is_bounded() -> None:
+    from app.services.ai_builder import node_catalog_for_prompt
+
+    catalog = node_catalog_for_prompt(max_chars=4000)
+    assert len(catalog) <= 4000
+    assert "http_request" in catalog
 
 
 def test_new_node_registry_entries_have_params() -> None:

@@ -30,60 +30,49 @@ from app.services.credentials import CREDENTIAL_REF_MARKER, credential_ref
 from app.services.org_keys import decrypt_credential_for
 from nodyra.models import Edge, GraphNode, Position, WorkflowGraph
 
-_ALLOWED_NODE_TYPES = {
-    "manual_trigger",
-    "schedule_trigger",
-    "webhook_trigger",
-    "switch",
-    "edit_fields",
-    "code",
-    "http_request",
-    "slack",
-    "smtp_send_email",
-    "notion_create_page_v2",
-    "github_get_repo_v2",
-    "github_create_issue_v2",
-    "postgres_query",
-    "mysql_query",
-    "s3_put_object",
-    "s3_get_object",
-    "openai_chat",
-    "anthropic_message",
-    "ai_prompt_template",
-    "ai_chat_model",
-    "ai_chat",
-    "ai_structured_output",
-    "ai_text_chunk",
-    "ai_batch_embeddings",
-    "ai_dataset_map",
-    "ai_vector_retriever",
-    "ai_rag_answer",
-    "ai_memory_buffer",
-    "ai_tool",
-    "ai_tool_box",
-    "ai_agent",
-    "ai_moderation_guard",
-    "ai_vision_analyze",
-    "ai_image_generate",
-    "airtable_list_records_v2",
-    "airtable_create_record_v2",
-    "csv_parse",
-    "csv_write",
-    "json_schema_validate",
-    # File nodes
-    "read_parquet_file",
-    "write_parquet_file",
-    "read_excel_file",
-    "write_excel_file",
-    # Data platform nodes
-    "snowflake_query",
-    "bigquery_query",
-    "dbt_cloud_trigger_job",
-    "mlflow_log_metric",
-    "mlflow_log_artifact",
-    # GitLab pipeline
-    "gitlab_trigger_pipeline_v2",
-}
+
+def _registered_manifests():
+    import nodyra_nodes  # noqa: F401 - importing registers built-in node manifests
+    from nodyra.sdk import registry as node_registry
+
+    return node_registry.manifests()
+
+
+def allowed_node_types() -> frozenset[str]:
+    """Every registered node type the builder may propose.
+
+    The vocabulary is manifest-driven so new providers are automatically
+    buildable. Unconditional host-risk nodes stay excluded, except ``code``:
+    it was already allowed and still passes through unsafe-node approval gates.
+    """
+    from app.services.unsafe_nodes import UNCONDITIONAL_UNSAFE
+
+    excluded = set(UNCONDITIONAL_UNSAFE) - {"code"}
+    return frozenset(
+        manifest.id for manifest in _registered_manifests() if manifest.id not in excluded
+    )
+
+
+def node_catalog_for_prompt(max_chars: int = 12000) -> str:
+    """Compact ``type - name`` catalog injected into the builder prompt."""
+    allowed = allowed_node_types()
+    priority = {node_id: index for index, node_id in enumerate(_NODE_REGISTRY)}
+    manifests = sorted(
+        (manifest for manifest in _registered_manifests() if manifest.id in allowed),
+        key=lambda manifest: (priority.get(manifest.id, len(priority)), manifest.id),
+    )
+    lines = [f"{manifest.id} - {manifest.name}" for manifest in manifests]
+    out: list[str] = []
+    used = 0
+    for line in lines:
+        if used + len(line) + 1 > max_chars:
+            break
+        out.append(line)
+        used += len(line) + 1
+    return "\n".join(out)
+
+
+_ALLOWED_NODE_TYPES = allowed_node_types()
 
 _NODE_REGISTRY: dict[str, dict[str, Any]] = {
     "manual_trigger": {"name": "Manual Trigger", "params": ["data"]},
@@ -407,8 +396,9 @@ def _slug(text: str, fallback: str = "ai-workflow") -> str:
 def _coerce_graph(value: Any) -> WorkflowGraph:
     graph = WorkflowGraph.model_validate(value)
     node_ids = {node.id for node in graph.nodes}
+    allowed = allowed_node_types()
     for node in graph.nodes:
-        if node.type not in _ALLOWED_NODE_TYPES:
+        if node.type not in allowed:
             raise ValueError(f"unknown node type: {node.type}")
         node.params = _sanitize_params(node.params)
     for edge in graph.edges:
@@ -620,7 +610,7 @@ def _llm_messages(
         "failed_node_id": body.failed_node_id,
         "error": body.error,
         "current_graph": current_graph.model_dump() if current_graph is not None else None,
-        "allowed_nodes": _NODE_REGISTRY,
+        "allowed_node_catalog": node_catalog_for_prompt(),
         "response_schema": {
             "graph": {"nodes": [], "edges": []},
             "assumptions": ["string"],
