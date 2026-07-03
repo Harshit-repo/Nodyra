@@ -17,6 +17,7 @@ from nodyra_client.client import NodyraClient, NodyraError
 
 # Token cache in user home directory.
 _TOKEN_FILE = Path.home() / ".nodyra" / "token"
+_EXIT_BY_STATUS = {"success": 0, "error": 2, "cancelled": 3}
 _WF_COLUMNS = [
     ("ID", "id"),
     ("Name", "name"),
@@ -108,6 +109,50 @@ def _handle_error(exc: Exception) -> None:
     if hint:
         click.echo(f"Hint: {hint}", err=True)
     sys.exit(1)
+
+
+def _watch_run(run_id: str, interval: float) -> None:
+    from rich.live import Live
+    from rich.table import Table
+
+    from nodyra_client.cli.render import _console, emit_json_line
+
+    client = _client()
+    final = None
+    try:
+        if _json_mode():
+            for snapshot in client.runs.watch(run_id, interval=interval):
+                emit_json_line(snapshot)
+                final = snapshot
+            sys.exit(_EXIT_BY_STATUS.get(final.status if final else "", 1))
+
+        with Live(console=_console, refresh_per_second=4) as live:
+            for snapshot in client.runs.watch(run_id, interval=interval):
+                table = Table(
+                    title=f"run {snapshot.id} - {snapshot.status}",
+                    header_style="bold",
+                )
+                for column in ("Node", "Type", "Status", "Error"):
+                    table.add_column(column)
+                for node_run in snapshot.node_runs:
+                    table.add_row(
+                        node_run.node_name or node_run.node_id,
+                        node_run.node_type,
+                        node_run.status,
+                        (node_run.error or "")[:60],
+                    )
+                live.update(table)
+                final = snapshot
+    except KeyboardInterrupt:
+        click.echo(
+            f"\nDetached. The run continues server-side; "
+            f"'nodyra run cancel {run_id}' to stop it.",
+            err=True,
+        )
+        sys.exit(130)
+    finally:
+        client.close()
+    sys.exit(_EXIT_BY_STATUS.get(final.status if final else "", 1))
 
 
 @click.group()
@@ -235,7 +280,8 @@ def run() -> None:
 @run.command("start")
 @click.argument("workflow_id")
 @click.option("--data", default=None, help="JSON input data for the run")
-def run_start(workflow_id: str, data: str | None) -> None:
+@click.option("--watch", "watch_", is_flag=True, help="Follow the run to completion.")
+def run_start(workflow_id: str, data: str | None, watch_: bool) -> None:
     """Start a workflow run."""
     payload: dict | None = None
     if data:
@@ -245,7 +291,28 @@ def run_start(workflow_id: str, data: str | None) -> None:
             click.echo(f"Error: --data must be valid JSON: {exc}", err=True)
             sys.exit(1)
     try:
-        emit(_client().runs.start(workflow_id, data=payload), json_mode=_json_mode())
+        created = _client().runs.start(workflow_id, data=payload)
+    except (NodyraError, httpx.TransportError) as exc:
+        _handle_error(exc)
+        return
+    if not watch_:
+        emit(created, json_mode=_json_mode())
+        return
+    if not _json_mode():
+        click.echo(f"run {created.id} started; watching...", err=True)
+    try:
+        _watch_run(created.id, 1.5)
+    except (NodyraError, httpx.TransportError) as exc:
+        _handle_error(exc)
+
+
+@run.command("watch")
+@click.argument("run_id")
+@click.option("--interval", default=1.5, show_default=True, type=float)
+def run_watch(run_id: str, interval: float) -> None:
+    """Live-follow a run until it finishes."""
+    try:
+        _watch_run(run_id, interval)
     except (NodyraError, httpx.TransportError) as exc:
         _handle_error(exc)
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import time
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -17,6 +19,8 @@ from nodyra_client.models import (
     WorkflowGraph,
     WorkflowSummary,
 )
+
+TERMINAL_RUN_STATUSES = frozenset({"success", "error", "cancelled"})
 
 
 class NodyraError(Exception):
@@ -233,6 +237,28 @@ class _RunsAPI:
 
     def get(self, run_id: str) -> RunDetail:
         return RunDetail(**self._c._get(f"/runs/{run_id}"))
+
+    def watch(
+        self,
+        run_id: str,
+        *,
+        interval: float = 1.5,
+        timeout: float | None = None,
+    ) -> Iterator[RunDetail]:
+        """Poll a run until it reaches a terminal status.
+
+        Yields every snapshot, including the terminal one. Raises
+        ``NodyraError(408, ...)`` if *timeout* seconds elapse first.
+        """
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            detail = self.get(run_id)
+            yield detail
+            if detail.status in TERMINAL_RUN_STATUSES:
+                return
+            if deadline is not None and time.monotonic() >= deadline:
+                raise NodyraError(408, f"run {run_id} still {detail.status} after {timeout}s")
+            time.sleep(interval)
 
     def cancel(self, run_id: str) -> dict[str, Any]:
         return self._c._post(f"/runs/{run_id}/cancel")
