@@ -547,6 +547,9 @@ class Workflow(Base):
     # Optional per-workflow sandbox resource requests: {"memory_mb", "cpu",
     # "tmpfs_mb"}. Validated at write time and clamped at container spawn.
     sandbox_resources: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    requirements: Mapped[list] = mapped_column(
+        JSON, default=list, nullable=False, server_default="[]"
+    )
     # Per-workflow wall-clock cap (seconds) for a single run. NULL falls back
     # to ``settings.workflow_run_timeout_seconds``; 0 means no cap.
     run_timeout_seconds: Mapped[float | None] = mapped_column(

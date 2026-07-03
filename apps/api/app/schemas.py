@@ -32,6 +32,7 @@ class WorkflowUpdate(BaseModel):
     allow_concurrent: bool | None = None
     execution_mode: str | None = None
     sandbox_resources: dict[str, Any] | None = None
+    requirements: list[str] | None = None
     # Per-workflow wall-clock cap (seconds) for a run. None leaves it unset
     # (falls back to the server default); 0 disables the cap for this workflow.
     run_timeout_seconds: float | None = Field(default=None, ge=0)
@@ -146,6 +147,7 @@ class WorkflowDetail(BaseModel):
     allow_concurrent: bool = True
     execution_mode: Literal["inherit", "sandboxed", "standard"] = "inherit"
     sandbox_resources: dict[str, Any] | None = None
+    requirements: list[str] = Field(default_factory=list)
     run_timeout_seconds: float | None = None
     mcp_enabled: bool = False
     mcp_tool_name: str | None = None

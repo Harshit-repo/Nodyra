@@ -86,6 +86,25 @@ EMPTY_GRAPH: dict = {"nodes": [], "edges": []}
 STRUCTURAL_NODE_TYPES: frozenset[str] = frozenset({"meta_node"})
 
 
+def _validate_requirement_lines(requirements: list[str] | None) -> list[str]:
+    from packaging.requirements import InvalidRequirement, Requirement
+
+    cleaned: list[str] = []
+    for raw in requirements or []:
+        line = str(raw).strip()
+        if not line:
+            continue
+        try:
+            Requirement(line)
+        except InvalidRequirement as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                f"Invalid requirement {line!r}: {exc}",
+            ) from exc
+        cleaned.append(line)
+    return cleaned
+
+
 def _validate_node_types(graph: dict | WorkflowGraph) -> None:
     """422 with a list of unknown node types — guards against typos that
     only surface at run-time with a confusing 'unknown node' engine error.
@@ -290,6 +309,7 @@ async def _detail(session: AsyncSession, workflow: Workflow) -> WorkflowDetail:
         allow_concurrent=workflow.allow_concurrent,
         execution_mode=workflow.execution_mode,
         sandbox_resources=workflow.sandbox_resources,
+        requirements=list(workflow.requirements or []),
         run_timeout_seconds=workflow.run_timeout_seconds,
         mcp_enabled=workflow.mcp_enabled,
         mcp_tool_name=workflow.mcp_tool_name,
@@ -710,6 +730,8 @@ async def update_workflow(
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)
                 ) from exc
+    if "requirements" in sent:
+        workflow.requirements = _validate_requirement_lines(body.requirements)
     if "run_timeout_seconds" in sent:
         workflow.run_timeout_seconds = body.run_timeout_seconds
     if body.mcp_enabled is not None:

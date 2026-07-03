@@ -68,7 +68,12 @@ from app.services.graph_utils import (
     targets_have_trigger,
 )
 from app.services.live_settings import get_live_settings
-from app.services.package_preflight import find_missing_packages, format_missing
+from app.services.package_preflight import (
+    find_missing_packages,
+    format_missing,
+    format_missing_workflow_requirements,
+    missing_workflow_requirements,
+)
 from app.services.redaction import (
     load_secret_values,
     load_secret_values_for_org,
@@ -578,6 +583,14 @@ async def _start_run_impl(
             missing = find_missing_packages(graph, list(preflight_env.packages))
             if missing:
                 raise PackageNotInstalled(format_missing(missing))
+            missing_requirements = missing_workflow_requirements(
+                workflow_requirements=list(wf_obj.requirements or []) if wf_obj else [],
+                installed=list(preflight_env.packages or []),
+            )
+            if missing_requirements:
+                raise PackageNotInstalled(
+                    format_missing_workflow_requirements(missing_requirements)
+                )
 
         if wf_obj is not None and wf_obj.allow_concurrent is False:
             # Single-flight gate — serialize concurrent start_run calls so two

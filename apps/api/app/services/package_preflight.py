@@ -5,6 +5,9 @@ from __future__ import annotations
 import re
 import sys
 
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
+
 from nodyra.packages import canonical_package_name
 from nodyra.sdk import registry as node_registry
 
@@ -59,5 +62,51 @@ def format_missing(missing: dict[str, list[str]]) -> str:
     return (
         "This workflow's environment is missing packages required by its nodes: "
         + "; ".join(parts)
+        + ". Add them to the environment or switch the workflow to an env that has them."
+    )
+
+
+def _installed_names(installed: dict[str, str] | list[str]) -> set[str]:
+    if isinstance(installed, dict):
+        source = installed.keys()
+    else:
+        source = installed
+    names: set[str] = set()
+    for entry in source:
+        text = str(entry).strip()
+        if not text:
+            continue
+        try:
+            names.add(canonicalize_name(Requirement(text).name))
+        except InvalidRequirement:
+            names.add(canonicalize_name(canonical_package_name(text)))
+    return names
+
+
+def missing_workflow_requirements(
+    *, workflow_requirements: list[str], installed: dict[str, str] | list[str]
+) -> list[str]:
+    """Workflow requirement lines whose distribution name is absent."""
+    have = _installed_names(installed)
+    missing: list[str] = []
+    for line in workflow_requirements:
+        text = str(line).strip()
+        if not text or not _requirement_applies(text):
+            continue
+        try:
+            req_name = Requirement(text).name
+        except InvalidRequirement:
+            missing.append(text)
+            continue
+        if canonicalize_name(req_name) not in have:
+            missing.append(text)
+    return missing
+
+
+def format_missing_workflow_requirements(missing: list[str]) -> str:
+    return (
+        "This workflow's environment is missing packages declared in workflow "
+        "requirements: "
+        + ", ".join(missing)
         + ". Add them to the environment or switch the workflow to an env that has them."
     )

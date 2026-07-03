@@ -10,6 +10,8 @@ const baseProps = {
   onExecutionModeChange: vi.fn(),
   sandboxResources: {},
   onSandboxResourcesChange: vi.fn(),
+  requirementsText: "",
+  onRequirementsTextChange: vi.fn(),
   mcpEnabled: false,
   onMcpEnabledChange: vi.fn(),
   mcpToolName: "",
@@ -64,5 +66,19 @@ describe("WorkflowSettingsModal", () => {
       target: { value: "2048" },
     });
     expect(onSandboxResourcesChange).toHaveBeenLastCalledWith({ memory_mb: 2048 });
+  });
+
+  it("updates workflow requirements text", () => {
+    const onRequirementsTextChange = vi.fn();
+    render(
+      <WorkflowSettingsModal
+        {...baseProps}
+        onRequirementsTextChange={onRequirementsTextChange}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText(/python requirements/i), {
+      target: { value: "pandas>=2.0\nrequests" },
+    });
+    expect(onRequirementsTextChange).toHaveBeenCalledWith("pandas>=2.0\nrequests");
   });
 });

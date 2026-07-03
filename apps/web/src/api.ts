@@ -350,6 +350,7 @@ export interface WorkflowPatch {
   run_timeout_seconds?: number | null;
   execution_mode?: "inherit" | "sandboxed" | "standard";
   sandbox_resources?: { memory_mb?: number; cpu?: number; tmpfs_mb?: number } | null;
+  requirements?: string[];
   mcp_enabled?: boolean;
   mcp_tool_name?: string | null;
   mcp_description?: string | null;

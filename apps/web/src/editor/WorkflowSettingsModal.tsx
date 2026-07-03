@@ -15,6 +15,8 @@ export interface WorkflowSettingsModalProps {
   onExecutionModeChange: (v: WorkflowExecutionMode) => void;
   sandboxResources: SandboxResources;
   onSandboxResourcesChange: (v: SandboxResources) => void;
+  requirementsText: string;
+  onRequirementsTextChange: (v: string) => void;
   mcpEnabled: boolean;
   onMcpEnabledChange: (v: boolean) => void;
   mcpToolName: string;
@@ -29,6 +31,7 @@ export function WorkflowSettingsModal(props: WorkflowSettingsModalProps) {
     runTimeout, onRunTimeoutChange,
     executionMode, onExecutionModeChange,
     sandboxResources, onSandboxResourcesChange,
+    requirementsText, onRequirementsTextChange,
     mcpEnabled, onMcpEnabledChange,
     mcpToolName, onMcpToolNameChange,
     mcpDescription, onMcpDescriptionChange,
@@ -144,6 +147,21 @@ export function WorkflowSettingsModal(props: WorkflowSettingsModalProps) {
               </p>
             </div>
           )}
+
+          <label className="field ws-field">
+            <span className="ws-field-label">Python requirements</span>
+            <textarea
+              value={requirementsText}
+              rows={4}
+              placeholder={"pandas>=2.0\nrequests"}
+              aria-label="Python requirements"
+              onChange={(e) => onRequirementsTextChange(e.target.value)}
+            />
+            <span className="ws-field-hint">
+              One PEP 508 requirement per line. Runs are blocked if the selected
+              environment is missing one.
+            </span>
+          </label>
         </section>
 
         <section className="ws-section">

@@ -308,6 +308,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
     cpu?: number;
     tmpfs_mb?: number;
   }>({});
+  const [requirementsText, setRequirementsText] = useState("");
   const [mcpEnabled, setMcpEnabled] = useState(false);
   const [mcpToolName, setMcpToolName] = useState("");
   const [mcpDescription, setMcpDescription] = useState("");
@@ -456,6 +457,7 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
       );
       setExecutionMode(detail.execution_mode ?? "inherit");
       setSandboxResources(detail.sandbox_resources ?? {});
+      setRequirementsText((detail.requirements ?? []).join("\n"));
       setMcpEnabled(detail.mcp_enabled ?? false);
       setMcpToolName(detail.mcp_tool_name ?? "");
       setMcpDescription(detail.mcp_description ?? "");
@@ -891,6 +893,10 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
           Object.keys(cleanedSandboxResources).length > 0
             ? cleanedSandboxResources
             : null,
+        requirements: requirementsText
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean),
         mcp_enabled: mcpEnabled,
         mcp_tool_name: mcpToolName || null,
         mcp_description: mcpDescription || null,
@@ -2008,6 +2014,8 @@ const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
           onExecutionModeChange={setExecutionMode}
           sandboxResources={sandboxResources}
           onSandboxResourcesChange={setSandboxResources}
+          requirementsText={requirementsText}
+          onRequirementsTextChange={setRequirementsText}
           mcpEnabled={mcpEnabled}
           onMcpEnabledChange={setMcpEnabled}
           mcpToolName={mcpToolName}

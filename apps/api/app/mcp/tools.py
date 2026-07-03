@@ -1080,6 +1080,7 @@ async def _graph_validation_summary(
 
     required_packages = _graph_requirements(parsed)
     missing_packages: list[str] = []
+    workflow_requirements_missing: list[str] = []
     environment: dict[str, Any] | None = None
     if workflow:
         env: Environment | None = None
@@ -1098,6 +1099,12 @@ async def _graph_validation_summary(
                 for requirement in required_packages
                 if canonical_package_name(requirement) not in installed
             ]
+            from app.services.package_preflight import missing_workflow_requirements
+
+            workflow_requirements_missing = missing_workflow_requirements(
+                workflow_requirements=list(workflow.requirements or []),
+                installed=list(env.packages or []),
+            )
             environment = {
                 "id": env.id,
                 "name": env.name,
@@ -1110,6 +1117,7 @@ async def _graph_validation_summary(
         "edge_count": len(parsed.edges),
         "required_packages": required_packages,
         "missing_packages": missing_packages,
+        "workflow_requirements_missing": workflow_requirements_missing,
         "environment": environment,
     }
 
@@ -1327,6 +1335,9 @@ async def _apply_workflow_patch(session: AsyncSession, user: User | None, args: 
         "edge_count": len(parsed.edges),
         "changes": changes,
         "missing_packages": summary.get("missing_packages", []),
+        "workflow_requirements_missing": summary.get(
+            "workflow_requirements_missing", []
+        ),
         "hint": "Draft saved atomically. Use run_workflow (use_draft=true) to test.",
     }
     if args.get("include_graph"):
