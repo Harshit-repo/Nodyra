@@ -58,6 +58,13 @@ Nodyra is an MCP server. Claude, Cursor, or any MCP client can create, edit,
 validate, run, and publish workflows through 61 tools. See
 [docs/mcp-quickstart.md](docs/mcp-quickstart.md) for a one-paste setup.
 
+## CLI & Python SDK
+
+`pip install nodyra-client` gives you the `nodyra` CLI and a typed Python SDK:
+login, list workflows, import/export Python workflow modules, and run workflows
+from CI with `--watch` outcome exit codes. See
+[packages/client/README.md](packages/client/README.md).
+
 ## Current Status
 
 Nodyra is an active product codebase. The local and Docker stacks are usable,
