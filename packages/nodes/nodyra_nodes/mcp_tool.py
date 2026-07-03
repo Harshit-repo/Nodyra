@@ -8,6 +8,7 @@ secret decryption.
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -15,6 +16,36 @@ from nodyra.context import node_debug
 from nodyra.engine.types import RuntimeContext
 from nodyra.expr import build_context, evaluate
 from nodyra.sdk import node
+
+
+def _preview(value: Any, limit: int = 2000) -> str:  # noqa: ANN401
+    try:
+        text = json.dumps(value, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        text = repr(value)
+    return text[:limit]
+
+
+def _with_mcp_trace(result: Any, trace: dict[str, Any]) -> dict[str, Any]:  # noqa: ANN401
+    output = dict(result) if isinstance(result, dict) else {"result": result}
+    output["_mcp_trace"] = trace
+    return output
+
+
+def _record_debug_trace(
+    debug: Any,
+    trace: dict[str, Any],
+    *,
+    status: str,
+    error: str | None = None,
+) -> None:
+    if not isinstance(debug, dict):
+        return
+    debug_trace = dict(trace)
+    debug_trace["status"] = status
+    if error:
+        debug_trace["error"] = error
+    debug.setdefault("mcp_calls", []).append(debug_trace)
 
 
 @node(
@@ -47,18 +78,30 @@ async def mcp_tool(input: Any = None, *, ctx: RuntimeContext) -> Any:  # noqa: A
 
     # Dispatch through the platform hook (implemented in runner's RuntimeContext).
     debug = node_debug.get()
-    trace: dict[str, Any] = {"connection_id": conn_id, "tool": tool_name}
     started = time.monotonic()
     try:
         result = await ctx.call_mcp_tool(conn_id, tool_name, resolved_args)
     except Exception as exc:
-        trace["status"] = "error"
-        trace["error"] = f"{type(exc).__name__}: {exc}"
-        raise
-    else:
-        trace["status"] = "success"
-        return result
-    finally:
-        trace["duration_ms"] = int((time.monotonic() - started) * 1000)
-        if isinstance(debug, dict):
-            debug.setdefault("mcp_calls", []).append(trace)
+        error_text = f"{type(exc).__name__}: {exc}"
+        trace = {
+            "connection_id": conn_id,
+            "tool": tool_name,
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "arguments_preview": _preview(resolved_args),
+            "result_preview": _preview(error_text),
+            "is_error": True,
+        }
+        _record_debug_trace(debug, trace, status="error", error=error_text)
+        trace_json = json.dumps({"_mcp_trace": trace}, ensure_ascii=False, default=str)
+        raise RuntimeError(f"{error_text}; {trace_json}") from exc
+
+    trace = {
+        "connection_id": conn_id,
+        "tool": tool_name,
+        "duration_ms": int((time.monotonic() - started) * 1000),
+        "arguments_preview": _preview(resolved_args),
+        "result_preview": _preview(result),
+        "is_error": False,
+    }
+    _record_debug_trace(debug, trace, status="success")
+    return _with_mcp_trace(result, trace)

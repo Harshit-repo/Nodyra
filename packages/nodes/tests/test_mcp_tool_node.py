@@ -6,6 +6,8 @@ is not defined``. These tests execute the node function directly (no
 manifest-only coverage) so a missing import can never ship silently again.
 """
 
+import json
+
 import pytest
 
 from nodyra.context import node_debug
@@ -37,7 +39,14 @@ async def test_mcp_tool_executes_and_dispatches(recorded_calls):
         node_inputs={"main": {"value": 42}},
     )
     result = await mcp_tool(input={"value": 42}, ctx=ctx)
-    assert result == {"ok": True}
+    assert result["ok"] is True
+    trace = result["_mcp_trace"]
+    assert trace["connection_id"] == "conn-1"
+    assert trace["tool"] == "echo"
+    assert trace["is_error"] is False
+    assert trace["duration_ms"] >= 0
+    assert trace["arguments_preview"] == '{"message": "hello"}'
+    assert len(trace["result_preview"]) <= 2000
     assert recorded_calls == [("conn-1", "echo", {"message": "hello"})]
 
 
@@ -89,6 +98,25 @@ async def test_mcp_tool_records_call_trace(recorded_calls):
     assert call["connection_id"] == "conn-1"
     assert call["status"] == "success"
     assert isinstance(call["duration_ms"], int)
+    assert call["is_error"] is False
+
+
+async def test_mcp_tool_wraps_scalar_output_with_trace(recorded_calls):
+    async def fake_call(connection_id: str, tool_name: str, arguments: dict):
+        return "pong"
+
+    set_call_mcp_tool_impl(fake_call)
+    ctx = RuntimeContext(
+        run_id="r1",
+        workflow_id="w1",
+        node_params={"connection_id": "conn-1", "tool_name": "ping"},
+        node_inputs={},
+    )
+
+    result = await mcp_tool(input=None, ctx=ctx)
+
+    assert result["result"] == "pong"
+    assert result["_mcp_trace"]["tool"] == "ping"
 
 
 async def test_mcp_tool_records_failed_call(recorded_calls):
@@ -105,8 +133,14 @@ async def test_mcp_tool_records_failed_call(recorded_calls):
             node_params={"connection_id": "conn-1", "tool_name": "echo"},
             node_inputs={},
         )
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError) as excinfo:
             await mcp_tool(input=None, ctx=ctx)
     finally:
         node_debug.reset(token)
     assert debug["mcp_calls"][0]["status"] == "error"
+    assert debug["mcp_calls"][0]["is_error"] is True
+    payload = json.loads(str(excinfo.value).split("; ", 1)[1])
+    trace = payload["_mcp_trace"]
+    assert trace["tool"] == "echo"
+    assert trace["is_error"] is True
+    assert trace["duration_ms"] >= 0
