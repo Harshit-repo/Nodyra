@@ -256,7 +256,7 @@ def embeddings(
         body["truncate"] = bool(truncate)
     result = _transport(credentials).request(
         "POST",
-        f"/hf-inference/models/{_model_path(model)}",
+        f"/hf-inference/models/{_model_path(model)}/pipeline/feature-extraction",
         operation="embeddings",
         json_body=body,
     )

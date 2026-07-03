@@ -100,7 +100,7 @@ def test_huggingface_embeddings_dispatches_feature_extraction(monkeypatch) -> No
     assert result == {"embedding": [0.1, 0.2, 0.3], "raw": [[0.1, 0.2, 0.3]]}
     transport.request.assert_called_once_with(
         "POST",
-        "/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2",
+        "/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2/pipeline/feature-extraction",
         operation="embeddings",
         json_body={"inputs": "embed me", "normalize": True, "truncate": False},
     )
